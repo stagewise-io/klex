@@ -65,6 +65,7 @@ describe('Klex local-data registry', () => {
       'config',
       'model-calls',
       'mcp-oauth',
+      'provider-credentials',
       'cloud-identity-metadata',
       'cloud-enrollment',
       'todos-extension-todos',

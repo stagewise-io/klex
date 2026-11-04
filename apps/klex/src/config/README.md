@@ -148,6 +148,29 @@ Released config schemas 1–6 retain their original voice shape. The public
 `configVersion` remains `2`. Configs written by `0.27.0` without TTS/STT keys
 also migrate from schema 6 to 7. Older binaries reject schema 7 before writing.
 
+Config schema 8, introduced in `0.28.3`, adds an optional `authMode` to
+`chatgpt-codex-subscription` settings. The 7→8 migration changes only store
+metadata: existing Codex entries without `authMode` remain `local-cli` entries
+that read the Codex CLI's `auth.json`. Older binaries reject schema 8 before
+writing.
+
+```json
+{
+  "providers": {
+    "codex": {
+      "type": "chatgpt-codex-subscription",
+      "settings": { "authMode": "managed" }
+    }
+  }
+}
+```
+
+`managed` accepts only `baseUrl` and `testModelId`. Klex signs in through the
+Codex device-code flow (`PUT /v1/providers/{id}/authorization`) and needs no
+Codex executable or `auth.json`. Tokens are stored with owner-only permissions
+in `credentials/providers.json` under the data directory, refreshed by Klex, and
+never written to `config.json` or returned by the Admin API.
+
 `openai-primary` and `openai-secondary` demonstrate independent instances of
 one provider type. `openai-internal` keeps native OpenAI behavior while routing
 it to a configured internal endpoint. `custom-chat` is a single-endpoint

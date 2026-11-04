@@ -5,12 +5,22 @@ import { createOpenResponses } from '@ai-sdk/open-responses';
 import type { LanguageModelV4 } from '@ai-sdk/provider';
 
 import type {
+  ProviderAuthorization,
   ProviderConnectionResult,
+  ProviderContext,
   ProviderDefinition,
   ProviderInstance,
   ProviderModel,
   ProviderOperationResult,
+  ProviderSettings,
 } from '../provider-registry';
+import {
+  codexAccountId,
+  jwtExpiration,
+  pollDeviceAuthorization,
+  refreshCredential,
+  startDeviceAuthorization,
+} from './chatgpt-codex-device-auth';
 import { resolveOpenAiModelMetadata } from './openai';
 import {
   available,
@@ -25,18 +35,44 @@ import {
 const BASE_URL = 'https://chatgpt.com/backend-api/codex/responses';
 const LEGACY_TEST_MODEL_ID = 'gpt-5-codex';
 const DEFAULT_TEST_MODEL_ID = 'gpt-5.6-sol';
+/**
+ * Sent as `client_version` on model-catalog requests, as the Codex CLI does.
+ * The service omits every model whose minimum client version is newer than
+ * this value: 0.130.0 returned only a hidden model, 0.166.0 returned the full
+ * catalog. Keep it at a released `@openai/codex` npm version and raise it when
+ * managed discovery returns fewer models than the Codex CLI.
+ */
+const CODEX_CLIENT_VERSION = '0.166.0';
+
+const SIGN_IN_REQUIRED = 'ChatGPT sign-in is required for this provider';
+
+function isManaged(settings: ProviderSettings): boolean {
+  return settings.authMode === 'managed';
+}
+
+const authorization: ProviderAuthorization = {
+  method: 'device-code',
+  isRequired: isManaged,
+  // Tokens are sent to baseUrl; a different endpoint needs a new sign-in.
+  credentialScope: (settings) => JSON.stringify(settings.baseUrl ?? BASE_URL),
+  start: (_instance, signal) => startDeviceAuthorization(signal),
+  poll: (_instance, handle, signal) => pollDeviceAuthorization(handle, signal),
+  refresh: (_instance, credential, signal) =>
+    refreshCredential(credential, signal),
+};
 
 export const chatGptCodexSubscriptionProviderDefinition: ProviderDefinition = {
   type: 'chatgpt-codex-subscription',
   usageGuidance:
-    'Use for Codex models authenticated by a local ChatGPT subscription session. The Codex CLI must be installed and logged in.',
+    'Use for Codex models authenticated by a ChatGPT subscription. authMode "local-cli" (default) reads the session of a locally installed and logged-in Codex CLI. authMode "managed" needs no Codex CLI: Klex signs in through the ChatGPT device-code flow and stores and refreshes the credentials itself.',
   metadata: {
     displayName: 'ChatGPT Codex Subscription',
     description:
-      'Codex model transport authenticated by a local ChatGPT subscription session.',
+      'Codex model transport authenticated by a ChatGPT subscription session, either from a local Codex CLI or signed in by Klex.',
   },
   resolveModelMetadata: resolveOpenAiModelMetadata,
   preflightCreate: (settings) => preflight(settings),
+  authorization,
   createLanguageModel,
   discoverModels,
   testConnection: testCodexConnection,
@@ -45,17 +81,26 @@ export const chatGptCodexSubscriptionProviderDefinition: ProviderDefinition = {
 async function testCodexConnection(
   instance: ProviderInstance,
   signal: AbortSignal,
+  context?: ProviderContext,
 ): Promise<ProviderOperationResult<ProviderConnectionResult>> {
+  if (isManaged(instance.settings) && !(await context?.credential()))
+    return unavailable(
+      'authentication_required',
+      SIGN_IN_REQUIRED,
+      'Sign in with ChatGPT first.',
+    );
   const requestedModel = setting(instance, 'testModelId');
   const modelId =
     requestedModel && requestedModel !== LEGACY_TEST_MODEL_ID
       ? requestedModel
-      : ((await loadConfiguredModel(instance)) ?? DEFAULT_TEST_MODEL_ID);
+      : ((isManaged(instance.settings)
+          ? undefined
+          : await loadConfiguredModel(instance)) ?? DEFAULT_TEST_MODEL_ID);
   const { testModelId: _testModelId, ...settings } = instance.settings;
   return testModelConnection(
     { ...instance, settings: { ...settings, testModelId: modelId } },
     BASE_URL,
-    (id) => createLanguageModel(instance, id),
+    (id) => createLanguageModel(instance, id, context),
     signal,
   );
 }
@@ -79,7 +124,10 @@ async function loadConfiguredModel(
 async function discoverModels(
   instance: ProviderInstance,
   signal: AbortSignal,
+  context?: ProviderContext,
 ): Promise<ProviderOperationResult<readonly ProviderModel[]>> {
+  if (isManaged(instance.settings))
+    return discoverManagedModels(instance, signal, context);
   const cacheFile = codexFile(instance, 'models_cache.json');
   if (!cacheFile)
     return unavailable(
@@ -92,45 +140,7 @@ async function discoverModels(
     const parsed = JSON.parse(
       await readFile(cacheFile, { encoding: 'utf8', signal }),
     ) as unknown;
-    if (!isRecord(parsed) || !Array.isArray(parsed.models))
-      throw new Error('Invalid Codex model catalog');
-    const models = parsed.models.flatMap((value): ProviderModel[] => {
-      if (
-        !isRecord(value) ||
-        typeof value.slug !== 'string' ||
-        !value.slug ||
-        value.visibility !== 'list' ||
-        value.supported_in_api !== true
-      )
-        return [];
-      const inputModalities = Array.isArray(value.input_modalities)
-        ? value.input_modalities
-        : [];
-      const capabilities = {
-        input: {
-          ...(inputModalities.includes('image') && { image: {} }),
-          ...(inputModalities.includes('audio') && { audio: {} }),
-        },
-      };
-      return [
-        {
-          modelId: value.slug,
-          kind: 'language',
-          ...(typeof value.display_name === 'string' && value.display_name
-            ? { displayName: value.display_name }
-            : {}),
-          ...(typeof value.context_window === 'number' &&
-          Number.isFinite(value.context_window) &&
-          value.context_window > 0
-            ? { contextSize: value.context_window }
-            : {}),
-          ...(Object.keys(capabilities.input).length > 0
-            ? { capabilities }
-            : {}),
-        },
-      ];
-    });
-    return available(models);
+    return available(parseModelCatalog(parsed));
   } catch (error) {
     return unavailable(
       'discovery_failed',
@@ -142,9 +152,93 @@ async function discoverModels(
   }
 }
 
+async function discoverManagedModels(
+  instance: ProviderInstance,
+  signal: AbortSignal,
+  context: ProviderContext | undefined,
+): Promise<ProviderOperationResult<readonly ProviderModel[]>> {
+  const url = new URL(modelsUrl(setting(instance, 'baseUrl') ?? BASE_URL));
+  url.searchParams.set('client_version', CODEX_CLIENT_VERSION);
+  let response: Response;
+  try {
+    response = await managedFetch(context)(url, { method: 'GET', signal });
+  } catch (error) {
+    if (error instanceof Error && error.message === SIGN_IN_REQUIRED)
+      return unavailable(
+        'authentication_required',
+        SIGN_IN_REQUIRED,
+        'Sign in with ChatGPT first.',
+      );
+    return unavailable('discovery_failed', sanitizedError(error));
+  }
+  if (response.status === 401 || response.status === 403)
+    return unavailable(
+      'authentication_required',
+      'ChatGPT rejected the stored sign-in',
+      'Sign in with ChatGPT again.',
+    );
+  if (!response.ok)
+    return unavailable(
+      'discovery_failed',
+      `Provider returned HTTP ${response.status}`,
+    );
+  try {
+    return available(parseModelCatalog(await response.json()));
+  } catch {
+    return unavailable('discovery_failed', 'Codex model catalog is invalid');
+  }
+}
+
+/** `https://…/codex/responses` → `https://…/codex/models`. */
+function modelsUrl(baseUrl: string): string {
+  return `${baseUrl.replace(/\/$/, '').replace(/\/responses$/, '')}/models`;
+}
+
+/** Parses the `/codex/models` response, which is also the CLI cache shape. */
+function parseModelCatalog(parsed: unknown): ProviderModel[] {
+  if (!isRecord(parsed) || !Array.isArray(parsed.models))
+    throw new Error('Invalid Codex model catalog');
+  return parsed.models.flatMap((value): ProviderModel[] => {
+    if (
+      !isRecord(value) ||
+      typeof value.slug !== 'string' ||
+      !value.slug ||
+      value.visibility !== 'list' ||
+      value.supported_in_api !== true
+    )
+      return [];
+    const inputModalities = Array.isArray(value.input_modalities)
+      ? value.input_modalities
+      : [];
+    const capabilities = {
+      input: {
+        ...(inputModalities.includes('image') && { image: {} }),
+        ...(inputModalities.includes('audio') && { audio: {} }),
+      },
+    };
+    return [
+      {
+        modelId: value.slug,
+        kind: 'language',
+        ...(typeof value.display_name === 'string' && value.display_name
+          ? { displayName: value.display_name }
+          : {}),
+        ...(typeof value.context_window === 'number' &&
+        Number.isFinite(value.context_window) &&
+        value.context_window > 0
+          ? { contextSize: value.context_window }
+          : {}),
+        ...(Object.keys(capabilities.input).length > 0 ? { capabilities } : {}),
+      },
+    ];
+  });
+}
+
 async function preflight(
   settings: Readonly<Record<string, unknown>>,
 ): Promise<ProviderOperationResult> {
+  // Managed instances are created signed out; the sign-in follows creation.
+  if (isManaged(settings)) return available(undefined);
   const instance: ProviderInstance = {
     id: 'preflight',
     type: 'chatgpt-codex-subscription',
@@ -181,27 +275,79 @@ async function preflight(
 function createLanguageModel(
   instance: ProviderInstance,
   modelId: string,
+  context?: ProviderContext,
 ): LanguageModelV4 {
   const baseUrl = setting(instance, 'baseUrl') ?? BASE_URL;
   return createOpenResponses({
     name: 'codex',
     url: responsesUrl(baseUrl),
-    fetch: authenticatedFetch(instance),
+    fetch: responsesFetch(
+      isManaged(instance.settings)
+        ? managedFetch(context)
+        : localCliFetch(instance),
+    ),
   }).languageModel(modelId);
 }
 
-function authenticatedFetch(instance: ProviderInstance): typeof fetch {
+interface CodexAuth {
+  accessToken: string;
+  accountId?: string;
+}
+
+function withCodexHeaders(
+  init: RequestInit | undefined,
+  auth: CodexAuth,
+): Headers {
+  const headers = new Headers(init?.headers);
+  headers.set('Authorization', `Bearer ${auth.accessToken}`);
+  if (auth.accountId) headers.set('ChatGPT-Account-Id', auth.accountId);
+  headers.set('originator', 'codex_cli_rs');
+  headers.set('User-Agent', 'codex_cli_rs');
+  return headers;
+}
+
+function localCliFetch(instance: ProviderInstance): typeof fetch {
+  return async (input, init) =>
+    fetch(input, {
+      ...init,
+      headers: withCodexHeaders(init, await loadAuth(instance)),
+    });
+}
+
+/**
+ * Uses registry-owned credentials only; never falls back to a local Codex
+ * session. Retries once with a forced refresh after a 401.
+ */
+function managedFetch(context: ProviderContext | undefined): typeof fetch {
   return async (input, init) => {
-    const auth = await loadAuth(instance);
-    const headers = new Headers(init?.headers);
-    headers.set('Authorization', `Bearer ${auth.accessToken}`);
-    if (auth.accountId) headers.set('ChatGPT-Account-Id', auth.accountId);
-    headers.set('originator', 'codex_cli_rs');
-    headers.set('User-Agent', 'codex_cli_rs');
-    const request = codexRequestBody(init?.body);
+    const credential = await context?.credential();
+    if (!credential) throw new Error(SIGN_IN_REQUIRED);
     const response = await fetch(input, {
       ...init,
-      headers,
+      headers: withCodexHeaders(init, credential),
+    });
+    const replayable =
+      init?.body === undefined ||
+      init.body === null ||
+      typeof init.body === 'string';
+    if (response.status !== 401 || !replayable || init?.signal?.aborted)
+      return response;
+    const refreshed = await context?.invalidate();
+    if (!refreshed || refreshed.accessToken === credential.accessToken)
+      return response;
+    await response.body?.cancel().catch(() => {});
+    return fetch(input, {
+      ...init,
+      headers: withCodexHeaders(init, refreshed),
+    });
+  };
+}
+
+function responsesFetch(authorizedFetch: typeof fetch): typeof fetch {
+  return async (input, init) => {
+    const request = codexRequestBody(init?.body);
+    const response = await authorizedFetch(input, {
+      ...init,
       body: request.body,
     });
     return request.streaming ? response : collectCodexResponse(response);
@@ -324,9 +470,7 @@ async function collectCodexResponse(response: Response): Promise<Response> {
   }
 }
 
-async function loadAuth(
-  instance: ProviderInstance,
-): Promise<{ accessToken: string; accountId?: string }> {
+async function loadAuth(instance: ProviderInstance): Promise<CodexAuth> {
   const authFile =
     setting(instance, 'authFile') ?? codexFile(instance, 'auth.json');
   if (!authFile)
@@ -340,10 +484,7 @@ async function loadAuth(
   const accountId =
     typeof parsed.tokens.account_id === 'string'
       ? parsed.tokens.account_id
-      : jwtStringClaim(
-          accessToken,
-          'https://api.openai.com/auth.chatgpt_account_id',
-        );
+      : codexAccountId(accessToken);
   return { accessToken, ...(accountId && { accountId }) };
 }
 
@@ -379,27 +520,4 @@ async function findExecutable(name: string): Promise<string | undefined> {
     }
   }
   return undefined;
-}
-
-function jwtExpiration(token: string): number | undefined {
-  const value = jwtClaim(token, 'exp');
-  return typeof value === 'number' ? value * 1_000 : undefined;
-}
-
-function jwtStringClaim(token: string, claim: string): string | undefined {
-  const value = jwtClaim(token, claim);
-  return typeof value === 'string' ? value : undefined;
-}
-
-function jwtClaim(token: string, claim: string): unknown {
-  try {
-    const payload = token.split('.')[1];
-    if (!payload) return undefined;
-    const parsed = JSON.parse(
-      Buffer.from(payload, 'base64url').toString('utf8'),
-    ) as unknown;
-    return isRecord(parsed) ? parsed[claim] : undefined;
-  } catch {
-    return undefined;
-  }
 }

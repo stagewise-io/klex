@@ -6,10 +6,11 @@ export const CONFIG_STORE_DEFINITION: JsonStoreDefinition = {
   id: 'config',
   relativePath: 'config.json',
   required: true,
-  schemaVersion: 7,
+  schemaVersion: 8,
   // Schema 7 blocks older writers that still persist TTS/STT selections.
+  // Schema 8 adds Codex `authMode`; the schema bump itself blocks older readers.
   compatibilityVersion: 8,
-  minimumKlexVersion: '0.27.1',
+  minimumKlexVersion: '0.28.3',
   legacySchemaVersion: 1,
   versions: LOCAL_DATA_MIGRATIONS.config.versions,
   migrations: LOCAL_DATA_MIGRATIONS.config.migrations,

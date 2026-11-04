@@ -34,6 +34,7 @@ const cases = [
   'v6-empty',
   'v6-broken-0.27.0',
   'v7',
+  'v8',
 ];
 
 async function snapshot(
@@ -127,9 +128,9 @@ describe('frozen persisted config upgrades', () => {
         ...expected,
         _klex: {
           store: 'config',
-          schemaVersion: 7,
+          schemaVersion: 8,
           compatibilityVersion: 8,
-          minimumKlexVersion: '0.27.1',
+          minimumKlexVersion: '0.28.3',
           writtenByKlexVersion: KLEX_VERSION,
         },
       });
@@ -147,7 +148,7 @@ describe('frozen persisted config upgrades', () => {
       await readFile(new URL('config-expected-v7.json', fixtures), 'utf8'),
     );
     const { _klex } = JSON.parse(
-      await readFile(new URL('config-v7.json', fixtures), 'utf8'),
+      await readFile(new URL('config-v8.json', fixtures), 'utf8'),
     );
     const { instincts, ...selections } = expected.modelSelection;
     // v0.27.1 inherited these positions from v5, then appended instinct.
@@ -218,6 +219,59 @@ describe('frozen persisted config upgrades', () => {
       ]);
     },
   );
+
+  it('migrates v7 Codex local-CLI settings to v8 without rewriting them', async () => {
+    const migration = CONFIG_STORE_DEFINITION.migrations.find(
+      (step) => step.from === 7,
+    );
+    if (!migration) throw new Error('Missing 7→8 migration');
+    const { _klex: _metadata, ...input } = JSON.parse(
+      await readFile(new URL('config-v7.json', fixtures), 'utf8'),
+    );
+    const withCodex = {
+      ...input,
+      providers: {
+        ...input.providers,
+        codex: {
+          type: 'chatgpt-codex-subscription',
+          settings: { codexExecutable: '/usr/local/bin/codex' },
+        },
+      },
+    };
+    const output = await migration.up(structuredClone(withCodex));
+    expect(output).toEqual(withCodex);
+    expect(Object.keys(output)).toEqual(Object.keys(withCodex));
+  });
+
+  it('accepts managed Codex auth only from schema 8', () => {
+    const settings = { authMode: 'managed' };
+    const payload = {
+      configVersion: 2,
+      providers: {
+        codex: { type: 'chatgpt-codex-subscription', settings },
+      },
+    };
+    const schema = (version: number) => {
+      const found = CONFIG_STORE_DEFINITION.versions.find(
+        (item) => item.version === version,
+      );
+      if (!found) throw new Error(`Missing schema ${version}`);
+      return found.schema;
+    };
+    expect(schema(7).safeParse(payload).success).toBe(false);
+    expect(schema(8).safeParse(payload).success).toBe(true);
+    expect(
+      schema(8).safeParse({
+        ...payload,
+        providers: {
+          codex: {
+            type: 'chatgpt-codex-subscription',
+            settings: { authMode: 'managed', codexExecutable: 'codex' },
+          },
+        },
+      }).success,
+    ).toBe(false);
+  });
 
   it('keeps the released 5→6 output voice lists; only 6→7 removes them', async () => {
     const { _klex: _metadata, ...input } = JSON.parse(

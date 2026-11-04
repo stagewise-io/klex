@@ -167,6 +167,17 @@ const environmentAwareUrlSchema = z.string().refine((value) => {
     return false;
   }
 }, 'Invalid URL');
+/**
+ * A URL without environment references. Used where the value scopes a stored
+ * credential: an environment change across restarts must not silently send
+ * the credential to a different endpoint.
+ */
+const literalUrlSchema = z
+  .string()
+  .refine((value) => !value.includes('${env:'), {
+    message: 'Environment references are not allowed here',
+  })
+  .refine((value) => URL.canParse(value), 'Invalid URL');
 const environmentPlaceholderSchema = z
   .string()
   .regex(environmentPlaceholderPattern);
@@ -277,14 +288,24 @@ const googleVertexSettingsSchema = z.discriminatedUnion('authMode', [
     })
     .strict(),
 ]);
-const codexSubscriptionSettingsSchema = z
-  .object({
-    codexExecutable: z.string().min(1).default('codex'),
-    authFile: z.string().min(1).optional(),
-    baseUrl: environmentAwareUrlSchema.optional(),
-    testModelId: z.string().min(1).optional().meta({ readOnly: true }),
-  })
-  .strict();
+const codexSubscriptionSettingsSchema = z.union([
+  z
+    .object({
+      authMode: z.literal('local-cli').optional(),
+      codexExecutable: z.string().min(1).default('codex'),
+      authFile: z.string().min(1).optional(),
+      baseUrl: environmentAwareUrlSchema.optional(),
+      testModelId: z.string().min(1).optional().meta({ readOnly: true }),
+    })
+    .strict(),
+  z
+    .object({
+      authMode: z.literal('managed'),
+      baseUrl: literalUrlSchema.optional(),
+      testModelId: z.string().min(1).optional().meta({ readOnly: true }),
+    })
+    .strict(),
+]);
 
 const vercelAiGatewaySettingsSchema = openAiSettingsSchema.extend({
   teamIdOrSlug: z.string().min(1).optional(),
@@ -355,6 +376,29 @@ function parseProviderSettings(
   input: unknown,
 ): Record<string, unknown> {
   return providerSettingsSchemas[type].parse(input);
+}
+
+/**
+ * Setting keys the given auth mode accepts, or undefined when the provider has
+ * no auth-mode variants. Lets a mode switch drop settings of the previous mode,
+ * including schema defaults the user never set.
+ */
+function providerSettingKeysForAuthMode(
+  type: ProviderType,
+  authMode: unknown,
+): ReadonlySet<string> | undefined {
+  const schema: z.ZodType = providerSettingsSchemas[type];
+  if (!(schema instanceof z.ZodUnion)) return undefined;
+  for (const option of schema.options) {
+    if (!(option instanceof z.ZodObject)) continue;
+    const discriminator: unknown = option.shape.authMode;
+    if (
+      discriminator instanceof z.ZodType &&
+      discriminator.safeParse(authMode).success
+    )
+      return new Set(Object.keys(option.shape));
+  }
+  return undefined;
 }
 
 function isProviderSecretSetting(type: ProviderType, key: string): boolean {
@@ -655,6 +699,7 @@ export {
   parseProviderSettings,
   providerConfigSchema,
   providerInstanceIdSchema,
+  providerSettingKeysForAuthMode,
   providerTypeSchema,
   stsModelSelectionEntrySchema,
   timezoneSchema,

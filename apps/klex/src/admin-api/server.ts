@@ -97,6 +97,14 @@ import {
   updateProviderRoute,
 } from './routes/v1/providers';
 import {
+  cancelProviderAuthorization,
+  cancelProviderAuthorizationRoute,
+  deleteProviderCredentials,
+  deleteProviderCredentialsRoute,
+  startProviderAuthorization,
+  startProviderAuthorizationRoute,
+} from './routes/v1/providers.authorization';
+import {
   getSessionHistory,
   getSessionHistoryMessages,
   getSessionHistoryMessagesRoute,
@@ -232,6 +240,12 @@ export function createAdminApp(deps: AdminAppDependencies) {
     .openapi(updateProviderRoute, updateProvider(deps))
     .openapi(deleteProviderRoute, deleteProvider(deps))
     .openapi(testProviderRoute, testProvider(deps))
+    .openapi(startProviderAuthorizationRoute, startProviderAuthorization(deps))
+    .openapi(
+      cancelProviderAuthorizationRoute,
+      cancelProviderAuthorization(deps),
+    )
+    .openapi(deleteProviderCredentialsRoute, deleteProviderCredentials(deps))
     .openapi(validateModelRoute, validateModel(deps))
     .openapi(getProviderModelsRoute, getProviderModels(deps))
     .openapi(getProviderVoicesRoute, getProviderVoices(deps))

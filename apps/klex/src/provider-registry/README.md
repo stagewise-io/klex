@@ -38,11 +38,25 @@ This registry covers language-model transports only. Full Codex, Claude Code, an
 
 Every provider definition exposes user-facing metadata (`name`, `description`, optional SVG logo, capabilities, setup fields, and usage guidance) and implements the shared provider contract.
 
-- **Preflight:** `preflightCreate`, `preflightUpdate`, and `preflightRemove` validate prerequisites without mutating configuration. Failures use stable codes and may include remediation text.
-- **Setup:** optional setup hooks run after preflight and before persistence. They may resolve local dependencies or normalize settings. Cleanup hooks run as part of removal. A failed hook leaves configuration unchanged.
+- **Preflight:** the optional `preflightCreate` validates prerequisites before an instance is added or its settings change, without mutating configuration. Failures use stable codes and may include remediation text. A failed preflight leaves configuration unchanged. Removal calls no provider hook; the registry checks referential integrity and deletes registry-owned credentials.
 - **Discovery:** `discoverModels` returns transient model metadata. Discovery never rewrites configuration. Manual `knownModels` entries are merged by exact model ID and take precedence field by field.
 - **Connectivity:** `testConnection` returns a structured success or failure result. Tests use the configured credentials and an optional provider-specific test model; they do not persist discovered models.
 - **Resolution:** runtime selection always uses the pair `{ providerId, modelId }`. Model IDs are opaque and may contain colons.
+
+## Interactive authorization
+
+A definition may declare `authorization` (currently only `method: 'device-code'`). `isRequired(settings)` decides per instance whether it applies, so one type can mix local and interactive modes. The capability `interactiveAuthorization` advertises it, and `ProviderInstanceInfo.authorization` reports `status` (`required`, `pending`, `authorized`, `expired`, `failed`, `revoked`), the account id, and the pending attempt id and expiry.
+
+The provider implements only the protocol: `start` returns a challenge (verification URL, user code, interval, expiry, opaque handle), `poll` returns `pending` or a credential, and `refresh` rotates tokens. Return `authentication_required` for permanent failures; other codes count as transient.
+
+The registry owns everything else:
+
+- **Storage:** credentials live in the `provider-credentials` store (`credentials/providers.json`, owner-only), never in `config.json`. Token rotation therefore does not trigger config subscribers or clear caches.
+- **Polling:** one attempt per instance runs in the background, each HTTP call bounded by the 10-second hook limit. Starting again while pending returns the same challenge. Shutdown aborts attempts; they are not resumed.
+- **Refresh:** hooks receive a `ProviderContext`. `credential()` refreshes when the token expires within five minutes; `invalidate()` forces one refresh, e.g. after a 401. Refreshes are serialized per instance. A permanent failure marks the instance `revoked` and deletes its tokens.
+- **Lifecycle:** removal, sign-out, a type change, or switching to a mode that does not require authorization cancels the attempt and deletes the credentials.
+
+The verification URL and user code appear only in the `PUT` response. They are never logged or listed.
 
 ## Admin API contract
 
@@ -55,6 +69,7 @@ The Admin API exposes enough metadata to build provider-neutral setup interfaces
 - `PATCH /v1/providers/{id}` updates an instance.
 - `DELETE /v1/providers/{id}` removes an instance after referential-integrity and lifecycle checks.
 - `POST /v1/providers/{id}/test` runs the standardized connectivity test.
+- `PUT /v1/providers/{id}/authorization` starts or returns the pending sign-in. `DELETE` on the same path cancels it. `DELETE /v1/providers/{id}/credentials` signs out.
 - `GET /v1/providers/{id}/models` returns merged manual and discovered models; callers can control discovery through the query contract.
 - `POST /v1/providers/{id}/models`, `PATCH /v1/providers/{id}/models/{modelId}`, and `DELETE /v1/providers/{id}/models/{modelId}` manage manual model metadata.
 
@@ -114,7 +129,7 @@ A built-in provider should require one registry definition, not changes througho
 
 1. Add one provider file under `providers/` and register its exported definition in `providers/providers.ts`. Use the shared spec factory when an existing transport adapter is sufficient; implement a focused `ProviderDefinition` only when provider-specific behavior cannot be expressed by the shared factory.
 2. Supply complete metadata and declarative setup fields. Mark credentials as `secret`; use conditions for fields tied to an authentication mode.
-3. Implement or select settings validation, create/update/remove preflight, optional setup/cleanup, discovery, connectivity testing, and runtime factory behavior.
+3. Implement or select settings validation, preflight, optional interactive authorization, discovery, connectivity testing, and runtime factory behavior.
 4. Add contract tests for invalid settings, blocked prerequisites, lifecycle atomicity, discovery/manual merge behavior, connectivity results, and runtime resolution.
 5. Verify that the generic Admin API and CLI render and operate the new definition. Do not add provider-specific routes or screens unless the shared contract cannot represent a necessary capability.
 

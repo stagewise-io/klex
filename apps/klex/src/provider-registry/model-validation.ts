@@ -299,6 +299,11 @@ export function classifyModelValidationError(
       );
     if (APICallError.isInstance(error)) {
       const status = error.statusCode;
+      // Fetch rejections can surface as status-less wrappers. Classify the cause.
+      if (status === undefined && error.cause instanceof Error) {
+        error = error.cause;
+        continue;
+      }
       if (status === 401)
         return modelValidationResult(
           'invalid',

@@ -134,6 +134,35 @@ async function setup(dataDirectory: string) {
 }
 
 describe('provider registry managed authorization', () => {
+  it('reports an unsigned managed instance as authentication_required during validation', async () => {
+    const fetchMock = stubOpenAi();
+    const env = await setup(await createDataDirectory());
+    try {
+      expect(
+        await env.registry.addInstance({
+          id: 'codex',
+          type: 'chatgpt-codex-subscription',
+          settings: { authMode: 'managed' },
+        }),
+      ).toMatchObject({ ok: true });
+      // Goes through the real AI SDK fetch path, not a mocked model.
+      expect(
+        await env.registry.validateModel({
+          provider: { id: 'codex' },
+          modelId: 'gpt-test',
+          purpose: 'chat',
+        }),
+      ).toMatchObject({ status: 'invalid', code: 'authentication_required' });
+      expect(
+        fetchMock.mock.calls.some(([request]) =>
+          String(request).endsWith('/responses'),
+        ),
+      ).toBe(false);
+    } finally {
+      await env.close();
+    }
+  });
+
   it('runs sign-in, survives restart, and cleans up on removal', async () => {
     const fetchMock = stubOpenAi();
     const dataDirectory = await createDataDirectory();

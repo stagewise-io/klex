@@ -67,6 +67,28 @@ const get = (kind, path, options = {}) =>
   });
 
 describe('built routing over HTTP', () => {
+  it('permanently redirects legacy legal aliases to their canonical pages', async () => {
+    for (const policy of ['terms', 'privacy']) {
+      for (const suffix of ['', '/']) {
+        for (const method of ['GET', 'HEAD']) {
+          const response = await get('marketing', `/${policy}${suffix}`, {
+            method,
+            redirect: 'manual',
+            headers: { Accept: 'text/markdown' },
+          });
+          expect(response.status).toBe(308);
+          expect(response.headers.get('location')).toBe(`/legal/${policy}`);
+        }
+      }
+      const destination = await get('marketing', `/${policy}`, {
+        headers: { Accept: 'text/markdown' },
+      });
+      expect(destination.status).toBe(200);
+      expect(destination.headers.get('content-type')).toContain(
+        'text/markdown',
+      );
+    }
+  });
   it('serves emitted images and fonts with their actual MIME types', async () => {
     const { readdir } = await import('node:fs/promises');
     const files = await readdir(

@@ -66,11 +66,16 @@ function prerenderPages(): Plugin {
 
 const servePageRoutes: Connect.NextHandleFunction = (
   request,
-  _response,
+  response,
   next,
 ) => {
   const url = new URL(request.url ?? '/', 'http://localhost');
   const route = url.pathname.replace(/\/$/, '');
+  if (['/terms', '/privacy'].includes(route)) {
+    response.writeHead(308, { Location: `/legal${route}` });
+    response.end();
+    return;
+  }
   if (['/brand', '/press'].includes(route)) {
     request.url = `${route}/index.html${url.search}`;
   }

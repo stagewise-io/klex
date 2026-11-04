@@ -654,7 +654,12 @@ function HeroTeam({ entrance }: { entrance: Promise<void> }) {
   const onArrive = useCallback(() => setArrivalCount((count) => count + 1), []);
 
   return (
-    <div ref={stage} className="new-hero-stage" data-klex-viewport="">
+    <div
+      ref={stage}
+      className="new-hero-stage"
+      data-klex-viewport=""
+      style={{ '--hero-depth': dimensions.height } as CSSProperties}
+    >
       <div
         ref={ground}
         className="new-hero-ground"

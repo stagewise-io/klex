@@ -45,6 +45,8 @@ import {
 import {
   builtInProviderDefinitions,
   createProviderRegistry,
+  PROVIDER_CREDENTIALS_STORE_DEFINITION,
+  ProviderCredentialStore,
 } from '@/provider-registry';
 import { KLEX_VERSION, resolveReleaseTarget } from '@/release';
 import { discoverManagedInstallation, UpdateManager } from '@/self-update';
@@ -486,6 +488,9 @@ class ApplicationModule implements Application {
       definitions: builtInProviderDefinitions,
       getSoul: () =>
         readSoul(join(dataDirectory, 'extensions', createSoulExt.identifier)),
+      credentials: new ProviderCredentialStore(
+        join(dataDirectory, PROVIDER_CREDENTIALS_STORE_DEFINITION.relativePath),
+      ),
     });
     this.own(providerRegistry);
     await providerRegistry.start();

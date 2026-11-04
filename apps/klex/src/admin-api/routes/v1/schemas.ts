@@ -438,8 +438,40 @@ const providerMetadataSchema = z.object({
     customModels: z.boolean(),
     generation: z.boolean(),
     evaluation: z.boolean(),
+    interactiveAuthorization: z.boolean(),
   }),
 });
+
+// Status only. The verification URI and user code are never part of it.
+const providerAuthorizationSchema = z
+  .object({
+    method: z.literal('device-code'),
+    status: z.enum([
+      'required',
+      'pending',
+      'authorized',
+      'expired',
+      'failed',
+      'revoked',
+    ]),
+    accountId: z.string().optional(),
+    pending: z
+      .object({ id: z.string(), expiresAt: z.string().datetime() })
+      .optional(),
+    message: z.string().optional(),
+  })
+  .openapi('ProviderAuthorization');
+
+// The one response that carries the verification URI and user code: it goes
+// to the caller that started the sign-in, and nowhere else.
+const providerAuthorizationStartedSchema = z
+  .object({
+    id: z.string(),
+    verificationUri: z.url(),
+    userCode: z.string(),
+    expiresAt: z.string().datetime(),
+  })
+  .openapi('ProviderAuthorizationStarted');
 
 const providerTypeSchema = providerMetadataSchema.extend({
   type: configProviderTypeSchema,
@@ -558,6 +590,7 @@ const providerResponseSchema = z.object({
     update: providerAvailabilitySchema,
     remove: providerAvailabilitySchema,
   }),
+  authorization: providerAuthorizationSchema.optional(),
 });
 
 const providersQuerySchema = z.object({
@@ -1432,6 +1465,8 @@ export {
   modelSelectionWarningSchema,
   oauthCallbackAcceptedSchema,
   oauthCallbackBodySchema,
+  providerAuthorizationSchema,
+  providerAuthorizationStartedSchema,
   providerIdParamSchema,
   providerModelsQuerySchema,
   providerModelsResponseSchema,

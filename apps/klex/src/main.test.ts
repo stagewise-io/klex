@@ -102,6 +102,10 @@ vi.mock('@/product-analytics', () => ({
 vi.mock('@/provider-registry', () => ({
   builtInProviderDefinitions: [],
   createProviderRegistry: () => mocks.resource,
+  PROVIDER_CREDENTIALS_STORE_DEFINITION: {
+    relativePath: 'credentials/providers.json',
+  },
+  ProviderCredentialStore: class {},
 }));
 vi.mock('@/release/verify-native', () => ({ runNativeVerification: vi.fn() }));
 vi.mock('@/self-update', () => ({

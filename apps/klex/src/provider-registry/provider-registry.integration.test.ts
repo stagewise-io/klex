@@ -1090,6 +1090,7 @@ describe('provider registry module integration', () => {
     expect(createLanguageModel).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'provider-primary' }),
       'vendor:model:v2',
+      undefined,
     );
 
     await expect(registry.testConnection('provider-primary')).resolves.toEqual({

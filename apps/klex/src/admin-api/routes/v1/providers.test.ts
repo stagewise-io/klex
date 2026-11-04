@@ -47,6 +47,7 @@ const metadata = {
     customModels: true,
     generation: true,
     evaluation: false,
+    interactiveAuthorization: false,
   },
 };
 const instance = {

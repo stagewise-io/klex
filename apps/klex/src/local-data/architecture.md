@@ -11,6 +11,7 @@ The composition root in `local-data-registry` contains every structured Klex-own
 | `config` | `config.json` | JSON | Required |
 | `model-calls` | `model-calls.sqlite` | SQLite | Created when missing |
 | `mcp-oauth` | `credentials/mcp-oauth.json` | JSON | Optional |
+| `provider-credentials` | `credentials/providers.json` | JSON | Optional |
 | `cloud-identity-metadata` | `identity/metadata.json` | JSON | Optional |
 | `cloud-enrollment` | `identity/enrollment.json` | JSON | Optional |
 | `todos-extension-todos` | `extensions/io.stagewise/todos/todos.json` | JSON | Optional |
@@ -23,6 +24,8 @@ The composition root in `local-data-registry` contains every structured Klex-own
 Initialization creates missing parent directories for nested stores. SQLite definitions may declare `initPragmas`, which run one by one before `initSql` only when the database is created. Settings such as `auto_vacuum` take effect only on an empty file and are never re-applied to existing stores.
 
 `identity/private-key.pem`, `SOUL.md`, inactive legacy episode JSONL files under `episodic/`, skill `SKILL.md` folders under `skills/{namespace}/` (and legacy learned folders under `extensions/io.stagewise/learning/skills/` awaiting import), locks, logs, downloaded assets, and reconstructable caches are not migration stores. Private identity keys are opaque and must never be transformed by a migration. Soul and skill files are plain documents, not versioned migration stores; skill files use Agent Skills frontmatter and readers skip skills they cannot parse. Legacy episode files are untouched inactive artifacts: runtime never opens, scans or writes them.
+
+The provider credential store (schema v1, Klex 0.28.3) holds registry-owned tokens for model providers with interactive authorization, keyed by provider instance ID. Records carry `type`, `status` (`authorized` or `revoked`), an optional `credential` (access, refresh and ID tokens, expiry, account ID, timestamps) and an optional sanitized `failure`. Every object boundary preserves unknown fields. Tokens rotate on refresh, so they never live in `config.json`. Like `mcp-oauth`, the file is written owner-only and has no migrations yet.
 
 The learning state store uses schema v2. Its deterministic v1-to-v2 migration keeps cursor, failures, per-skill usage and sources, timestamps, legacy counters and unknown fields. Activity counters and skill activity positions start at zero; pending weighted changes, retry scheduling and deferred references start empty. Historical wall-clock timestamps never become synthetic episode activity. Older writers reject v2 before mutation; skill and episode documents remain unchanged.
 

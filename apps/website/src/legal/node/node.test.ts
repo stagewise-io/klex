@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -40,6 +41,55 @@ async function content() {
 const original = syntheticMarkdown('privacy', '2020-01-01');
 const parse = (bytes: Buffer) =>
   parseSource(bytes, 'privacy/2020-01-01.md', registry);
+
+describe('checked-in legal policies', () => {
+  it('publishes every registered policy with footer access and generated dates', async () => {
+    const sources = await createLegalSource(
+      fileURLToPath(new URL('../../../content/legal/', import.meta.url)),
+    ).load();
+    const artifacts = generateArtifacts(sources, template);
+    const footer = createFooterMarkup({ showCta: false });
+
+    expect(footer).toContain('href="/legal">Legal Center</a>');
+    expect(resolveLegalRequest('/legal', artifacts)).toBe('legal/index.html');
+    expect(resolveLegalRequest('/legal/', artifacts)).toBe('legal/index.html');
+    const center = artifacts.get('legal/index.html')?.toString();
+    expect(center).toContain('<h1>Legal Center</h1>');
+    expect(center).toContain(footer);
+    for (const { slug } of sources.registry.policies) {
+      expect(center).toContain(`href="/legal/${slug}"`);
+      expect(
+        sources.revisions.some((revision) => revision.policy === slug),
+      ).toBe(true);
+      expect(resolveLegalRequest(`/legal/${slug}`, artifacts)).toBe(
+        `legal/${slug}/index.html`,
+      );
+      expect(artifacts.get(`legal/${slug}/index.html`)?.toString()).toContain(
+        footer,
+      );
+    }
+
+    for (const revision of sources.revisions) {
+      const path = `legal/${revision.policy}/${revision.revision}`;
+      const html = artifacts.get(`${path}/index.html`)?.toString();
+      expect(revision.body).not.toMatch(/^Effective date: .*Revision:/m);
+      expect(html).toContain(footer);
+      expect(html).toContain('<p class="legal-back"><a href="/legal"><svg');
+      expect(html?.match(/class="legal-metadata"/g)).toHaveLength(1);
+      expect(html).toContain(
+        `<time datetime="${revision.effectiveDate}">${revision.effectiveDate}</time>`,
+      );
+      expect(html).not.toContain('<span>Revision ');
+      expect(
+        artifacts.get(`legal/${revision.policy}/index.html`)?.toString(),
+      ).toContain(`href="/${path}"`);
+      expect(resolveLegalRequest(`/${path}`, artifacts)).toBe(
+        `${path}/index.html`,
+      );
+      expect(artifacts.get(`legal/${revision.source}`)).toBeDefined();
+    }
+  });
+});
 
 describe('source discovery, validation and build-time hashes', () => {
   it('derives policy, revision and effective date from the source path alone', () => {
@@ -296,7 +346,8 @@ describe('generated HTML, Markdown and catalog', () => {
       expect(html).toContain('<meta name="robots" content="noindex,follow">');
       expect(html).toContain(`href="https://klex.bot/${path}"`);
       expect(html).toContain('section-scope-2');
-      expect(html).toContain('Download original Markdown');
+      expect(html).not.toContain('Download original Markdown');
+      expect(html).not.toContain('SHA-256 of the original Markdown');
       expect(html).not.toMatch(/posthog|telemetry/i);
     }
     expect(String(artifacts.get('legal/privacy/index.html'))).not.toContain(
@@ -313,6 +364,8 @@ describe('generated HTML, Markdown and catalog', () => {
   it('handles slash/no-slash routes and rejects missing legal paths instead of SPA fallback', () => {
     const artifacts = generateArtifacts(fixtureSources(), template);
     for (const path of [
+      '/legal',
+      '/legal/',
       '/legal/privacy',
       '/legal/privacy/',
       '/legal/privacy/2020-01-01',
@@ -326,7 +379,6 @@ describe('generated HTML, Markdown and catalog', () => {
       '/legal/privacy/nope',
       '/legal/privacy/2020-01-02',
       '/legal/missing',
-      '/legal',
       '/legal/policies.json/extra',
     ])
       expect(resolveLegalRequest(path, artifacts)).toBeUndefined();

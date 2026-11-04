@@ -71,7 +71,7 @@ describe('legal reader selection and failure behavior', () => {
     await handle.start();
     await handle.start();
     expect(article()?.dataset.revision).toBe('2021-01-01');
-    expect(status()).toContain('Current effective');
+    expect(status()).toBe('');
     expect(document.title).toBe('Synthetic privacy 2021-01-01 | Klex');
     expect(historyLinks()).toEqual(['/legal/privacy/2020-01-01']);
     expect(fetcher).toHaveBeenCalledTimes(2);
@@ -119,7 +119,7 @@ describe('legal reader selection and failure behavior', () => {
     first.handle.close();
     const upcoming = setup({ dates: ['2099-01-01'] });
     await upcoming.handle.start();
-    expect(status()).toContain('No effective revision');
+    expect(status()).toBe('No policy is effective yet.');
     expect(article()).toBeNull();
     expect(
       document.querySelector('#legal-fallback a')?.getAttribute('href'),
@@ -158,7 +158,7 @@ describe('legal reader selection and failure behavior', () => {
     expect(document.getElementById('legal-retry')?.hidden).toBe(false);
     expect(document.getElementById('legal-history')?.hidden).toBe(true);
     document.getElementById('legal-retry')?.click();
-    await vi.waitFor(() => expect(status()).toContain('Current effective'));
+    await vi.waitFor(() => expect(status()).toBe(''));
   });
   it.each([
     new Response('<html>SPA fallback</html>', {
@@ -225,7 +225,7 @@ describe('legal reader selection and failure behavior', () => {
     );
     await initial;
     expect(article()).toBe(rendered);
-    expect(status()).toContain('Current effective');
+    expect(status()).toBe('');
   });
 });
 
@@ -242,7 +242,7 @@ describe('safe article import and bounded HTTP decoding', () => {
     expect(value.querySelector('h1')?.hasAttribute('onclick')).toBe(false);
     expect(value.querySelector('h1')?.hasAttribute('style')).toBe(false);
     expect(value.querySelector('#section-scope')).not.toBeNull();
-    expect(value.querySelector('a[download]')).not.toBeNull();
+    expect(value.querySelector('a[download]')).toBeNull();
   });
   it.each([
     (value: string) => value.replace('data-sha256="', 'data-sha256="bad'),

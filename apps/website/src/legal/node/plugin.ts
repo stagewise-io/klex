@@ -89,6 +89,7 @@ export function createLegalPlugin(options: {
           );
           const artifacts = new Map<string, string | Buffer>([
             ['legal/policies.json', ''],
+            ['legal/index.html', ''],
           ]);
           for (const [policy, entries] of Object.entries(catalog.policies)) {
             artifacts.set(`legal/${policy}/index.html`, '');

@@ -26,13 +26,11 @@ export function escapeHtml(value: string): string {
 }
 
 function article(revision: SourceRevision): string {
-  const path = revisionPath(revision.policy, revision.revision);
   return `<article data-legal-article data-policy="${escapeHtml(revision.policy)}" data-revision="${revision.revision}" data-effective-date="${revision.effectiveDate}" data-sha256="${revision.sha256}">
 <header class="legal-document-header"><h1>${escapeHtml(revision.title)}</h1>
-<p class="legal-metadata">Effective <time datetime="${revision.effectiveDate}">${revision.effectiveDate} (UTC)</time><span>Revision ${revision.revision}</span></p>
+<p class="legal-metadata">Effective <time datetime="${revision.effectiveDate}">${revision.effectiveDate}</time></p>
 ${revision.changeSummary ? `<p class="legal-summary">${escapeHtml(revision.changeSummary)}</p>` : ''}</header>
 <div class="legal-prose">${renderMarkdown(revision.body)}</div>
-<section class="legal-source" aria-label="Document source"><a href="${path}.md" download>Download original Markdown</a><p>SHA-256 of the original Markdown</p><code>${revision.sha256}</code></section>
 </article>`;
 }
 
@@ -40,7 +38,7 @@ function revisionList(sources: LegalSources, policy: string): string {
   const revisions = sources.revisions
     .filter((record) => record.policy === policy)
     .sort((a, b) => b.revision.localeCompare(a.revision));
-  return `<section id="legal-fallback" class="legal-fallback" aria-labelledby="revision-list-title"><h2 id="revision-list-title">Published revisions</h2><p>Automatic selection uses JavaScript and your device's UTC clock. Each dated link always opens that exact revision.</p>${revisions.length ? `<ul>${revisions.map((record) => `<li><a href="${revisionPath(policy, record.revision)}">${record.revision}</a> — effective <time datetime="${record.effectiveDate}">${record.effectiveDate}</time> at 00:00 UTC</li>`).join('')}</ul>` : '<p data-empty-revisions>No approved revisions have been published.</p>'}</section>`;
+  return `<section id="legal-fallback" class="legal-fallback" aria-labelledby="revision-list-title"><h2 id="revision-list-title">Published revisions</h2><p>Each dated link opens that version of the policy.</p>${revisions.length ? `<ul>${revisions.map((record) => `<li><a href="${revisionPath(policy, record.revision)}">${record.revision}</a> — effective <time datetime="${record.effectiveDate}">${record.effectiveDate}</time></li>`).join('')}</ul>` : '<p data-empty-revisions>No approved revisions have been published.</p>'}</section>`;
 }
 
 function frame(
@@ -52,6 +50,7 @@ function frame(
   return `<a class="new-skip-link" href="#legal-main">Skip to policy</a>
 <header class="new-header"><a class="new-brand" href="/" aria-label="Klex home"><img class="new-logo-light" src="/klex-logo-light.svg" alt="Klex" width="88" height="33"><img class="new-logo-dark" src="/klex-logo-dark.svg" alt="Klex" width="88" height="33"></a><div id="new-nav"><nav aria-label="Main"><a href="https://docs.klex.bot">Docs</a><a href="https://github.com/stagewise-io/klex">GitHub</a></nav></div></header>
 <main id="legal-main" tabindex="-1" class="legal-main" data-policy="${policy}" data-label="${escapeHtml(label)}" data-fixed-revision="${revision?.revision ?? ''}">
+<p class="legal-back"><a href="/legal"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 19-7-7 7-7M5 12h14"/></svg>Legal Center</a></p>
 <div class="legal-notice"><p id="legal-status" role="status" aria-live="polite">${revision ? 'Dated revision. See published revisions below for effective dates.' : 'Choose a dated revision below, or enable JavaScript for automatic selection.'}</p><button id="legal-retry" type="button" hidden>Retry loading policy</button></div>
 <div id="legal-document">${revision ? article(revision) : `<h1>${escapeHtml(label)}</h1><p class="legal-unavailable">${sources.revisions.some((entry) => entry.policy === policy) ? 'The effective revision will load here. Dated revisions remain available below.' : 'This policy is not yet available. No approved revision has been published.'}</p>`}</div>
 <nav id="legal-history" class="legal-history" aria-label="Revision history" hidden></nav>
@@ -81,6 +80,22 @@ export function generateArtifacts(
     'Published legal catalog exceeds 2 MiB',
   );
   artifacts.set('legal/policies.json', catalogText);
+  const centerBody = frame(sources, '', 'Legal Center');
+  const centerMain = `<main id="legal-center" tabindex="-1" class="legal-main"><header class="legal-document-header"><h1>Legal Center</h1></header><nav aria-label="Legal documents"><ul class="legal-center-list">${sources.registry.policies.map((type) => `<li><a href="/legal/${escapeHtml(type.slug)}">${escapeHtml(type.label)}<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg></a></li>`).join('')}</ul></nav></main>`;
+  artifacts.set(
+    'legal/index.html',
+    template
+      .replace(
+        '<!-- legal:head -->',
+        `<title>Legal Center | Klex</title><meta name="description" content="Terms and policies for Klex Cloud and the Klex website."><link rel="canonical" href="${siteOrigin}/legal">`,
+      )
+      .replace(
+        '<!-- legal:body -->',
+        centerBody
+          .replace(/<main\b[\s\S]*?<\/main>/, centerMain)
+          .replace('href="#legal-main"', 'href="#legal-center"'),
+      ),
+  );
   for (const type of sources.registry.policies) {
     const documents = sources.revisions.filter(
       (entry) => entry.policy === type.slug,

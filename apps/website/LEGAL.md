@@ -2,7 +2,11 @@
 
 The website publishes a static revision catalog and immutable Markdown sources. Browsers select the latest effective revision using their device clock; cloud consumers select using their own server clock. Nginx needs no Node service or scheduled rebuild to activate an already published future revision.
 
-**No approved policy text ships with the initial setup.** Privacy and Terms arrays are empty and pages say unavailable. Do not treat an empty registry, a future-only registry, or the website build succeeding as legal-launch readiness.
+The source now contains five prepared policies dated 4 November 2026: Privacy, B2B Cloud Terms, Acceptable Use, Service and billing, and EU Data Act switching. `content/legal/` is the canonical location for these documents; there is no separate active drafting copy. The registry also includes the supplied DPA dated 4 November 2026 at `/legal/data-processing-agreement/2026-11-04`, with `/legal/data-processing-agreement` as its default route. It contains processing terms, technical and organizational measures, and an authorized subprocessor schedule. Insertion is not legal or operational approval. Verify its commitments, including the 30-day all-copy deletion maximum against retained Bot snapshots and configured 35-day database backups, before using the Terms. The standalone Subprocessor information page has been removed. Consumer terms are not part of this B2B policy set.
+
+The Terms have `requiresConsent: true`; publication does not itself obtain acceptance or convert an existing consumer contract. The other policies do not request separate blanket consent through the catalog. The Terms identify the incorporated contractual documents. Preserve required notices, agreement records and incorporated DPA versions.
+
+These source files are not proof of legal approval, operational readiness or deployment. The one-month hosting liability cap still requires German standard-terms review, and existing consumers require separate lawful treatment. Do not treat an empty registry, a future-only registry, or a successful website build as legal-launch readiness.
 
 ## Source layout and authoring
 
@@ -32,7 +36,7 @@ Rules:
 - `requiresConsent` is optional and defaults to `false`. Use the unquoted boolean `true` for a revision whose changes require explicit user consent, or `false` otherwise. Quoted strings, numbers, null, and YAML-style `yes`/`no` are rejected. The catalog always exposes this field as a JSON boolean for every revision. It is metadata only; the cloud service must collect and record consent.
 - `title` is required. `changeSummary` is optional. Unknown fields, nested YAML, duplicate keys, tags, and aliases are rejected. Quote dates.
 - UTF-8 without BOM, LF line endings, no NUL bytes, nonempty body, at most 2 MiB per Markdown source. The Git attribute forces LF checkouts; validation rejects CRLF rather than normalizing source bytes. Do not run transformations or formatters over previously pushed Markdown.
-- The page supplies the only H1 from `title`. Body headings start at H2. Heading IDs are deterministic (`section-scope`, then `section-scope-2` for a duplicate).
+- The page supplies the only H1 from `title` and displays the path-derived effective date and revision in its header. Do not duplicate that metadata in the document body. Body headings start at H2. Heading IDs are deterministic (`section-scope`, then `section-scope-2` for a duplicate).
 - Markdown is rendered without raw HTML, image embeds, or automatic links. Explicit HTTP(S), mailto, root/relative, and fragment links are allowed; executable/data/protocol-relative links are not. HTML is displayed as literal text, not executed.
 - CI requires new revisions to have dates later than **all** existing revisions for that policy in the Git baseline, including future ones. Inserting a revision into the middle is not supported. Once pushed, fixes require a new revision.
 - Rendered pages are bounded at 16 MiB and the catalog at 2 MiB. Builds reject oversized output and publish no incomplete catalog.
@@ -56,7 +60,7 @@ Publishing a future revision immediately makes its dated HTML and original Markd
 
 The build intentionally permits empty/future-only policies so infrastructure can be prepared before approved content arrives. Before the legal launch, ensure both Privacy and Terms have approved revisions whose effective dates have arrived.
 
-To add a DPA, append `{ "slug": "dpa", "label": "Data Processing Agreement" }` to the registry, add its Markdown, then build/deploy. Its pages are generated automatically; no page implementation is needed. The shared website footer links Privacy and Terms. Add a DPA link there when it should be discoverable from the website.
+The DPA uses the same registry and versioned publishing system as the other policies. The Terms and Privacy Policy link to its fixed revision at `/legal/data-processing-agreement/2026-11-04`; the shared website footer links all six registered policies through their default routes. Subprocessor details belong in the DPA rather than a separate generated policy page. The DPA contains the supplied agreement text. Complete operational verification and approval before pushing this revision, because pushed revisions are immutable; after a push, substantive fixes require a later revision and corresponding new revisions of incorporating documents where necessary.
 
 ## Public routes
 

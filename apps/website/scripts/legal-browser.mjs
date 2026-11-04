@@ -257,9 +257,7 @@ try {
         document
           .querySelector('[data-legal-article]')
           ?.getAttribute('data-revision') === expected &&
-        document
-          .getElementById('legal-status')
-          ?.textContent.includes('Current effective'),
+        document.getElementById('legal-status')?.textContent === '',
       revision,
     );
   await page.goto(`${base}/legal/privacy#section-scope`);
@@ -347,10 +345,8 @@ try {
         ?.getAttribute('data-policy') === 'dpa',
   );
   await page.goto(`${base}/legal/terms/2021-01-01`);
-  await page.waitForFunction(() =>
-    document
-      .getElementById('legal-status')
-      ?.textContent.includes('Current effective'),
+  await page.waitForFunction(
+    () => document.getElementById('legal-status')?.textContent === '',
   );
   await page.setViewportSize({ width: 390, height: 844 });
   await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' });

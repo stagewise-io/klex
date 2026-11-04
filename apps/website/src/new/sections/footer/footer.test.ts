@@ -31,13 +31,17 @@ describe('shared website footer', () => {
     expect(footerMarkup).toContain('https://cloud.klex.bot');
     expect(footerMarkup).toContain('aria-label="Resources"');
     expect(footerMarkup).toContain('aria-label="Company"');
-    expect(footerMarkup).toContain('href="/legal/privacy"');
-    expect(footerMarkup).toContain('href="/legal/terms"');
-    expect(footerMarkup).toContain(
-      'href="https://cloud.klex.bot/withdrawal">Withdraw from contract</a>',
+    expect(footerMarkup).toContain('href="/legal">Legal Center</a>');
+    expect(footerMarkup).toContain('href="/legal/privacy">Privacy Policy</a>');
+    expect(footerMarkup).toContain('href="/legal/terms">Terms of Service</a>');
+    expect(footerMarkup).not.toContain('href="/legal/acceptable-use"');
+    expect(footerMarkup).not.toContain('href="/legal/service-and-billing"');
+    expect(footerMarkup).not.toContain('href="/legal/data-act-switching"');
+    expect(footerMarkup).not.toContain(
+      'href="/legal/data-processing-agreement"',
     );
     expect(footerMarkup).toContain(
-      'href="https://cloud.klex.bot/cancel-contract">Cancel contracts here</a>',
+      'href="mailto:support@klex.bot">Support</a>',
     );
     expect(footerMarkup).toContain('/stagewise-wordmark.svg');
     expect(footerMarkup).toContain(
@@ -45,5 +49,6 @@ describe('shared website footer', () => {
     );
     expect(footerMarkup).toContain('Third-party product names');
     expect(footerMarkup).not.toContain('legal-footer');
+    expect(footerMarkup).not.toContain('href="/legal/subprocessors"');
   });
 });

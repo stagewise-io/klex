@@ -14,7 +14,7 @@ const page = createLegalPage({
   window,
   fetch: window.fetch.bind(window),
 });
-void page.start();
+if (document.querySelector('#legal-main[data-policy]')) void page.start();
 const disposeNavigation = mountNavigation();
 const disposeLogos = mountLogoMenus(document.body);
 

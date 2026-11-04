@@ -307,7 +307,7 @@ class LegalPageModule implements LegalPage {
         this.documentHost.replaceChildren(heading, message);
         document.title = `${this.label} | Klex`;
         this.status.textContent = revisions.length
-          ? 'No effective revision (dates use 00:00 UTC).'
+          ? 'No policy is effective yet.'
           : 'Policy unavailable.';
         this.fallback.hidden = false;
       } else {
@@ -389,7 +389,7 @@ class LegalPageModule implements LegalPage {
       const item = document.createElement('li');
       const link = document.createElement('a');
       link.href = revisionPath(this.policy, revision.revision);
-      link.textContent = `${revision.revision} — effective ${revision.effectiveDate} at 00:00 UTC`;
+      link.textContent = `Effective ${revision.effectiveDate}`;
       item.append(link);
       list.append(item);
     }
@@ -403,10 +403,10 @@ class LegalPageModule implements LegalPage {
     const state = revisionState(this.revisions, displayed, this.now());
     this.status.textContent =
       state.status === 'upcoming'
-        ? `Upcoming revision. Effective ${displayed.effectiveDate} at 00:00 UTC; not current yet.`
+        ? `Upcoming version. Effective ${displayed.effectiveDate}.`
         : state.status === 'historical'
           ? 'Previous version. This dated document is no longer current.'
-          : 'Current effective revision (using your device’s UTC clock).';
+          : '';
     this.history.replaceChildren();
     if (state.status !== 'current' && state.current) {
       const current = document.createElement('a');
@@ -423,7 +423,7 @@ class LegalPageModule implements LegalPage {
         const item = document.createElement('li');
         const link = document.createElement('a');
         link.href = revisionPath(this.policy, revision.revision);
-        link.textContent = `${revision.revision} — effective ${revision.effectiveDate} (UTC)`;
+        link.textContent = `Effective ${revision.effectiveDate}`;
         item.append(link);
         list.append(item);
       }

@@ -2,6 +2,17 @@
 
 All notable Klex changes are documented here.
 
+## 0.29.0 (2026-11-04)
+
+### Features
+
+- sign in to ChatGPT Codex via device code without the CLI (8d24deb)
+
+### Bug Fixes
+
+- classify sign-in errors behind status-less API errors (68185a0)
+- classify missing sign-in and guard sign-out races (27da99c)
+
 ## 0.28.2 (2026-11-03)
 
 ### Bug Fixes

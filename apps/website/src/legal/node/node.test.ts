@@ -383,6 +383,26 @@ describe('generated HTML, Markdown and catalog', () => {
     ])
       expect(resolveLegalRequest(path, artifacts)).toBeUndefined();
   });
+  it('preserves dollar replacement sequences in titles, summaries, content and center labels', () => {
+    const literal = "$$ $& $` $'";
+    const sources = fixtureSources();
+    sources.registry.policies[0].label = literal;
+    const revision = sources.revisions[0];
+    revision.title = literal;
+    revision.changeSummary = literal;
+    revision.body = `## Literal\n\n${literal}`;
+    const artifacts = generateArtifacts(sources, template);
+    const html = String(
+      artifacts.get(`legal/${revision.policy}/${revision.revision}/index.html`),
+    );
+    expect(html).toContain('<h1>$$ $&amp; $` $&#39;</h1>');
+    expect(html).toContain('<p class="legal-summary">$$ $&amp; $` $&#39;</p>');
+    expect(html).toContain(renderMarkdown(revision.body));
+    expect(String(artifacts.get('legal/index.html'))).toContain(
+      '$$ $&amp; $` $&#39;',
+    );
+    expect(html).not.toContain('<!-- legal:body -->');
+  });
   it('escapes HTML, suppresses images/executable links and provides stable unique anchors', () => {
     const html = renderMarkdown(
       '## Scope\n\n<script>alert(1)</script>\n\n[bad](javascript:alert(1))\n\n![bad](https://evil.invalid/pixel)\n\n## Scope\n',

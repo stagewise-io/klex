@@ -193,6 +193,9 @@ class LegalPageModule implements LegalPage {
   private onFocus = () => {
     if (this.deps.document.visibilityState !== 'hidden') void this.refresh();
   };
+  private onPageShow = (event: PageTransitionEvent) => {
+    if (event.persisted) this.onFocus();
+  };
   private onRetry = () => {
     void this.refresh();
   };
@@ -220,7 +223,7 @@ class LegalPageModule implements LegalPage {
     this.retry = element('legal-retry') as HTMLButtonElement;
     this.started = true;
     window.addEventListener('focus', this.onFocus);
-    window.addEventListener('pageshow', this.onFocus);
+    window.addEventListener('pageshow', this.onPageShow);
     document.addEventListener('visibilitychange', this.onFocus);
     this.retry.addEventListener('click', this.onRetry);
     await this.refresh(true);
@@ -440,7 +443,7 @@ class LegalPageModule implements LegalPage {
     this.deps.window.clearTimeout(this.timer);
     this.deps.window.clearTimeout(this.deadline);
     this.deps.window.removeEventListener('focus', this.onFocus);
-    this.deps.window.removeEventListener('pageshow', this.onFocus);
+    this.deps.window.removeEventListener('pageshow', this.onPageShow);
     this.deps.document.removeEventListener('visibilitychange', this.onFocus);
     this.retry.removeEventListener('click', this.onRetry);
   }

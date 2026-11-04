@@ -89,7 +89,6 @@ try {
     '/legal/nope',
     '/legal/privacy/2020-02-02',
     '/legal/privacy/nope.md',
-    '/legal',
     '/legal/nope.json',
   ])
     assert.equal((await fetch(`${base}${path}`)).status, 404);
@@ -272,10 +271,7 @@ try {
   await displayed('2021-01-01');
   assert.equal(await page.title(), 'Synthetic privacy 2021-01-01 | Klex');
   assert.equal(await page.locator('h1').count(), 1);
-  assert.equal(
-    await page.locator('a[download]').getAttribute('href'),
-    '/legal/privacy/2021-01-01.md',
-  );
+  assert.equal(await page.locator('a[download]').count(), 0);
   assert((await contrast()) >= 4.5, 'Light-theme link contrast');
   assert.equal(
     await page

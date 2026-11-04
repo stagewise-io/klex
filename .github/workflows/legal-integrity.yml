@@ -30,14 +30,33 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Compare legal history with trusted baseline
         run: |
-          # A new branch has no previous push; compare it with the default branch instead.
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "push" ] && [ "$REF_NAME" != "$DEFAULT_BRANCH" ]; then
+            BASE_SHA="$(git rev-parse "origin/$DEFAULT_BRANCH")"
+          fi
           if [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
             BASE_SHA="$(git rev-parse "origin/$DEFAULT_BRANCH")"
           fi
-          node scripts/check-legal-revisions.mjs "$BASE_SHA"
+          TRUSTED_ROOT="$RUNNER_TEMP/legal-integrity-base"
+          git worktree add --detach "$TRUSTED_ROOT" "$BASE_SHA"
+          if git cat-file -e "$BASE_SHA:scripts/check-legal-revisions.mjs" 2>/dev/null; then
+            (cd "$TRUSTED_ROOT" && pnpm install --frozen-lockfile --ignore-scripts)
+            node "$TRUSTED_ROOT/scripts/check-legal-revisions.mjs" "$BASE_SHA" "$GITHUB_WORKSPACE"
+            node --test "$TRUSTED_ROOT/scripts/check-legal-revisions.test.mjs"
+          else
+            # Bootstrap only when the trusted base has no published Markdown to protect.
+            if git ls-tree -r --name-only "$BASE_SHA" -- apps/website/content/legal | grep -q '\.md$'; then
+              echo 'Trusted checker missing for existing legal history' >&2
+              exit 1
+            fi
+            echo 'First rollout: no baseline legal revisions; candidate checker requires review.'
+            node scripts/check-legal-revisions.mjs "$BASE_SHA"
+          fi
         env:
           BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
       - run: node --test scripts/check-legal-revisions.test.mjs
       - run: pnpm --filter @klex/website test:legal
       - run: pnpm --filter @klex/website build

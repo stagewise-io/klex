@@ -64,6 +64,8 @@ try {
   }
   assert(ready, 'Nginx fixture did not become ready');
   for (const path of [
+    '/legal',
+    '/legal/',
     '/legal/privacy',
     '/legal/privacy/',
     '/legal/privacy/2020-01-01',
@@ -75,10 +77,22 @@ try {
     });
     assert.equal(response.status, 200);
     assert.match(response.headers.get('content-type'), /^text\/html/);
-    assert.match(await response.text(), /Synthetic|Privacy Policy/);
+    const html = await response.text();
+    const revision = /\/privacy\/(\d{4}-\d{2}-\d{2})/.exec(path)?.[1];
+    if (revision) {
+      assert(html.includes(`<h1>Synthetic privacy ${revision}</h1>`));
+      assert(html.includes(`data-revision="${revision}"`));
+    } else {
+      assert(
+        html.includes(
+          path === '/legal' || path === '/legal/'
+            ? '<h1>Legal Center</h1>'
+            : '<h1>Privacy Policy</h1>',
+        ),
+      );
+    }
   }
   for (const path of [
-    '/legal',
     '/legal/unknown',
     '/legal/missing.json',
     '/legal/privacy/2020-12-99',

@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -101,14 +102,17 @@ export async function checkLegalRevisions({ baseSha, root = repositoryRoot }) {
 
 if (
   process.argv[1] &&
-  import.meta.url === pathToFileURL(resolve(process.argv[1])).href
+  import.meta.url === pathToFileURL(realpathSync(resolve(process.argv[1]))).href
 ) {
   try {
     assert(
-      process.argv.length === 3,
-      'Usage: node scripts/check-legal-revisions.mjs <trusted-base-sha>',
+      process.argv.length === 3 || process.argv.length === 4,
+      'Usage: node scripts/check-legal-revisions.mjs <trusted-base-sha> [candidate-root]',
     );
-    const result = await checkLegalRevisions({ baseSha: process.argv[2] });
+    const result = await checkLegalRevisions({
+      baseSha: process.argv[2],
+      root: process.argv[3] ? resolve(process.argv[3]) : repositoryRoot,
+    });
     console.log(
       `Legal history verified: ${result.previous} unchanged baseline revisions, ${result.revisions} candidate revisions.`,
     );

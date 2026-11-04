@@ -13,6 +13,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import {
   createCatalog,
@@ -78,6 +79,25 @@ async function add(directory, policy, date) {
     markdown(policy, date),
   );
 }
+
+test('symlinked CLI invocation runs validation instead of silently succeeding', async () => {
+  const data = await fixture();
+  const entry = join(data.root, 'checker.mjs');
+  await symlink(
+    fileURLToPath(new URL('./check-legal-revisions.mjs', import.meta.url)),
+    entry,
+  );
+  assert.throws(
+    () => execFileSync(process.execPath, [entry, 'invalid'], { stdio: 'pipe' }),
+    /Command failed/,
+  );
+  const output = execFileSync(
+    process.execPath,
+    [entry, data.baseSha, data.root],
+    { encoding: 'utf8' },
+  );
+  assert.match(output, /1 unchanged baseline revisions/);
+});
 
 test('unchanged history and new Markdown revisions pass without registration', async () => {
   const data = await fixture();

@@ -87,12 +87,12 @@ export function generateArtifacts(
     template
       .replace(
         '<!-- legal:head -->',
-        `<title>Legal Center | Klex</title><meta name="description" content="Terms and policies for Klex Cloud and the Klex website."><link rel="canonical" href="${siteOrigin}/legal">`,
+        () =>
+          `<title>Legal Center | Klex</title><meta name="description" content="Terms and policies for Klex Cloud and the Klex website."><link rel="canonical" href="${siteOrigin}/legal">`,
       )
-      .replace(
-        '<!-- legal:body -->',
+      .replace('<!-- legal:body -->', () =>
         centerBody
-          .replace(/<main\b[\s\S]*?<\/main>/, centerMain)
+          .replace(/<main\b[\s\S]*?<\/main>/, () => centerMain)
           .replace('href="#legal-main"', 'href="#legal-center"'),
       ),
   );
@@ -108,9 +108,8 @@ export function generateArtifacts(
       const title = revision?.title ?? type.label;
       const head = `<title>${escapeHtml(title)}${revision ? ` — ${revision.revision}` : ''} | Klex</title><meta name="description" content="${escapeHtml(`${title}: effective dates, original source and revision history.`)}"><link rel="canonical" href="${siteOrigin}${path}">${revision || documents.length === 0 ? '<meta name="robots" content="noindex,follow">' : ''}<meta name="legal-origin" content="${siteOrigin}">`;
       const html = template
-        .replace('<!-- legal:head -->', head)
-        .replace(
-          '<!-- legal:body -->',
+        .replace('<!-- legal:head -->', () => head)
+        .replace('<!-- legal:body -->', () =>
           frame(sources, type.slug, type.label, revision),
         );
       assert(

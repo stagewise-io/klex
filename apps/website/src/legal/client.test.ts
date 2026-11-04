@@ -66,6 +66,19 @@ const historyLinks = () =>
   );
 
 describe('legal reader selection and failure behavior', () => {
+  it('ignores initial pageshow and refreshes restored pages', async () => {
+    const { handle, fetcher } = setup();
+    const loading = handle.start();
+    window.dispatchEvent(
+      new PageTransitionEvent('pageshow', { persisted: false }),
+    );
+    await loading;
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    window.dispatchEvent(
+      new PageTransitionEvent('pageshow', { persisted: true }),
+    );
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(4));
+  });
   it('loads latest effective revision, updates title and links only its predecessor', async () => {
     const { handle, fetcher } = setup();
     await handle.start();

@@ -114,7 +114,7 @@ Deploy the **entire** website build directory as an atomic release. Merge the fo
 
 ```nginx
 location = /legal {
-    return 404;
+    rewrite ^ /legal/ last;
 }
 
 location ^~ /legal/ {
@@ -138,9 +138,9 @@ Nginx `add_header` directives can override inherited header sets: retain the dep
 
 ## Integrity and deployment safety
 
-The `Legal Revision Integrity` workflow runs on **every branch push** and on pull requests. It validates candidate Markdown, then compares the actual source bytes with the trusted Git baseline: the target branch's base SHA for PRs and `github.event.before` for pushes. A new branch with an all-zero previous-push SHA is compared against the default branch instead. Full Git history is fetched; an unresolved baseline fails closed. A baseline predating the legal directory allows the first rollout.
+The `Legal Revision Integrity` workflow runs on **every branch push** and on pull requests. It validates candidate Markdown, then compares the actual source bytes with the trusted Git baseline: the target branch's base SHA for PRs, the default branch tip for non-default-branch pushes, and `github.event.before` for default-branch pushes. The checker and its imported modules/tests run from a separate trusted-base worktree, against the candidate content. First rollout permits the candidate checker only when the trusted base has no legal Markdown revisions. Full Git history is fetched; an unresolved baseline fails closed. A baseline predating the legal directory allows the first rollout.
 
-It rejects edits to body/frontmatter/whitespace, deletions, renames, symlink replacements, registry schema downgrades, policy identity removal/reordering, and date insertion. Hashes are generated output, not an editable CI baseline. Drafts can change before their first push; after pushing, add a new dated file instead. Push checks compare history on that branch; PR checks additionally protect the target branch's policies. This is not a global archive of every revision ever pushed to every deleted branch.
+It rejects edits to body/frontmatter/whitespace, deletions, renames, symlink replacements, registry schema downgrades, policy identity removal/reordering, and date insertion. Hashes are generated output, not an editable CI baseline. Drafts can change before their first push; after pushing, add a new dated file instead. Feature-branch push checks and PR checks protect default/target-branch history; protected-branch PR checks are the enforcement point. Default-branch push checks additionally detect changes against the previous default-branch tip. This is not a global archive of every revision ever pushed to every deleted branch.
 
 Require **Legal Revision Integrity** in protected-branch rules, disallow force pushes/history rewrites, and review changes to the checker, CI workflow, registry, and Git attributes. Those repository settings are manual; editing a workflow does not enable branch protection.
 

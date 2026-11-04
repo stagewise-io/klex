@@ -556,11 +556,12 @@ class AgentBuild {
       }
     }
     routes.unshift({ src: '^/404(?:\\.(?:html|json|md))?$', dest: '/site' });
-    routes.unshift({
-      src: '^/\\.well-known/api-catalog$',
-      headers: { 'Content-Type': 'application/linkset+json' },
-      continue: true,
-    });
+    if (this.kind === 'docs')
+      routes.unshift({
+        src: '^/\\.well-known/api-catalog$',
+        headers: { 'Content-Type': 'application/linkset+json' },
+        continue: true,
+      });
     routes.push({ handle: 'filesystem' }, { src: '^/.*$', dest: '/site' });
     await writeFile(
       resolve(output, 'config.json'),

@@ -96,14 +96,10 @@ function matchesTruncatedResource(
   previous: ResourceStateData,
   update: ResourceStateData,
 ): boolean {
-  if (
-    typeof update.handle === 'string' &&
-    typeof update.generation === 'number'
-  ) {
-    return (
-      previous.handle === update.handle &&
-      previous.generation === update.generation
-    );
+  if (typeof update.handle === 'string') {
+    // Navigation/reopen increments the generation even for the same URI.
+    // A missing snapshot invalidates every older baseline for this handle.
+    return previous.handle === update.handle;
   }
 
   // Older bounded events omitted the window identity. Compare using the

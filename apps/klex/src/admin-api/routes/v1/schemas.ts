@@ -132,6 +132,7 @@ const mcpServerCapabilitiesSchema = z
 
 const mcpServerInfoSchema = z
   .object({
+    connectionId: z.string().uuid().optional(),
     name: z.string(),
     status: mcpConnectionStatusSchema,
     serverInfo: mcpImplementationSchema.optional(),
@@ -239,6 +240,17 @@ const toolCallHistoryResponseSchema = z
     toolCalls: z.array(mcpToolCallRecordSchema),
   })
   .openapi('ToolCallHistoryResponse');
+
+const callMcpToolBodySchema = z
+  .object({
+    toolName: z.string().min(1),
+    arguments: z.record(z.string(), z.unknown()),
+  })
+  .openapi('CallMcpToolBody');
+
+const callMcpToolResponseSchema = z
+  .object({ result: z.unknown() })
+  .openapi('CallMcpToolResponse');
 
 const mcpServerNameParamSchema = z.object({
   name: z.string().min(1),
@@ -1425,6 +1437,8 @@ export {
   agentIdentityResponseSchema,
   ambiguousSkillResponseSchema,
   audioInputCapabilitySchema,
+  callMcpToolBodySchema,
+  callMcpToolResponseSchema,
   canAddProviderBodySchema,
   cloudEnrollBodySchema,
   cloudEnrollResponseSchema,

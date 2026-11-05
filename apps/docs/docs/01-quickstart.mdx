@@ -24,6 +24,24 @@ To install Klex, run the following script in your system's shell:
 
 ## Creating your bot
 
+To create, enroll, and start a bot without interactive setup, use an enrollment token from Klex Cloud:
+
+```sh
+klex --create-agent --cloud-enroll-token <token>
+```
+
+Add `--headless` to run without the terminal UI. You can also supply the token through `KLEX_CLOUD_ENROLLMENT_TOKEN` instead of a CLI argument to keep it out of shell history.
+
+Cloud agents use a stable UUID folder under `~/.klex/agents/` (or `$KLEX_HOME/agents/`). The cloud-assigned name is displayed in the picker; renaming the bot does not move its folder. Until the cloud configures a name, it is displayed as `Agent`.
+
+For a standalone bot, a name is required:
+
+```sh
+klex --create-agent --no-cloud --agent-name Ada
+```
+
+Standalone agents use the supplied name as their folder name. Creation cannot be combined with `--data-dir` or `KLEX_DATA_DIR`; those open an existing agent. If enrollment fails, the new folder is retained and its path is printed. Retry with `klex --data-dir <printed-path> --cloud-enroll-token <token>` instead of creating another agent. Providers and models still need to be configured before the bot can work.
+
 <Tabs inline param="bot-setup">
 
 <Tab title="Cloud-assisted (recommended)" syncKey="cloud">
@@ -35,10 +53,7 @@ To install Klex, run the following script in your system's shell:
     Follow the guide in the wizard to install and start the Klex app.
   </Step>
   <Step title="Create a new bot">
-    In the Klex app, select `Create a new Bot` in the option list and press Enter.
-  </Step>
-  <Step title="Name your bot">
-    Enter the name this bot should use. The bot will know that this is its own name.
+    In the Klex app, press `a` to create a new bot. Cloud-connected bots skip the local name prompt; the cloud sets their name.
   </Step>
   <Step title="Enroll the bot into the cloud">
     Follow the instructions in the cloud wizard to connect this bot to your Klex Cloud organization.

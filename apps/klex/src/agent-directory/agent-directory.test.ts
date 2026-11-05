@@ -1,10 +1,14 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { createConfig } from '@/config';
 import { createDirectoryLock } from '@/directory-lock';
+import { createLocalData } from '@/local-data';
+import { KLEX_LOCAL_DATA_STORES } from '@/local-data-registry';
+import { KLEX_VERSION } from '@/release';
 
 import { createAgentDirectory } from './agent-directory';
 
@@ -80,6 +84,63 @@ describe('AgentDirectory', () => {
     expect(stored).not.toHaveProperty('episodeFinishIdleTriggerTimeMs');
     expect(stored).not.toHaveProperty('memoryWriteIntervalMs');
     expect(stored).not.toHaveProperty('memoryWriteStepInterval');
+  });
+
+  it('creates unique UUID folders for unnamed cloud agents and loads them through registered startup', async () => {
+    const root = await makeRoot();
+    const directory = createAgentDirectory({ logging, rootDirectory: root });
+    const first = await directory.create();
+    const second = await directory.create();
+    expect(basename(first.directory)).toMatch(
+      /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/,
+    );
+    expect(first.directory).not.toBe(second.directory);
+    expect(first.officialName).toBe('Agent');
+    const lock = createDirectoryLock({
+      logging,
+      dataDirectory: first.directory,
+    });
+    const localData = createLocalData({
+      logging,
+      dataDirectory: first.directory,
+      klexVersion: KLEX_VERSION,
+      stores: KLEX_LOCAL_DATA_STORES,
+    });
+    const config = createConfig({ logging, dataDirectory: first.directory });
+    await lock.acquire();
+    try {
+      await localData.start();
+      await config.start();
+      expect(config.get().officialName).toBe('Agent');
+      await config.mutate((current) => ({
+        ...current,
+        officialName: 'Cloud name',
+      }));
+      expect(await directory.discover()).toContainEqual(
+        expect.objectContaining({
+          directory: first.directory,
+          officialName: 'Cloud name',
+        }),
+      );
+    } finally {
+      await config.close();
+      await localData.close();
+      await lock.release();
+    }
+  });
+
+  it('rejects invalid local names and never overwrites an existing agent', async () => {
+    const root = await makeRoot();
+    const directory = createAgentDirectory({ logging, rootDirectory: root });
+    for (const name of ['', 'A', '..', '../Ada', 'a/b', 'a\\\\b']) {
+      await expect(directory.create(name)).rejects.toThrow('Agent name');
+    }
+    const agent = await directory.create('Ada');
+    const before = await readFile(join(agent.directory, 'config.json'), 'utf8');
+    await expect(directory.create('Ada')).rejects.toThrow('Could not create');
+    expect(await readFile(join(agent.directory, 'config.json'), 'utf8')).toBe(
+      before,
+    );
   });
 
   it('marks agents whose directory lock is held as in use', async () => {

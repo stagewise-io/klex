@@ -97,14 +97,15 @@ function setup(options: { autoUpdate?: boolean; managed?: boolean } = {}) {
   const exit = vi.fn();
   const disposeLogging = vi.fn(async () => undefined);
   const onStartupFailure = vi.fn();
+  const cli = parseCliArgs([
+    '--headless',
+    '--data-dir',
+    'agents/selected',
+    ...(options.autoUpdate === false ? [] : ['--auto-update']),
+  ]);
   const bootstrap = createUpdateBootstrap({
     logging,
-    cli: parseCliArgs([
-      '--headless',
-      '--data-dir',
-      'agents/selected',
-      ...(options.autoUpdate === false ? [] : ['--auto-update']),
-    ]),
+    cli,
     loadApplication,
     discoverInstallation,
     createUpdateManager: (managerOptions) =>
@@ -127,6 +128,7 @@ function setup(options: { autoUpdate?: boolean; managed?: boolean } = {}) {
   instances.push(bootstrap);
   return {
     bootstrap,
+    cli,
     application,
     loadApplication,
     discoverInstallation,
@@ -267,6 +269,48 @@ describe('update-first bootstrap', () => {
       expect(test.restartProcess).toHaveBeenCalledOnce();
       expect(test.application.start).toHaveBeenCalledOnce();
       expect(test.loadApplication).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each([false, true])(
+    'preserves creation only before a directory exists, created=%s',
+    async (created) => {
+      const argv = process.argv;
+      process.argv = [
+        'node',
+        'klex',
+        '--create-agent',
+        '--cloud-enroll-token',
+        'token',
+      ];
+      try {
+        const test = setup();
+        test.cli.dataDirectory = undefined;
+        test.cli.createAgent = true;
+        test.application.start.mockImplementationOnce(async () => {
+          if (created) test.cli.dataDirectory = 'agents/new-agent';
+          throw new Error('enrollment failed');
+        });
+        await test.bootstrap.start();
+        test.publish('1.2.4');
+        await vi.advanceTimersByTimeAsync(300_000);
+        expect(test.restartProcess).toHaveBeenCalledWith(
+          expect.objectContaining({
+            arguments: created
+              ? ['--cloud-enroll-token', 'token']
+              : ['--create-agent', '--cloud-enroll-token', 'token'],
+            ...(created
+              ? {
+                  environment: expect.objectContaining({
+                    KLEX_DATA_DIR: expect.stringContaining('agents/new-agent'),
+                  }),
+                }
+              : {}),
+          }),
+        );
+      } finally {
+        process.argv = argv;
+      }
     },
   );
 

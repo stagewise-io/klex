@@ -181,7 +181,7 @@ describe('GodMessagesScreen', () => {
     await vi.waitFor(() => expect(view.lastFrame()).toContain('Done'));
     const lines = (view.lastFrame() ?? '').split('\n');
     const directiveLine = lines.findIndex((line) => line.includes('Do it'));
-    const agentLine = lines.findIndex((line) => line.includes('Agent'));
+    const agentLine = lines.findIndex((line) => line.includes('Bot'));
     expect(lines.some((line) => line.includes('God'))).toBe(true);
     expect(agentLine - directiveLine).toBeGreaterThan(1);
     view.unmount();

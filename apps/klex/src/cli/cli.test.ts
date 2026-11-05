@@ -94,7 +94,7 @@ describe('parseCliArgs', () => {
     });
     it('creates a named local agent', () => {
       expect(
-        parseCliArgs(['--create-bot', '--no-cloud', '--agent-name', ' Ada ']),
+        parseCliArgs(['--create-bot', '--no-cloud', '--bot-name', ' Ada ']),
       ).toMatchObject({
         createAgent: true,
         cloudEnabled: false,
@@ -107,16 +107,13 @@ describe('parseCliArgs', () => {
         ['--create-bot', '--cloud-enroll-token', ' '],
         'requires --cloud-enroll-token',
       ],
-      [['--create-bot', '--no-cloud'], 'requires --agent-name'],
+      [['--create-bot', '--no-cloud'], 'requires --bot-name'],
       [
-        ['--create-bot', '--no-cloud', '--agent-name', ' '],
-        'requires --agent-name',
+        ['--create-bot', '--no-cloud', '--bot-name', ' '],
+        'requires --bot-name',
       ],
-      [['--agent-name', 'Ada'], 'requires --create-bot'],
-      [
-        ['--create-bot', '--agent-name', 'Ada'],
-        'only supported with --no-cloud',
-      ],
+      [['--bot-name', 'Ada'], 'requires --create-bot'],
+      [['--create-bot', '--bot-name', 'Ada'], 'only supported with --no-cloud'],
       [['--create-bot', '--data-dir', '/existing'], 'cannot be combined'],
     ])('rejects invalid creation arguments %j', (args, message) => {
       expect(() => parseCliArgs(args)).toThrow(message);
@@ -128,8 +125,8 @@ describe('parseCliArgs', () => {
       );
     });
     it.each([
-      ['--create-bot', '--no-cloud', '--agent-name', 'Ada', '--verbose'],
-      ['--create-bot', '--no-cloud', '--agent-name=Ada', '--verbose'],
+      ['--create-bot', '--no-cloud', '--bot-name', 'Ada', '--verbose'],
+      ['--create-bot', '--no-cloud', '--bot-name=Ada', '--verbose'],
     ])('removes one-shot creation flags from restart args %j', (...args) => {
       expect(agentRestartArgs(args)).toEqual(['--no-cloud', '--verbose']);
     });
@@ -445,12 +442,20 @@ describe('parseCliArgs', () => {
   });
 
   it('exits with code 0 when --help is passed', () => {
+    const writeSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {
       throw new Error('process.exit called');
     });
-    expect(() => parseCliArgs(['--help'])).toThrow('process.exit called');
-    expect(exitSpy).toHaveBeenCalledWith(0);
-    exitSpy.mockRestore();
+    try {
+      expect(() => parseCliArgs(['--help'])).toThrow('process.exit called');
+      expect(exitSpy).toHaveBeenCalledWith(0);
+      const help = writeSpy.mock.calls.map(([chunk]) => String(chunk)).join('');
+      expect(help).toContain('--bot-name');
+      expect(help).not.toMatch(/agent/i);
+    } finally {
+      exitSpy.mockRestore();
+      writeSpy.mockRestore();
+    }
   });
 
   describe('--version', () => {

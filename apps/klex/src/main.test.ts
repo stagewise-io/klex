@@ -329,6 +329,39 @@ describe('managed-update agent continuity', () => {
     },
   );
 
+  it('releases enrollment resources on cancellation before reopening the same bot', async () => {
+    vi.stubEnv('KLEX_NO_CLOUD', '0');
+    mocks.createCloudConnectivity.mockReturnValue({
+      ...mocks.resource,
+      isEnrolled: () => false,
+    });
+    mocks.createAgentPicker.mockImplementation(
+      (options: {
+        prepareAgent: (directory: string) => Promise<boolean>;
+        onEnrollmentCancelled: (directory: string) => Promise<void>;
+      }) => ({
+        choose: async () => {
+          await options.prepareAgent(mocks.selectedDirectory);
+          expect(mocks.resource.acquire).toHaveBeenCalledTimes(1);
+          await options.onEnrollmentCancelled(mocks.selectedDirectory);
+          expect(mocks.resource.release).toHaveBeenCalledTimes(1);
+          expect(mocks.resource.close).toHaveBeenCalledTimes(2);
+          await options.prepareAgent(mocks.selectedDirectory);
+          expect(mocks.resource.acquire).toHaveBeenCalledTimes(2);
+          await options.onEnrollmentCancelled(mocks.selectedDirectory);
+          expect(mocks.resource.release).toHaveBeenCalledTimes(2);
+          return undefined;
+        },
+      }),
+    );
+    process.argv = [process.execPath, 'klex'];
+    await import('./main');
+    await vi.waitFor(() =>
+      expect(mocks.resource.release).toHaveBeenCalledTimes(2),
+    );
+    expect(mocks.logger.fatal).not.toHaveBeenCalled();
+  });
+
   it('checks for updates before config loading and survives a config startup failure', async () => {
     const failure = new Error('Existing configuration cannot be loaded');
     const configClose = vi.fn(async () => undefined);
@@ -418,7 +451,7 @@ describe('managed-update agent continuity', () => {
     const shutdown = mocks.shutdowns.at(-1);
     expect(shutdown).toBeDefined();
     await expect(shutdown?.cleanup()).rejects.toThrow(
-      'Could not release the agent-directory lock',
+      'Could not release the bot-directory lock',
     );
     expect(mocks.resource.release).toHaveBeenCalledOnce();
     expect(mocks.logger[Symbol.asyncDispose]).toHaveBeenCalledOnce();
@@ -574,7 +607,7 @@ describe('managed-update agent continuity', () => {
   });
 
   it('creates a named local agent without the picker', async () => {
-    await launch(['--create-bot', '--no-cloud', '--agent-name', 'Ada']);
+    await launch(['--create-bot', '--no-cloud', '--bot-name', 'Ada']);
     await vi.waitFor(() => expect(mocks.createCliUi).toHaveBeenCalled());
     expect(mocks.createCliUi).toHaveBeenCalledWith(
       expect.objectContaining({ cloudEnrollmentCompleted: false }),

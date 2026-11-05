@@ -32,15 +32,15 @@ klex --create-bot --cloud-enroll-token <token>
 
 Add `--headless` to run without the terminal UI. You can also supply the token through `KLEX_CLOUD_ENROLLMENT_TOKEN` instead of a CLI argument to keep it out of shell history.
 
-Cloud agents use a stable UUID folder under `~/.klex/agents/` (or `$KLEX_HOME/agents/`). The cloud-assigned name is displayed in the picker; renaming the bot does not move its folder. Until the cloud configures a name, it is displayed as `Agent`.
+Cloud bots use a stable UUID folder under `~/.klex/agents/` (or `$KLEX_HOME/agents/`). The cloud-assigned name is displayed in the picker; renaming the bot does not move its folder. Until the cloud configures a name, it is displayed as `Bot`.
 
 For a standalone bot, a name is required:
 
 ```sh
-klex --create-bot --no-cloud --agent-name Ada
+klex --create-bot --no-cloud --bot-name Ada
 ```
 
-Standalone agents use the supplied name as their folder name. Creation cannot be combined with `--data-dir` or `KLEX_DATA_DIR`; those open an existing agent. If enrollment fails, the new folder is retained and its path is printed. Retry with `klex --data-dir <printed-path> --cloud-enroll-token <token>` instead of creating another agent. Providers and models still need to be configured before the bot can work.
+Standalone bots use the supplied name as their folder name. Creation cannot be combined with `--data-dir` or `KLEX_DATA_DIR`; those open an existing bot. If enrollment fails, the new folder is retained and its path is printed. Retry with `klex --data-dir <printed-path> --cloud-enroll-token <token>` instead of creating another bot. Providers and models still need to be configured before the bot can work.
 
 <Tabs inline param="bot-setup">
 

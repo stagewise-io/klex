@@ -95,7 +95,7 @@ describe('AgentDirectory', () => {
       /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/,
     );
     expect(first.directory).not.toBe(second.directory);
-    expect(first.officialName).toBe('Agent');
+    expect(first.officialName).toBe('Bot');
     const lock = createDirectoryLock({
       logging,
       dataDirectory: first.directory,
@@ -111,7 +111,7 @@ describe('AgentDirectory', () => {
     try {
       await localData.start();
       await config.start();
-      expect(config.get().officialName).toBe('Agent');
+      expect(config.get().officialName).toBe('Bot');
       await config.mutate((current) => ({
         ...current,
         officialName: 'Cloud name',
@@ -133,7 +133,7 @@ describe('AgentDirectory', () => {
     const root = await makeRoot();
     const directory = createAgentDirectory({ logging, rootDirectory: root });
     for (const name of ['', 'A', '..', '../Ada', 'a/b', 'a\\\\b']) {
-      await expect(directory.create(name)).rejects.toThrow('Agent name');
+      await expect(directory.create(name)).rejects.toThrow('Bot name');
     }
     const agent = await directory.create('Ada');
     const before = await readFile(join(agent.directory, 'config.json'), 'utf8');

@@ -87,7 +87,7 @@ export function GodMessagesScreen({
             color={entry.role === 'user' ? 'yellow' : 'cyan'}
             wrap="truncate-end"
           >
-            {entry.role === 'user' ? 'God' : 'Agent'}
+            {entry.role === 'user' ? 'God' : 'Bot'}
           </Text>
           <Text wrap="hard">{entry.text}</Text>
         </Box>

@@ -138,7 +138,7 @@ export function CloudScreen({
         <Box marginTop={1} flexDirection="column">
           <Text>Paste your enrollment code below:</Text>
           <Text dimColor>
-            The code was generated when you added a new agent in the cloud UI.
+            The code was generated when you added a new bot in the cloud UI.
           </Text>
         </Box>
         <Box marginTop={1}>
@@ -244,7 +244,7 @@ export function CloudScreen({
                   <Text dimColor>
                     1. Open {status.cloudBaseUrl} in your browser
                   </Text>
-                  <Text dimColor>2. Add a new agent</Text>
+                  <Text dimColor>2. Add a new bot</Text>
                   <Text dimColor>3. Copy the authentication code</Text>
                   <Text dimColor>
                     4. Press <KeyHint keyName="c" /> here and paste the code

@@ -2668,6 +2668,104 @@ describe('MCP Ingress extension', () => {
     },
   );
 
+  it.each([false, true])(
+    'invalidates older generations after a bounded same-URI reopen (rendered: %s)',
+    async (rendered) => {
+      const namespace = 'github';
+      const uri = 'file:///data.txt';
+      const deps = createMockDeps({
+        readResource: vi.fn().mockResolvedValue({
+          contents: [{ uri, mimeType: 'text/plain', text: 'current' }],
+        }),
+      });
+      const ext = createMcpIngressExt().create(deps);
+      try {
+        await callTool(ext, 'openResource', { serverName: namespace, uri });
+        await callTool(ext, 'openResource', {
+          serverName: namespace,
+          uri,
+          navigateHandle: 'r1',
+        });
+        const baseline = createResourceStateMessage({
+          namespace,
+          uri,
+          isInitial: true,
+          diff: {
+            kind: 'full',
+            reason: 'initial',
+            content: [{ type: 'text', text: 'stale generation one' }],
+          },
+        });
+        const unrelated = createResourceStateMessage({
+          handle: 'r2',
+          namespace,
+          uri: 'file:///unrelated.txt',
+          isInitial: true,
+          diff: {
+            kind: 'full',
+            reason: 'initial',
+            content: [{ type: 'text', text: 'unrelated baseline' }],
+          },
+        });
+        const event = boundInboxEvent(
+          {
+            context: {
+              sourceEnv: 'mcp-resource-watcher',
+              metadata: { namespace, uri, handle: 'r1', generation: 2 },
+              content: [{ type: 'text' as const, text: 'x'.repeat(20_000) }],
+            },
+          },
+          4_096,
+        );
+        expect(event.context.metadata).toHaveProperty('truncated', true);
+        const history: ExtendedUIMessage[] = [
+          createOpenResourcesMessage({
+            isInitial: true,
+            resources: [
+              { handle: 'r1', server: namespace, uri, live: false },
+              {
+                handle: 'r2',
+                server: namespace,
+                uri: 'file:///unrelated.txt',
+                live: false,
+              },
+            ],
+          }),
+          baseline,
+          unrelated,
+          {
+            id: 'bounded-reopen',
+            role: 'user',
+            parts: [{ type: 'data-context', data: event.context }],
+          },
+        ];
+        const view = rendered
+          ? unwrapHistoryResult(ext.historyTransformer?.(history, {} as never))
+          : history;
+        const restored: ExtendedUIMessage[] = JSON.parse(JSON.stringify(view));
+        const carry = (await ext.getCheckpointCarry?.(restored)) ?? [];
+        expect(
+          findStateParts([{ id: 'checkpoint', role: 'user', parts: carry }]),
+        ).toEqual(unrelated.parts);
+        const provisional = await ext.getProvisionalStepContext?.(
+          restored,
+          {} as never,
+        );
+        const recovered = findStateParts([
+          { id: 'recovery', role: 'user', parts: provisional?.parts ?? [] },
+        ]);
+        expect(recovered).toHaveLength(1);
+        expect(recovered[0]).toHaveProperty('data.generation', 2);
+        expect(recovered[0]).toHaveProperty(
+          'data.diff.content.0.text',
+          expect.stringContaining('current'),
+        );
+      } finally {
+        await ext.onClose?.();
+      }
+    },
+  );
+
   it('does not mistake a resource-linked notification for full resource content', async () => {
     const ext = createMcpIngressExt().create(createMockDeps());
     const state = createResourceStateMessage({

@@ -21,6 +21,8 @@ export interface CliUiDependencies {
   dangerousLocalAdminApiPort: number | undefined;
   /** Persistent banner shown while telemetry is exporting. */
   telemetryWarning: import('@/telemetry-config').TelemetryWarning | undefined;
+  /** Enrollment succeeded during this launch; show the setup handoff on Home. */
+  cloudEnrollmentCompleted?: boolean;
   updateManager?: import('@/self-update').UpdateManager;
   /** Product-analytics hook for the Cloud screen enrollment flow. */
   trackEnrollment?: import('@/product-analytics').TrackEnrollment;

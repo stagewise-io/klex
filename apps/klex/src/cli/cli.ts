@@ -25,7 +25,7 @@ export interface CliOptions {
   agentRoot: string;
   /** Create a fresh agent instead of opening the picker. */
   createAgent: boolean;
-  /** Local-only name, used only with --create-agent --no-cloud. */
+  /** Local-only name, used only with --create-bot --no-cloud. */
   agentName: string | undefined;
   cloudEnabled: boolean;
   cloudBaseUrl: string;
@@ -93,7 +93,7 @@ function portOrUndefined(
 
 const CLI_OPTIONS = {
   'data-dir': { type: 'string', short: 'd' },
-  'create-agent': { type: 'boolean' },
+  'create-bot': { type: 'boolean' },
   'agent-name': { type: 'string' },
   help: { type: 'boolean', short: 'h' },
   headless: { type: 'boolean', short: 'H' },
@@ -195,15 +195,15 @@ export function parseCliArgs(argv: string[]): CliOptions {
   const cloudEnrollToken = pathOrUndefined(
     values['cloud-enroll-token'] ?? process.env.KLEX_CLOUD_ENROLLMENT_TOKEN,
   );
-  const createAgent = values['create-agent'] ?? false;
+  const createAgent = values['create-bot'] ?? false;
   const agentName = pathOrUndefined(values['agent-name']);
   if (values['agent-name'] !== undefined && !createAgent) {
-    throw new Error('--agent-name requires --create-agent');
+    throw new Error('--agent-name requires --create-bot');
   }
   if (createAgent) {
     if (dataDirectory !== undefined) {
       throw new Error(
-        '--create-agent cannot be combined with --data-dir or KLEX_DATA_DIR',
+        '--create-bot cannot be combined with --data-dir or KLEX_DATA_DIR',
       );
     }
     if (cloudEnabled) {
@@ -214,11 +214,11 @@ export function parseCliArgs(argv: string[]): CliOptions {
       }
       if (!cloudEnrollToken) {
         throw new Error(
-          '--create-agent requires --cloud-enroll-token or KLEX_CLOUD_ENROLLMENT_TOKEN when cloud is enabled',
+          '--create-bot requires --cloud-enroll-token or KLEX_CLOUD_ENROLLMENT_TOKEN when cloud is enabled',
         );
       }
     } else if (!agentName) {
-      throw new Error('--create-agent --no-cloud requires --agent-name');
+      throw new Error('--create-bot --no-cloud requires --agent-name');
     }
   }
 
@@ -285,7 +285,7 @@ export function agentRestartArgs(argv: string[]): string[] {
   for (const token of tokens) {
     if (
       token.kind !== 'option' ||
-      !['create-agent', 'no-create-agent', 'agent-name'].includes(token.name)
+      !['create-bot', 'no-create-bot', 'agent-name'].includes(token.name)
     )
       continue;
     removed.add(token.index);
@@ -305,8 +305,8 @@ Usage: klex [options]
 
 Options:
   -d, --data-dir <path>        Directory for agent data (overrides KLEX_DATA_DIR; interactive mode otherwise discovers agents under KLEX_HOME)
-  --create-agent               Create, enroll (cloud mode), and start a new agent without the picker
-  --agent-name <name>          Required with --create-agent --no-cloud; cloud mode gets its name from the cloud
+  --create-bot               Create, enroll (cloud mode), and start a new agent without the picker
+  --agent-name <name>          Required with --create-bot --no-cloud; cloud mode gets its name from the cloud
   -H, --headless               Run without the interactive CLI UI (overrides KLEX_HEADLESS)
   --no-headless                Run with the interactive CLI UI (overrides KLEX_HEADLESS)
   --auto-update                Install updates automatically and restart once the agent is idle, or after a 10-minute drain timeout (overrides KLEX_AUTO_UPDATE)

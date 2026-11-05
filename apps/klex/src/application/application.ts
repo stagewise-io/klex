@@ -227,7 +227,7 @@ class ApplicationModule implements Application {
 
     if (cli.dataDirectory === undefined && cli.headless && !cli.createAgent) {
       throw new Error(
-        'Headless mode requires --data-dir, KLEX_DATA_DIR, or --create-agent to identify an agent directory',
+        'Headless mode requires --data-dir, KLEX_DATA_DIR, or --create-bot to identify an agent directory',
       );
     }
 
@@ -256,6 +256,18 @@ class ApplicationModule implements Application {
     await productAnalytics.start();
     const trackEnrollment: TrackEnrollment = (method) =>
       productAnalytics.trackEnrollment(method);
+
+    let cloudEnrollmentCompleted = false;
+    const onTokenEnrollment = (): EnrollmentTracker => {
+      const tracker = trackEnrollment('token');
+      return {
+        attemptFailed: () => tracker.attemptFailed(),
+        finish: (outcome) => {
+          if (outcome === 'enrolled') cloudEnrollmentCompleted = true;
+          tracker.finish(outcome);
+        },
+      };
+    };
 
     let interactiveCloud: CloudConnectivity | undefined;
     let interactiveLocalData: LocalData | undefined;
@@ -302,6 +314,7 @@ class ApplicationModule implements Application {
         cloudEnabled: cli.cloudEnabled,
         prepareAgent: async (directory) => {
           finishPickerEnrollment('aborted');
+          cloudEnrollmentCompleted = false;
           await interactiveCloud?.close().catch(() => undefined);
           interactiveCloud = undefined;
           await interactiveLocalData?.close().catch(() => undefined);
@@ -338,7 +351,7 @@ class ApplicationModule implements Application {
               // otherwise the wizard collects one below.
               enrollmentToken: cli.cloudEnrollToken,
               allowDangerousUnsecureCloud: cli.allowDangerousUnsecureCloud,
-              onTokenEnrollment: () => trackEnrollment('token'),
+              onTokenEnrollment,
             });
             interactiveCloud = cloud;
             await cloud.start();
@@ -366,6 +379,7 @@ class ApplicationModule implements Application {
             pickerEnrollment?.attemptFailed();
             throw error;
           }
+          cloudEnrollmentCompleted = true;
           finishPickerEnrollment('enrolled');
         },
         onEnrollmentCancelled: () => finishPickerEnrollment('aborted'),
@@ -516,7 +530,7 @@ class ApplicationModule implements Application {
         cloudBaseUrl: cli.cloudBaseUrl,
         enrollmentToken: cli.cloudEnrollToken,
         allowDangerousUnsecureCloud: cli.allowDangerousUnsecureCloud,
-        onTokenEnrollment: () => trackEnrollment('token'),
+        onTokenEnrollment,
       });
     runtimeCloud = cloudConnectivity;
     const realtimeComposition = {
@@ -932,6 +946,7 @@ class ApplicationModule implements Application {
         telemetryWarning,
         updateManager,
         trackEnrollment,
+        cloudEnrollmentCompleted,
       });
       cliUi = ui;
       this.resources.push(async () => {

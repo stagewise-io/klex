@@ -279,7 +279,7 @@ describe('update-first bootstrap', () => {
       process.argv = [
         'node',
         'klex',
-        '--create-agent',
+        '--create-bot',
         '--cloud-enroll-token',
         'token',
       ];
@@ -298,7 +298,7 @@ describe('update-first bootstrap', () => {
           expect.objectContaining({
             arguments: created
               ? ['--cloud-enroll-token', 'token']
-              : ['--create-agent', '--cloud-enroll-token', 'token'],
+              : ['--create-bot', '--cloud-enroll-token', 'token'],
             ...(created
               ? {
                   environment: expect.objectContaining({

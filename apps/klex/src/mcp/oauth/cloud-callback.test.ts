@@ -189,4 +189,24 @@ describe('createAgentClientMetadataUrlResolver', () => {
     });
     expect(await resolve(baseUrl)).toBeUndefined();
   });
+
+  it('falls back once the lookup budget runs out, token wait included', async () => {
+    const onError = vi.fn();
+    const resolve = createAgentClientMetadataUrlResolver({
+      getAccessToken: () => new Promise<string>(() => undefined),
+      onError,
+      fetch: vi.fn(),
+      timeoutMs: 20,
+    });
+    expect(await resolve(baseUrl)).toBeUndefined();
+    expect(onError).toHaveBeenCalledOnce();
+  });
+
+  it('passes the lookup budget to the Cloud request', async () => {
+    const { fetch, resolve } = setup([
+      Response.json({ clientMetadataUrl: agentUrl }),
+    ]);
+    await resolve(baseUrl);
+    expect(fetch.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
+  });
 });

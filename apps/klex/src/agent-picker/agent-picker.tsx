@@ -163,8 +163,11 @@ function PickerScreen({
       setError(undefined);
       if (enrolling) {
         void runOpening(async () => {
-          await onEnrollmentCancelled?.(enrolling);
-          setEnrolling(undefined);
+          try {
+            await onEnrollmentCancelled?.(enrolling);
+          } finally {
+            setEnrolling(undefined);
+          }
         });
       } else if (creating) setCreating(false);
       else onComplete(undefined);

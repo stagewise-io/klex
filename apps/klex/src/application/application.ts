@@ -301,12 +301,33 @@ class ApplicationModule implements Application {
       process.stdout.write(`Created bot at ${agent.directory}\n`);
     }
     const closeInteractiveResources = async () => {
-      await interactiveCloud?.close();
-      interactiveCloud = undefined;
-      await interactiveLocalData?.close();
-      interactiveLocalData = undefined;
-      await interactiveLock?.release();
-      interactiveLock = undefined;
+      const errors: unknown[] = [];
+      // Attempt every teardown in dependency order. Retain failed resources so
+      // the next attempt (or shutdown) can retry them before reopening a bot.
+      try {
+        await interactiveCloud?.close();
+        interactiveCloud = undefined;
+      } catch (error) {
+        errors.push(error);
+      }
+      try {
+        await interactiveLocalData?.close();
+        interactiveLocalData = undefined;
+      } catch (error) {
+        errors.push(error);
+      }
+      try {
+        await interactiveLock?.release();
+        interactiveLock = undefined;
+      } catch (error) {
+        errors.push(error);
+      }
+      if (errors.length > 0) {
+        throw new AggregateError(
+          errors,
+          'Could not close bot enrollment resources',
+        );
+      }
     };
     if (cli.dataDirectory === undefined) {
       // The picker's enrollment wizard. Open while the token prompt is shown.
@@ -386,9 +407,12 @@ class ApplicationModule implements Application {
           finishPickerEnrollment('enrolled');
         },
         onEnrollmentCancelled: async () => {
-          await closeInteractiveResources();
-          cloudEnrollmentCompleted = false;
-          finishPickerEnrollment('aborted');
+          try {
+            await closeInteractiveResources();
+          } finally {
+            cloudEnrollmentCompleted = false;
+            finishPickerEnrollment('aborted');
+          }
         },
       }).choose();
       finishPickerEnrollment('aborted');

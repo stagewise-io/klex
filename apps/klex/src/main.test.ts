@@ -362,6 +362,54 @@ describe('managed-update agent continuity', () => {
     expect(mocks.logger.fatal).not.toHaveBeenCalled();
   });
 
+  it.each(['cloud', 'local data', 'lock'])(
+    'attempts all enrollment cleanup after a failed %s teardown and retries before reopening',
+    async (failure) => {
+      vi.stubEnv('KLEX_NO_CLOUD', '0');
+      const error = new Error('Cleanup failed');
+      const cloudClose = vi.fn(async () => undefined);
+      mocks.createCloudConnectivity.mockReturnValue({
+        ...mocks.resource,
+        close: cloudClose,
+        isEnrolled: () => false,
+      });
+      const completed = vi.fn();
+      mocks.createAgentPicker.mockImplementation(
+        (options: {
+          prepareAgent: (directory: string) => Promise<boolean>;
+          onEnrollmentCancelled: (directory: string) => Promise<void>;
+        }) => ({
+          choose: async () => {
+            await options.prepareAgent(mocks.selectedDirectory);
+            const failedClose =
+              failure === 'cloud'
+                ? cloudClose
+                : failure === 'local data'
+                  ? mocks.resource.close
+                  : mocks.resource.release;
+            failedClose.mockRejectedValueOnce(error);
+            await expect(
+              options.onEnrollmentCancelled(mocks.selectedDirectory),
+            ).rejects.toThrow('Could not close bot enrollment resources');
+            expect(cloudClose).toHaveBeenCalledTimes(1);
+            expect(mocks.resource.close).toHaveBeenCalledTimes(1);
+            expect(mocks.resource.release).toHaveBeenCalledTimes(1);
+            await options.prepareAgent(mocks.selectedDirectory);
+            expect(failedClose).toHaveBeenCalledTimes(2);
+            expect(mocks.resource.acquire).toHaveBeenCalledTimes(2);
+            await options.onEnrollmentCancelled(mocks.selectedDirectory);
+            completed();
+            return undefined;
+          },
+        }),
+      );
+      process.argv = [process.execPath, 'klex'];
+      await import('./main');
+      await vi.waitFor(() => expect(completed).toHaveBeenCalledOnce());
+      expect(mocks.logger.fatal).not.toHaveBeenCalled();
+    },
+  );
+
   it('checks for updates before config loading and survives a config startup failure', async () => {
     const failure = new Error('Existing configuration cannot be loaded');
     const configClose = vi.fn(async () => undefined);

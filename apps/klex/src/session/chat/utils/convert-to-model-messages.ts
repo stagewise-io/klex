@@ -209,7 +209,9 @@ function materializeContentBlocks(
           text: `<text>${escapeXmlText(res.text)}</text>`,
         });
       } else if (res.blob !== undefined && res.mimeType?.trim()) {
-        const normalizedMimeType = res.mimeType.trim().toLowerCase();
+        const normalizedMimeType =
+          res.mimeType.split(';', 1)[0]?.trim().toLowerCase() ||
+          'application/octet-stream';
         parts.push({
           type: 'file',
           mediaType: normalizedMimeType,

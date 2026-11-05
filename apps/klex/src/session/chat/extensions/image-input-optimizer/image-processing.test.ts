@@ -450,6 +450,38 @@ describe('ImageInputOptimizer — format preference', () => {
 });
 
 describe('ImageInputOptimizer — format-only conversion (no resize needed)', () => {
+  it.each(['image', 'image/jpg', 'image/unsupported'])(
+    'corrects unsupported original media type %s',
+    async (mediaType) => {
+      const img = await makeImageBuffer(100, 100, 'jpeg');
+      const content = getContent(
+        await runTransformer(
+          [makeUserMessage([makeFilePart(img, mediaType)])],
+          makeModel(),
+        ),
+        0,
+      );
+      expect(content[0]?.mediaType).toBe('image/jpeg');
+    },
+  );
+
+  it('reprocesses cached images when capabilities change for the same model', async () => {
+    const img = await makeImageBuffer(100, 100, 'png');
+    const history = [makeUserMessage([makeFilePart(img, 'image/png')])];
+    for (const mediaType of ['image/png', 'image/jpeg']) {
+      const content = getContent(
+        await runTransformer(
+          history,
+          makeModel({
+            inputCapabilities: { image: { mediaTypes: [mediaType] } },
+          }),
+        ),
+        0,
+      );
+      expect(content[0]?.mediaType).toBe(mediaType);
+    }
+  });
+
   it('converts format when image is within size limits but format not supported', async () => {
     // 100x100 is within default 2048 limits — only format is incompatible
     const img = await makeImageBuffer(100, 100, 'webp');

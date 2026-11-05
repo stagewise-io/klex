@@ -278,6 +278,29 @@ describe('startup agent picker', () => {
     expect(agentDirectory.create).toHaveBeenCalledTimes(1);
   });
 
+  it('returns to the picker with an error when cancellation cleanup fails', async () => {
+    const onEnrollmentCancelled = vi
+      .fn()
+      .mockRejectedValue(new Error('Cleanup failed'));
+    const prepareAgent = vi.fn().mockResolvedValue(true);
+    const { view } = fixture({
+      prepareAgent,
+      enrollCloud: vi.fn(),
+      onEnrollmentCancelled,
+    });
+    await press(view, '\r');
+    await vi.waitFor(() => expect(view.lastFrame()).toContain('Token:'));
+    await press(view, '\u001B');
+    await vi.waitFor(() => {
+      expect(view.lastFrame()).toContain('Select a Klex Bot');
+      expect(view.lastFrame()).toContain('Cleanup failed');
+      expect(view.lastFrame()).not.toContain('Token:');
+    });
+    await press(view, '\r');
+    await vi.waitFor(() => expect(view.lastFrame()).toContain('Token:'));
+    expect(prepareAgent).toHaveBeenCalledTimes(2);
+  });
+
   it('opens a new cloud agent directly when preparation enrolls it with a supplied token', async () => {
     const { view, props } = fixture({
       agents: [],

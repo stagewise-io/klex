@@ -36,6 +36,13 @@ export type AgentClientMetadataUrlResolver = (
  */
 export const CLOUD_AUTHORIZATION_TIMEOUT_MS = 15 * 60_000;
 
+/**
+ * Budget for the whole agent metadata lookup, token included. It runs before
+ * the SDK registers the pending authorization, which callers only wait 15s
+ * for, so a slow Cloud must fall back quickly rather than eat that window.
+ */
+export const AGENT_CLIENT_METADATA_LOOKUP_TIMEOUT_MS = 3_000;
+
 export interface CloudOAuthAuthorizationSessionFactoryOptions {
   registry: McpPendingAuthorizationRegistry;
   /** Cloud API base URL, as configured for cloud connectivity. */
@@ -99,16 +106,22 @@ export function createAgentClientMetadataUrlResolver(options: {
   getAccessToken: (resource: string, scopes: string[]) => Promise<string>;
   onError?: (error: unknown) => void;
   fetch?: typeof fetch;
+  timeoutMs?: number;
 }): AgentClientMetadataUrlResolver {
   const fetchImpl = options.fetch ?? fetch;
+  const timeoutMs =
+    options.timeoutMs ?? AGENT_CLIENT_METADATA_LOOKUP_TIMEOUT_MS;
   const cache = new Map<string, URL>();
   return async (cloudBaseUrl) => {
     const cached = cache.get(cloudBaseUrl);
     if (cached) return cached;
+    const signal = AbortSignal.timeout(timeoutMs);
     try {
-      const token = await options.getAccessToken(
-        cloudUrl(cloudBaseUrl, '/v1').toString(),
-        ['agent:access'],
+      const token = await abortable(
+        options.getAccessToken(cloudUrl(cloudBaseUrl, '/v1').toString(), [
+          'agent:access',
+        ]),
+        signal,
       );
       const response = await fetchImpl(
         cloudUrl(cloudBaseUrl, CLOUD_AGENT_OAUTH_CLIENT_PATH),
@@ -118,7 +131,7 @@ export function createAgentClientMetadataUrlResolver(options: {
             authorization: `Bearer ${token}`,
           },
           redirect: 'error',
-          signal: AbortSignal.timeout(10_000),
+          signal,
         },
       );
       if (response.status === 404) return undefined;
@@ -140,6 +153,18 @@ export function createAgentClientMetadataUrlResolver(options: {
       return undefined;
     }
   };
+}
+
+/** Rejects with the signal's reason once it aborts; `promise` keeps running. */
+function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(resolve, reject).finally(() => {
+      signal.removeEventListener('abort', onAbort);
+    });
+  });
 }
 
 export function cloudCallbackUrl(cloudBaseUrl: string): URL {

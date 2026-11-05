@@ -53,6 +53,7 @@ import {
 import type { OAuthAuthorizationSessionFactory } from './oauth/callback';
 import {
   cloudCallbackUrl,
+  createAgentClientMetadataUrlResolver,
   createCloudOAuthAuthorizationSessionFactory,
 } from './oauth/cloud-callback';
 import { LocalOAuthAuthorizationCoordinator } from './oauth/coordinator';
@@ -2089,6 +2090,7 @@ export function createMcp(deps: McpDependencies): Mcp {
   };
   const pendingAuthorizations =
     deps.pendingAuthorizations ?? new McpPendingAuthorizationRegistry();
+  const cloudConnectivity = deps.cloudConnectivity;
   const cloudSessionFactory = createCloudOAuthAuthorizationSessionFactory({
     registry: pendingAuthorizations,
     getCloudBaseUrl: () => {
@@ -2097,6 +2099,17 @@ export function createMcp(deps: McpDependencies): Mcp {
         throw new Error('Cloud connectivity is not configured');
       return cloudConnectivity.getCloudBaseUrl();
     },
+    resolveAgentClientMetadataUrl: cloudConnectivity
+      ? createAgentClientMetadataUrlResolver({
+          getAccessToken: (resource, scopes) =>
+            cloudConnectivity.getAccessToken(resource, scopes),
+          onError: (error) =>
+            logger.warn(
+              { error: safeDiagnosticError(error) },
+              'Could not resolve the agent OAuth client, using the shared Klex client',
+            ),
+        })
+      : undefined,
   });
   const sessionFactory: OAuthAuthorizationSessionFactory = {
     start: (context) =>

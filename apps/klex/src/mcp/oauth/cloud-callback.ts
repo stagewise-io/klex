@@ -19,6 +19,17 @@ export const CLOUD_OAUTH_CALLBACK_PATH = '/v1/mcp-oauth/callback';
 export const CLOUD_OAUTH_CLIENT_METADATA_PATH = '/v1/mcp-oauth/client.json';
 
 /**
+ * Returns the calling agent's own metadata document URL, which carries the
+ * agent's name and logo. Older Cloud versions answer 404.
+ */
+export const CLOUD_AGENT_OAUTH_CLIENT_PATH = '/v1/agent/mcp-oauth/client';
+
+/** Resolves the agent's metadata document URL, or undefined to use Klex's. */
+export type AgentClientMetadataUrlResolver = (
+  cloudBaseUrl: string,
+) => Promise<URL | undefined>;
+
+/**
  * Cloud authorizations are user-driven and asynchronous — the user may add a
  * server and consent minutes later — so the window is far wider than the local
  * browser flow's five minutes.
@@ -29,6 +40,7 @@ export interface CloudOAuthAuthorizationSessionFactoryOptions {
   registry: McpPendingAuthorizationRegistry;
   /** Cloud API base URL, as configured for cloud connectivity. */
   getCloudBaseUrl: () => string;
+  resolveAgentClientMetadataUrl?: AgentClientMetadataUrlResolver;
   timeoutMs?: number;
 }
 
@@ -47,15 +59,15 @@ export function createCloudOAuthAuthorizationSessionFactory(
     start: async (context): Promise<OAuthAuthorizationSession> => {
       const cloudBaseUrl = options.getCloudBaseUrl();
       const redirectUrl = cloudCallbackUrl(cloudBaseUrl);
+      // CIMD requires HTTPS; a local HTTP Cloud keeps dynamic registration.
+      const clientMetadataUrl =
+        redirectUrl.protocol === 'https:'
+          ? ((await options.resolveAgentClientMetadataUrl?.(cloudBaseUrl)) ??
+            cloudUrl(cloudBaseUrl, CLOUD_OAUTH_CLIENT_METADATA_PATH))
+          : undefined;
       return {
         redirectUrl,
-        // CIMD requires HTTPS; a local HTTP Cloud keeps dynamic registration.
-        ...(redirectUrl.protocol === 'https:' && {
-          clientMetadataUrl: cloudUrl(
-            cloudBaseUrl,
-            CLOUD_OAUTH_CLIENT_METADATA_PATH,
-          ),
-        }),
+        ...(clientMetadataUrl && { clientMetadataUrl }),
         authorize: ({ authorizationUrl, signal, state }) =>
           options.registry.register(
             {
@@ -74,6 +86,59 @@ export function createCloudOAuthAuthorizationSessionFactory(
         close: async () => undefined,
       };
     },
+  };
+}
+
+/**
+ * Asks Cloud for the agent's metadata document URL. A found URL is cached for
+ * the process, since an agent keeps its Cloud identity. A 404 (older Cloud or
+ * unknown agent) and any failure fall back to Klex's shared document, so a
+ * Cloud hiccup never blocks a connection. Misses are retried next time.
+ */
+export function createAgentClientMetadataUrlResolver(options: {
+  getAccessToken: (resource: string, scopes: string[]) => Promise<string>;
+  onError?: (error: unknown) => void;
+  fetch?: typeof fetch;
+}): AgentClientMetadataUrlResolver {
+  const fetchImpl = options.fetch ?? fetch;
+  const cache = new Map<string, URL>();
+  return async (cloudBaseUrl) => {
+    const cached = cache.get(cloudBaseUrl);
+    if (cached) return cached;
+    try {
+      const token = await options.getAccessToken(
+        cloudUrl(cloudBaseUrl, '/v1').toString(),
+        ['agent:access'],
+      );
+      const response = await fetchImpl(
+        cloudUrl(cloudBaseUrl, CLOUD_AGENT_OAUTH_CLIENT_PATH),
+        {
+          headers: {
+            accept: 'application/json',
+            authorization: `Bearer ${token}`,
+          },
+          redirect: 'error',
+          signal: AbortSignal.timeout(10_000),
+        },
+      );
+      if (response.status === 404) return undefined;
+      if (!response.ok) throw new Error(`Cloud answered ${response.status}`);
+      const body: unknown = await response.json();
+      const value =
+        typeof body === 'object' && body !== null && 'clientMetadataUrl' in body
+          ? body.clientMetadataUrl
+          : undefined;
+      if (typeof value !== 'string')
+        throw new Error('Cloud response has no clientMetadataUrl');
+      const url = new URL(value);
+      if (url.protocol !== 'https:')
+        throw new Error('Agent client metadata URL is not HTTPS');
+      cache.set(cloudBaseUrl, url);
+      return url;
+    } catch (error) {
+      options.onError?.(error);
+      return undefined;
+    }
   };
 }
 

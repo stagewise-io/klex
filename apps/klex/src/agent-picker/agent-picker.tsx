@@ -57,7 +57,7 @@ export function createAgentPicker(deps: {
   prepareAgent?: (directory: string) => Promise<boolean>;
   enrollCloud?: (directory: string, token: string) => Promise<void>;
   /** The user left the enrollment step with Escape. */
-  onEnrollmentCancelled?: (directory: string) => void;
+  onEnrollmentCancelled?: (directory: string) => void | Promise<void>;
 }): AgentPicker {
   return {
     choose: () => chooseAgent(deps),
@@ -69,7 +69,7 @@ async function chooseAgent(deps: {
   cloudEnabled?: boolean;
   prepareAgent?: (directory: string) => Promise<boolean>;
   enrollCloud?: (directory: string, token: string) => Promise<void>;
-  onEnrollmentCancelled?: (directory: string) => void;
+  onEnrollmentCancelled?: (directory: string) => void | Promise<void>;
 }): Promise<string | undefined> {
   const agents = await deps.agentDirectory.discover();
   return new Promise((resolve) => {
@@ -141,7 +141,7 @@ function PickerScreen({
   cloudEnabled?: boolean;
   prepareAgent?: (directory: string) => Promise<boolean>;
   enrollCloud?: (directory: string, token: string) => Promise<void>;
-  onEnrollmentCancelled?: (directory: string) => void;
+  onEnrollmentCancelled?: (directory: string) => void | Promise<void>;
 }) {
   const [createdAgents, setCreatedAgents] = useState<DiscoveredAgent[]>([]);
   const availableAgents = [...agents, ...createdAgents];
@@ -162,8 +162,10 @@ function PickerScreen({
       if (enrollmentSubmitting) return;
       setError(undefined);
       if (enrolling) {
-        onEnrollmentCancelled?.(enrolling);
-        setEnrolling(undefined);
+        void runOpening(async () => {
+          await onEnrollmentCancelled?.(enrolling);
+          setEnrolling(undefined);
+        });
       } else if (creating) setCreating(false);
       else onComplete(undefined);
     } else if (!creating && !enrolling && !key.ctrl && !key.meta) {
@@ -186,7 +188,7 @@ function PickerScreen({
 
   const openDirectory = async (directory: string) => {
     if (await isDirectoryInUse(directory)) {
-      throw new Error('This agent is already started. Choose another agent.');
+      throw new Error('This bot is already started. Choose another bot.');
     }
     const needsEnrollment = await prepareAgent?.(directory);
     if (needsEnrollment && enrollCloud) {
@@ -309,7 +311,7 @@ function PickerScreen({
           Choose a name for this bot. It will be used as its local identity.
         </Text>
         <Box marginTop={1} flexDirection="column">
-          <Text>Agent name:</Text>
+          <Text>Bot name:</Text>
           <TextInput
             value={name}
             onChange={setName}

@@ -26,7 +26,7 @@ interface MenuItem {
 }
 
 const MENU_ITEMS: MenuItem[] = [
-  { label: 'Agent Identity', value: 'agent-identity' },
+  { label: 'Bot Identity', value: 'agent-identity' },
   { label: 'Soul', value: 'soul' },
   { label: 'Cloud', value: 'cloud' },
   { label: 'Providers & Endpoints', value: 'providers' },
@@ -106,7 +106,7 @@ export function SettingsScreen({
         Manage identity, soul, connectivity, models, tools, and diagnostics.
       </Text>
       <Box marginTop={1} flexDirection="column">
-        <Text dimColor>Agent data directory</Text>
+        <Text dimColor>Bot data directory</Text>
         <Text>{dataDirectory}</Text>
       </Box>
       <Box marginTop={1}>

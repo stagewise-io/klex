@@ -46,7 +46,7 @@ describe('CloudScreen enrollment handoff', () => {
         expect(view.lastFrame()).toContain('Paste your enrollment code'),
       );
       view.stdin.write('test-token');
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await vi.waitFor(() => expect(view.lastFrame()).toContain('test-token'));
       view.stdin.write('\r');
       await vi.waitFor(() => expect(enroll).toHaveBeenCalledWith('test-token'));
       await vi.waitFor(() =>

@@ -106,7 +106,7 @@ export function HomeScreen({
             Cloud traffic uses an unencrypted connection ({cloud.cloudBaseUrl}).
           </Text>
           <Text dimColor>
-            Credentials and agent data may be visible in transit. Use HTTPS in
+            Credentials and bot data may be visible in transit. Use HTTPS in
             production.
           </Text>
         </ScreenSection>

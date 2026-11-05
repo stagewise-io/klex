@@ -58,7 +58,7 @@ export function AgentIdentityScreen({
           const message =
             err instanceof AdminApiClientError
               ? err.message
-              : 'Failed to load agent identity';
+              : 'Failed to load bot identity';
           setLoadError(message);
           pushToast(message, 'error');
           setLoading(false);
@@ -75,7 +75,7 @@ export function AgentIdentityScreen({
 
   useEffect(() => {
     setMeta({
-      title: mode === 'edit' ? 'Agent Identity — Edit' : 'Agent Identity',
+      title: mode === 'edit' ? 'Bot Identity — Edit' : 'Bot Identity',
       breadcrumb: ['Home', 'Settings'],
       keys:
         mode === 'view'
@@ -132,7 +132,7 @@ export function AgentIdentityScreen({
         officialName: trimmed,
       });
       setIdentity(updated);
-      pushToast('Agent name updated', 'info');
+      pushToast('Bot name updated', 'info');
       setMode('view');
     } catch (err) {
       pushToast(
@@ -147,7 +147,7 @@ export function AgentIdentityScreen({
 
   if (mode === 'edit') {
     return (
-      <ScreenSection title="Edit agent identity">
+      <ScreenSection title="Edit bot identity">
         <Text dimColor>
           Official name ({MIN_NAME}–{MAX_NAME} characters):
         </Text>
@@ -157,7 +157,7 @@ export function AgentIdentityScreen({
             onChange={(value) => {
               if (!savingRef.current) setPendingName(value);
             }}
-            placeholder="Agent name"
+            placeholder="Bot name"
             onSubmit={saveName}
             showCursor={!saving}
           />
@@ -168,7 +168,7 @@ export function AgentIdentityScreen({
   }
 
   return (
-    <ScreenSection title="Agent Identity">
+    <ScreenSection title="Bot Identity">
       {loading && <Text dimColor>Loading...</Text>}
       {!loading && loadError && !identity && (
         <Text color="red">{loadError}</Text>

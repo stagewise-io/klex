@@ -227,7 +227,7 @@ class ApplicationModule implements Application {
 
     if (cli.dataDirectory === undefined && cli.headless && !cli.createAgent) {
       throw new Error(
-        'Headless mode requires --data-dir, KLEX_DATA_DIR, or --create-bot to identify an agent directory',
+        'Headless mode requires --data-dir, KLEX_DATA_DIR, or --create-bot to identify a bot directory',
       );
     }
 
@@ -298,8 +298,16 @@ class ApplicationModule implements Application {
       cli.dataDirectory = agent.directory;
       // Keep this path visible if enrollment fails, so the user can retry with
       // --data-dir instead of creating a second identity.
-      process.stdout.write(`Created agent at ${agent.directory}\n`);
+      process.stdout.write(`Created bot at ${agent.directory}\n`);
     }
+    const closeInteractiveResources = async () => {
+      await interactiveCloud?.close();
+      interactiveCloud = undefined;
+      await interactiveLocalData?.close();
+      interactiveLocalData = undefined;
+      await interactiveLock?.release();
+      interactiveLock = undefined;
+    };
     if (cli.dataDirectory === undefined) {
       // The picker's enrollment wizard. Open while the token prompt is shown.
       let pickerEnrollment: EnrollmentTracker | undefined;
@@ -315,12 +323,7 @@ class ApplicationModule implements Application {
         prepareAgent: async (directory) => {
           finishPickerEnrollment('aborted');
           cloudEnrollmentCompleted = false;
-          await interactiveCloud?.close().catch(() => undefined);
-          interactiveCloud = undefined;
-          await interactiveLocalData?.close().catch(() => undefined);
-          interactiveLocalData = undefined;
-          await interactiveLock?.release().catch(() => undefined);
-          interactiveLock = undefined;
+          await closeInteractiveResources();
 
           await ensureDataDirectory(directory);
           const lock = createDirectoryLock({
@@ -382,7 +385,11 @@ class ApplicationModule implements Application {
           cloudEnrollmentCompleted = true;
           finishPickerEnrollment('enrolled');
         },
-        onEnrollmentCancelled: () => finishPickerEnrollment('aborted'),
+        onEnrollmentCancelled: async () => {
+          await closeInteractiveResources();
+          cloudEnrollmentCompleted = false;
+          finishPickerEnrollment('aborted');
+        },
       }).choose();
       finishPickerEnrollment('aborted');
       if (selectedDirectory === undefined) return false;
@@ -830,7 +837,7 @@ class ApplicationModule implements Application {
         // are drained after every other telemetry provider has stopped.
         await this.deps.disposeLogging();
         if (lockRelease.status === 'rejected') {
-          throw new Error('Could not release the agent-directory lock', {
+          throw new Error('Could not release the bot-directory lock', {
             cause: lockRelease.reason,
           });
         }

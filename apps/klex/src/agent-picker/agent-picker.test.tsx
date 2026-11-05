@@ -232,6 +232,70 @@ describe('startup agent picker', () => {
     });
   });
 
+  it('skips the name prompt for cloud creation and keeps the agent selectable after cancellation', async () => {
+    const onEnrollmentCancelled = vi.fn();
+    const { view, props, agentDirectory } = fixture({
+      agents: [],
+      cloudEnabled: true,
+      prepareAgent: vi.fn().mockResolvedValue(true),
+      enrollCloud: vi.fn().mockResolvedValue(undefined),
+      onEnrollmentCancelled,
+    });
+    await press(view, 'a');
+    await vi.waitFor(() => expect(view.lastFrame()).toContain('Token:'));
+    expect(agentDirectory.create).toHaveBeenCalledExactlyOnceWith(undefined);
+    expect(view.lastFrame()).not.toContain('Agent name:');
+    await press(view, '\u001B');
+    await vi.waitFor(() => expect(view.lastFrame()).toContain('Available bot'));
+    expect(onEnrollmentCancelled).toHaveBeenCalledWith(agent.directory);
+    await press(view, '\r');
+    await vi.waitFor(() => expect(view.lastFrame()).toContain('Token:'));
+    await press(view, 'token');
+    await press(view, '\r');
+    await vi.waitFor(() =>
+      expect(props.onComplete).toHaveBeenCalledWith(agent.directory),
+    );
+    expect(agentDirectory.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens a new cloud agent directly when preparation enrolls it with a supplied token', async () => {
+    const { view, props } = fixture({
+      agents: [],
+      cloudEnabled: true,
+      prepareAgent: vi.fn().mockResolvedValue(false),
+    });
+    await press(view, 'a');
+    await vi.waitFor(() =>
+      expect(props.onComplete).toHaveBeenCalledWith(agent.directory),
+    );
+    expect(view.frames.some((frame) => frame.includes('Agent name:'))).toBe(
+      false,
+    );
+  });
+
+  it('blocks duplicate creation and cancellation while opening', async () => {
+    let finish: ((value: DiscoveredAgent) => void) | undefined;
+    const { view, props, agentDirectory } = fixture({
+      agents: [],
+      cloudEnabled: true,
+    });
+    vi.mocked(agentDirectory.create).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    await press(view, 'a');
+    await press(view, 'a');
+    await press(view, '\u001B');
+    expect(agentDirectory.create).toHaveBeenCalledTimes(1);
+    expect(props.onComplete).not.toHaveBeenCalled();
+    finish?.(agent);
+    await vi.waitFor(() =>
+      expect(props.onComplete).toHaveBeenCalledWith(agent.directory),
+    );
+  });
+
   it('keeps cloud enrollment errors single-line', async () => {
     const { view, props } = fixture({
       prepareAgent: vi.fn().mockResolvedValue(true),

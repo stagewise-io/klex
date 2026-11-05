@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
 import type { Application } from '@/application';
-import type { CliOptions } from '@/cli';
+import { agentRestartArgs, type CliOptions } from '@/cli';
 import { createHealthServer, type HealthServer } from '@/health-server';
 import { KLEX_VERSION, resolveReleaseTarget } from '@/release';
 import {
@@ -194,7 +194,12 @@ class UpdateBootstrapModule implements UpdateBootstrap {
     }
     this.phase = 'restarting';
     this.shutdown?.requestRestart({
-      arguments: process.argv.slice(2),
+      // Before creation, retain the request. Once a directory exists, even a
+      // failed startup must reopen it rather than create a second agent.
+      arguments:
+        this.deps.cli.dataDirectory === undefined
+          ? process.argv.slice(2)
+          : agentRestartArgs(process.argv.slice(2)),
       cwd: process.cwd(),
       environment: {
         ...process.env,

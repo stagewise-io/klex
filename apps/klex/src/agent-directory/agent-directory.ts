@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { mkdir, readdir, readFile, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -25,7 +26,8 @@ export interface DiscoveredAgent {
 export interface AgentDirectory {
   ensureRoot(): Promise<void>;
   discover(): Promise<DiscoveredAgent[]>;
-  create(officialName: string): Promise<DiscoveredAgent>;
+  /** Omit the name for a cloud agent with a stable UUID directory. */
+  create(officialName?: string): Promise<DiscoveredAgent>;
 }
 
 export interface AgentDirectoryDependencies {
@@ -99,15 +101,17 @@ class AgentDirectoryModule implements AgentDirectory {
     return agents.sort((a, b) => a.officialName.localeCompare(b.officialName));
   }
 
-  async create(officialName: string): Promise<DiscoveredAgent> {
-    const name = validateAgentName(officialName);
+  async create(officialName?: string): Promise<DiscoveredAgent> {
+    const name =
+      officialName === undefined ? 'Agent' : validateAgentName(officialName);
+    const directoryName = officialName === undefined ? randomUUID() : name;
     await this.ensureRoot();
-    const directory = join(this.deps.rootDirectory, name);
+    const directory = join(this.deps.rootDirectory, directoryName);
 
     try {
       await mkdir(directory, { recursive: false, mode: DIRECTORY_MODE });
     } catch (error) {
-      throw new Error(`Could not create agent directory "${name}"`, {
+      throw new Error(`Could not create agent directory "${directoryName}"`, {
         cause: error,
       });
     }

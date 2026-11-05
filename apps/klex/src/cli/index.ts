@@ -1,1 +1,1 @@
-export { type CliOptions, parseCliArgs } from './cli';
+export { agentRestartArgs, type CliOptions, parseCliArgs } from './cli';

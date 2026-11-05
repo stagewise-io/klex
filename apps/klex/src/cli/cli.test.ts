@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { KLEX_VERSION } from '@/release';
 
-import { parseCliArgs } from './cli';
+import { agentRestartArgs, parseCliArgs } from './cli';
 
 describe('parseCliArgs', () => {
   const originalEnv = { ...process.env };
@@ -61,6 +61,83 @@ describe('parseCliArgs', () => {
         delete process.env[key as keyof typeof process.env];
       }
     }
+  });
+
+  describe('agent creation', () => {
+    it('does not create by default', () => {
+      expect(parseCliArgs([])).toMatchObject({
+        createAgent: false,
+        agentName: undefined,
+      });
+    });
+    it.each([{ flags: [] }, { flags: ['--headless'] }])(
+      'creates a cloud agent with flags %j',
+      ({ flags }) => {
+        expect(
+          parseCliArgs([
+            '--create-agent',
+            '--cloud-enroll-token',
+            ' token ',
+            ...flags,
+          ]),
+        ).toMatchObject({
+          createAgent: true,
+          cloudEnabled: true,
+          cloudEnrollToken: 'token',
+          agentName: undefined,
+        });
+      },
+    );
+    it('accepts an enrollment token from the environment', () => {
+      process.env.KLEX_CLOUD_ENROLLMENT_TOKEN = 'token';
+      expect(parseCliArgs(['--create-agent']).createAgent).toBe(true);
+    });
+    it('creates a named local agent', () => {
+      expect(
+        parseCliArgs(['--create-agent', '--no-cloud', '--agent-name', ' Ada ']),
+      ).toMatchObject({
+        createAgent: true,
+        cloudEnabled: false,
+        agentName: 'Ada',
+      });
+    });
+    it.each([
+      [['--create-agent'], 'requires --cloud-enroll-token'],
+      [
+        ['--create-agent', '--cloud-enroll-token', ' '],
+        'requires --cloud-enroll-token',
+      ],
+      [['--create-agent', '--no-cloud'], 'requires --agent-name'],
+      [
+        ['--create-agent', '--no-cloud', '--agent-name', ' '],
+        'requires --agent-name',
+      ],
+      [['--agent-name', 'Ada'], 'requires --create-agent'],
+      [
+        ['--create-agent', '--agent-name', 'Ada'],
+        'only supported with --no-cloud',
+      ],
+      [['--create-agent', '--data-dir', '/existing'], 'cannot be combined'],
+    ])('rejects invalid creation arguments %j', (args, message) => {
+      expect(() => parseCliArgs(args)).toThrow(message);
+    });
+    it('rejects an environment-selected data directory', () => {
+      process.env.KLEX_DATA_DIR = '/existing';
+      expect(() => parseCliArgs(['--create-agent'])).toThrow(
+        'cannot be combined',
+      );
+    });
+    it.each([
+      ['--create-agent', '--no-cloud', '--agent-name', 'Ada', '--verbose'],
+      ['--create-agent', '--no-cloud', '--agent-name=Ada', '--verbose'],
+    ])('removes one-shot creation flags from restart args %j', (...args) => {
+      expect(agentRestartArgs(args)).toEqual(['--no-cloud', '--verbose']);
+    });
+    it('preserves unrelated argument values resembling creation flags', () => {
+      expect(agentRestartArgs(['--cloud-enroll-token=--create-agent'])).toEqual(
+        ['--cloud-enroll-token=--create-agent'],
+      );
+    });
   });
 
   describe('health listener', () => {

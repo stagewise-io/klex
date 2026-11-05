@@ -13,7 +13,7 @@ import { createAdminApi } from '@/admin-api';
 import { createAgentDirectory, defaultAgentRoot } from '@/agent-directory';
 import { createAgentPicker } from '@/agent-picker';
 import { type AutoUpdate, createAutoUpdate } from '@/auto-update';
-import type { CliOptions } from '@/cli';
+import { agentRestartArgs, type CliOptions } from '@/cli';
 import { createCliUi } from '@/cli-ui';
 import {
   type CloudConnectivity,
@@ -225,9 +225,9 @@ class ApplicationModule implements Application {
       'Klex Bot started',
     );
 
-    if (cli.dataDirectory === undefined && cli.headless) {
+    if (cli.dataDirectory === undefined && cli.headless && !cli.createAgent) {
       throw new Error(
-        'Headless mode requires --data-dir or KLEX_DATA_DIR to identify an agent directory',
+        'Headless mode requires --data-dir, KLEX_DATA_DIR, or --create-agent to identify an agent directory',
       );
     }
 
@@ -279,6 +279,15 @@ class ApplicationModule implements Application {
       logging,
       rootDirectory: cli.agentRoot || defaultAgentRoot(),
     });
+    if (cli.createAgent) {
+      const agent = await agentDirectory.create(
+        cli.cloudEnabled ? undefined : cli.agentName,
+      );
+      cli.dataDirectory = agent.directory;
+      // Keep this path visible if enrollment fails, so the user can retry with
+      // --data-dir instead of creating a second identity.
+      process.stdout.write(`Created agent at ${agent.directory}\n`);
+    }
     if (cli.dataDirectory === undefined) {
       // The picker's enrollment wizard. Open while the token prompt is shown.
       let pickerEnrollment: EnrollmentTracker | undefined;
@@ -290,6 +299,7 @@ class ApplicationModule implements Application {
       };
       const selectedDirectory = await createAgentPicker({
         agentDirectory,
+        cloudEnabled: cli.cloudEnabled,
         prepareAgent: async (directory) => {
           finishPickerEnrollment('aborted');
           await interactiveCloud?.close().catch(() => undefined);
@@ -859,7 +869,7 @@ class ApplicationModule implements Application {
     this.restartHandler = (updatedInstallation) => {
       const restart = () =>
         shutdown.requestRestart({
-          arguments: process.argv.slice(2),
+          arguments: agentRestartArgs(process.argv.slice(2)),
           cwd: process.cwd(),
           environment: {
             ...process.env,

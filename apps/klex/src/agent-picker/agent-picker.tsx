@@ -5,6 +5,7 @@ import {
   type ComponentProps,
   type ReactNode,
   useEffect,
+  useRef,
   useState,
 } from 'react';
 
@@ -52,6 +53,7 @@ function PickerError({ message }: { message: string }) {
 
 export function createAgentPicker(deps: {
   agentDirectory: AgentDirectory;
+  cloudEnabled?: boolean;
   prepareAgent?: (directory: string) => Promise<boolean>;
   enrollCloud?: (directory: string, token: string) => Promise<void>;
   /** The user left the enrollment step with Escape. */
@@ -64,6 +66,7 @@ export function createAgentPicker(deps: {
 
 async function chooseAgent(deps: {
   agentDirectory: AgentDirectory;
+  cloudEnabled?: boolean;
   prepareAgent?: (directory: string) => Promise<boolean>;
   enrollCloud?: (directory: string, token: string) => Promise<void>;
   onEnrollmentCancelled?: (directory: string) => void;
@@ -83,6 +86,7 @@ async function chooseAgent(deps: {
         agents={agents}
         onComplete={finish}
         agentDirectory={deps.agentDirectory}
+        cloudEnabled={deps.cloudEnabled}
         prepareAgent={deps.prepareAgent}
         enrollCloud={deps.enrollCloud}
         onEnrollmentCancelled={deps.onEnrollmentCancelled}
@@ -126,6 +130,7 @@ function PickerScreen({
   agents,
   onComplete,
   agentDirectory,
+  cloudEnabled = false,
   prepareAgent,
   enrollCloud,
   onEnrollmentCancelled,
@@ -133,11 +138,16 @@ function PickerScreen({
   agents: DiscoveredAgent[];
   onComplete: (directory: string | undefined) => void;
   agentDirectory: AgentDirectory;
+  cloudEnabled?: boolean;
   prepareAgent?: (directory: string) => Promise<boolean>;
   enrollCloud?: (directory: string, token: string) => Promise<void>;
   onEnrollmentCancelled?: (directory: string) => void;
 }) {
+  const [createdAgents, setCreatedAgents] = useState<DiscoveredAgent[]>([]);
+  const availableAgents = [...agents, ...createdAgents];
   const [creating, setCreating] = useState(false);
+  const [opening, setOpening] = useState(false);
+  const pending = useRef(false);
   const [name, setName] = useState('');
   const [error, setError] = useState<string | undefined>();
   const [enrolling, setEnrolling] = useState<string | undefined>();
@@ -145,6 +155,7 @@ function PickerScreen({
   const [enrollmentSubmitting, setEnrollmentSubmitting] = useState(false);
 
   useInput((input, key) => {
+    if (pending.current) return;
     if (key.escape) {
       // An in-flight request decides the outcome: cancelling here would
       // report an abort and then open the agent if the request succeeds.
@@ -160,7 +171,8 @@ function PickerScreen({
       else if (input.toLowerCase() === 'a') {
         setError(undefined);
         setName('');
-        setCreating(true);
+        if (cloudEnabled) void createAgent();
+        else setCreating(true);
       }
     }
   });
@@ -172,37 +184,55 @@ function PickerScreen({
     setError(undefined);
   }, [creating]);
 
-  const selectDirectory = (directory: string) => {
-    setError(undefined);
-    void isDirectoryInUse(directory)
-      .then((inUse) => {
-        if (inUse) {
-          setError('This agent is already started. Choose another agent.');
-          return;
-        }
-        if (!prepareAgent) {
-          onComplete(directory);
-          return;
-        }
-        void prepareAgent(directory).then(
-          (needsEnrollment) => {
-            if (needsEnrollment && enrollCloud) {
-              setEnrollmentToken('');
-              setEnrollmentSubmitting(false);
-              setError(undefined);
-              setEnrolling(directory);
-            } else {
-              onComplete(directory);
-            }
-          },
-          (cause: unknown) =>
-            setError(cause instanceof Error ? cause.message : String(cause)),
-        );
-      })
-      .catch((cause: unknown) =>
-        setError(cause instanceof Error ? cause.message : String(cause)),
-      );
+  const openDirectory = async (directory: string) => {
+    if (await isDirectoryInUse(directory)) {
+      throw new Error('This agent is already started. Choose another agent.');
+    }
+    const needsEnrollment = await prepareAgent?.(directory);
+    if (needsEnrollment && enrollCloud) {
+      setEnrollmentToken('');
+      setEnrollmentSubmitting(false);
+      setEnrolling(directory);
+    } else {
+      onComplete(directory);
+    }
   };
+
+  const runOpening = async (operation: () => Promise<void>) => {
+    if (pending.current) return;
+    pending.current = true;
+    setOpening(true);
+    setError(undefined);
+    try {
+      await operation();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      pending.current = false;
+      setOpening(false);
+    }
+  };
+  const selectDirectory = (directory: string) =>
+    runOpening(() => openDirectory(directory));
+  const createAgent = () =>
+    runOpening(async () => {
+      const agent = await agentDirectory.create(
+        cloudEnabled ? undefined : name,
+      );
+      setCreatedAgents((previous) => [...previous, agent]);
+      setCreating(false);
+      await openDirectory(agent.directory);
+    });
+
+  if (opening) {
+    return (
+      <PickerFrame title="Opening Klex Bot" keys={[]}>
+        <Text>
+          <Spinner type="dots" /> Opening...
+        </Text>
+      </PickerFrame>
+    );
+  }
 
   if (enrolling) {
     return (
@@ -284,13 +314,7 @@ function PickerScreen({
             value={name}
             onChange={setName}
             onSubmit={() => {
-              void agentDirectory.create(name).then(
-                (agent) => selectDirectory(agent.directory),
-                (cause: unknown) =>
-                  setError(
-                    cause instanceof Error ? cause.message : String(cause),
-                  ),
-              );
+              void createAgent();
             }}
           />
         </Box>
@@ -299,7 +323,7 @@ function PickerScreen({
     );
   }
 
-  const items: MenuItem<string>[] = agents.map((agent) => ({
+  const items: MenuItem<string>[] = availableAgents.map((agent) => ({
     label: agent.inUse
       ? `${agent.officialName} (${agent.directory}) — already started`
       : agent.compatibilityError
@@ -313,7 +337,7 @@ function PickerScreen({
     <PickerFrame
       title="Select a Klex Bot"
       keys={[
-        ...(agents.length > 0
+        ...(availableAgents.length > 0
           ? [
               { key: '↑↓', label: 'Navigate' },
               { key: 'enter', label: 'Select' },
@@ -329,7 +353,9 @@ function PickerScreen({
       {items.length > 0 ? (
         <AgentChoiceList
           items={items}
-          onSelect={(item) => selectDirectory(item.value)}
+          onSelect={(item) => {
+            void selectDirectory(item.value);
+          }}
         />
       ) : (
         <Box marginTop={1}>

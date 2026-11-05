@@ -51,6 +51,8 @@ const mocks = vi.hoisted(() => {
     createLearningExt:
       vi.fn<(options: { getSoul: () => string | null }) => void>(),
     readSoul: vi.fn((_directory: string) => 'Current soul'),
+    createAgent: vi.fn(),
+    createCloudConnectivity: vi.fn(),
     createAgentPicker: vi.fn(),
     createCliUi: vi.fn(),
     ensureDataDirectory: vi.fn(),
@@ -64,7 +66,7 @@ const mocks = vi.hoisted(() => {
 vi.mock('@stagewise/logger', () => ({ createLogger: () => mocks.logger }));
 vi.mock('@/admin-api', () => ({ createAdminApi: () => mocks.resource }));
 vi.mock('@/agent-directory', () => ({
-  createAgentDirectory: vi.fn(),
+  createAgentDirectory: () => ({ create: mocks.createAgent }),
   defaultAgentRoot: () => '/unused/agents',
 }));
 vi.mock('@/agent-picker', () => ({
@@ -72,7 +74,7 @@ vi.mock('@/agent-picker', () => ({
 }));
 vi.mock('@/cli-ui', () => ({ createCliUi: mocks.createCliUi }));
 vi.mock('@/cloud-connectivity', () => ({
-  createCloudConnectivity: () => mocks.resource,
+  createCloudConnectivity: mocks.createCloudConnectivity,
 }));
 vi.mock('@/composition/runtime', () => ({
   startRuntime: () => mocks.resource,
@@ -251,6 +253,12 @@ describe('managed-update agent continuity', () => {
         },
       }),
     );
+    mocks.createAgent.mockResolvedValue({
+      directory: mocks.selectedDirectory,
+      officialName: 'Agent',
+      inUse: false,
+    });
+    mocks.createCloudConnectivity.mockReturnValue(mocks.resource);
     mocks.createCliUi.mockReturnValue(mocks.resource);
     mocks.createConfig.mockReturnValue(mocks.resource);
     mocks.createTracing.mockReturnValue(mocks.resource);
@@ -474,6 +482,50 @@ describe('managed-update agent continuity', () => {
     expect(mocks.readSoul).toHaveBeenCalledWith(
       join(mocks.selectedDirectory, 'extensions', 'io.stagewise/soul'),
     );
+  });
+
+  it.each([false, true])(
+    'creates and enrolls a cloud agent without the picker, headless=%s',
+    async (headless) => {
+      await launch([
+        '--create-agent',
+        '--cloud',
+        '--cloud-enroll-token',
+        'test-token',
+        ...(headless ? ['--headless', '--auto-update'] : []),
+      ]);
+      await vi.waitFor(() =>
+        expect(mocks.createAgent).toHaveBeenCalledExactlyOnceWith(undefined),
+      );
+      await vi.waitFor(() =>
+        expect(mocks.resource.setTunnelRequestHandler).toHaveBeenCalled(),
+      );
+      expect(mocks.createAgentPicker).not.toHaveBeenCalled();
+      expect(mocks.createCloudConnectivity).toHaveBeenCalledWith(
+        expect.objectContaining({
+          dataDirectory: mocks.selectedDirectory,
+          enrollmentToken: 'test-token',
+          cloudEnabled: true,
+        }),
+      );
+      expect(mocks.resource.acquire).toHaveBeenCalledOnce();
+      expect(mocks.createConfig).toHaveBeenCalled();
+      const restart = requestRestart();
+      expect(restart.arguments).not.toContain('--create-agent');
+      vi.stubEnv('KLEX_DATA_DIR', restart.environment.KLEX_DATA_DIR);
+      vi.resetModules();
+      vi.clearAllMocks();
+      await launch([...restart.arguments]);
+      expect(mocks.createAgent).not.toHaveBeenCalled();
+      expect(mocks.createAgentPicker).not.toHaveBeenCalled();
+    },
+  );
+
+  it('creates a named local agent without the picker', async () => {
+    await launch(['--create-agent', '--no-cloud', '--agent-name', 'Ada']);
+    expect(mocks.createAgent).toHaveBeenCalledExactlyOnceWith('Ada');
+    expect(mocks.createAgentPicker).not.toHaveBeenCalled();
+    expect(requestRestart().arguments).toEqual(['--no-cloud']);
   });
 
   it('carries the picker selection only in the restart environment', async () => {

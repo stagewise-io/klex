@@ -485,7 +485,13 @@ class ProviderRegistryModule implements ProviderRegistry {
   private unsubscribe: (() => void) | undefined;
   private readonly modelCache = new Map<
     ProviderInstanceId,
-    { signature: string; models: readonly ProviderModel[]; fetchedAt: number }
+    {
+      signature: string;
+      models: readonly ProviderModel[];
+      fetchedAt: number;
+      /** Why the latest refresh failed; cleared by the next success. */
+      issue?: ModelDiscoveryStatus['issue'];
+    }
   >();
   private readonly pendingDiscovery = new Map<
     ProviderInstanceId,
@@ -1274,8 +1280,9 @@ class ProviderRegistryModule implements ProviderRegistry {
     ) {
       models = usable.models;
       discovery = {
-        status: 'cached',
+        status: usable.issue ? 'stale' : 'cached',
         fetchedAt: new Date(usable.fetchedAt).toISOString(),
+        ...(usable.issue && { issue: usable.issue }),
       };
     } else {
       const result = await this.discover(
@@ -1292,6 +1299,7 @@ class ProviderRegistryModule implements ProviderRegistry {
         // A failed refresh keeps the last good list or the maintained
         // catalog, so pickers stay usable and still show why.
         if (usable) {
+          usable.issue = issue;
           models = usable.models;
           discovery = {
             status: 'stale',

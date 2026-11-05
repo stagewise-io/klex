@@ -279,6 +279,21 @@ describe('provider registry module integration', () => {
       });
       expect(discoverModels).toHaveBeenCalledTimes(2);
 
+      // A failed forced refresh stays visible on later reads of the warm cache.
+      const stale = {
+        value: {
+          models: [{ modelId: 'live-model', source: 'discovered' }],
+          discovery: {
+            status: 'stale',
+            fetchedAt: '2026-10-29T10:00:00.000Z',
+            issue: { code: 'discovery_failed' },
+          },
+        },
+      };
+      expect(await registry.listModels('fallback', true)).toMatchObject(stale);
+      expect(await registry.listModels('fallback')).toMatchObject(stale);
+      expect(discoverModels).toHaveBeenCalledTimes(3);
+
       // After the cache expires, a failed refresh keeps the last good list.
       vi.setSystemTime(new Date('2026-10-29T11:01:00.000Z'));
       expect(await registry.listModels('fallback')).toMatchObject({
@@ -291,7 +306,20 @@ describe('provider registry module integration', () => {
           },
         },
       });
-      expect(discoverModels).toHaveBeenCalledTimes(3);
+      expect(discoverModels).toHaveBeenCalledTimes(4);
+
+      // The next successful fetch clears the failure.
+      discoverModels.mockResolvedValueOnce({
+        ok: true,
+        code: 'available',
+        value: [{ modelId: 'live-model' }],
+      });
+      await registry.listModels('fallback', true);
+      const cached = await registry.listModels('fallback');
+      expect(cached).toMatchObject({
+        value: { discovery: { status: 'cached' } },
+      });
+      expect(cached.ok && cached.value.discovery?.issue).toBeUndefined();
     } finally {
       vi.useRealTimers();
       await registry.close();

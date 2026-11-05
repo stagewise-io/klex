@@ -11,6 +11,7 @@ import {
 import z from 'zod';
 
 import type { ModelSelectionEntry } from '@/config';
+import { adaptRemoteMedia } from '../content-adaptation/file-adaptation';
 
 import type {
   ContextProcessingResult,
@@ -138,7 +139,7 @@ class ImageInputOptimizerExt implements Extension {
               if (part.type === 'image') {
                 return this.processImagePart(
                   part,
-                  model.modelId,
+                  model,
                   settings,
                   `${messageIndex}-${partIndex}`,
                   hasVisionModels,
@@ -148,7 +149,7 @@ class ImageInputOptimizerExt implements Extension {
               if (part.type === 'file' && part.mediaType.startsWith('image')) {
                 return this.processImagePart(
                   part,
-                  model.modelId,
+                  model,
                   settings,
                   `${messageIndex}-${partIndex}`,
                   hasVisionModels,
@@ -169,7 +170,7 @@ class ImageInputOptimizerExt implements Extension {
               if (part.type === 'file' && part.mediaType.startsWith('image')) {
                 return this.processImagePart(
                   part,
-                  model.modelId,
+                  model,
                   settings,
                   `${messageIndex}-${partIndex}`,
                   hasVisionModels,
@@ -207,7 +208,7 @@ class ImageInputOptimizerExt implements Extension {
                   ) {
                     return this.processImagePart(
                       item as FilePart,
-                      model.modelId,
+                      model,
                       settings,
                       `${messageIndex}-${partIndex}-${valueIndex}`,
                       hasVisionModels,
@@ -245,7 +246,7 @@ class ImageInputOptimizerExt implements Extension {
 
   private async processImagePart(
     part: FilePart | ImagePart,
-    modelId: string,
+    model: ResolvedModel,
     settings: EffectiveVision,
     imageId: string,
     hasVisionModels: boolean,
@@ -302,10 +303,16 @@ class ImageInputOptimizerExt implements Extension {
     }
 
     // supports === true: pass through URL/reference images uncached
-    if (buffer === null) return part;
+    if (buffer === null)
+      return (
+        (await adaptRemoteMedia(part, this.deps, model, 'image')) ?? {
+          type: 'text',
+          text: UNSUPPORTED_IMAGE_TEXT,
+        }
+      );
 
     // supports === true: process image (resize, format, etc.) with caching
-    const cacheKey = `${createHash('sha1').update(buffer).digest('hex').slice(0, 16)}:${modelId}`;
+    const cacheKey = `${createHash('sha1').update(buffer).digest('hex').slice(0, 16)}:${model.modelId}:${JSON.stringify(settings)}`;
     const cached = cache.get(cacheKey);
     if (cached !== undefined) return cached;
 

@@ -1,7 +1,10 @@
 import type { FilePart, ImagePart, ModelMessage } from 'ai';
 
 /** Normalize SDK/MCP tool media into ordinary input parts without serializing payloads. */
-export function projectToolMedia(value: unknown): FilePart | ImagePart | null {
+export function projectToolMedia(
+  value: unknown,
+  includeRemote = false,
+): FilePart | ImagePart | null {
   if (!value || typeof value !== 'object') return null;
   const item = value as Record<string, unknown>;
   if (item.type === 'image-url' && typeof item.url === 'string') {
@@ -41,8 +44,11 @@ export function projectToolMedia(value: unknown): FilePart | ImagePart | null {
     'type' in item.data &&
     (item.data as { type?: unknown }).type === 'url'
   )
-    return null;
-  if (item.type === 'file' && item.data !== undefined) return value as FilePart;
+    return includeRemote
+      ? ({ type: 'file', mediaType, data: item.data } as FilePart)
+      : null;
+  if (item.type === 'file' && item.data !== undefined)
+    return { ...(value as FilePart) };
   return null;
 }
 

@@ -17,7 +17,7 @@ import {
   runOptimization,
 } from '../audio-input-optimizer/audio-processing';
 import audioSystemPrompt from '../audio-input-optimizer/audio-system-prompt.md';
-import type { ExtensionDeps, ResolvedModel } from '../extension-api';
+import type { ExtensionDeps } from '../extension-api';
 import {
   extractImageBuffer,
   runOptimization as optimizeImage,
@@ -30,12 +30,18 @@ import {
 } from '../image-input-optimizer/vision-helper';
 import visionSystemPrompt from '../image-input-optimizer/vision-system-prompt.md';
 import { projectToolMedia } from './media-projection';
+import {
+  adaptFilePart,
+  adaptRemoteMedia,
+  normalizeMediaType,
+  type AdaptationModel,
+} from './file-adaptation';
 
 /** Media-only projections can use this entry point without interactive tool policy. */
 export async function adaptContent(
   history: readonly ModelMessage[],
   deps: ExtensionDeps,
-  model: Pick<ResolvedModel, 'modelId' | 'inputCapabilities'>,
+  model: AdaptationModel,
 ): Promise<ModelMessage[]> {
   let aborted = false;
   const trackedDeps: ExtensionDeps = {
@@ -47,7 +53,14 @@ export async function adaptContent(
       return result;
     },
   };
-  const audio = await adaptAudioContent(history, trackedDeps, model);
+  const audio = await adaptAudioContent(
+    history,
+    trackedDeps,
+    model,
+    undefined,
+    true,
+    true,
+  );
   if (aborted)
     throw new Error('Media adaptation aborted', { cause: 'aborted' });
   return Promise.all(
@@ -89,12 +102,18 @@ export async function adaptContent(
 async function adaptImagePart(
   part: FilePart | ImagePart,
   deps: ExtensionDeps,
-  model: Pick<ResolvedModel, 'inputCapabilities'>,
+  model: AdaptationModel,
 ): Promise<FilePart | ImagePart | TextPart> {
   const settings = resolveEffectiveVision(model.inputCapabilities);
   const buffer = extractImageBuffer(part);
   if (settings.supports) {
-    if (!buffer) return { ...part };
+    if (!buffer)
+      return (
+        (await adaptRemoteMedia(part, deps, model, 'image')) ?? {
+          type: 'text',
+          text: UNSUPPORTED_IMAGE_TEXT,
+        }
+      );
     try {
       return await optimizeImage(buffer, part, settings);
     } catch (error) {
@@ -129,7 +148,7 @@ async function adaptImagePart(
 export async function adaptAudioPart(
   deps: ExtensionDeps,
   part: FilePart,
-  model: Pick<ResolvedModel, 'modelId' | 'inputCapabilities'>,
+  model: AdaptationModel,
   describeReferences = true,
 ): Promise<ProcessedPart> {
   const settings = resolveEffectiveAudio(model.inputCapabilities);
@@ -160,7 +179,15 @@ export async function adaptAudioPart(
       };
     return { type: 'text', text: UNSUPPORTED_AUDIO_TEXT };
   }
-  if (buffer === null) return { ...part };
+  if (buffer === null)
+    return (
+      ((await adaptRemoteMedia(
+        part,
+        deps,
+        model,
+        'audio',
+      )) as FilePart | null) ?? { type: 'text', text: UNSUPPORTED_AUDIO_TEXT }
+    );
   // Include capabilities: a provider override can change limits for the same model ID.
   const key = `${hash}:${model.modelId}:${JSON.stringify(settings)}`;
   const cached = cache.get(key);
@@ -181,13 +208,14 @@ export async function adaptAudioPart(
 export async function adaptAudioContent(
   history: readonly ModelMessage[],
   deps: ExtensionDeps,
-  model: Pick<ResolvedModel, 'modelId' | 'inputCapabilities'>,
+  model: AdaptationModel,
   decorate?: (
     original: FilePart,
     adapted: ProcessedPart,
     id: string,
   ) => ProcessedPart,
   describeReferences = true,
+  compaction = false,
 ): Promise<ModelMessage[]> {
   const process = async (part: FilePart, id: string) => {
     const adapted = await adaptAudioPart(deps, part, model, describeReferences);
@@ -201,6 +229,14 @@ export async function adaptAudioContent(
       if (message.role === 'user') {
         const content = await Promise.all(
           message.content.map(async (part, partIndex) => {
+            if (part.type === 'file')
+              part = { ...part, mediaType: normalizeMediaType(part.mediaType) };
+            if (
+              part.type === 'file' &&
+              !part.mediaType.startsWith('image') &&
+              !part.mediaType.startsWith('audio')
+            )
+              return adaptFilePart(part, message.role, deps, model, compaction);
             if (part.type === 'file' && part.mediaType.startsWith('audio')) {
               return process(part, `${messageIndex}-${partIndex}`);
             }
@@ -214,6 +250,14 @@ export async function adaptAudioContent(
       if (message.role === 'assistant') {
         const content = await Promise.all(
           message.content.map(async (part, partIndex) => {
+            if (part.type === 'file')
+              part = { ...part, mediaType: normalizeMediaType(part.mediaType) };
+            if (
+              part.type === 'file' &&
+              !part.mediaType.startsWith('image') &&
+              !part.mediaType.startsWith('audio')
+            )
+              return adaptFilePart(part, message.role, deps, model, compaction);
             if (part.type === 'file' && part.mediaType.startsWith('audio')) {
               return process(
                 part,
@@ -246,7 +290,25 @@ export async function adaptAudioContent(
             }
             const newValue = await Promise.all(
               output.value.map(async (item, valueIndex) => {
-                const audio = projectToolMedia(item);
+                const audio = projectToolMedia(item, true);
+                if (audio?.type === 'file') {
+                  audio.mediaType = normalizeMediaType(audio.mediaType);
+                  if (
+                    !audio.mediaType.startsWith('image') &&
+                    !audio.mediaType.startsWith('audio')
+                  ) {
+                    const adapted = await adaptFilePart(
+                      audio,
+                      'tool',
+                      deps,
+                      model,
+                      compaction,
+                    );
+                    return adapted.type === 'text'
+                      ? adapted
+                      : { ...item, mediaType: adapted.mediaType };
+                  }
+                }
                 if (
                   audio?.type !== 'file' ||
                   !audio.mediaType.startsWith('audio/')
@@ -266,7 +328,7 @@ export async function adaptAudioContent(
                       mediaType: adapted.mediaType,
                       data: buffer.toString('base64'),
                     }
-                  : item;
+                  : { ...item, mediaType: adapted.mediaType };
               }),
             );
             return {

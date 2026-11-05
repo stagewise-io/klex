@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => {
     release: vi.fn(async (): Promise<void> => undefined),
     get: () => ({ officialName: 'Selected agent', timezone: 'UTC' }),
     agentStarted: vi.fn(),
+    trackEnrollment: vi.fn(() => ({ attemptFailed: vi.fn(), finish: vi.fn() })),
     setDynamicResourceAttributes: vi.fn(),
     setModelCallSink: vi.fn(),
     handle: vi.fn(),
@@ -488,7 +489,7 @@ describe('managed-update agent continuity', () => {
     'creates and enrolls a cloud agent without the picker, headless=%s',
     async (headless) => {
       await launch([
-        '--create-agent',
+        '--create-bot',
         '--cloud',
         '--cloud-enroll-token',
         'test-token',
@@ -511,7 +512,7 @@ describe('managed-update agent continuity', () => {
       expect(mocks.resource.acquire).toHaveBeenCalledOnce();
       expect(mocks.createConfig).toHaveBeenCalled();
       const restart = requestRestart();
-      expect(restart.arguments).not.toContain('--create-agent');
+      expect(restart.arguments).not.toContain('--create-bot');
       vi.stubEnv('KLEX_DATA_DIR', restart.environment.KLEX_DATA_DIR);
       vi.resetModules();
       vi.clearAllMocks();
@@ -521,8 +522,63 @@ describe('managed-update agent continuity', () => {
     },
   );
 
+  it.each(['enrolled', 'failed', 'aborted'] as const)(
+    'shows the startup handoff only for successful token enrollment: %s',
+    async (outcome) => {
+      mocks.createCloudConnectivity.mockImplementationOnce(
+        (options: {
+          onTokenEnrollment: () => { finish(outcome: string): void };
+        }) => {
+          options.onTokenEnrollment().finish(outcome);
+          return mocks.resource;
+        },
+      );
+      await launch([
+        '--create-bot',
+        '--cloud',
+        '--cloud-enroll-token',
+        'test-token',
+      ]);
+      await vi.waitFor(() => expect(mocks.createCliUi).toHaveBeenCalled());
+      expect(mocks.createCliUi).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cloudEnrollmentCompleted: outcome === 'enrolled',
+        }),
+      );
+    },
+  );
+
+  it('shows the startup handoff after picker enrollment', async () => {
+    mocks.createCloudConnectivity.mockReturnValueOnce({
+      ...mocks.resource,
+      isEnrolled: () => false,
+      enroll: vi.fn().mockResolvedValue(undefined),
+    });
+    mocks.createAgentPicker.mockImplementationOnce(
+      (options: {
+        prepareAgent(directory: string): Promise<boolean>;
+        enrollCloud(directory: string, token: string): Promise<void>;
+      }) => ({
+        choose: async () => {
+          await options.prepareAgent(mocks.selectedDirectory);
+          await options.enrollCloud(mocks.selectedDirectory, 'test-token');
+          return mocks.selectedDirectory;
+        },
+      }),
+    );
+    await launch(['--cloud']);
+    await vi.waitFor(() => expect(mocks.createCliUi).toHaveBeenCalled());
+    expect(mocks.createCliUi).toHaveBeenCalledWith(
+      expect.objectContaining({ cloudEnrollmentCompleted: true }),
+    );
+  });
+
   it('creates a named local agent without the picker', async () => {
-    await launch(['--create-agent', '--no-cloud', '--agent-name', 'Ada']);
+    await launch(['--create-bot', '--no-cloud', '--agent-name', 'Ada']);
+    await vi.waitFor(() => expect(mocks.createCliUi).toHaveBeenCalled());
+    expect(mocks.createCliUi).toHaveBeenCalledWith(
+      expect.objectContaining({ cloudEnrollmentCompleted: false }),
+    );
     expect(mocks.createAgent).toHaveBeenCalledExactlyOnceWith('Ada');
     expect(mocks.createAgentPicker).not.toHaveBeenCalled();
     expect(requestRestart().arguments).toEqual(['--no-cloud']);

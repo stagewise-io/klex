@@ -27,7 +27,7 @@ To install Klex, run the following script in your system's shell:
 To create, enroll, and start a bot without interactive setup, use an enrollment token from Klex Cloud:
 
 ```sh
-klex --create-agent --cloud-enroll-token <token>
+klex --create-bot --cloud-enroll-token <token>
 ```
 
 Add `--headless` to run without the terminal UI. You can also supply the token through `KLEX_CLOUD_ENROLLMENT_TOKEN` instead of a CLI argument to keep it out of shell history.
@@ -37,7 +37,7 @@ Cloud agents use a stable UUID folder under `~/.klex/agents/` (or `$KLEX_HOME/ag
 For a standalone bot, a name is required:
 
 ```sh
-klex --create-agent --no-cloud --agent-name Ada
+klex --create-bot --no-cloud --agent-name Ada
 ```
 
 Standalone agents use the supplied name as their folder name. Creation cannot be combined with `--data-dir` or `KLEX_DATA_DIR`; those open an existing agent. If enrollment fails, the new folder is retained and its path is printed. Retry with `klex --data-dir <printed-path> --cloud-enroll-token <token>` instead of creating another agent. Providers and models still need to be configured before the bot can work.

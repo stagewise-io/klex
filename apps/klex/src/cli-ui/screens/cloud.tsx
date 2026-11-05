@@ -24,6 +24,7 @@ export interface CloudScreenProps {
   apiClient: AdminApiClient;
   onBack: () => void;
   trackEnrollment?: TrackEnrollment;
+  onEnrolled?: () => void;
 }
 
 type Mode = 'overview' | 'enroll-input' | 'enrolling';
@@ -32,6 +33,7 @@ export function CloudScreen({
   apiClient,
   onBack,
   trackEnrollment,
+  onEnrolled,
 }: CloudScreenProps) {
   const { pushToast } = useToast();
   const { setMeta } = useScreenMeta();
@@ -164,6 +166,7 @@ export function CloudScreen({
                       'info',
                     );
                     setEnrollCode('');
+                    onEnrolled?.();
                     statusPoll.refresh();
                     setMode('overview');
                   } catch (err) {

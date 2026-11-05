@@ -75,7 +75,7 @@ describe('parseCliArgs', () => {
       ({ flags }) => {
         expect(
           parseCliArgs([
-            '--create-agent',
+            '--create-bot',
             '--cloud-enroll-token',
             ' token ',
             ...flags,
@@ -90,11 +90,11 @@ describe('parseCliArgs', () => {
     );
     it('accepts an enrollment token from the environment', () => {
       process.env.KLEX_CLOUD_ENROLLMENT_TOKEN = 'token';
-      expect(parseCliArgs(['--create-agent']).createAgent).toBe(true);
+      expect(parseCliArgs(['--create-bot']).createAgent).toBe(true);
     });
     it('creates a named local agent', () => {
       expect(
-        parseCliArgs(['--create-agent', '--no-cloud', '--agent-name', ' Ada ']),
+        parseCliArgs(['--create-bot', '--no-cloud', '--agent-name', ' Ada ']),
       ).toMatchObject({
         createAgent: true,
         cloudEnabled: false,
@@ -102,41 +102,41 @@ describe('parseCliArgs', () => {
       });
     });
     it.each([
-      [['--create-agent'], 'requires --cloud-enroll-token'],
+      [['--create-bot'], 'requires --cloud-enroll-token'],
       [
-        ['--create-agent', '--cloud-enroll-token', ' '],
+        ['--create-bot', '--cloud-enroll-token', ' '],
         'requires --cloud-enroll-token',
       ],
-      [['--create-agent', '--no-cloud'], 'requires --agent-name'],
+      [['--create-bot', '--no-cloud'], 'requires --agent-name'],
       [
-        ['--create-agent', '--no-cloud', '--agent-name', ' '],
+        ['--create-bot', '--no-cloud', '--agent-name', ' '],
         'requires --agent-name',
       ],
-      [['--agent-name', 'Ada'], 'requires --create-agent'],
+      [['--agent-name', 'Ada'], 'requires --create-bot'],
       [
-        ['--create-agent', '--agent-name', 'Ada'],
+        ['--create-bot', '--agent-name', 'Ada'],
         'only supported with --no-cloud',
       ],
-      [['--create-agent', '--data-dir', '/existing'], 'cannot be combined'],
+      [['--create-bot', '--data-dir', '/existing'], 'cannot be combined'],
     ])('rejects invalid creation arguments %j', (args, message) => {
       expect(() => parseCliArgs(args)).toThrow(message);
     });
     it('rejects an environment-selected data directory', () => {
       process.env.KLEX_DATA_DIR = '/existing';
-      expect(() => parseCliArgs(['--create-agent'])).toThrow(
+      expect(() => parseCliArgs(['--create-bot'])).toThrow(
         'cannot be combined',
       );
     });
     it.each([
-      ['--create-agent', '--no-cloud', '--agent-name', 'Ada', '--verbose'],
-      ['--create-agent', '--no-cloud', '--agent-name=Ada', '--verbose'],
+      ['--create-bot', '--no-cloud', '--agent-name', 'Ada', '--verbose'],
+      ['--create-bot', '--no-cloud', '--agent-name=Ada', '--verbose'],
     ])('removes one-shot creation flags from restart args %j', (...args) => {
       expect(agentRestartArgs(args)).toEqual(['--no-cloud', '--verbose']);
     });
     it('preserves unrelated argument values resembling creation flags', () => {
-      expect(agentRestartArgs(['--cloud-enroll-token=--create-agent'])).toEqual(
-        ['--cloud-enroll-token=--create-agent'],
-      );
+      expect(agentRestartArgs(['--cloud-enroll-token=--create-bot'])).toEqual([
+        '--cloud-enroll-token=--create-bot',
+      ]);
     });
   });
 

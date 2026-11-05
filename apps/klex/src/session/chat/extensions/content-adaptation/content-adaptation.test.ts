@@ -15,6 +15,7 @@ import {
 } from '../audio-input-optimizer/test-helpers';
 import type { GenerateTextResult } from '../extension-api';
 import { adaptAudioContent } from './content-adaptation';
+import { adaptRemoteMedia } from './file-adaptation';
 
 vi.mock('../audio-input-optimizer/audio-processing', () => ({
   cache: new Map(),
@@ -63,6 +64,35 @@ function depsForAudio() {
 }
 
 describe('content adaptation', () => {
+  it.each(['file-123', { openai: 'file-123' }])(
+    'preserves non-URL audio references with a model reference: %j',
+    async (data) => {
+      const deps = makeDeps();
+      const model = makeModel({
+        reference: { providerId: 'openai', modelId: 'test' },
+        inputCapabilities: { audio: { mediaTypes: ['audio/mpeg'] } },
+      });
+      const part: FilePart = {
+        type: 'file',
+        data,
+        mediaType: 'Audio/MP3; codecs=mp3',
+      };
+      expect(await adaptRemoteMedia(part, deps, model, 'audio')).toEqual({
+        ...part,
+        mediaType: 'audio/mpeg',
+      });
+      expect(
+        await adaptRemoteMedia(
+          { ...part, mediaType: 'audio/wav' },
+          deps,
+          model,
+          'audio',
+        ),
+      ).toBeNull();
+      expect(deps.modelResolver.getLanguageModel).not.toHaveBeenCalled();
+    },
+  );
+
   it('leaves readAttachment audio outputs to their owning extension', async () => {
     const deps = depsForAudio();
     const history: ModelMessage[] = [

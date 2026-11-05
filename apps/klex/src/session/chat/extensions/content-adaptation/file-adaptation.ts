@@ -60,10 +60,10 @@ export async function adaptRemoteMedia(
   }
   const url = referenceUrl(part.type === 'file' ? part.data : part.image);
   if (
+    url !== undefined &&
     model.reference &&
     typeof deps.modelResolver?.getLanguageModel === 'function'
   ) {
-    if (!url) return null;
     try {
       const result = await prepareRemoteInput(
         deps.modelResolver.getLanguageModel(model.reference),

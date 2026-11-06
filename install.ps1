@@ -52,6 +52,12 @@ param(
 	# Remove the installation, keeping all agent data.
 	[switch] $Uninstall,
 
+	# Supplying a token creates, enrolls, and runs a bot after installation.
+	[string] $CloudEnrollmentToken,
+
+	# Only forwarded when CloudEnrollmentToken starts a bot.
+	[string] $CloudBaseUrl,
+
 	[switch] $Help
 )
 
@@ -107,6 +113,9 @@ Options:
   -InstallDir <path>   Install root (default: $env:LOCALAPPDATA\Klex)
   -NoModifyPath        Do not touch the user PATH
   -Uninstall           Remove the installation, keeping all agent data
+  -CloudEnrollmentToken <token>
+                       Create, enroll, and run a bot after successful installation
+  -CloudBaseUrl <url>  Cloud API URL forwarded only when starting a bot
   -Help                Show this help
 
 Environment:
@@ -115,6 +124,8 @@ Environment:
   KLEX_HOME            Agent data root (default: %USERPROFILE%\.klex); never modified here
 
 Agent data lives outside the install root and survives -Uninstall.
+With an enrollment token, klex runs in the foreground until it exits.
+A base URL alone does not start klex. Enrollment cannot be combined with -Uninstall.
 '@ | Write-Host
 }
 
@@ -706,7 +717,9 @@ function Invoke-Install {
 
 		Write-Info "klex $($manifest.version) installed to $root"
 		Write-Host ''
-		Write-Host 'Run klex --help to get started.'
+		if (-not $CloudEnrollmentToken) {
+			Write-Host 'Run klex --help to get started.'
+		}
 	} finally {
 		if (Test-Path -LiteralPath $staging) {
 			Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue
@@ -721,6 +734,10 @@ if ($Help) {
 	return
 }
 
+if ($Uninstall -and $CloudEnrollmentToken) {
+	Stop-WithError '-CloudEnrollmentToken cannot be combined with -Uninstall'
+}
+
 $operationRoot = Resolve-InstallDir
 Enter-InstallLock -Root $operationRoot
 try {
@@ -732,4 +749,17 @@ try {
 	Invoke-Install
 } finally {
 	Exit-InstallLock
+}
+
+if ($CloudEnrollmentToken) {
+	# Invoke the verified executable directly, not the cmd shim or a PATH entry.
+	# The install lock and staging directory must be gone before the bot starts.
+	$klexExe = Join-Path $operationRoot 'current\klex.exe'
+	$klexArgs = @('--create-bot', '--cloud-enroll-token', $CloudEnrollmentToken)
+	if ($CloudBaseUrl) {
+		$klexArgs += @('--cloud-base-url', $CloudBaseUrl)
+	}
+	Write-Info 'starting klex'
+	& $klexExe @klexArgs
+	exit $LASTEXITCODE
 }

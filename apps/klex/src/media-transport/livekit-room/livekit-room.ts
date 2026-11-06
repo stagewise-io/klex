@@ -21,6 +21,12 @@ const CHANNELS = 1;
 const FRAME_SIZE_MS = 20;
 const INCOMING_QUEUE_CAPACITY = 10;
 const OUTGOING_QUEUE_MS = 200;
+// LiveKit DisconnectReason values for a server-side end of the session. The
+// controller removed this participant or closed the room: a normal call end.
+const ENDED_DISCONNECT_REASONS = new Map([
+  ['4', 'participant-removed'],
+  ['5', 'room-deleted'],
+]);
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -203,7 +209,10 @@ class LiveKitRoomMediaTransportModule implements MediaTransport {
         this.handleTrackUnsubscribed(track),
       ),
       this.room.onDisconnected((reason) => {
-        if (!this.closing)
+        if (this.closing) return;
+        const ended = ENDED_DISCONNECT_REASONS.get(reason);
+        if (ended) void this.finish({ type: 'closed', reason: ended });
+        else
           void this.finish(
             {
               type: 'failed',

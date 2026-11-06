@@ -316,6 +316,25 @@ describe('LiveKitRoomMediaTransportConnector', () => {
     expect(room.disconnect).toHaveBeenCalledOnce();
   });
 
+  it.each([
+    ['4', 'participant-removed'],
+    ['5', 'room-deleted'],
+  ])(
+    'closes normally when the server ends the session (reason %s)',
+    async (code, reason) => {
+      const { connector, room } = setup();
+      const transport = await connector.connect(descriptor, {
+        signal: new AbortController().signal,
+      });
+      room.emitDisconnected(code);
+      await expect(transport.closed).resolves.toEqual({
+        type: 'closed',
+        reason,
+      });
+      expect(room.disconnect).toHaveBeenCalledOnce();
+    },
+  );
+
   it('aborts an in-flight connection and disconnects a late completion', async () => {
     const room = new FakeRoom();
     let resolveConnect!: () => void;

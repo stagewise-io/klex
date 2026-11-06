@@ -185,6 +185,30 @@ describe('createOAuthTokenEndpointFetch', () => {
     });
   });
 
+  it('keeps a rotated refresh token over a newer access token with the old one', async () => {
+    const { create, provider, store } = await setup();
+    const fetchImpl = create(async () => {
+      await store.saveTokens(serverName, {
+        access_token: 'newer',
+        refresh_token: 'refresh-1',
+        token_type: 'Bearer',
+      });
+      return json(200, {
+        access_token: 'access-2',
+        refresh_token: 'refresh-2',
+        token_type: 'Bearer',
+      });
+    });
+    const response = await refresh(fetchImpl, 'refresh-1');
+    const body = parseTokenResponse(await response.json());
+    if (!body) throw new Error('Expected a token response');
+    await provider.saveTokens(body);
+    await expect(store.tokens(serverName)).resolves.toMatchObject({
+      access_token: 'access-2',
+      refresh_token: 'refresh-2',
+    });
+  });
+
   it('does not replay non-rotating refresh responses', async () => {
     const { create } = await setup();
     let count = 0;

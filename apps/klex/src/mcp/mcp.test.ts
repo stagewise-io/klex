@@ -932,6 +932,54 @@ describe('MCP server statuses', () => {
     }
   });
 
+  it('resets the post-connect 401 budget when authorization is requested', async () => {
+    let activeOptions: ConnectMcpServerOptions | undefined;
+    let activeConnection: McpConnection | undefined;
+    let attempts = 0;
+    const { mcp } = setupAuthorization(
+      { protected: { url: 'https://protected.example/mcp' } },
+      async (options) => {
+        attempts += 1;
+        activeOptions = options;
+        activeConnection = connection(options.namespace);
+        return activeConnection;
+      },
+    );
+    const disconnectUnauthorized = () => {
+      if (!activeOptions || !activeConnection)
+        throw new Error('Expected an active connection');
+      activeOptions.onDisconnect(activeConnection, 'unauthorized');
+    };
+    try {
+      await mcp.start();
+      await waitForNamespace(mcp, 'protected');
+      vi.useFakeTimers();
+      for (const delay of [1_000, 2_000]) {
+        disconnectUnauthorized();
+        await vi.advanceTimersByTimeAsync(delay);
+      }
+      // The third 401 uses the last reconnect of the budget; re-authorize
+      // during its backoff.
+      disconnectUnauthorized();
+      const before = attempts;
+      // Resolves only after the wait for a pending login times out.
+      const request = mcp.requestAuthorization('protected');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(attempts).toBe(before + 1);
+      // A fresh budget: the next 401 retries after 1s instead of parking.
+      disconnectUnauthorized();
+      expect(serverRow(mcp, 'protected')?.status).not.toBe(
+        'authorization_required',
+      );
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(attempts).toBe(before + 2);
+      await vi.advanceTimersByTimeAsync(60_000);
+      await request;
+    } finally {
+      await mcp.close();
+    }
+  });
+
   it('preserves the persisted URL template instead of exposing the resolved runtime URL', async () => {
     const { mcp, config } = setup(
       { remote: { url: 'https://mcp.example.com/secret-path' } },

@@ -1737,6 +1737,8 @@ class McpModule implements Mcp {
     }
 
     this.clearRetry(runtime);
+    // New authorization means new credentials; earlier 401s no longer count.
+    runtime.unauthorizedReconnects = 0;
     runtime.attempt?.controller.abort();
     runtime.attempt = undefined;
     if (client) {

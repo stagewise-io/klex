@@ -309,7 +309,11 @@ export function createOAuthTokenEndpointFetch(
             options.serverName,
             refreshToken,
             tokens,
-            snapshot?.refresh_token === refreshToken
+            // A rotated refresh token is the only one the server still
+            // accepts, so it must win over a newer access token that kept the
+            // old refresh token. Only non-rotating responses also require the
+            // access token to be unchanged.
+            !rotated && snapshot?.refresh_token === refreshToken
               ? snapshot.access_token
               : undefined,
           )

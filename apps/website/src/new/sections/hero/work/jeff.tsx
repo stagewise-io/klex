@@ -1,5 +1,7 @@
 import { useRef, useState } from 'react';
 
+import { currentLocale, t } from '@/i18n';
+
 import { PrApproved, PrComment, PrIcon } from '../../pull-request';
 import { typeText, usePlay, wait } from '../../workflow/stage';
 import type { WorkSceneProps } from './scenes';
@@ -26,7 +28,7 @@ type Phase = 'test' | 'done' | 'review' | 'approved';
 
 export const jeffScene = {
   count: tests.length,
-  app: () => ({ name: 'Browser', icon: 'chrome' }),
+  app: () => ({ name: t('Browser'), icon: 'chrome' }),
   Scene: JeffScene,
 };
 
@@ -87,14 +89,14 @@ function JeffScene({ variant, setApp, onDone }: WorkSceneProps) {
           <div className="new-pr-meta">
             <span className="new-pr-open">
               <PrIcon name="git-pull-request" />
-              Open
+              {t('Open')}
             </span>
           </div>
         </div>
         <div className="new-pr-timeline">
           <div className="new-build-reveal">
             <PrComment author="jeff-bot" bot="jeff">
-              <p>{test.comment}</p>
+              <p>{t(test.comment)}</p>
             </PrComment>
           </div>
           {phase === 'approved' && (
@@ -112,33 +114,55 @@ function JeffScene({ variant, setApp, onDone }: WorkSceneProps) {
         <span className="new-careers-brand">
           acme<span>.</span>
         </span>
-        <span>Product</span>
-        <span>Pricing</span>
+        <span>{t('Product')}</span>
+        <span>{t('Pricing')}</span>
       </nav>
       {phase === 'done' ? (
         <div className="new-demo-success new-build-reveal">
           <span aria-hidden="true">✓</span>
-          <h4>Welcome to acme {plan === 'team' ? 'Team' : 'Starter'}!</h4>
-          <p>We sent a confirmation to {test.email}.</p>
+          <h4>
+            {t('Welcome to acme {{plan}}!', {
+              plan: t(plan === 'team' ? 'Team' : 'Starter'),
+            })}
+          </h4>
+          <p>
+            {t('We sent a confirmation to {{email}}.', { email: test.email })}
+          </p>
         </div>
       ) : (
         <>
-          <h4 className="new-demo-title">Pick your plan</h4>
+          <h4 className="new-demo-title">{t('Pick your plan')}</h4>
           <div className="new-demo-plans">
             <p data-target="starter" data-selected={plan === 'starter'}>
-              <strong>Starter</strong>
-              <span>€0 / month</span>
+              <strong>{t('Starter')}</strong>
+              <span>
+                {t('{{price}} / month', {
+                  price: new Intl.NumberFormat(currentLocale(), {
+                    style: 'currency',
+                    currency: 'EUR',
+                    maximumFractionDigits: 0,
+                  }).format(0),
+                })}
+              </span>
             </p>
             <p data-target="team" data-selected={plan === 'team'}>
-              <strong>Team</strong>
-              <span>€12 / seat</span>
+              <strong>{t('Team')}</strong>
+              <span>
+                {t('{{price}} / seat', {
+                  price: new Intl.NumberFormat(currentLocale(), {
+                    style: 'currency',
+                    currency: 'EUR',
+                    maximumFractionDigits: 0,
+                  }).format(12),
+                })}
+              </span>
             </p>
           </div>
           <p className="new-demo-input" data-target="email">
             {email || <span>you@company.com</span>}
           </p>
           <p className="new-demo-submit" data-target="submit">
-            Start free trial
+            {t('Start free trial')}
           </p>
         </>
       )}

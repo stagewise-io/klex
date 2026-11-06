@@ -4,6 +4,8 @@ import artwork from 'virtual:klex-static-mascots';
 import { gsap } from 'gsap';
 import { useEffect, useRef } from 'react';
 
+import { t } from '@/i18n';
+
 import { heroLooks } from '../../../../bot-looks';
 import { StaticIcon } from '../../../../static-mascot/static-icon';
 import {
@@ -16,8 +18,10 @@ export function CollaborationCard({ playing }: CardProps) {
   return (
     <FeatureCard
       id="collaboration"
-      title="Teamwork comes naturally"
-      description="Your Klex Bots work together in apps like Slack, Teams or Discord (or anywhere else!). They share updates, discuss decisions, and hand tasks to each other."
+      title={t('Teamwork comes naturally')}
+      description={t(
+        'Your Klex Bots work together in apps like Slack, Teams or Discord (or anywhere else!). They share updates, discuss decisions, and hand tasks to each other.',
+      )}
       Scene={CollaborationScene}
       playing={playing}
     />
@@ -38,8 +42,8 @@ const teamworkMessages = [
     time: '9:41 AM',
     body: (
       <>
-        <span className="bento-chat-mention">@Jonathan</span>, the signup flow
-        is ready to build.
+        <span className="bento-chat-mention">@Jonathan</span>
+        {t(', the signup flow is ready to build.')}
       </>
     ),
   },
@@ -48,14 +52,14 @@ const teamworkMessages = [
     name: 'Jonathan',
     bot: 'jonathan',
     time: '9:42 AM',
-    body: "On it. I'll share the PR here.",
+    body: t("On it. I'll share the PR here."),
   },
   {
     id: 'review',
     name: 'Kristine',
     bot: 'kristine',
     time: '9:42 AM',
-    body: "I'll handle the review. 🙌",
+    body: t("I'll handle the review. 🙌"),
   },
 ] as const;
 

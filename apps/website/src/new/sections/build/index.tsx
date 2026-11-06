@@ -16,6 +16,8 @@ import {
   Input,
 } from '@stagewise/ui';
 
+import { t } from '@/i18n';
+
 import { LinearIssueDialog } from '../linear/dialog';
 import { SceneProgress } from '../workflow/controls';
 import {
@@ -34,9 +36,10 @@ import {
 import { SafariWindow, useCareersZoom, WindowLabel } from './safari';
 
 const careersIssue = {
-  title: 'Publish a Product Designer role',
-  description:
+  title: t('Publish a Product Designer role'),
+  description: t(
     "Build a careers page with Monica's job description and an application form. Accept a résumé upload and send each application to Monica.",
+  ),
 };
 
 const codeSteps = [
@@ -58,8 +61,8 @@ export function CareersPage() {
 `,
   `      <Card>
         <CardHeader>
-          <Badge variant="secondary">Open position</Badge>
-          <CardTitle>Product Designer</CardTitle>
+          <Badge variant="secondary">{t('Open position')}</Badge>
+          <CardTitle>{t('Product Designer')}</CardTitle>
         </CardHeader>
         <CardContent>Full-time · Remote / Berlin</CardContent>
       </Card>
@@ -71,14 +74,14 @@ export function CareersPage() {
         encType="multipart/form-data"
       >
         <h2>Apply for this role</h2>
-        <p>Tell us a little about yourself.</p>
+        <p>{t('Tell us a little about yourself.')}</p>
         <FieldGroup>
           <Field>
-            <FieldLabel htmlFor="name">Full name</FieldLabel>
-            <Input id="name" name="name" placeholder="Your name" required />
+            <FieldLabel htmlFor="name">{t('Full name')}</FieldLabel>
+            <Input id="name" name="name" placeholder={t('Your name')} required />
           </Field>
           <Field>
-            <FieldLabel htmlFor="email">Email address</FieldLabel>
+            <FieldLabel htmlFor="email">{t('Email address')}</FieldLabel>
             <Input id="email" name="email" type="email" required />
           </Field>
 `,
@@ -87,7 +90,7 @@ export function CareersPage() {
             <Input id="portfolio" name="portfolio" type="url" />
           </Field>
           <Field>
-            <FieldLabel htmlFor="resume">Résumé</FieldLabel>
+            <FieldLabel htmlFor="resume">{t('Résumé')}</FieldLabel>
             <Input
               id="resume"
               name="resume"
@@ -145,32 +148,30 @@ function CareersPreview({ step }: { step: number }) {
         {step >= 1 && (
           <nav
             className="new-careers-nav new-build-reveal"
-            aria-label="Careers preview navigation"
+            aria-label={t('Careers preview navigation')}
           >
             <span className="new-careers-brand">
               acme<span>.</span>
             </span>
-            <span>Our team</span>
-            <span>Open roles</span>
-            <span className="new-careers-nav-cta">Apply now ↗</span>
+            <span>{t('Our team')}</span>
+            <span>{t('Open roles')}</span>
+            <span className="new-careers-nav-cta">{t('Apply now')} ↗</span>
           </nav>
         )}
         {step >= 2 && (
           <header className="new-careers-hero new-build-reveal">
-            <p>CAREERS AT ACME</p>
-            <h3>Design what’s next.</h3>
-            <span>Join a small team building better ways to work.</span>
+            <p>{t('Careers at acme')}</p>
+            <h3>{t('Design what’s next.')}</h3>
+            <span>{t('Join a small team building better ways to work.')}</span>
           </header>
         )}
         {step >= 3 && (
           <Card className="new-careers-role new-build-reveal">
             <CardHeader>
-              <Badge variant="secondary">Open position</Badge>
-              <CardTitle>Product Designer</CardTitle>
+              <Badge variant="secondary">{t('Open position')}</Badge>
+              <CardTitle>{t('Product Designer')}</CardTitle>
             </CardHeader>
-            <CardContent>
-              Full-time <i /> Remote / Berlin
-            </CardContent>
+            <CardContent>{t('Full-time · Remote / Berlin')}</CardContent>
             <span className="new-careers-role-arrow" aria-hidden="true">
               ↗
             </span>
@@ -185,21 +186,25 @@ function CareersPreview({ step }: { step: number }) {
             encType="multipart/form-data"
             onSubmit={(event) => event.preventDefault()}
           >
-            <h4>Apply for this role</h4>
-            <p>Tell us a little about yourself.</p>
+            <h4>{t('Apply for this role')}</h4>
+            <p>{t('Tell us a little about yourself.')}</p>
             <FieldGroup>
               <div className="new-careers-form-row">
                 <Field>
-                  <FieldLabel htmlFor="preview-name">Full name</FieldLabel>
+                  <FieldLabel htmlFor="preview-name">
+                    {t('Full name')}
+                  </FieldLabel>
                   <Input
                     id="preview-name"
                     name="name"
-                    placeholder="Your name"
+                    placeholder={t('Your name')}
                     readOnly
                   />
                 </Field>
                 <Field>
-                  <FieldLabel htmlFor="preview-email">Email address</FieldLabel>
+                  <FieldLabel htmlFor="preview-email">
+                    {t('Email address')}
+                  </FieldLabel>
                   <Input
                     id="preview-email"
                     name="email"
@@ -213,7 +218,7 @@ function CareersPreview({ step }: { step: number }) {
                 <div className="new-careers-form-extra new-build-reveal">
                   <Field>
                     <FieldLabel htmlFor="preview-portfolio">
-                      Portfolio URL
+                      {t('Portfolio URL')}
                     </FieldLabel>
                     <Input
                       id="preview-portfolio"
@@ -224,7 +229,9 @@ function CareersPreview({ step }: { step: number }) {
                     />
                   </Field>
                   <Field>
-                    <FieldLabel htmlFor="preview-resume">Résumé</FieldLabel>
+                    <FieldLabel htmlFor="preview-resume">
+                      {t('Résumé')}
+                    </FieldLabel>
                     <Input
                       id="preview-resume"
                       name="resume"
@@ -242,7 +249,7 @@ function CareersPreview({ step }: { step: number }) {
                   type="submit"
                   disabled
                 >
-                  Send application <span aria-hidden="true">↗</span>
+                  {t('Send application')} <span aria-hidden="true">↗</span>
                 </Button>
               )}
             </FieldGroup>
@@ -261,7 +268,9 @@ export function GitHubPullRequest({
   repo = 'careers',
   branch = 'feat/careers-page',
   number = 42,
-  body = 'Adds the Product Designer role and an application form. Résumés are sent to Monica. Closes PRO-42.',
+  body = t(
+    'Adds the Product Designer role and an application form. Résumés are sent to Monica. Closes PRO-42.',
+  ),
 }: {
   title: string;
   created: boolean;
@@ -282,28 +291,30 @@ export function GitHubPullRequest({
             {title} <span>#{number}</span>
           </h4>
           <p>
-            <span className="new-gh-state">Open</span>
-            <strong>jonathan-bot</strong> wants to merge 1 commit into{' '}
-            <code>main</code> from <code>{branch}</code>
+            <span className="new-gh-state">{t('Open')}</span>
+            {t(
+              '{{author}} wants to merge 1 commit into {{base}} from {{branch}}',
+              { author: 'jonathan-bot', base: 'main', branch },
+            )}
           </p>
           <p className="new-gh-checks">
-            <span aria-hidden="true">✓</span> All checks have passed · Preview
-            deployed
+            <span aria-hidden="true">✓</span>{' '}
+            {t('All checks have passed · Preview deployed')}
           </p>
         </div>
       ) : (
         <div className="new-gh-compare new-build-reveal">
-          <h4>Open a pull request</h4>
+          <h4>{t('Open a pull request')}</h4>
           <p className="new-gh-branches">
             <code>base: main</code> ← <code>compare: {branch}</code>
-            <span>✓ Able to merge</span>
+            <span>✓ {t('Able to merge')}</span>
           </p>
           <p className="new-gh-input">
-            {title || <span className="new-gh-placeholder">Title</span>}
+            {title || <span className="new-gh-placeholder">{t('Title')}</span>}
           </p>
           <p className="new-gh-input new-gh-body">{body}</p>
           <span className="new-gh-button" data-ready={!!title}>
-            Create pull request
+            {t('Create pull request')}
           </span>
         </div>
       )}
@@ -343,7 +354,7 @@ function BuildScene({
       setProgress(0.03);
       await kristine.current?.walkTo({ edge: 'center' }, signal, skipArrival);
       kristine.current?.setActivity('working');
-      kristine.current?.say('Planning…');
+      kristine.current?.say(t('Planning…'));
       await wait(400, signal);
       await typeIssueText(
         careersIssue.title,
@@ -388,7 +399,7 @@ function BuildScene({
       setOpen(true);
       await jonathan.current?.walkTo({ edge: 'center' }, signal);
       jonathan.current?.setActivity('working');
-      jonathan.current?.say('Coding…');
+      jonathan.current?.say(t('Coding…'));
       for (let next = 14; next < fullCode.length; next += 14) {
         setLength(next);
         setProgress(0.35 + (0.45 * next) / fullCode.length);
@@ -486,7 +497,7 @@ function BuildScene({
                     ? 'github.com / acme / careers / pull / 42'
                     : 'github.com / acme / careers / compare'
                 }
-                label="Jonathan opens a pull request on GitHub"
+                label={t('Jonathan opens a pull request on GitHub')}
               >
                 <GitHubPullRequest
                   title={title}
@@ -496,7 +507,9 @@ function BuildScene({
             ) : (
               <SafariWindow
                 address="localhost:5173 / careers"
-                label="Animated preview of a Product Designer careers page being built"
+                label={t(
+                  'Animated preview of a Product Designer careers page being built',
+                )}
               >
                 <CareersPreview step={step} />
               </SafariWindow>

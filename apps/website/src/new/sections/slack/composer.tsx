@@ -12,6 +12,8 @@ import { IconMicrophone3Outline18 } from '@stagewise/ui/icons/nucleo/ui-outline-
 import { IconPlusOutline18 } from '@stagewise/ui/icons/nucleo/ui-outline-18/IconPlusOutline18.tsx';
 import { IconVideoOutline18 } from '@stagewise/ui/icons/nucleo/ui-outline-18/IconVideoOutline18.tsx';
 
+import { t } from '@/i18n';
+
 const iconPaths = {
   link: 'M7 11l4-4M6 8l-2 2a3 3 0 004 4l2-2M8 6l2-2a3 3 0 014 4l-2 2',
   ordered: 'M7 4h9M7 9h9M7 14h9M2 3h1v4M2 7h2M2 11c2-2 3 0 1 2l-1 2h2',
@@ -76,7 +78,9 @@ export function mountSlackComposer(container: HTMLElement) {
               {draft.slice(mention.length)}
             </>
           ) : (
-            <span className="new-slack-placeholder">Message #hiring</span>
+            <span className="new-slack-placeholder">
+              {t('Message #hiring')}
+            </span>
           )}
         </div>
         <InputGroupAddon align="block-start" className="new-slack-formatting">
@@ -144,7 +148,7 @@ export function mountSlackComposer(container: HTMLElement) {
             size="icon-sm"
             aria-disabled={!draft}
             tabIndex={-1}
-            aria-label="Send message"
+            aria-label={t('Send message')}
             className="new-slack-send"
             data-ready={!!draft}
           >
@@ -156,7 +160,7 @@ export function mountSlackComposer(container: HTMLElement) {
             size="icon-sm"
             aria-disabled={!draft}
             tabIndex={-1}
-            aria-label="Send options"
+            aria-label={t('Send options')}
             className="new-slack-send-options"
             data-ready={!!draft}
           >

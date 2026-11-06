@@ -2,6 +2,8 @@ import './styles.css';
 
 import { IconDiscord } from '@stagewise/ui/icons/provider/IconDiscord.tsx';
 
+import { t } from '@/i18n';
+
 import {
   type CardProps,
   FeatureCard,
@@ -14,8 +16,10 @@ export function PermissionsCard({ playing }: CardProps) {
   return (
     <FeatureCard
       id="permissions"
-      title="Set permissions for each Klex Bot"
-      description="Granularly manage each bot's permissions right inside the apps, just like for your human team."
+      title={t('Set permissions for each Klex Bot')}
+      description={t(
+        "Granularly manage each bot's permissions right inside the apps, just like for your human team.",
+      )}
       Scene={PermissionsScene}
       playing={playing}
     />
@@ -30,13 +34,13 @@ function PermissionsScene({ active }: SceneProps) {
       <div className="bento-permission-app">
         <IconDiscord />
         <span>Discord</span>
-        <span>Permissions</span>
+        <span>{t('Permissions')}</span>
       </div>
       <div className="bento-permission-access">
         <table className="bento-permission-table">
           <thead>
             <tr>
-              <th scope="col">Channel access</th>
+              <th scope="col">{t('Channel access')}</th>
               {(['monica', 'jeff'] as const).map((bot, i) => (
                 <th key={bot} scope="col">
                   <div className="bento-permission-avatar" data-bot={bot}>
@@ -57,11 +61,11 @@ function PermissionsScene({ active }: SceneProps) {
             <tr>
               <th scope="row">#hiring</th>
               <td className="bento-allowed">✓</td>
-              <td className="bento-locked">No access</td>
+              <td className="bento-locked">{t('No access')}</td>
             </tr>
             <tr>
               <th scope="row">#engineering</th>
-              <td className="bento-locked">No access</td>
+              <td className="bento-locked">{t('No access')}</td>
               <td className="bento-allowed">✓</td>
             </tr>
           </tbody>

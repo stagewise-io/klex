@@ -21,6 +21,9 @@ function prerenderPages(): Plugin {
             configFile: false,
             root: fileURLToPath(new URL('.', import.meta.url)),
             appType: 'custom',
+            resolve: {
+              alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
+            },
             server: {
               middlewareMode: true,
               hmr: false,

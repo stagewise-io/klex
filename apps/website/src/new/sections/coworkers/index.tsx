@@ -13,6 +13,8 @@ import {
   TableRow,
 } from '@stagewise/ui';
 
+import { t } from '@/i18n';
+
 import { heroLooks } from '../../bot-looks';
 import { mountIsland } from '../../island';
 import { ProgressiveMascot } from '../../static-mascot';
@@ -60,7 +62,7 @@ const comparisons = [
       text: 'Learn skills, relationships, and ways of working.',
     },
   },
-];
+] as const;
 
 type BotName = 'jonathan' | 'kristine' | 'monica' | 'jeff';
 type Kind = 'you' | 'person' | 'company' | 'assistant' | BotName;
@@ -147,7 +149,7 @@ function Glyph({ kind, small }: { kind: Kind; small?: boolean }) {
   if (kind === 'assistant' || kind === 'you') {
     return (
       <span className="coworkers-label">
-        {kind === 'assistant' ? 'AI' : 'You'}
+        {kind === 'assistant' ? 'AI' : t('You')}
       </span>
     );
   }
@@ -262,11 +264,8 @@ export function Coworkers() {
   return (
     <>
       <h2 id="coworkers-title" className="coworkers-title">
-        <span>
-          Personal <span className="coworkers-nowrap">AI-Assistants</span> don't
-          work for your business.
-        </span>{' '}
-        <span>Klex Bots are digital coworkers that do.</span>
+        <span>{t('Personal AI Assistants don’t work for your business.')}</span>{' '}
+        <span>{t('Klex Bots are digital coworkers that do.')}</span>
       </h2>
       <Card className="coworkers-card ring-0">
         <CardContent className="px-0">
@@ -285,9 +284,9 @@ export function Coworkers() {
                     className="coworkers-column-title"
                     data-font="plain"
                   >
-                    Personal AI Assistant
+                    {t('Personal AI Assistant')}
                   </span>
-                  <p data-markdown="exclude">Built around you.</p>
+                  <p data-markdown="exclude">{t('Built around you.')}</p>
                 </TableHead>
                 <TableHead scope="col">
                   <div className="coworkers-product" aria-hidden="true">
@@ -305,7 +304,7 @@ export function Coworkers() {
                     )}
                   </div>
                   <span className="coworkers-column-title">Klex Bots</span>
-                  <p data-markdown="exclude">Built into your team.</p>
+                  <p data-markdown="exclude">{t('Built into your team.')}</p>
                   <Button
                     size="lg"
                     data-markdown="exclude"
@@ -314,7 +313,7 @@ export function Coworkers() {
                     role="link"
                     render={<a href="https://cloud.klex.bot" />}
                   >
-                    Create a Klex Bot
+                    {t('Create a Klex Bot')}
                   </Button>
                 </TableHead>
               </TableRow>
@@ -330,7 +329,7 @@ export function Coworkers() {
                       id={`coworkers-${topic.toLowerCase()}-title`}
                       className="coworkers-topic-title"
                     >
-                      {sectionTitle}
+                      {t(sectionTitle)}
                     </h3>
                   </TableHead>
                 </TableRow>
@@ -338,8 +337,10 @@ export function Coworkers() {
                   {[assistant, coworker].map(({ title, text }, index) => (
                     <TableCell key={title}>
                       <MiniDiagram topic={topic} team={index === 1} />
-                      <strong className="coworkers-cell-title">{title}</strong>
-                      <p>{text}</p>
+                      <strong className="coworkers-cell-title">
+                        {t(title)}
+                      </strong>
+                      <p>{t(text)}</p>
                     </TableCell>
                   ))}
                 </TableRow>

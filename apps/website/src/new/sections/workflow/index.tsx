@@ -3,6 +3,8 @@ import './workflow.css';
 
 import { flushSync } from 'react-dom';
 
+import { html, t } from '@/i18n';
+
 import { mountWorkflowActors } from './actors';
 import { mountWorkflowControls, reportProgress } from './controls';
 import { STEP_ENTER, STEP_FINISH, STEP_LEAVE, STEP_RESET } from './stage';
@@ -22,7 +24,7 @@ const steps = [
   {
     id: 'new-build-story-title',
     phase: 'Plan & build',
-    title: 'Kristine plans. Jonathan builds the page',
+    title: 'Kristine plans. Jonathan builds the careers page',
     description:
       'Kristine creates a ticket in Linear and assigns it to Jonathan. He then writes the careers page and application form, checks it in the browser, and opens a pull request.',
   },
@@ -40,16 +42,16 @@ const steps = [
     description:
       'The listing is online. Monica shares the link in Slack and will let you know when applications arrive.',
   },
-];
+] as const;
 
 export const workflowMarkup = (panels: string[]) => `
   <section class="new-workflow" data-markdown-bot-names="Monica,Kristine,Jonathan,Jeff" id="how-it-works" aria-labelledby="new-workflow-intro">
     <div class="new-workflow-viewport" data-klex-viewport>
       <div class="new-workflow-body">
-        <div class="new-workflow-navigation" role="group" aria-label="Workflow steps">
-          <h2 class="new-workflow-intro" id="new-workflow-intro">How Klex Bots work together</h2>
-          <div class="new-workflow-mobile-steps" data-markdown="exclude" aria-label="Choose a story step">
-            ${steps.map(({ phase }, index) => `<button type="button" data-step="${index}" aria-label="Step ${index + 1}: ${phase}" aria-controls="new-workflow-panel-${index}" aria-current="${index === 0 ? 'step' : 'false'}">${String(index + 1).padStart(2, '0')}</button>`).join('')}
+        <div class="new-workflow-navigation" role="group" aria-label="${html('Workflow steps')}">
+          <h2 class="new-workflow-intro" id="new-workflow-intro">${html('How Klex Bots work together')}</h2>
+          <div class="new-workflow-mobile-steps" data-markdown="exclude" aria-label="${html('Choose a story step')}">
+            ${steps.map(({ phase }, index) => `<button type="button" data-step="${index}" aria-label="${html('Step {{number}}: {{phase}}', { number: index + 1, phase: t(phase) })}" aria-controls="new-workflow-panel-${index}" aria-current="${index === 0 ? 'step' : 'false'}">${String(index + 1).padStart(2, '0')}</button>`).join('')}
           </div>
           <div class="new-workflow-step-viewport">
           <ol class="new-workflow-steps" data-markdown-layout="sections">
@@ -59,12 +61,12 @@ export const workflowMarkup = (panels: string[]) => `
               <li class="new-workflow-step" data-active="${index === 0}">
                 <h3 id="${id}" data-markdown-text="Step ${index + 1}: ${phase} — ${title}">
                   <button class="new-workflow-step-button" type="button" data-step="${index}" aria-controls="new-workflow-panel-${index}" aria-current="${index === 0 ? 'step' : 'false'}">
-                    <span class="new-workflow-step-number"><span class="new-workflow-step-index">${String(index + 1).padStart(2, '0')}</span> · ${phase}</span>
-                    ${workflowTitleMarkup(title)}
+                    <span class="new-workflow-step-number"><span class="new-workflow-step-index">${String(index + 1).padStart(2, '0')}</span> · ${html(phase)}</span>
+                    ${workflowTitleMarkup(t(title))}
                   </button>
                 </h3>
                 <div class="new-workflow-description" data-markdown="include" aria-hidden="${index !== 0}"${index === 0 ? '' : ' inert'}><div>
-                  <p>${description}</p>
+                  <p>${html(description)}</p>
                   <div class="new-workflow-controls-slot" data-markdown="exclude">${index === 0 ? '<div class="new-workflow-controls-mount"></div>' : ''}</div>
                 </div>
                 </div>
@@ -75,7 +77,7 @@ export const workflowMarkup = (panels: string[]) => `
           </ol>
           </div>
         </div>
-        <div class="new-workflow-scenes" data-markdown="exclude" role="group" aria-label="Workflow illustrations">
+        <div class="new-workflow-scenes" data-markdown="exclude" role="group" aria-label="${html('Workflow illustrations')}">
           <div class="new-workflow-track">
             ${panels.map((panel, index) => `<div class="new-workflow-slide" id="new-workflow-panel-${index}"${index === 0 ? '' : ' inert aria-hidden="true"'}><div class="new-workflow-artwork">${panel}</div></div>`).join('')}
           </div>

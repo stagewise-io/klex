@@ -9,6 +9,7 @@
     "preview": "node ../../scripts/agent-site/preview.mjs marketing",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:i18n-browser": "node scripts/i18n-browser.mjs",
     "test:legal": "vitest run src/legal",
     "test:legal-browser": "node scripts/legal-browser.mjs",
     "test:legal-nginx": "node scripts/legal-nginx.mjs"
@@ -33,10 +34,13 @@
     "@stagewise/ui": "^0.12.1",
     "@sugar-high/react": "^2.4.0",
     "gsap": "^3.15.0",
+    "i18next": "26.7.1",
+    "i18next-browser-languagedetector": "8.3.0",
     "motion": "^13.4.0",
     "posthog-js": "1.439.0",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "react-i18next": "17.1.10"
   },
   "engines": {
     "node": ">=24"

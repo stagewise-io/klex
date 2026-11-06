@@ -4,6 +4,8 @@ import { Klex, type KlexHandle } from '@klex/mascot';
 import { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 
+import { t } from '@/i18n';
+
 import { heroLooks, klexLook } from '../../bot-looks';
 import { usePlayback } from '../../playback';
 import { mountOffice } from './office-team';
@@ -250,7 +252,7 @@ function MemoryScene() {
       data-age={age}
     >
       <div className="trust-memory-record">
-        <span className="trust-memory-record-label">Memory</span>
+        <span className="trust-memory-record-label">{t('Memory')}</span>
         {[68, 88, 58, 82, 72, 45].map((width, index) => (
           <span
             key={width}

@@ -1,5 +1,7 @@
 import { useState } from 'react';
 
+import { t } from '@/i18n';
+
 import { LinearIssueDialog } from '../../linear/dialog';
 import { typeIssueText, usePlay, wait } from '../../workflow/stage';
 import type { WorkSceneProps } from './scenes';
@@ -26,7 +28,7 @@ const issues = [
     assignee: 'Monica',
     id: 'PRO-66',
   },
-];
+] as const;
 
 export const kristineScene = {
   count: issues.length,
@@ -45,9 +47,9 @@ function KristineScene({ variant, onDone }: WorkSceneProps) {
     true,
     async (signal) => {
       await wait(600, signal);
-      await typeIssueText(issue.title, setTitle, signal, 700);
+      await typeIssueText(t(issue.title), setTitle, signal, 700);
       await wait(300, signal);
-      await typeIssueText(issue.description, setDescription, signal, 1500);
+      await typeIssueText(t(issue.description), setDescription, signal, 1500);
       await wait(500, signal);
       setAssignee(issue.assignee);
       await wait(700, signal);

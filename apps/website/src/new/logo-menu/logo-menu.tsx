@@ -8,20 +8,22 @@ import {
   ContextMenuTrigger,
 } from '@stagewise/ui';
 
+import { t } from '@/i18n';
+
 function logoMenuActions(dark: boolean) {
   const theme = dark ? 'dark' : 'light';
   return [
     {
-      label: 'Download logo',
+      label: t('Download logo'),
       href: `/brand/klex-square-${theme}.svg`,
       download: `klex-square-${theme}.svg`,
     },
     {
-      label: 'Download logo + wordmark',
+      label: t('Download logo + wordmark'),
       href: `/klex-logo-${theme}.svg`,
       download: `klex-logo-wordmark-${theme}.svg`,
     },
-    { label: 'Show brand kit', href: '/brand', download: undefined },
+    { label: t('Show brand kit'), href: '/brand', download: undefined },
   ];
 }
 
@@ -34,7 +36,9 @@ function LogoContextMenu() {
       }}
     >
       <ContextMenuTrigger
-        render={<a className="new-brand" href="/" aria-label="Klex home" />}
+        render={
+          <a className="new-brand" href="/" aria-label={t('Klex home')} />
+        }
       >
         <img
           className="new-logo-light"
@@ -52,7 +56,7 @@ function LogoContextMenu() {
         />
       </ContextMenuTrigger>
       <ContextMenuContent
-        aria-label="Klex logo"
+        aria-label={t('Klex logo')}
         className="min-w-64 motion-reduce:animate-none"
       >
         {logoMenuActions(dark).map((action) => (

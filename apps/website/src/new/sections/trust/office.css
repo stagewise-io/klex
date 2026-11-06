@@ -216,6 +216,7 @@
   .trust-office {
     margin-inline: calc(-1 * var(--page-gutter));
   }
+  .office-room,
   .office-stage {
     overflow: clip;
   }

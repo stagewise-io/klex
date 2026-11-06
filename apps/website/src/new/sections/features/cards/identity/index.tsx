@@ -4,6 +4,8 @@ import type { KlexHandle } from '@klex/mascot';
 import { gsap } from 'gsap';
 import { useCallback, useEffect, useRef } from 'react';
 
+import { t } from '@/i18n';
+
 import { klexLook } from '../../../../bot-looks';
 import { ProgressiveMascot, StaticMascot } from '../../../../static-mascot';
 import { StaticIcon } from '../../../../static-mascot/static-icon';
@@ -17,8 +19,10 @@ export function IdentityCard({ playing }: CardProps) {
   return (
     <FeatureCard
       id="identity"
-      title="Their own accounts in your tools"
-      description="Each Klex Bot has its own account and profile in Slack, Discord, GitHub, and the other tools your team uses."
+      title={t('Their own accounts in your tools')}
+      description={t(
+        'Each Klex Bot has its own account and profile in Slack, Discord, GitHub, and the other tools your team uses.',
+      )}
       Scene={IdentityScene}
       playing={playing}
     />

@@ -1,5 +1,7 @@
 import './dialog.css';
 
+import { t } from '@/i18n';
+
 type LinearIssueDialogProps = {
   title?: string;
   description?: string;
@@ -17,7 +19,7 @@ export function LinearIssueDialog({
   return (
     <article
       className="linear-issue-dialog"
-      aria-label="Linear new issue preview"
+      aria-label={t('Linear new issue preview')}
     >
       <header className="linear-issue-header">
         <span className="linear-issue-team">
@@ -26,7 +28,9 @@ export function LinearIssueDialog({
         <span className="linear-issue-chevron" aria-hidden="true">
           ›
         </span>
-        <span className="linear-issue-heading">{createdAs ?? 'New issue'}</span>
+        <span className="linear-issue-heading">
+          {createdAs ?? t('New issue')}
+        </span>
         <span className="linear-issue-window-actions" aria-hidden="true">
           <svg aria-hidden="true" viewBox="0 0 16 16" fill="none">
             <path d="M9.5 2.75h3.75V6.5m0-3.75L9 7M6.5 13.25H2.75V9.5m0 3.75L7 9" />
@@ -43,7 +47,7 @@ export function LinearIssueDialog({
             title ? 'linear-issue-title' : 'linear-issue-title is-placeholder'
           }
         >
-          {title || 'Issue title'}
+          {title || t('Issue title')}
         </p>
         <p
           className={
@@ -52,7 +56,7 @@ export function LinearIssueDialog({
               : 'linear-issue-description is-placeholder'
           }
         >
-          {description || 'Add description...'}
+          {description || t('Add description...')}
         </p>
       </div>
 
@@ -72,7 +76,7 @@ export function LinearIssueDialog({
               strokeDasharray="1.57 1.57"
             />
           </svg>
-          Backlog
+          {t('Backlog')}
         </span>
         <span className="linear-issue-pill">
           <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
@@ -81,7 +85,7 @@ export function LinearIssueDialog({
               stroke="none"
             />
           </svg>
-          Priority
+          {t('Priority')}
         </span>
         <span
           className={
@@ -99,25 +103,25 @@ export function LinearIssueDialog({
             />
             <path d="M3.75 12.25c1.5-2.75 7-2.75 8.5 0" />
           </svg>
-          {assignee || 'Assignee'}
+          {assignee || t('Assignee')}
         </span>
         <span className="linear-issue-pill">
           <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="m8 1.75 5.5 3.125v6.25L8 14.25l-5.5-3.125v-6.25L8 1.75Zm0 6.5 5.5-3.375M8 8.25V14M8 8.25 2.5 4.875" />
           </svg>
-          Project
+          {t('Project')}
         </span>
         <span className="linear-issue-pill">
           <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M5 3.75h7A2.25 2.25 0 0 1 14.25 6v4A2.25 2.25 0 0 1 12 12.25H5L1.5 8 5 3.75Z" />
             <circle cx="6.5" cy="8" r="1" fill="currentColor" stroke="none" />
           </svg>
-          Labels
+          {t('Labels')}
         </span>
         <span
           className="linear-issue-pill linear-issue-more"
           role="img"
-          aria-label="More properties"
+          aria-label={t('More properties')}
         >
           <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
             <circle cx="3" cy="8" r="1.5" stroke="none" />
@@ -131,7 +135,7 @@ export function LinearIssueDialog({
         <span
           className="linear-issue-attachment"
           role="img"
-          aria-label="Attachment"
+          aria-label={t('Attachment')}
         >
           <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="m13.1 8.2-3.7 3.7c-1.8 1.8-4.4 2-5.7.6s-1.2-3.9.6-5.7l3.4-3.4c1.2-1.2 2.9-1.3 3.8-.4s.8 2.6-.4 3.8L7.7 10.2c-.7.7-1.6.7-2 .3s-.4-1.3.3-2l3.1-3.1" />
@@ -141,13 +145,13 @@ export function LinearIssueDialog({
           <span className="linear-issue-toggle" aria-hidden="true">
             <i />
           </span>
-          <span className="linear-issue-create-more">Create more</span>
+          <span className="linear-issue-create-more">{t('Create more')}</span>
           <span
             className={
               createdAs ? 'linear-issue-submit is-done' : 'linear-issue-submit'
             }
           >
-            {createdAs ? 'Created' : 'Create issue'}
+            {createdAs ? t('Created') : t('Create issue')}
           </span>
         </div>
       </footer>

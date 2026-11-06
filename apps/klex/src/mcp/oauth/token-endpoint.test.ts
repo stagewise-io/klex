@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ModuleLogger } from '@stagewise/logger';
 
 import { McpOAuthProvider } from './provider';
-import { McpOAuthStore } from './store';
+import { McpOAuthStore, parseTokenResponse } from './store';
 import { createOAuthTokenEndpointFetch } from './token-endpoint';
 
 const temporaryDirectories: string[] = [];
@@ -136,6 +136,67 @@ describe('createOAuthTokenEndpointFetch', () => {
     await refresh(fetchImpl, 'refresh-1');
     await expect(store.tokens(serverName)).resolves.toMatchObject({
       access_token: 'replacement',
+    });
+  });
+
+  it('skips the SDK write for a superseded refresh response', async () => {
+    const { create, provider, store } = await setup();
+    const fetchImpl = create(async () => {
+      await store.saveTokens(serverName, {
+        access_token: 'replacement',
+        refresh_token: 'refresh-new-login',
+        token_type: 'Bearer',
+      });
+      return json(200, {
+        access_token: 'late',
+        refresh_token: 'refresh-2',
+        token_type: 'Bearer',
+      });
+    });
+    const response = await refresh(fetchImpl, 'refresh-1');
+    const body = parseTokenResponse(await response.json());
+    if (!body) throw new Error('Expected a token response');
+    // What the SDK does with a successful refresh response.
+    await provider.saveTokens(body);
+    await expect(store.tokens(serverName)).resolves.toMatchObject({
+      access_token: 'replacement',
+      refresh_token: 'refresh-new-login',
+    });
+    // Only the superseded set is skipped, and only once.
+    await provider.saveTokens({ access_token: 'other', token_type: 'Bearer' });
+    await expect(store.tokens(serverName)).resolves.toMatchObject({
+      access_token: 'other',
+    });
+  });
+
+  it('does not overwrite a newer token set that kept the same refresh token', async () => {
+    const { create, store } = await setup();
+    const fetchImpl = create(async () => {
+      await store.saveTokens(serverName, {
+        access_token: 'newer',
+        refresh_token: 'refresh-1',
+        token_type: 'Bearer',
+      });
+      return json(200, { access_token: 'older', token_type: 'Bearer' });
+    });
+    await refresh(fetchImpl, 'refresh-1');
+    await expect(store.tokens(serverName)).resolves.toMatchObject({
+      access_token: 'newer',
+    });
+  });
+
+  it('does not replay non-rotating refresh responses', async () => {
+    const { create } = await setup();
+    let count = 0;
+    const next = vi.fn(async () =>
+      json(200, { access_token: `access-${++count}`, token_type: 'Bearer' }),
+    );
+    const fetchImpl = create(next);
+    await refresh(fetchImpl, 'refresh-1');
+    const second = await refresh(fetchImpl, 'refresh-1');
+    expect(next).toHaveBeenCalledTimes(2);
+    await expect(second.json()).resolves.toMatchObject({
+      access_token: 'access-2',
     });
   });
 

@@ -78,6 +78,14 @@ import {
 
 const RETRY_INITIAL_MS = 1_000;
 const RETRY_MAX_MS = 30_000;
+/**
+ * Post-connect 401 reconnects allowed within the window before the server is
+ * marked `authorization_required`. A successful connect resets the regular
+ * backoff, so a server that accepts `initialize` but rejects every request
+ * would otherwise reconnect every second.
+ */
+const MAX_UNAUTHORIZED_RECONNECTS = 3;
+const UNAUTHORIZED_RECONNECT_WINDOW_MS = 10 * 60_000;
 const EVENT_PAGE_SIZE = 100;
 /**
  * How long `requestAuthorization` waits for a connection attempt to reach the
@@ -394,6 +402,8 @@ interface McpServerRuntime {
   clientSetup?: AbortController;
   retryAttempt: number;
   retryTimer?: ReturnType<typeof setTimeout>;
+  unauthorizedReconnects?: number;
+  lastUnauthorizedAt?: number;
   lastError?: McpServerErrorInfo;
   nextRetryAt?: string;
   /** Cached combined count of resources + resource templates, refreshed after connect. */
@@ -983,9 +993,11 @@ class McpModule implements Mcp {
           runtime.status = status;
           this.publishRegistry();
         },
-        onDisconnect: (disconnected) => {
+        onDisconnect: (disconnected, reason) => {
           if (!this.isCurrentConnection(runtime, disconnected)) return;
           runtime.connection = undefined;
+          if (reason === 'unauthorized' && this.exhaustUnauthorized(runtime))
+            return;
           runtime.status = 'error';
           runtime.lastError = {
             name: 'McpDisconnectedError',
@@ -1549,6 +1561,39 @@ class McpModule implements Mcp {
     timer.unref?.();
     runtime.retryTimer = timer;
     runtime.nextRetryAt = new Date(Date.now() + delay).toISOString();
+  }
+
+  /**
+   * Counts a post-connect 401 reconnect. Returns true once the budget is spent
+   * and the server has been moved to `authorization_required`.
+   */
+  private exhaustUnauthorized(runtime: McpServerRuntime): boolean {
+    const now = Date.now();
+    if (
+      now - (runtime.lastUnauthorizedAt ?? 0) >
+      UNAUTHORIZED_RECONNECT_WINDOW_MS
+    )
+      runtime.unauthorizedReconnects = 0;
+    runtime.lastUnauthorizedAt = now;
+    const count = (runtime.unauthorizedReconnects ?? 0) + 1;
+    runtime.unauthorizedReconnects = count;
+    if (count <= MAX_UNAUTHORIZED_RECONNECTS) {
+      // Grow the backoff across connects instead of restarting at 1s.
+      runtime.retryAttempt = count - 1;
+      return false;
+    }
+    runtime.unauthorizedReconnects = 0;
+    runtime.status = 'authorization_required';
+    runtime.lastError = undefined;
+    runtime.nextRetryAt = undefined;
+    this.stopEventWorker(runtime.namespace);
+    this.stopRealtimeWorker(runtime.namespace);
+    this.publishRegistry();
+    this.deps.logger.warn(
+      { namespace: runtime.namespace, unauthorizedReconnects: count - 1 },
+      'MCP server keeps rejecting requests after connect; authorization required',
+    );
+    return true;
   }
 
   private clearRetry(runtime: McpServerRuntime): void {

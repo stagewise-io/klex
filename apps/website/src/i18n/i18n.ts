@@ -97,6 +97,50 @@ export const resources = Object.fromEntries(
   ]),
 );
 
+type LanguagePreference = Locale | 'auto';
+
+function cookiePreference(): LanguagePreference | undefined {
+  if (typeof document === 'undefined') return undefined;
+  try {
+    const value = document.cookie
+      .split(';')
+      .map((part) => part.trim())
+      .find((part) => part.startsWith(`${preferenceKey}=`))
+      ?.slice(preferenceKey.length + 1);
+    return value === 'auto' || isLocale(value) ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function savePreference(language: LanguagePreference): boolean {
+  try {
+    const url = new URL(location.href);
+    const sharedDomain =
+      url.hostname === 'klex.bot' || url.hostname.endsWith('.klex.bot');
+    document.cookie = `${preferenceKey}=${language}; Path=/; Max-Age=31536000; SameSite=Lax${sharedDomain ? '; Domain=klex.bot' : ''}${url.protocol === 'https:' ? '; Secure' : ''}`;
+    return cookiePreference() === language;
+  } catch {
+    return false;
+  }
+}
+
+function savedPreference(): LanguagePreference | undefined {
+  const cookie = cookiePreference();
+  if (cookie !== undefined) return cookie;
+  // Migrate the former origin-local setting only when no valid shared choice exists.
+  try {
+    const legacy = localStorage.getItem(preferenceKey);
+    if (isLocale(legacy)) {
+      if (savePreference(legacy)) localStorage.removeItem(preferenceKey);
+      return legacy;
+    }
+  } catch {
+    // Cookie choices remain usable when localStorage is blocked.
+  }
+  return undefined;
+}
+
 export const i18n = createInstance();
 i18n.use(initReactI18next);
 if (typeof window !== 'undefined') {
@@ -104,11 +148,8 @@ if (typeof window !== 'undefined') {
   detector.addDetector({
     name: 'savedPreference',
     lookup: () => {
-      try {
-        return localStorage.getItem(preferenceKey) ?? undefined;
-      } catch {
-        return undefined;
-      }
+      const preference = savedPreference();
+      return preference === 'auto' ? undefined : preference;
     },
   });
   detector.addDetector({ name: 'browserPreference', lookup: browserLocale });
@@ -125,9 +166,7 @@ await i18n.init({
   nsSeparator: false,
   interpolation: { escapeValue: false },
   detection: {
-    order: ['querystring', 'savedPreference', 'browserPreference'],
-    lookupQuerystring: 'lang',
-    lookupLocalStorage: preferenceKey,
+    order: ['savedPreference', 'browserPreference'],
     caches: [],
   },
 });
@@ -155,20 +194,15 @@ export function mountLanguage({
   const locale = currentLocale();
   document.documentElement.lang = preserveEnglish ? 'en' : locale;
   document.documentElement.dir = preserveEnglish ? 'ltr' : i18n.dir(locale);
-  // Keep explicit URL choices across marketing pages, including when storage is blocked.
-  const explicitLanguage = new URL(location.href).searchParams.get('lang');
+  // Retire old language URLs without disturbing unrelated parameters or anchors.
+  const pageUrl = new URL(location.href);
+  if (pageUrl.searchParams.has('lang')) {
+    pageUrl.searchParams.delete('lang');
+    history.replaceState(history.state, '', pageUrl.href);
+  }
   for (const link of document.querySelectorAll<HTMLAnchorElement>('a[href]')) {
     const url = new URL(link.href);
     if (
-      url.origin === location.origin &&
-      ['/', '/brand', '/press'].includes(
-        url.pathname.replace(/\/$/, '') || '/',
-      ) &&
-      isLocale(explicitLanguage)
-    ) {
-      url.searchParams.set('lang', explicitLanguage);
-      link.href = `${url.pathname}${url.search}${url.hash}`;
-    } else if (
       url.origin === 'https://docs.klex.bot' &&
       locale !== 'en' &&
       !isLocale(url.pathname.split('/')[1])
@@ -183,26 +217,21 @@ export function mountLanguage({
 }
 
 export function languagePreference(): Locale | 'auto' {
-  let saved: string | null = null;
-  try {
-    saved = localStorage.getItem(preferenceKey);
-  } catch {
-    /* Storage can be blocked. */
-  }
-  const explicit = new URL(location.href).searchParams.get('lang');
-  return isLocale(explicit) ? explicit : isLocale(saved) ? saved : 'auto';
+  const saved = savedPreference();
+  return isLocale(saved) ? saved : 'auto';
 }
 
 export function changeLanguagePreference(language: Locale | 'auto'): void {
-  try {
-    if (language === 'auto') localStorage.removeItem(preferenceKey);
-    else if (isLocale(language)) localStorage.setItem(preferenceKey, language);
-  } catch {
-    /* URL selection still works when storage is blocked. */
+  if (language !== 'auto' && !isLocale(language)) return;
+  if (savePreference(language)) {
+    try {
+      localStorage.removeItem(preferenceKey);
+    } catch {
+      // The shared cookie is authoritative; legacy storage may be blocked.
+    }
   }
   const url = new URL(location.href);
-  if (language === 'auto') url.searchParams.delete('lang');
-  else if (isLocale(language)) url.searchParams.set('lang', language);
+  url.searchParams.delete('lang');
   location.assign(url.href);
 }
 

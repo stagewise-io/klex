@@ -48,7 +48,7 @@ export const brandMarkup = `
   </section>
   <section class="resource-section" id="description" aria-labelledby="description-title">
     <h2 id="description-title">${html('Short description')}</h2>
-    <div class="resource-section-body"><p class="resource-lead">${html(shortDescription)}</p><p><a href="/press">${html('For articles, listings, and introductions. For more product and company background, visit our press page.')}</a></p></div>
+    <div class="resource-section-body"><p class="resource-lead">${html(shortDescription)}</p><p>${html('For articles, listings, and introductions. For more product and company background, visit our <press>press page</press>.').replace('&lt;press&gt;', '<a href="/press">').replace('&lt;/press&gt;', '</a>')}</p></div>
   </section>
   <section class="resource-section resource-section-wide" id="logos" aria-labelledby="logos-title">
     <div class="resource-section-intro"><h2 id="logos-title">${html('Logo sets')}</h2><p>${html('Use the logo and wordmark together where space allows. The rounded square mark works for app icons; the square-corner avatar fills its box edge to edge, so the platform can apply its own crop. The unframed mark keeps the entire silhouette visible on badges and custom backgrounds. Download the original SVG or choose a resolution for a PNG generated in your browser. PNGs preserve the artwork’s aspect ratio and any transparent areas.')}</p></div>

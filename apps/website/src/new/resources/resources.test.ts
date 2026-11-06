@@ -5,6 +5,10 @@ import pressHtml from '../../../press/index.html?raw';
 import { brandMarkup, pressMarkup } from './resources';
 
 describe('Klex media resources', () => {
+  it('links only the press-page label, not the surrounding paragraph', () => {
+    expect(brandMarkup).toContain('visit our <a href="/press">press page</a>.');
+    expect(brandMarkup).not.toContain('<a href="/press">For articles');
+  });
   it.each([
     ['brand', brandHtml],
     ['press', pressHtml],

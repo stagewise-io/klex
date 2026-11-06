@@ -35,8 +35,10 @@ describe('translation catalogs', () => {
     await i18n.changeLanguage('en');
     expect(html('Add description...')).toBe('Add description...');
     expect(
-      html('The pull request, with Jeff’s bug report and Jonathan’s fix'),
-    ).not.toContain('<');
+      html('Apps {{name}} uses', { name: `<a title="x">Tom & 'Jo'</a>` }),
+    ).toBe(
+      'Apps &lt;a title=&quot;x&quot;&gt;Tom &amp; &#39;Jo&#39;&lt;/a&gt; uses',
+    );
   });
   it.each([
     [['de-DE', 'en-US'], 'de'],
@@ -70,7 +72,18 @@ function browser(search: string, saved: string | null, languages = ['ja-JP']) {
     addEventListener: vi.fn(),
     removeEventListener: vi.fn(),
   };
+  const cookies = new Map<string, string>();
+  const cookieWrites: string[] = [];
   const document = {
+    get cookie() {
+      return [...cookies].map(([key, value]) => `${key}=${value}`).join('; ');
+    },
+    set cookie(value: string) {
+      cookieWrites.push(value);
+      const [pair] = value.split(';');
+      const separator = pair.indexOf('=');
+      cookies.set(pair.slice(0, separator), pair.slice(separator + 1));
+    },
     documentElement: { lang: '', dir: '' },
     querySelectorAll: () => [],
     querySelector: () => select,
@@ -80,10 +93,64 @@ function browser(search: string, saved: string | null, languages = ['ja-JP']) {
   vi.stubGlobal('localStorage', localStorage);
   vi.stubGlobal('navigator', { languages, language: languages[0] });
   vi.stubGlobal('document', document);
-  return { storage, localStorage, location, select, document };
+  vi.stubGlobal('history', { state: null, replaceState: vi.fn() });
+  return {
+    storage,
+    localStorage,
+    location,
+    select,
+    document,
+    cookies,
+    cookieWrites,
+  };
 }
 
 describe('language detection and footer', () => {
+  it('migrates an existing localStorage preference to the shared cookie', async () => {
+    const env = browser('', 'fr');
+    const module = await import('./i18n');
+    expect(module.currentLocale()).toBe('fr');
+    expect(env.cookies.get(preferenceKey)).toBe('fr');
+    expect(env.storage.has(preferenceKey)).toBe(false);
+  });
+  it.each(['en', 'auto'])(
+    'uses shared %s instead of a stale local preference',
+    async (value) => {
+      const env = browser('', 'de', ['en-US']);
+      env.cookies.set(preferenceKey, value);
+      const module = await import('./i18n');
+      expect(module.currentLocale()).toBe('en');
+      expect(module.languagePreference()).toBe(value);
+    },
+  );
+  it('ignores invalid cookie values and malformed unrelated cookies', async () => {
+    const env = browser('', null, ['en-US']);
+    env.cookies.set('other', '%broken');
+    env.cookies.set(preferenceKey, 'invalid');
+    const module = await import('./i18n');
+    expect(module.currentLocale()).toBe('en');
+  });
+  it('uses a host-only nonsecure cookie on local development origins', async () => {
+    const env = browser('', null);
+    env.location.href = 'http://localhost:5173/';
+    const module = await import('./i18n');
+    module.changeLanguagePreference('fr');
+    expect(env.cookieWrites.at(-1)).toBe(
+      'klex-language=fr; Path=/; Max-Age=31536000; SameSite=Lax',
+    );
+  });
+  it('retains the legacy setting if cookies cannot be written', async () => {
+    const env = browser('', 'fr');
+    Object.defineProperty(env.document, 'cookie', {
+      get: () => '',
+      set: () => {},
+    });
+    const module = await import('./i18n');
+    expect(module.currentLocale()).toBe('fr');
+    expect(env.storage.get(preferenceKey)).toBe('fr');
+    module.changeLanguagePreference('de');
+    expect(env.location.assign).toHaveBeenCalledWith('https://klex.bot/brand');
+  });
   it('prefers the browser primary language when its preference list disagrees', async () => {
     browser('', null, ['de-DE', 'en-US']);
     vi.stubGlobal('navigator', {
@@ -97,7 +164,7 @@ describe('language detection and footer', () => {
   it('keeps the automatic language independent of URL and saved overrides', async () => {
     browser('?lang=ar', 'de', ['en-US', 'de-DE']);
     const module = await import('./i18n');
-    expect(module.currentLocale()).toBe('ar');
+    expect(module.currentLocale()).toBe('de');
     expect(module.browserLocale()).toBe('en');
     expect(
       module.t('Automatic (device language)', { lng: module.browserLocale() }),
@@ -109,12 +176,12 @@ describe('language detection and footer', () => {
     expect(module.currentLocale()).toBe('en');
   });
   it.each([
-    ['?lang=ar', 'de', 'ar'],
+    ['?lang=ar', 'de', 'de'],
     ['', 'fr', 'fr'],
     ['', null, 'ja'],
     ['?lang=invalid', 'de', 'de'],
   ])(
-    'uses URL, saved choice, then browser: %s / %s',
+    'ignores language URLs and uses saved choice then browser: %s / %s',
     async (search, saved, expected) => {
       browser(search ?? '', saved);
       const module = await import('./i18n');
@@ -122,24 +189,27 @@ describe('language detection and footer', () => {
     },
   );
   it('sets Arabic direction, persists footer changes, and resets automatic selection', async () => {
-    const env = browser('?lang=ar', 'de');
+    const env = browser('?lang=de', 'ar');
     const module = await import('./i18n');
     const dispose = module.mountLanguage();
     expect(env.document.documentElement).toEqual({ lang: 'ar', dir: 'rtl' });
     expect(module.languagePreference()).toBe('ar');
     module.changeLanguagePreference('fr');
-    expect(env.storage.get(preferenceKey)).toBe('fr');
+    expect(env.cookies.get(preferenceKey)).toBe('fr');
+    expect(env.storage.has(preferenceKey)).toBe(false);
+    expect(env.cookieWrites.at(-1)).toContain('Domain=klex.bot; Secure');
     expect(env.location.assign).toHaveBeenLastCalledWith(
-      'https://klex.bot/brand?lang=fr',
+      'https://klex.bot/brand',
     );
     module.changeLanguagePreference('auto');
+    expect(env.cookies.get(preferenceKey)).toBe('auto');
     expect(env.storage.has(preferenceKey)).toBe(false);
     expect(env.location.assign).toHaveBeenLastCalledWith(
       'https://klex.bot/brand',
     );
     dispose();
   });
-  it('keeps legal content English and allows URL switching when storage is blocked', async () => {
+  it('keeps legal content English and saves cookies when localStorage is blocked', async () => {
     const env = browser('?lang=ar', null);
     env.localStorage.getItem = () => {
       throw new Error('blocked');
@@ -152,7 +222,7 @@ describe('language detection and footer', () => {
     expect(env.document.documentElement).toEqual({ lang: 'en', dir: 'ltr' });
     module.changeLanguagePreference('de');
     expect(env.location.assign).toHaveBeenLastCalledWith(
-      'https://klex.bot/brand?lang=de',
+      'https://klex.bot/brand',
     );
   });
 });

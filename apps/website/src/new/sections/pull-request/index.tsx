@@ -21,7 +21,7 @@ import {
 import { IconCircleCheckOutline18 } from '@stagewise/ui/icons/nucleo/ui-outline-18/IconCircleCheckOutline18.tsx';
 import { IconOctagonWarningOutline18 } from '@stagewise/ui/icons/nucleo/ui-outline-18/IconOctagonWarningOutline18.tsx';
 
-import { t } from '@/i18n';
+import { RichMessage, t } from '@/i18n';
 
 import { heroLooks } from '../../bot-looks';
 import { SafariWindow, useCareersZoom } from '../build/safari';
@@ -166,18 +166,30 @@ function PullRequest({
               {merged ? t('Merged') : t('Open')}
             </span>
             <span className="new-pr-merge">
-              {t(
-                merged
-                  ? '{{author}} merged 2 commits into {{base}} from {{branch}}'
-                  : fixed
-                    ? '{{author}} wants to merge 2 commits into {{base}} from {{branch}}'
-                    : '{{author}} wants to merge 1 commit into {{base}} from {{branch}}',
-                {
-                  author: 'jonathan-bot',
-                  base: 'main',
-                  branch: 'feat/careers-page',
-                },
-              )}
+              <RichMessage
+                message={
+                  merged
+                    ? '{{author}} merged 2 commits into {{base}} from {{branch}}'
+                    : fixed
+                      ? '{{author}} wants to merge 2 commits into {{base}} from {{branch}}'
+                      : '{{author}} wants to merge 1 commit into {{base}} from {{branch}}'
+                }
+                values={{
+                  author: <strong>jonathan-bot</strong>,
+                  base: <code>main</code>,
+                  branch: (
+                    <span className="new-pr-head-branch">
+                      <code>feat/careers-page</code>
+                      <svg
+                        className="new-pr-copy new-pr-icon"
+                        aria-hidden="true"
+                      >
+                        <use href="/github-pr-icons.svg#copy" />
+                      </svg>
+                    </span>
+                  ),
+                }}
+              />
             </span>
           </div>
         </div>

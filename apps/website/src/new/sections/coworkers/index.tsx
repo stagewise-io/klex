@@ -271,7 +271,7 @@ export function Coworkers() {
         <CardContent className="px-0">
           <Table className="coworkers-comparison">
             <TableCaption className="sr-only">
-              Personal AI Assistant compared with Klex Bots
+              {t('Personal AI Assistant compared with Klex Bots')}
             </TableCaption>
             <TableHeader>
               <TableRow>

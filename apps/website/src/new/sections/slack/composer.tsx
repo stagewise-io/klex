@@ -12,7 +12,7 @@ import { IconMicrophone3Outline18 } from '@stagewise/ui/icons/nucleo/ui-outline-
 import { IconPlusOutline18 } from '@stagewise/ui/icons/nucleo/ui-outline-18/IconPlusOutline18.tsx';
 import { IconVideoOutline18 } from '@stagewise/ui/icons/nucleo/ui-outline-18/IconVideoOutline18.tsx';
 
-import { t } from '@/i18n';
+import { type Message, t } from '@/i18n';
 
 const iconPaths = {
   link: 'M7 11l4-4M6 8l-2 2a3 3 0 004 4l2-2M8 6l2-2a3 3 0 014 4l-2 2',
@@ -47,7 +47,7 @@ function ToolButton({
   children,
   className,
 }: {
-  label: string;
+  label: Message;
   children: ReactNode;
   className?: string;
 }) {
@@ -55,7 +55,7 @@ function ToolButton({
     <InputGroupButton
       size="icon-sm"
       tabIndex={-1}
-      aria-label={label}
+      aria-label={t(label)}
       className={className}
     >
       {children}

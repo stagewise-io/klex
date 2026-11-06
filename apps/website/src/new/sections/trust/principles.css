@@ -1,9 +1,11 @@
 .trust-principle-scene {
+  overflow: clip;
   height: 260px;
   margin-bottom: 1.75rem;
 }
 
 .trust-scene {
+  direction: ltr;
   position: relative;
   width: 100%;
   max-width: 360px;

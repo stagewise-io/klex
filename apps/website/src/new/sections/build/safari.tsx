@@ -2,6 +2,8 @@ import './build.css';
 
 import { type ReactNode, type RefObject, useEffect } from 'react';
 
+import { t } from '@/i18n';
+
 // The careers page lays out at this width and zooms out in narrower windows,
 // so it keeps its desktop composition instead of reflowing into a cramped one.
 const careersPageWidth = 440;
@@ -43,7 +45,10 @@ export function SafariWindow({
 }) {
   return (
     <div className="new-window-stack" data-window-enter={enter}>
-      <WindowLabel title={app} icon={app === 'GitHub' ? 'github' : 'chrome'} />
+      <WindowLabel
+        title={app === 'Browser' ? t('Browser') : app}
+        icon={app === 'GitHub' ? 'github' : 'chrome'}
+      />
       <div className="new-safari-window" role="img" aria-label={label}>
         <div className="new-safari-toolbar" aria-hidden="true">
           <span className="new-safari-dots">

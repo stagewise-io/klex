@@ -21,7 +21,7 @@
 }
 
 .new-slack-window {
-  text-align: left;
+  text-align: start;
 }
 
 .new-slack-monica-mount,
@@ -177,7 +177,7 @@
   position: absolute;
   left: 0;
   height: 16px;
-  border-left: 1px solid currentColor;
+  border-inline-start: 1px solid currentColor;
   opacity: 0.2;
   content: "";
 }

@@ -66,15 +66,15 @@
 }
 
 .trust-principles article:first-child {
-  padding-left: 0;
+  padding-inline-start: 0;
 }
 
 .trust-principles article:last-child {
-  padding-right: 0;
+  padding-inline-end: 0;
 }
 
 .trust-principles article + article {
-  border-left: 1px solid var(--border);
+  border-inline-start: 1px solid var(--border);
 }
 
 .trust-principles h4 {
@@ -142,7 +142,11 @@
 }
 
 .trust-center-cta {
-  padding-inline: 1rem;
+  max-width: 100%;
+  height: auto;
+  padding: 0.75rem 1rem;
+  white-space: normal;
+  text-align: center;
   text-decoration: none;
 }
 
@@ -170,6 +174,6 @@
   .trust-principles article + article {
     padding-top: 1.5rem;
     border-top: 1px solid var(--border);
-    border-left: 0;
+    border-inline-start: 0;
   }
 }

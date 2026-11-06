@@ -1,5 +1,7 @@
 import './office.css';
 
+import { html } from '@/i18n';
+
 import { officeFigure, type Point, project } from './office-figures';
 import { officeMembers } from './office-members';
 
@@ -725,18 +727,18 @@ function roomDrawing() {
 const floorCorner = project([-7.8, 0, 5]);
 
 export const officeMarkup = `
-  <section class="trust-office" id="our-first-office" aria-label="The stagewise office">
+  <section class="trust-office" id="our-first-office" aria-label="${html('The stagewise office')}">
     <figure class="office-room" style="--office-caption-y: ${((floorCorner.y - 100) / 1600) * 100}%;">
       <div class="office-stage">
         <svg class="office-drawing" viewBox="-100 100 1600 650" role="img" aria-labelledby="office-drawing-title office-drawing-description">
-          <title id="office-drawing-title">Our first office in Bielefeld, Germany</title>
-          <desc id="office-drawing-description">Four people sit at the desks: Jakob at the front left, a teammate at the back left, Glenn at the back right, and Julian at the front right. Kristine, a Klex Bot, sits beside the back-left desk. Jonathan and Harry sit on the floor to the left and right of the desks. Hover over a bot to see what they do.</desc>
+          <title id="office-drawing-title">${html('Our first office in Bielefeld, Germany')}</title>
+          <desc id="office-drawing-description">${html('Four people sit at the desks: Jakob at the front left, a teammate at the back left, Glenn at the back right, and Julian at the front right. Kristine, a Klex Bot, sits beside the back-left desk. Jonathan and Harry sit on the floor to the left and right of the desks. Hover over a bot to see what they do.')}</desc>
           ${roomDrawing()}
         </svg>
         <div class="office-team-mount"></div>
       </div>
       <figcaption class="office-caption">
-        Our Klex Bots are not physically in the office… but sometimes it almost feels like they are.
+        ${html('Our Klex Bots are not physically in the office… but sometimes it almost feels like they are.')}
       </figcaption>
     </figure>
   </section>

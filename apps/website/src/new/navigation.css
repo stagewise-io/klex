@@ -45,6 +45,12 @@
   color: var(--foreground);
 }
 
+.new-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 .new-github svg {
   display: none;
 }
@@ -67,7 +73,8 @@
   .new-nav-content {
     gap: 0.3125rem;
   }
-  .new-header .new-desktop-nav {
+  .new-header .new-desktop-nav,
+  .new-desktop-language {
     display: none;
   }
   .new-brand img {

@@ -99,6 +99,9 @@
 }
 
 .new-hero h1 {
+  max-width: min(100%, 18ch, 56rem);
+  text-wrap: balance;
+  overflow-wrap: break-word;
   margin: 0;
   font-family: "Fraunces", Georgia, serif;
   font-size: clamp(2.75rem, 6.8vw, 5.75rem);

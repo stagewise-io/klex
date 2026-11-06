@@ -1,5 +1,7 @@
 import './styles.css';
 
+import { t } from '@/i18n';
+
 import {
   type CardProps,
   FeatureCard,
@@ -11,8 +13,10 @@ export function AutonomyCard({ playing }: CardProps) {
   return (
     <FeatureCard
       id="autonomy"
-      title="Working while you’re away"
-      description="Klex Bots keep working on their tasks while you’re away."
+      title={t('Working while you’re away')}
+      description={t(
+        'Klex Bots keep working on their tasks while you’re away.',
+      )}
       Scene={WorkingScene}
       playing={playing}
     />

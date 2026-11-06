@@ -1,3 +1,5 @@
+import { type Message, t } from '@/i18n';
+
 type Summary = {
   ongoing_incidents: { current_worst_impact?: string }[];
   in_progress_maintenances: unknown[];
@@ -75,12 +77,12 @@ class CloudStatus {
       if (controller.signal.aborted) return;
       this.host.dataset.state = status.state;
       const label = this.host.querySelector('[data-cloud-status-label]');
-      if (label) label.textContent = status.label;
+      if (label) label.textContent = t(status.label as Message);
     } catch {
       if (!controller.signal.aborted || this.timer) {
         this.host.dataset.state = 'unknown';
         const label = this.host.querySelector('[data-cloud-status-label]');
-        if (label) label.textContent = 'Klex Cloud status';
+        if (label) label.textContent = t('Klex Cloud status');
       }
     } finally {
       clearTimeout(timeout);

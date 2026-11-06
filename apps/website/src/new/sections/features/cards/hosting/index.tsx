@@ -1,5 +1,7 @@
 import './styles.css';
 
+import { t } from '@/i18n';
+
 import { type CardProps, FeatureCard } from '../../shared/feature-card';
 import deskUrl from './desk.svg?url';
 
@@ -7,8 +9,10 @@ export function HostingCard({ playing }: CardProps) {
   return (
     <FeatureCard
       id="hosting"
-      title="Hosted where you choose"
-      description="Run Klex Bots in our Klex Cloud - or on your own infrastructure, keeping all your Klex Bot's data with you."
+      title={t('Hosted where you choose')}
+      description={t(
+        "Run Klex Bots in our Klex Cloud - or on your own infrastructure, keeping all your Klex Bot's data with you.",
+      )}
       Scene={HostingScene}
       playing={playing}
     />

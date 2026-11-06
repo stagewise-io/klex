@@ -8,6 +8,8 @@ import {
   PopoverTitle,
 } from '@stagewise/ui';
 
+import { t } from '@/i18n';
+
 import { connectorRegistry } from '../connector-registry';
 
 type ProfileApp = { name: string; logoSrc: string };
@@ -37,8 +39,8 @@ export function ProfileApps({
   if (!apps.length) return null;
   return (
     <div className="new-bot-profile-apps">
-      <span>Uses</span>
-      <ul aria-label={`Apps ${name} uses`}>
+      <span>{t('Uses')}</span>
+      <ul aria-label={t('Apps {{name}} uses', { name })}>
         {apps.map((app) => (
           <li key={app.logoSrc} title={app.name}>
             <img src={app.logoSrc} alt={app.name} width={20} height={20} />

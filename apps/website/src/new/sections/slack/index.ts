@@ -1,5 +1,7 @@
 import './slack.css';
 
+import { html, t } from '@/i18n';
+
 import { slackMessageMarkup } from '../../slack-message';
 import { type BotSpot, workflowActor } from '../workflow/actors';
 import { reportProgress } from '../workflow/controls';
@@ -16,10 +18,10 @@ export const slackConversationMarkup = (hidden = false) =>
   [
     slackMessageMarkup({
       className: 'new-slack-human',
-      name: 'You',
+      name: t('You'),
       time: '9:41 AM',
       hidden,
-      body: `<span class="new-slack-mention">@Monica</span>, we're looking for a Product Designer. Can you add the role to our company's website?`,
+      body: `<span class="new-slack-mention">@Monica</span>${html(", we're looking for a Product Designer. Can you add the role to our company's website?")}`,
     }),
     slackMessageMarkup({
       className: 'new-slack-monica',
@@ -27,7 +29,7 @@ export const slackConversationMarkup = (hidden = false) =>
       name: 'Monica',
       time: '9:42 AM',
       hidden,
-      body: `<span class="new-slack-mention">@Kristine</span>, we don't have a careers page yet. Can you create a ticket to build one with an application form? I'll get started on the copy for the job offer.`,
+      body: `<span class="new-slack-mention">@Kristine</span>${html(", we don't have a careers page yet. Can you create a ticket to build one with an application form? I'll get started on the copy for the job offer.")}`,
     }),
     slackMessageMarkup({
       className: 'new-slack-kristine',
@@ -35,7 +37,7 @@ export const slackConversationMarkup = (hidden = false) =>
       name: 'Kristine',
       time: '9:42 AM',
       hidden,
-      body: `On it. I'll create a ticket for <span class="new-slack-mention">@Jonathan</span> to build the careers page and application form.`,
+      body: `${html("On it. I'll create a ticket for")} <span class="new-slack-mention">@Jonathan</span> ${html('to build the careers page and application form.')}`,
     }),
   ].join('');
 
@@ -46,11 +48,11 @@ export const slackMarkup = `
             <div class="new-slack-window new-slack-entrance" data-window-enter="false">
               <p class="new-slack-label"><img src="/connectors/slack.svg" alt="" width="22" height="22" />Slack</p>
               <div class="new-slack-panel">
-                <div class="new-slack-messages" role="log" aria-live="polite" aria-label="Example conversation in Slack">
+                <div class="new-slack-messages" role="log" aria-live="polite" aria-label="${html('Example conversation in Slack')}">
                   ${slackConversationMarkup(true)}
                 </div>
                 <div class="new-slack-composer dark" inert aria-hidden="true"></div>
-                <p class="new-slack-typing" aria-hidden="true">Monica is typing<span>…</span></p>
+                <p class="new-slack-typing" aria-hidden="true">${html('Monica is typing')}<span>…</span></p>
               </div>
             </div>
             <div class="new-slack-monica-mount" data-workflow-bot="monica"></div>
@@ -109,8 +111,7 @@ export function mountSlack() {
     else kristine()?.pop(kristineHome);
   };
 
-  const text =
-    "@Monica, we're looking for a Product Designer. Can you add the role to our company's website?";
+  const text = `@Monica${t(", we're looking for a Product Designer. Can you add the role to our company's website?")}`;
   const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
   let storyTimer: number | undefined;
   let completed = false;
@@ -155,7 +156,8 @@ export function mountSlack() {
     reset();
     started = true;
     messages.scrollTop = 0;
-    if (typing.firstChild) typing.firstChild.textContent = 'Monica is typing';
+    if (typing.firstChild)
+      typing.firstChild.textContent = t('Monica is typing');
 
     if (reducedMotion.matches) {
       finishStory();
@@ -199,9 +201,9 @@ export function mountSlack() {
           reportProgress(slide, 0.65);
           later(() => {
             kristine()?.setActivity('working');
-            kristine()?.say('Writing…');
+            kristine()?.say(t('Writing…'));
             if (typing.firstChild)
-              typing.firstChild.textContent = 'Kristine is typing';
+              typing.firstChild.textContent = t('Kristine is typing');
             typing.style.visibility = 'visible';
             later(() => {
               typing.style.visibility = 'hidden';

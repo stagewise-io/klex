@@ -3,6 +3,8 @@ import './report.css';
 
 import { type CSSProperties, useEffect, useRef, useState } from 'react';
 
+import { t } from '@/i18n';
+
 import { mascotMarkup } from '../../../mascot';
 import { heroLooks } from '../../bot-looks';
 import { slackConversationMarkup } from '../slack';
@@ -24,7 +26,7 @@ const monicaAvatar = mascotMarkup(
   heroLooks.monica.color,
   heroLooks.monica.shape,
 );
-const thankYouMessage = 'Amazing, thank you all!';
+const thankYouMessage = t('Amazing, thank you all!');
 
 function MonicaAvatar() {
   return (
@@ -91,7 +93,7 @@ function ReportScene({ playing, finished, onComplete }: StoryProps) {
       setProgress(0.2);
       await wait(1100, signal);
       monica.current?.setActivity('working');
-      monica.current?.say('Writing…');
+      monica.current?.say(t('Writing…'));
       setTyping(true);
       setProgress(0.5);
       await wait(1800, signal);
@@ -138,7 +140,7 @@ function ReportScene({ playing, finished, onComplete }: StoryProps) {
               ref={messages}
               className="new-slack-messages"
               role="log"
-              aria-label="Example conversation in Slack"
+              aria-label={t('Example conversation in Slack')}
             >
               <div
                 className="new-report-earlier"
@@ -155,24 +157,26 @@ function ReportScene({ playing, finished, onComplete }: StoryProps) {
                       <time>4:18 PM</time>
                     </p>
                     <p>
-                      <span className="new-slack-mention">@You</span>, our
-                      Product Designer role is live:{' '}
+                      <span className="new-slack-mention">@{t('You')}</span>
+                      {t(', our Product Designer role is live:')}{' '}
                       <span className="new-report-link">
                         acme.design/careers
                       </span>
                     </p>
                     <p>
-                      Listing is online, will tell you once we receive some
-                      applications!
+                      {t(
+                        'Listing is online, will tell you once we receive some applications!',
+                      )}
                     </p>
                     <div className="new-report-unfurl">
                       <strong>acme</strong>
                       <span className="new-report-unfurl-title">
-                        Product Designer · Careers at acme
+                        {t('Product Designer · Careers at acme')}
                       </span>
                       <span>
-                        Design what’s next. Join a small team building better
-                        ways to work.
+                        {t(
+                          'Design what’s next. Join a small team building better ways to work.',
+                        )}
                       </span>
                     </div>
                   </div>
@@ -188,7 +192,7 @@ function ReportScene({ playing, finished, onComplete }: StoryProps) {
                   </span>
                   <div>
                     <p className="new-slack-message-meta">
-                      <strong>You</strong>
+                      <strong>{t('You')}</strong>
                       <time>4:19 PM</time>
                     </p>
                     <p>{thankYouMessage}</p>
@@ -207,7 +211,8 @@ function ReportScene({ playing, finished, onComplete }: StoryProps) {
               aria-hidden="true"
               style={{ visibility: typing ? 'visible' : 'hidden' }}
             >
-              Monica is typing<span>…</span>
+              {t('Monica is typing')}
+              <span>…</span>
             </p>
           </div>
         </div>

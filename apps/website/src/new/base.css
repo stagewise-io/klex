@@ -52,7 +52,7 @@ button:focus-visible {
 .new-skip-link {
   position: fixed;
   top: -4rem;
-  left: 1rem;
+  inset-inline-start: 1rem;
   z-index: 10;
   padding: 0.75rem;
   background: var(--background);
@@ -75,6 +75,28 @@ button:focus-visible {
   color: var(--muted-foreground);
   font-size: 1rem;
   animation-delay: 50ms;
+}
+
+:where([lang="ar"], [lang="hi"], [lang="zh"], [lang="ja"], [lang="ko"])
+  :is(h1, h2, h3) {
+  line-height: 1.2;
+  letter-spacing: normal;
+}
+
+[dir="rtl"]
+  :is(
+    .new-slack,
+    .new-build,
+    .new-pull-request,
+    .new-report,
+    .new-workflow,
+    .new-features
+  ) {
+  text-align: start;
+}
+
+[dir="rtl"] :is(.new-slack-window, .new-report-window) {
+  text-align: start;
 }
 
 @media (prefers-reduced-motion: reduce) {

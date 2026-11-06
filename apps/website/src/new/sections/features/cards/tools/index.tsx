@@ -4,6 +4,8 @@ import { DEFAULT_GLIDE, type KlexHandle, MOVEMENT_STYLES } from '@klex/mascot';
 import { gsap } from 'gsap';
 import { useCallback, useEffect, useRef } from 'react';
 
+import { t } from '@/i18n';
+
 import { klexLook } from '../../../../bot-looks';
 import { ProgressiveMascot } from '../../../../static-mascot';
 import {
@@ -16,8 +18,10 @@ export function ToolsCard({ playing }: CardProps) {
   return (
     <FeatureCard
       id="tools"
-      title="Right where work happens"
-      description="Slack conversations. Linear tickets. GitHub pull requests. Klex Bots work in the tools you use."
+      title={t('Right where work happens')}
+      description={t(
+        'Slack conversations. Linear tickets. GitHub pull requests. Klex Bots work in the tools you use.',
+      )}
       Scene={ToolsScene}
       playing={playing}
     />

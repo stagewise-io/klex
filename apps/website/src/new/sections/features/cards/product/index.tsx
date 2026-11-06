@@ -3,6 +3,8 @@ import './styles.css';
 import { useInView } from 'motion/react';
 import { useRef } from 'react';
 
+import { t } from '@/i18n';
+
 import type { CardProps, SceneProps } from '../../shared/feature-card';
 import { SceneBot } from '../../shared/scene-bot';
 import { useBeat } from '../../shared/use-beat';
@@ -16,10 +18,10 @@ export function ProductCard({ playing }: CardProps) {
       ref={card}
       className="bento-cell bento-product"
       data-playing={active}
-      aria-label="Klex Bots, your team of digital coworkers"
+      aria-label={`Klex Bots, ${t('Your team of digital coworkers')}`}
     >
       <span className="bento-product-label">
-        Your team of digital coworkers
+        {t('Your team of digital coworkers')}
       </span>
       <h2 id="features-title" className="bento-product-title">
         Klex Bots

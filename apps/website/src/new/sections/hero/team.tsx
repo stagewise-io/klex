@@ -29,6 +29,8 @@ import {
 import { createPortal, flushSync } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 
+import { t } from '@/i18n';
+
 import { heroLooks } from '../../bot-looks';
 import { botProfileApps, ProfileApps } from '../../profile-card';
 import GradualBlur from './react-bits/GradualBlur';
@@ -42,30 +44,34 @@ const bots = [
   {
     id: 'jonathan',
     name: 'Jonathan',
-    role: 'Software Engineer',
+    role: t('Software Engineer'),
     mode: 'fly',
-    work: 'Turns Linear tickets into working features and opens pull requests.',
+    work: t(
+      'Turns Linear tickets into working features and opens pull requests.',
+    ),
   },
   {
     id: 'kristine',
     name: 'Kristine',
-    role: 'Product Manager',
+    role: t('Product Manager'),
     mode: 'hop',
-    work: 'Turns rough ideas in Slack into a plan and clear Linear tickets.',
+    work: t('Turns rough ideas in Slack into a plan and clear Linear tickets.'),
   },
   {
     id: 'monica',
     name: 'Monica',
-    role: 'Recruiter',
+    role: t('Recruiter'),
     mode: 'crawl',
-    work: 'Helps the team hire and welcome new teammates.',
+    work: t('Helps the team hire and welcome new teammates.'),
   },
   {
     id: 'jeff',
     name: 'Jeff',
-    role: 'Quality Assurance',
+    role: t('Quality Assurance'),
     mode: 'hop',
-    work: 'Tests new features, finds edge cases, and leaves precise feedback.',
+    work: t(
+      'Tests new features, finds edge cases, and leaves precise feedback.',
+    ),
   },
 ] as const satisfies readonly {
   id: string;
@@ -365,7 +371,10 @@ function HeroBot({
           className="new-bot-trigger"
           disabled={!visible}
           tabIndex={-1}
-          aria-label={`${bot.name}, ${bot.role}. Show details`}
+          aria-label={t('{{name}}, {{role}}. Show details', {
+            name: bot.name,
+            role: bot.role,
+          })}
           aria-expanded={profileOpen}
           aria-controls={profileOpen ? profileId : undefined}
           aria-pressed={selected}
@@ -391,7 +400,10 @@ function HeroBot({
             className="new-bot-tag"
             style={{ opacity: profileOpen ? 0 : 1, borderRadius: 10 }}
             disabled={!visible}
-            aria-label={`${bot.name}, ${bot.role}. Show details`}
+            aria-label={t('{{name}}, {{role}}. Show details', {
+              name: bot.name,
+              role: bot.role,
+            })}
             aria-expanded={profileOpen}
             aria-controls={profileOpen ? profileId : undefined}
             aria-describedby={profileOpen ? `${profileId}-work` : undefined}
@@ -693,7 +705,7 @@ function HeroTeam({ entrance }: { entrance: Promise<void> }) {
       <button
         type="button"
         className="new-grid-target"
-        aria-label="Move the selected Klex on the grid"
+        aria-label={t('Move the selected Klex on the grid')}
         onClick={(event) => {
           const bounds = stage.current?.getBoundingClientRect();
           if (!bounds) return;
@@ -736,7 +748,7 @@ function HeroTeam({ entrance }: { entrance: Promise<void> }) {
       <ul
         ref={team}
         className="new-team"
-        aria-label="Meet your digital coworkers"
+        aria-label={t('Meet your digital coworkers')}
       >
         {dimensions.width > 0 &&
           bots.map((bot, index) => (

@@ -128,7 +128,8 @@ export interface ConnectMcpServerOptions {
     connection: McpConnection,
     uri: string,
   ): void | Promise<void>;
-  onDisconnect(connection: McpConnection): void;
+  /** `unauthorized` when closed after a post-connect 401 the SDK could not fix. */
+  onDisconnect(connection: McpConnection, reason?: 'unauthorized'): void;
   onAuthorizationStatus?(
     status: 'authorization_required' | 'authorizing' | 'connecting',
   ): void;
@@ -324,7 +325,11 @@ export async function connectMcpServer(
   client.onclose = () => {
     if (connection) {
       oauthLifetime.abort();
-      if (!expectedClose) options.onDisconnect(connection);
+      if (!expectedClose)
+        options.onDisconnect(
+          connection,
+          reconnectingAfterUnauthorized ? 'unauthorized' : undefined,
+        );
     }
   };
   let reconnectingAfterUnauthorized = false;

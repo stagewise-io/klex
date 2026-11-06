@@ -890,6 +890,48 @@ describe('MCP server statuses', () => {
     }
   });
 
+  it('stops reconnecting after repeated post-connect 401s and requires authorization', async () => {
+    vi.useFakeTimers();
+    let activeOptions: ConnectMcpServerOptions | undefined;
+    let activeConnection: McpConnection | undefined;
+    let attempts = 0;
+    const { mcp } = setup(
+      { remote: { url: 'https://example.com/mcp' } },
+      async (options) => {
+        attempts += 1;
+        activeOptions = options;
+        activeConnection = connection(options.namespace);
+        return activeConnection;
+      },
+    );
+    const disconnectUnauthorized = () => {
+      if (!activeOptions || !activeConnection)
+        throw new Error('Expected an active connection');
+      activeOptions.onDisconnect(activeConnection, 'unauthorized');
+    };
+    try {
+      await mcp.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(attempts).toBe(1);
+      // Backoff grows across successful connects: 1s, 2s, 4s.
+      for (const delay of [1_000, 2_000, 4_000]) {
+        disconnectUnauthorized();
+        await vi.advanceTimersByTimeAsync(delay - 1);
+        const before = attempts;
+        await vi.advanceTimersByTimeAsync(1);
+        expect(attempts).toBe(before + 1);
+      }
+      disconnectUnauthorized();
+      expect(serverRow(mcp, 'remote')).toMatchObject({
+        status: 'authorization_required',
+      });
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(attempts).toBe(4);
+    } finally {
+      await mcp.close();
+    }
+  });
+
   it('preserves the persisted URL template instead of exposing the resolved runtime URL', async () => {
     const { mcp, config } = setup(
       { remote: { url: 'https://mcp.example.com/secret-path' } },

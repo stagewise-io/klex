@@ -214,7 +214,8 @@ export class McpOAuthStore {
 
   /**
    * Persists a refresh response only while the refresh token it replaced is
-   * still stored. Intentionally ignores connection signals: a rotated refresh
+   * still stored and, when given, the access token observed before the request
+   * is unchanged. Intentionally ignores connection signals: a rotated refresh
    * token that is not written is lost, while a removed or replaced token set
    * is never restored.
    */
@@ -222,6 +223,7 @@ export class McpOAuthStore {
     serverName: string,
     previousRefreshToken: string,
     tokens: StoredOAuthTokens,
+    expectedAccessToken?: string,
   ): Promise<RefreshedTokenPersistence> {
     let persistence: RefreshedTokenPersistence = 'superseded';
     await this.mutate((data) => {
@@ -231,6 +233,11 @@ export class McpOAuthStore {
         server.tokensByIssuer,
       )) {
         if (current.refresh_token !== previousRefreshToken) continue;
+        if (
+          expectedAccessToken !== undefined &&
+          current.access_token !== expectedAccessToken
+        )
+          continue;
         server.tokensByIssuer[issuerKey] = {
           ...tokens,
           refresh_token: tokens.refresh_token ?? previousRefreshToken,

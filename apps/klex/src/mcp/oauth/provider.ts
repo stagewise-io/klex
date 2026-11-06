@@ -235,6 +235,13 @@ export class McpOAuthProvider implements OAuthClientProvider {
       );
     }
     this.signal?.throwIfAborted();
+    if (this.tokenEndpoint.consumeSuperseded(tokens.access_token)) {
+      this.logger?.warn(
+        this.logFields,
+        'MCP OAuth token write skipped; stored tokens changed during refresh',
+      );
+      return;
+    }
     await this.store.saveTokens(
       this.serverName,
       tokens,

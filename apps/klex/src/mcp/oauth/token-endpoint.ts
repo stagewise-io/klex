@@ -8,7 +8,11 @@ import {
   type RefreshedTokenPersistence,
 } from './store';
 
-/** Late refreshes that reuse a just-rotated token get the same response. */
+/**
+ * Late refreshes that reuse a just-rotated token get the same response. Only
+ * rotating responses are replayed: the server rejects the old token anyway,
+ * while a non-rotating refresh can simply be sent again.
+ */
 const REPLAY_WINDOW_MS = 60_000;
 /** The SDK sends token requests without a signal; a hung request would hold the refresh lock. */
 const TOKEN_REQUEST_TIMEOUT_MS = 30_000;
@@ -55,6 +59,8 @@ export class OAuthTokenEndpointState {
   private queue: Promise<void> = Promise.resolve();
   private readonly rejected = new Set<string>();
   private readonly replays = new Map<string, ReplayEntry>();
+  /** Access tokens from refresh responses that lost the compare-and-swap. */
+  private readonly superseded = new Set<string>();
 
   public static for(
     store: McpOAuthStore,
@@ -88,6 +94,15 @@ export class OAuthTokenEndpointState {
 
   public markRejected(refreshToken: string): void {
     this.rejected.add(hashToken(refreshToken));
+  }
+
+  public markSuperseded(accessToken: string): void {
+    this.superseded.add(hashToken(accessToken));
+  }
+
+  /** True once for a superseded token set, so the SDK write can be skipped. */
+  public consumeSuperseded(accessToken: string): boolean {
+    return this.superseded.delete(hashToken(accessToken));
   }
 
   public remember(refreshToken: string, response: Response, body: string) {
@@ -258,6 +273,7 @@ export function createOAuthTokenEndpointFetch(
         return replayed;
       }
 
+      const snapshot = await options.store.tokens(options.serverName);
       const { body, durationMs, response } = await send(input, init, grantType);
       if (!response.ok) {
         const storedRefreshToken = (
@@ -284,9 +300,19 @@ export function createOAuthTokenEndpointFetch(
       const tokens = parseTokenResponse(parseJson(body));
       let persistence: RefreshedTokenPersistence | 'invalid_response' =
         'invalid_response';
+      const rotated = Boolean(
+        tokens?.refresh_token && tokens.refresh_token !== refreshToken,
+      );
       if (tokens) {
         persistence = await options.store
-          .replaceRefreshedTokens(options.serverName, refreshToken, tokens)
+          .replaceRefreshedTokens(
+            options.serverName,
+            refreshToken,
+            tokens,
+            snapshot?.refresh_token === refreshToken
+              ? snapshot.access_token
+              : undefined,
+          )
           .catch((error: unknown) => {
             options.logger?.error(
               { ...logFields, error, refreshTokenFingerprint },
@@ -294,11 +320,14 @@ export function createOAuthTokenEndpointFetch(
             );
             throw error;
           });
-        state.remember(refreshToken, response, body);
+        if (persistence === 'superseded') {
+          // The stored set was removed or replaced while this request was in
+          // flight; keep the SDK from writing the stale response over it.
+          state.markSuperseded(tokens.access_token);
+        } else if (rotated) {
+          state.remember(refreshToken, response, body);
+        }
       }
-      const rotated = Boolean(
-        tokens?.refresh_token && tokens.refresh_token !== refreshToken,
-      );
       state.lastOutcome = {
         at: new Date().toISOString(),
         durationMs,

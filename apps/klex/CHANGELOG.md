@@ -2,6 +2,32 @@
 
 All notable Klex changes are documented here.
 
+## 0.30.0 (2026-11-06)
+
+### Features
+
+- show setup handoff after cloud enrollment (025fa4f)
+- create and enroll agents noninteractively (16579c8)
+- use agent-specific CIMD client metadata URL (917ed69)
+- identify cloud MCP OAuth clients with Klex Cloud's CIMD (1db2b4a)
+- support customer-registered MCP OAuth clients (d0668c2)
+
+### Bug Fixes
+
+- complete enrollment teardown after cleanup failures (f1e0899)
+- release cancelled enrollment resources and use bot naming (3c19f33)
+- bound agent CIMD lookup to a 3s budget (54baa7e)
+- keep searching OAuth discovery documents for revocation (863d5a2)
+- stop registered OAuth client setup when removing MCP servers (8e94238)
+- preserve OIDC revocation metadata (ac153eb)
+- clean up OAuth credentials when removing MCP servers (aebacf1)
+- keep MCP authorization usable when a client replacement fails (ecf6154)
+- document 400 for invalid OAuth client bodies (34f2e65)
+- keep released MCP OAuth store schema unchanged (36b4ae0)
+- invalidate truncated resource baselines across generations (dd74f0f)
+- preserve identity in bounded resource updates (cc004b1)
+- preserve MCP resource baselines across compaction (5d24f89)
+
 ## 0.29.0 (2026-11-04)
 
 ### Features

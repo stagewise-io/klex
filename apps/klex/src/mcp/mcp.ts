@@ -2124,6 +2124,7 @@ export function createMcp(deps: McpDependencies): Mcp {
           ...options,
           oauth: {
             clientName: () => deps.config.get?.()?.officialName,
+            logger,
             sessionFactory,
             store,
           },

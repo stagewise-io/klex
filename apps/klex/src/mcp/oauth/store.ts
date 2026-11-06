@@ -110,6 +110,41 @@ export type OAuthCredentialScope =
   | 'verifier'
   | 'discovery';
 
+export interface InvalidateOptions {
+  /**
+   * Evaluated inside the mutation queue. Returning false keeps stored tokens,
+   * e.g. when a concurrent refresh already replaced the rejected token set.
+   */
+  shouldClearTokens?: (tokens: StoredOAuthTokens | undefined) => boolean;
+  signal?: AbortSignal;
+}
+
+export interface InvalidateResult {
+  /** False when token removal was requested but skipped by `shouldClearTokens`. */
+  tokensCleared: boolean;
+}
+
+/** `superseded`: the refreshed token set is no longer stored, so nothing was written. */
+export type RefreshedTokenPersistence = 'saved' | 'superseded';
+
+/** Secret-free summary of stored OAuth state for diagnostics. */
+export interface OAuthStoreSummary {
+  hasServerEntry: boolean;
+  hasTokens: boolean;
+  hasRefreshToken: boolean;
+  hasClientInformation: boolean;
+  hasCodeVerifier: boolean;
+  hasDiscoveryState: boolean;
+  tokenIssuerCount: number;
+}
+
+export function parseTokenResponse(
+  value: unknown,
+): StoredOAuthTokens | undefined {
+  const result = storedOAuthTokensSchema.safeParse(value);
+  return result.success ? result.data : undefined;
+}
+
 export class McpOAuthStore {
   private mutationQueue: Promise<void> = Promise.resolve();
   private metadata: LocalDataMetadata | undefined;
@@ -144,8 +179,13 @@ export class McpOAuthStore {
   public async invalidate(
     serverName: string,
     scope: OAuthCredentialScope,
-    signal?: AbortSignal,
-  ): Promise<void> {
+    options: InvalidateOptions | AbortSignal = {},
+  ): Promise<InvalidateResult> {
+    const { shouldClearTokens, signal } =
+      options instanceof AbortSignal ? { signal: options } : options;
+    const result: InvalidateResult = {
+      tokensCleared: scope === 'all' || scope === 'tokens',
+    };
     await this.mutate((data) => {
       const server = data.servers[serverName];
       if (!server) return;
@@ -155,13 +195,71 @@ export class McpOAuthStore {
         server.clientRedirectUrlsByIssuer = {};
       }
       if (scope === 'all' || scope === 'tokens') {
-        server.tokensByIssuer = {};
-        delete server.lastTokenIssuer;
+        const current = server.lastTokenIssuer
+          ? server.tokensByIssuer[server.lastTokenIssuer]
+          : undefined;
+        if (shouldClearTokens && !shouldClearTokens(current)) {
+          result.tokensCleared = false;
+        } else {
+          server.tokensByIssuer = {};
+          delete server.lastTokenIssuer;
+        }
       }
       if (scope === 'all' || scope === 'verifier') delete server.codeVerifier;
       if (scope === 'all' || scope === 'discovery')
         delete server.discoveryState;
     }, signal);
+    return result;
+  }
+
+  /**
+   * Persists a refresh response only while the refresh token it replaced is
+   * still stored. Intentionally ignores connection signals: a rotated refresh
+   * token that is not written is lost, while a removed or replaced token set
+   * is never restored.
+   */
+  public async replaceRefreshedTokens(
+    serverName: string,
+    previousRefreshToken: string,
+    tokens: StoredOAuthTokens,
+  ): Promise<RefreshedTokenPersistence> {
+    let persistence: RefreshedTokenPersistence = 'superseded';
+    await this.mutate((data) => {
+      const server = data.servers[serverName];
+      if (!server) return false;
+      for (const [issuerKey, current] of Object.entries(
+        server.tokensByIssuer,
+      )) {
+        if (current.refresh_token !== previousRefreshToken) continue;
+        server.tokensByIssuer[issuerKey] = {
+          ...tokens,
+          refresh_token: tokens.refresh_token ?? previousRefreshToken,
+          ...(current.issuer ? { issuer: current.issuer } : {}),
+        };
+        server.lastTokenIssuer = issuerKey;
+        persistence = 'saved';
+        return undefined;
+      }
+      return false;
+    });
+    return persistence;
+  }
+
+  public async summarize(serverName: string): Promise<OAuthStoreSummary> {
+    const server = await this.readServer(serverName);
+    const current = server?.lastTokenIssuer
+      ? server.tokensByIssuer[server.lastTokenIssuer]
+      : undefined;
+    return {
+      hasServerEntry: server !== undefined,
+      hasTokens: current !== undefined,
+      hasRefreshToken: Boolean(current?.refresh_token),
+      hasClientInformation:
+        Object.keys(server?.clientInformationByIssuer ?? {}).length > 0,
+      hasCodeVerifier: Boolean(server?.codeVerifier),
+      hasDiscoveryState: server?.discoveryState !== undefined,
+      tokenIssuerCount: Object.keys(server?.tokensByIssuer ?? {}).length,
+    };
   }
 
   /** Removes every URL used by this namespace, including legacy unscoped entries. */

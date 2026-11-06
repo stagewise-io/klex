@@ -85,6 +85,17 @@ pack_artifact() {
 case "\$1" in
 --version) printf '%s\n' '$1' ;;
 --verify-native) $2 ;;
+--create-bot)
+	printf '%s\\n' "\$@" >"\$HOME/launch-args"
+	if command -v flock >/dev/null 2>&1; then
+		flock -n "\$HOME/opt/klex.install-lock" true || exit 91
+	else
+		lockf -t 0 "\$HOME/opt/klex.install-lock" /usr/bin/true || exit 91
+	fi
+	printf 'released\\n' >"\$HOME/launch-lock"
+	while [ -f "\$HOME/keep-running" ]; do sleep 0.05; done
+	exit "\$(cat "\$HOME/launch-status" 2>/dev/null || printf 0)"
+	;;
 *) printf 'Usage: klex [options]\n' ;;
 esac
 EOF
@@ -614,6 +625,64 @@ run_installer_from_stdin --no-modify-path >"$LAB/stdin-install.log" 2>&1
 check 'stdin installer invocation succeeds' "$?"
 [ "$("$ROOT/bin/klex" --version)" = '2.1.0' ]
 check 'stdin installer preserves the published version' "$?"
+
+printf '\n== 19. optional cloud enrollment launch ==\n'
+[ ! -f "$LAB/home/launch-args" ]
+check 'normal installs never launch a bot' "$?"
+run_ok 'base URL alone stays install-only' "$LAB/url-only.log" --cloud-base-url 'https://example.test'
+[ ! -f "$LAB/home/launch-args" ]
+check 'base URL alone never launches a bot' "$?"
+
+# Spaces, quotes, and shell syntax must remain literal argument data.
+token='test token; $(false) "quoted"'
+url='https://example.test/api?one=1&two=2'
+printf '%s\n' --create-bot --cloud-enroll-token "$token" --cloud-base-url "$url" >"$LAB/expected-args"
+run_installer_from_stdin --no-modify-path --cloud-enrollment-token "$token" --cloud-base-url "$url" >"$LAB/launch.log" 2>&1
+check 'stdin install launches successfully' "$?"
+cmp -s "$LAB/expected-args" "$LAB/home/launch-args"
+check 'launch preserves exact token and URL arguments' "$?"
+[ -f "$LAB/home/launch-lock" ]
+check 'install lock is released before launch' "$?"
+! grep -qF "$token" "$LAB/launch.log"
+check 'installer does not log the enrollment token' "$?"
+
+printf '%s\n' --create-bot --cloud-enroll-token "$token" >"$LAB/expected-args"
+printf '23\n' >"$LAB/home/launch-status"
+run_installer --no-modify-path --cloud-enrollment-token="$token" >"$LAB/launch-status.log" 2>&1
+[ "$?" -eq 23 ]
+check 'CLI exit status is propagated' "$?"
+cmp -s "$LAB/expected-args" "$LAB/home/launch-args"
+check 'omitted URL leaves CLI defaults untouched' "$?"
+rm -f "$LAB/home/launch-status" "$LAB/home/launch-args" "$LAB/home/launch-lock"
+
+: >"$LAB/home/keep-running"
+run_installer --no-modify-path --cloud-enrollment-token "$token" >"$LAB/foreground.log" 2>&1 &
+launcher=$!
+attempt=0
+while [ ! -f "$LAB/home/launch-lock" ] && [ "$attempt" -lt 200 ]; do
+	sleep 0.05
+	attempt=$((attempt + 1))
+done
+[ -f "$LAB/home/launch-lock" ] && kill -0 "$launcher" 2>/dev/null
+check 'installer stays running while the foreground bot runs' "$?"
+rm -f "$LAB/home/keep-running"
+wait "$launcher"
+check 'installer completes when the bot stops' "$?"
+rm -f "$LAB/home/launch-args"
+
+run_installer --uninstall --cloud-enrollment-token "$token" >"$LAB/launch-uninstall.log" 2>&1 && bad=1 || bad=0
+check 'uninstall and enrollment are rejected together' "$bad"
+[ -f "$ROOT/install-receipt.json" ]
+check 'rejected enrollment does not uninstall' "$?"
+run_installer --cloud-enrollment-token= >"$LAB/empty-token.log" 2>&1 && bad=1 || bad=0
+check 'empty enrollment token is rejected' "$bad"
+run_installer --cloud-base-url >"$LAB/missing-url.log" 2>&1 && bad=1 || bad=0
+check 'missing base URL is rejected' "$bad"
+write_manifest 2.1.0 '0000000000000000000000000000000000000000000000000000000000000000'
+run_installer --cloud-enrollment-token "$token" >"$LAB/failed-launch.log" 2>&1 && bad=1 || bad=0
+check 'failed installation with enrollment exits non-zero' "$bad"
+[ ! -f "$LAB/home/launch-args" ]
+check 'failed installation never starts a bot' "$?"
 
 printf '\n'
 if [ "$fails" -eq 0 ]; then

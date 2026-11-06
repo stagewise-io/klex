@@ -34,6 +34,8 @@ opt_version=''
 opt_install_dir=''
 opt_modify_path='yes'
 opt_uninstall='no'
+opt_cloud_enrollment_token=''
+opt_cloud_base_url=''
 
 # Resolved state.
 klex_target=''
@@ -76,6 +78,9 @@ Options:
   --install-dir <path>  Install root (default: ${XDG_DATA_HOME:-~/.local/share}/klex)
   --no-modify-path      Do not touch shell startup files
   --uninstall           Remove the installation, keeping all agent data
+  --cloud-enrollment-token <token>
+                        Create, enroll, and run a bot after successful installation
+  --cloud-base-url <url> Cloud API URL forwarded only when starting a bot
   -h, --help            Show this help
 
 Environment:
@@ -84,6 +89,8 @@ Environment:
   KLEX_HOME             Agent data root (default: ~/.klex); never modified here
 
 Agent data lives outside the install root and survives --uninstall.
+With an enrollment token, klex runs in the foreground until it exits.
+A base URL alone does not start klex. Enrollment cannot be combined with --uninstall.
 EOF
 }
 
@@ -217,6 +224,26 @@ parse_arguments() {
 			opt_modify_path='no'
 			shift
 			;;
+		--cloud-enrollment-token)
+			require_value '--cloud-enrollment-token' "${2:-}"
+			opt_cloud_enrollment_token="$2"
+			shift 2
+			;;
+		--cloud-enrollment-token=*)
+			opt_cloud_enrollment_token="${1#--cloud-enrollment-token=}"
+			require_value '--cloud-enrollment-token' "$opt_cloud_enrollment_token"
+			shift
+			;;
+		--cloud-base-url)
+			require_value '--cloud-base-url' "${2:-}"
+			opt_cloud_base_url="$2"
+			shift 2
+			;;
+		--cloud-base-url=*)
+			opt_cloud_base_url="${1#--cloud-base-url=}"
+			require_value '--cloud-base-url' "$opt_cloud_base_url"
+			shift
+			;;
 		--uninstall)
 			opt_uninstall='yes'
 			shift
@@ -236,6 +263,9 @@ parse_arguments() {
 	# in the caller's shell would refuse to remove an installation over a value
 	# the operation never consults.
 	if [ "$opt_uninstall" = 'yes' ]; then
+		if [ -n "$opt_cloud_enrollment_token" ]; then
+			die '--cloud-enrollment-token cannot be combined with --uninstall'
+		fi
 		return 0
 	fi
 
@@ -954,7 +984,9 @@ do_install() {
 
 	info "klex $do_install_version installed to $klex_install_dir"
 	printf '\n'
-	printf 'Run klex --help to get started.\n'
+	if [ -z "$opt_cloud_enrollment_token" ]; then
+		printf 'Run klex --help to get started.\n'
+	fi
 }
 
 main() {
@@ -971,6 +1003,22 @@ main() {
 	fi
 
 	do_install
+
+	if [ -n "$opt_cloud_enrollment_token" ]; then
+		# do_install has cleaned staging and released the lock. Never eval tokens
+		# or route through PATH: invoke the installation we just verified.
+		set -- --create-bot --cloud-enroll-token "$opt_cloud_enrollment_token"
+		if [ -n "$opt_cloud_base_url" ]; then
+			set -- "$@" --cloud-base-url "$opt_cloud_base_url"
+		fi
+		info 'starting klex'
+		# curl | sh leaves stdin attached to the installer stream. Reattach the
+		# terminal when available so the foreground bot can accept input.
+		if [ ! -t 0 ] && ( : </dev/tty ) 2>/dev/null; then
+			exec "$klex_bin_dir/klex" "$@" </dev/tty
+		fi
+		exec "$klex_bin_dir/klex" "$@"
+	fi
 }
 
 main "$@"

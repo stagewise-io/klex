@@ -39,6 +39,20 @@ Windows (PowerShell):
 irm https://raw.githubusercontent.com/stagewise-io/klex/main/install.ps1 | iex
 ```
 
+To install (or update an existing installation), then create, enroll, and run a cloud bot in the foreground:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/stagewise-io/klex/main/install.sh | sh -s -- --cloud-enrollment-token '<TOKEN>'
+# Optional: append --cloud-base-url 'https://cloud.klex.bot'
+```
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/stagewise-io/klex/main/install.ps1))) -CloudEnrollmentToken '<TOKEN>'
+# Optional: append -CloudBaseUrl 'https://cloud.klex.bot'
+```
+
+The token triggers `klex --create-bot --cloud-enroll-token <TOKEN>` after successful installation and verification. The optional base URL is forwarded as `--cloud-base-url <URL>`; without it, Klex uses its normal URL resolution. A base URL alone does not start a bot. The installer releases its lock before starting Klex and stays attached until Klex exits; it does not install a background service. Do not combine enrollment with uninstall. Avoid putting real tokens in shared logs or shell history.
+
 After installation, you can add models, providers and mcp servers via the Terminal UI or configure their entries in `{data-directory}/config.json` directly. 
 
 Sending messages to the bot requires a connected MCP server with support for `mcp-extension-push-notifications`.

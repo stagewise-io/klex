@@ -221,6 +221,7 @@ describe('language detection and footer', () => {
     module.mountLanguage({ preserveEnglish: true });
     expect(env.document.documentElement).toEqual({ lang: 'en', dir: 'ltr' });
     module.changeLanguagePreference('de');
+    expect(env.cookies.get(preferenceKey)).toBe('de');
     expect(env.location.assign).toHaveBeenLastCalledWith(
       'https://klex.bot/brand',
     );

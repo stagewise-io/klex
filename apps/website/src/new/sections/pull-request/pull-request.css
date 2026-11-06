@@ -182,7 +182,7 @@
   position: absolute;
   top: 16px;
   bottom: 24px;
-  left: 72px;
+  inset-inline-start: 72px;
   z-index: -1;
   width: 2px;
   background: var(--pr-border);
@@ -315,13 +315,13 @@
   }
 
   .new-pr-timeline::before {
-    left: 16px;
+    inset-inline-start: 16px;
   }
 
   .new-pr-avatar {
     position: absolute;
     top: 24px;
-    left: 16px;
+    inset-inline-start: 16px;
     z-index: 1;
     width: 24px;
     height: 24px;

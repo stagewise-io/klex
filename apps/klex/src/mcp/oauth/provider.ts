@@ -9,11 +9,14 @@ import type {
   StoredOAuthTokens,
 } from '@modelcontextprotocol/client';
 
+import type { ModuleLogger } from '@stagewise/logger';
+
 import type {
   McpOAuthClientInformation,
   McpOAuthStore,
   OAuthCredentialScope,
 } from './store';
+import { fingerprint, OAuthTokenEndpointState } from './token-endpoint';
 
 export type AuthorizationRedirectHandler = (
   authorizationUrl: URL,
@@ -27,6 +30,7 @@ export interface McpOAuthProviderOptions {
   serverName: string;
   store: McpOAuthStore;
   signal?: AbortSignal;
+  logger?: ModuleLogger;
   onAuthorizationRedirect: AuthorizationRedirectHandler;
 }
 
@@ -36,6 +40,9 @@ export class McpOAuthProvider implements OAuthClientProvider {
   private readonly serverName: string;
   private readonly store: McpOAuthStore;
   private readonly signal: AbortSignal | undefined;
+  private readonly logger: ModuleLogger | undefined;
+  private readonly tokenEndpoint: OAuthTokenEndpointState;
+  private readonly logFields: { namespace: string; serverUrl?: string };
 
   public readonly redirectUrl: URL;
   public readonly clientMetadataUrl?: string;
@@ -48,6 +55,14 @@ export class McpOAuthProvider implements OAuthClientProvider {
     this.serverName = options.serverName;
     this.store = options.store;
     this.signal = options.signal;
+    this.logger = options.logger;
+    this.tokenEndpoint = OAuthTokenEndpointState.for(
+      options.store,
+      options.serverName,
+    );
+    const [namespace = options.serverName, serverUrl] =
+      options.serverName.split('\u0000');
+    this.logFields = { namespace, ...(serverUrl ? { serverUrl } : {}) };
   }
 
   public get clientMetadata(): OAuthClientMetadata {
@@ -98,13 +113,69 @@ export class McpOAuthProvider implements OAuthClientProvider {
     if (scope === 'client') {
       const client = await this.currentClientInformation();
       // A customer-owned app cannot be repaired by dynamically registering another.
-      if (client?.klex_registered) return;
+      if (client?.klex_registered) {
+        this.logger?.warn(
+          { ...this.logFields, scope },
+          'MCP OAuth client invalidation skipped for a configured client',
+        );
+        return;
+      }
     }
-    await this.store.invalidate(this.serverName, scope, this.signal);
+    let storedRefreshTokenFingerprint: string | undefined;
+    const { tokensCleared } = await this.store.invalidate(
+      this.serverName,
+      scope,
+      {
+        // The SDK clears tokens after any `invalid_grant`. Keep a stored
+        // refresh token unless the token endpoint rejected that exact token:
+        // otherwise a stale concurrent refresh deletes the winner's tokens.
+        ...(scope === 'tokens'
+          ? {
+              shouldClearTokens: (current) => {
+                if (current?.refresh_token) {
+                  storedRefreshTokenFingerprint = fingerprint(
+                    current.refresh_token,
+                  );
+                }
+                return (
+                  !current?.refresh_token ||
+                  this.tokenEndpoint.isRejected(current.refresh_token)
+                );
+              },
+            }
+          : {}),
+        signal: this.signal,
+      },
+    );
+    const fields = {
+      ...this.logFields,
+      lastTokenEndpoint: this.tokenEndpoint.lastOutcome,
+      scope,
+      storedRefreshTokenFingerprint,
+    };
+    if (scope === 'tokens' && !tokensCleared) {
+      this.logger?.info(
+        fields,
+        'MCP OAuth token invalidation skipped; stored tokens are newer than the rejected ones',
+      );
+    } else {
+      this.logger?.warn(fields, 'MCP OAuth credentials invalidated');
+    }
   }
 
   public async redirectToAuthorization(authorizationUrl: URL): Promise<void> {
     this.signal?.throwIfAborted();
+    // Root-cause evidence: why the SDK could not continue without the user.
+    this.logger?.warn(
+      {
+        ...this.logFields,
+        lastTokenEndpoint: this.tokenEndpoint.lastOutcome,
+        store: await this.store
+          .summarize(this.serverName)
+          .catch((error: unknown) => ({ unavailable: String(error) })),
+      },
+      'MCP OAuth requires user authorization',
+    );
     const client = await this.currentClientInformation();
     if (client && 'scope' in client && client.scope) {
       const scopes = new Set(
@@ -156,6 +227,13 @@ export class McpOAuthProvider implements OAuthClientProvider {
     tokens: StoredOAuthTokens,
     context?: OAuthClientInformationContext,
   ): Promise<void> {
+    if (this.signal?.aborted) {
+      // Refresh responses were already persisted by the token endpoint fetch.
+      this.logger?.debug(
+        this.logFields,
+        'MCP OAuth token write ignored after connection close',
+      );
+    }
     this.signal?.throwIfAborted();
     await this.store.saveTokens(
       this.serverName,

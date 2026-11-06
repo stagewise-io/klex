@@ -1,4 +1,4 @@
-import { html } from '../../../i18n/index.ts';
+import { html } from '../../../i18n/i18n.ts';
 
 export function createFooterMarkup({
   showCta = false,

@@ -132,13 +132,13 @@ function HostingScene() {
         </g>
         <g className="trust-hosting-labels">
           <text x="62" y="221">
-            Self hosted
+            {t('Self hosted')}
           </text>
           <text x="181" y="221">
-            On-Premise
+            {t('On-Premise')}
           </text>
           <text x="300" y="221">
-            Managed Cloud
+            {t('Managed Cloud')}
           </text>
         </g>
       </svg>
@@ -333,16 +333,18 @@ function MemoryScene() {
         </Klex>
       </div>
       <div className="trust-memory-timeline">
-        {['First day', 'Update 01', 'Update 02'].map((label, index) => (
-          <span
-            key={label}
-            data-reached={index <= age}
-            data-current={index === age}
-          >
-            <i />
-            {label}
-          </span>
-        ))}
+        {[t('First day'), t('Update 01'), t('Update 02')].map(
+          (label, index) => (
+            <span
+              key={label}
+              data-reached={index <= age}
+              data-current={index === age}
+            >
+              <i />
+              {label}
+            </span>
+          ),
+        )}
       </div>
     </div>
   );

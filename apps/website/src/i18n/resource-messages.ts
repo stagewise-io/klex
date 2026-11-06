@@ -69,19 +69,19 @@ export const resourceMessages = {
       'Наше облачное предложение для интеграций, размещённых агентов и компьютеров. Всегда два слова, с заглавной C.',
       'خدمتنا السحابية للتكاملات والوكلاء المستضافين والأجهزة. دائمًا كلمتان بحرف C كبير.',
     ],
-  'For articles, listings, and introductions. For more product and company background, visit our press page.':
+  'For articles, listings, and introductions. For more product and company background, visit our <press>press page</press>.':
     [
-      '适用于文章、目录和介绍。更多产品和公司背景，请访问我们的媒体页面。',
-      '記事、一覧、紹介文にご利用ください。製品と会社の背景はプレスページをご覧ください。',
-      '기사, 목록, 소개에 사용하세요. 제품과 회사의 배경은 보도자료 페이지에서 확인하세요.',
-      'Für Artikel, Verzeichnisse und Vorstellungen. Mehr über Produkt und Unternehmen findest du auf unserer Presseseite.',
-      'Pour les articles, annuaires et présentations. Consultez notre page presse pour en savoir plus sur le produit et l’entreprise.',
-      'Para artículos, directorios y presentaciones. Visita nuestra página de prensa para conocer más del producto y la empresa.',
-      'Para artigos, listagens e apresentações. Visite nossa página de imprensa para saber mais sobre o produto e a empresa.',
-      'लेख, सूचियों और परिचय के लिए। उत्पाद और कंपनी की अधिक जानकारी के लिए हमारा प्रेस पेज देखें।',
-      'Для статей, каталогів і представлень. Більше про продукт і компанію — на нашій сторінці для преси.',
-      'Для статей, каталогов и представлений. Подробнее о продукте и компании — на нашей странице для прессы.',
-      'للمقالات والقوائم والتعريفات. لمعرفة المزيد عن المنتج والشركة، زر صفحتنا الصحفية.',
+      '适用于文章、目录和介绍。更多产品和公司背景，请访问我们的<press>媒体页面</press>。',
+      '記事、一覧、紹介文にご利用ください。製品と会社の背景は<press>プレスページ</press>をご覧ください。',
+      '기사, 목록, 소개에 사용하세요. 제품과 회사의 배경은 <press>보도자료 페이지</press>에서 확인하세요.',
+      'Für Artikel, Verzeichnisse und Vorstellungen. Mehr über Produkt und Unternehmen findest du auf unserer <press>Presseseite</press>.',
+      'Pour les articles, annuaires et présentations. Consultez notre <press>page presse</press> pour en savoir plus sur le produit et l’entreprise.',
+      'Para artículos, directorios y presentaciones. Visita nuestra <press>página de prensa</press> para conocer más del producto y la empresa.',
+      'Para artigos, listagens e apresentações. Visite nossa <press>página de imprensa</press> para saber mais sobre o produto e a empresa.',
+      'लेख, सूचियों और परिचय के लिए। उत्पाद और कंपनी की अधिक जानकारी के लिए हमारा <press>प्रेस पेज</press> देखें।',
+      'Для статей, каталогів і представлень. Більше про продукт і компанію — на нашій <press>сторінці для преси</press>.',
+      'Для статей, каталогов и представлений. Подробнее о продукте и компании — на нашей <press>странице для прессы</press>.',
+      'للمقالات والقوائم والتعريفات. لمعرفة المزيد عن المنتج والشركة، زر <press>صفحتنا الصحفية</press>.',
     ],
   'Use the logo and wordmark together where space allows. The rounded square mark works for app icons; the square-corner avatar fills its box edge to edge, so the platform can apply its own crop. The unframed mark keeps the entire silhouette visible on badges and custom backgrounds. Download the original SVG or choose a resolution for a PNG generated in your browser. PNGs preserve the artwork’s aspect ratio and any transparent areas.':
     [

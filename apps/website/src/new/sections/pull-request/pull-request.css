@@ -384,7 +384,8 @@
   align-items: center;
   gap: 8px;
   margin: 0;
-  padding: 16px 0 16px 56px;
+  padding-block: 16px;
+  padding-inline: 56px 0;
   color: var(--pr-muted);
   font-size: 13px;
 }

@@ -32,7 +32,7 @@
   content: "";
   position: absolute;
   inset-block: 0;
-  left: var(--permission-label-width);
+  inset-inline-start: var(--permission-label-width);
   width: calc((100% - var(--permission-label-width)) / 2);
   border-radius: 9px;
   background: color-mix(in oklab, var(--bento-blue) 9%, transparent);
@@ -42,6 +42,11 @@
 }
 .bento-permissions-scene[data-bot="1"] .bento-permission-access::before {
   transform: translateX(100%);
+}
+[dir="rtl"]
+  .bento-permissions-scene[data-bot="1"]
+  .bento-permission-access::before {
+  transform: translateX(-100%);
 }
 .bento-permission-table {
   position: relative;

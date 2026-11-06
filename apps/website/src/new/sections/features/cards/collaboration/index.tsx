@@ -4,7 +4,7 @@ import artwork from 'virtual:klex-static-mascots';
 import { gsap } from 'gsap';
 import { useEffect, useRef } from 'react';
 
-import { t } from '@/i18n';
+import { RichMessage, t } from '@/i18n';
 
 import { heroLooks } from '../../../../bot-looks';
 import { StaticIcon } from '../../../../static-mascot/static-icon';
@@ -41,10 +41,12 @@ const teamworkMessages = [
     bot: 'kristine',
     time: '9:41 AM',
     body: (
-      <>
-        <span className="bento-chat-mention">@Jonathan</span>
-        {t(', the signup flow is ready to build.')}
-      </>
+      <RichMessage
+        message="{{mention}}, the signup flow is ready to build."
+        values={{
+          mention: <span className="bento-chat-mention">@Jonathan</span>,
+        }}
+      />
     ),
   },
   {

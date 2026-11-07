@@ -466,7 +466,28 @@ class ConfigModule implements Config {
     return this.mutate((current) => {
       const providers = { ...current.providers };
       delete providers[id];
-      return { ...current, providers };
+      const keepOtherProviders = <T extends ModelSelectionEntry>(
+        entries: T[],
+      ) => entries.filter((entry) => entry.providerId !== id);
+      const selection = current.modelSelection;
+      return {
+        ...current,
+        providers,
+        modelSelection: {
+          ...selection,
+          chat: keepOtherProviders(selection.chat),
+          compaction: keepOtherProviders(selection.compaction),
+          memory: keepOtherProviders(selection.memory),
+          consult: keepOtherProviders(selection.consult),
+          imageVision: keepOtherProviders(selection.imageVision),
+          audioListening: keepOtherProviders(selection.audioListening),
+          instincts: keepOtherProviders(selection.instincts),
+          voice: {
+            ...selection.voice,
+            sts: keepOtherProviders(selection.voice.sts),
+          },
+        },
+      };
     });
   }
 

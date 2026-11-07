@@ -16,7 +16,7 @@ import {
   parseModelCreatedAt,
   providerHeaders,
   sanitizedError,
-  testDiscoveryConnection,
+  setting,
   unavailable,
 } from './shared';
 
@@ -45,10 +45,23 @@ export const openRouterProviderDefinition: ProviderDefinition = {
       ['openaiCompatible'],
     ),
   discoverModels,
-  testConnection: (instance, signal) =>
-    testDiscoveryConnection(instance, BASE_URL, () =>
-      discoverModels(instance, signal),
-    ),
+  async testConnection(instance, signal) {
+    const startedAt = Date.now();
+    const baseUrl = setting(instance, 'baseUrl') ?? BASE_URL;
+    try {
+      await fetchJson(
+        new URL(`${baseUrl.replace(/\/$/, '')}/key`),
+        providerHeaders(instance, 'openai'),
+        signal,
+      );
+      return available({
+        latencyMs: Math.max(0, Date.now() - startedAt),
+        target: new URL(baseUrl).origin,
+      });
+    } catch (error) {
+      return unavailable('connectivity_failed', sanitizedError(error));
+    }
+  },
 };
 
 async function discoverModels(

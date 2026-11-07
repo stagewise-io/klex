@@ -2,6 +2,14 @@
 
 All notable Klex changes are documented here.
 
+## 0.30.1 (2026-11-07)
+
+### Bug Fixes
+
+- keep rotated refresh tokens and reset 401 budget on re-auth (0c111aa)
+- address MCP OAuth review findings (ff81bac)
+- coordinate MCP OAuth refresh and log token failures (58d3905)
+
 ## 0.30.0 (2026-11-06)
 
 ### Features

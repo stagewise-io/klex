@@ -965,12 +965,37 @@ const skillSummarySchema = z
   })
   .openapi('SkillSummary');
 
+const skillListQuerySchema = z
+  .object({
+    limit: z.coerce.number().int().min(1).max(100).optional(),
+    cursor: z
+      .string()
+      .min(1)
+      .optional()
+      .describe('`nextCursor` of the previous page'),
+    search: z
+      .string()
+      .trim()
+      .optional()
+      .describe('Case-insensitive description search'),
+  })
+  .openapi('SkillListQuery');
+
 const skillListResponseSchema = z
   .object({
     skills: z.array(skillSummarySchema),
     currentTurn: turnSchema.describe('Current agent activity clock'),
   })
   .openapi('SkillListResponse');
+
+const skillPageResponseSchema = skillListResponseSchema
+  .extend({
+    nextCursor: z
+      .string()
+      .nullable()
+      .describe('Cursor for the next page; null on the last page'),
+  })
+  .openapi('SkillPageResponse');
 
 const skillDetailSchema = skillSummarySchema
   .extend({
@@ -1490,8 +1515,10 @@ export {
   sessionKindSchema,
   skillDetailSchema,
   skillIdParamsSchema,
+  skillListQuerySchema,
   skillListResponseSchema,
   skillNameParamsSchema,
+  skillPageResponseSchema,
   skillSummarySchema,
   timezoneSettingsSchema,
   toolCallHistoryResponseSchema,

@@ -4,6 +4,7 @@ import type {
 } from '../model-metadata';
 import { mergeProviderModels, resolveMetadataRules } from '../model-metadata';
 import { resolveOpenModelMetadata } from '../open-model-catalog';
+import type { ProviderModel } from '../provider-registry';
 
 const REVIEWED_AT = '2026-09-08';
 
@@ -16,12 +17,18 @@ export interface ModelFallbackRule {
   documentationUrl?: string;
 }
 
+/** Exact rules keep the provider's model ID casing for catalog fallbacks. */
+export interface ExactModelRule extends ModelMetadataRule {
+  modelId: string;
+}
+
 export function exactModel(
   modelId: string,
   metadata: ProviderModelMetadata,
   documentationUrl: string,
-): ModelMetadataRule {
+): ExactModelRule {
   return {
+    modelId,
     match: { exact: modelId.toLowerCase() },
     metadata,
     provenance: {
@@ -31,6 +38,26 @@ export function exactModel(
     },
   };
 }
+
+/** Fallback list for failed discovery: exact chat and voice catalog entries. */
+export function catalogModels(
+  rules: readonly ExactModelRule[],
+  resolve: (modelId: string) => ProviderModelMetadata | undefined,
+): readonly ProviderModel[] {
+  return rules.flatMap(({ modelId }) => {
+    const metadata = resolve(modelId);
+    return metadata && CATALOG_FALLBACK_KINDS.has(metadata.kind ?? 'unknown')
+      ? [{ modelId, ...metadata }]
+      : [];
+  });
+}
+
+const CATALOG_FALLBACK_KINDS = new Set([
+  'language',
+  'speech-to-speech',
+  'speech-to-text',
+  'text-to-speech',
+]);
 
 export function modelFamily(
   prefix: string,

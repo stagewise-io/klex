@@ -4,9 +4,16 @@ import type { LanguageModelV4 } from '@ai-sdk/provider';
 import type {
   ProviderDefinition,
   ProviderInstance,
+  ProviderModel,
+  ProviderOperationResult,
 } from '../provider-registry';
-import { exactModel, resolveCatalogMetadata } from './model-catalog-helpers';
 import {
+  catalogModels,
+  exactModel,
+  resolveCatalogMetadata,
+} from './model-catalog-helpers';
+import {
+  available,
   customHeaders,
   discoverOpenAiCompatibleModels,
   requiredSetting,
@@ -89,7 +96,7 @@ const MODEL_FALLBACKS = [
     documentationUrl: MODEL_DOCS,
   },
   {
-    prefixes: ['gpt-image-', 'dall-e-'],
+    prefixes: ['gpt-image-', 'chatgpt-image-', 'dall-e-'],
     metadata: { kind: 'image-generation' },
     documentationUrl: MODEL_DOCS,
   },
@@ -277,13 +284,45 @@ export const openAiProviderDefinition: ProviderDefinition = {
   createEvaluationModel: (instance, modelId) =>
     createProvider(instance).evaluationModel(modelId),
   resolveModelMetadata: resolveOpenAiModelMetadata,
-  discoverModels: (instance, signal) =>
-    discoverOpenAiCompatibleModels(instance, BASE_URL, signal, false),
+  catalogModels: catalogModels(MODEL_CATALOG, resolveOpenAiModelMetadata),
+  discoverModels,
   testConnection: (instance, signal) =>
     testDiscoveryConnection(instance, BASE_URL, () =>
-      discoverOpenAiCompatibleModels(instance, BASE_URL, signal, false),
+      discoverModels(instance, signal),
     ),
 };
+
+/**
+ * `/v1/models` lists every model the key can call, including base
+ * completion, embedding, moderation and video models no Klex purpose can
+ * use. Voice, transcription and image models stay, typed by their kind.
+ */
+async function discoverModels(
+  instance: ProviderInstance,
+  signal: AbortSignal,
+): Promise<ProviderOperationResult<readonly ProviderModel[]>> {
+  const result = await discoverOpenAiCompatibleModels(
+    instance,
+    BASE_URL,
+    signal,
+    false,
+  );
+  if (!result.ok) return result;
+  return available(
+    result.value.filter(({ modelId }) => !isUnusableOpenAiModel(modelId)),
+  );
+}
+
+export function isUnusableOpenAiModel(modelId: string): boolean {
+  const id = modelId.toLowerCase();
+  return (
+    // Legacy base and instruct completion models without chat support.
+    /^(?:babbage|davinci|curie|ada)(?:-|$)/.test(id) ||
+    /^gpt-3\.5-turbo-instruct(?:-|$)/.test(id) ||
+    // Text completion, embedding and moderation models, and video models.
+    /^(?:text-|omni-moderation-|sora-)/.test(id)
+  );
+}
 
 function createLanguageModel(
   instance: ProviderInstance,

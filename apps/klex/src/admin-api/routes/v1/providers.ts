@@ -5,10 +5,10 @@ import type { ModuleLogger } from '@stagewise/logger';
 import type {
   ProviderInstanceInfo,
   ProviderMetadata,
+  ProviderModelList,
   ProviderOperationFailure,
   ProviderRegistry,
   ProviderTypeInfo,
-  ResolvedProviderModel,
 } from '@/provider-registry';
 
 import {
@@ -78,8 +78,11 @@ function serializeInstance(info: ProviderInstanceInfo) {
   };
 }
 
-function serializeModels(models: readonly ResolvedProviderModel[]) {
-  return models.map((model) => ({ ...model }));
+function serializeModels({ models, discovery }: ProviderModelList) {
+  return {
+    models: models.map((model) => ({ ...model })),
+    ...(discovery && { discovery }),
+  };
 }
 
 const voiceErrors = {
@@ -538,8 +541,7 @@ export function getProviderModels(
       c.req.valid('param').id,
       c.req.valid('query').refresh === 'true',
     );
-    if (result.ok)
-      return c.json({ models: serializeModels(result.value) }, 200);
+    if (result.ok) return c.json(serializeModels(result.value), 200);
     if (result.code === 'not_found') return c.json(failureBody(result), 404);
     if (result.code === 'internal_error')
       return c.json(failureBody(result), 500);
@@ -600,8 +602,7 @@ export function createKnownModel(
       return c.json(failureBody(changed), 404);
     }
     const result = await deps.providerRegistry.listModels(id);
-    if (result.ok)
-      return c.json({ models: serializeModels(result.value) }, 200);
+    if (result.ok) return c.json(serializeModels(result.value), 200);
     if (result.code === 'internal_error')
       return c.json(failureBody(result), 500);
     return c.json(failureBody(result), 400);
@@ -655,8 +656,7 @@ export function updateKnownModel(
       return c.json(failureBody(changed), 404);
     }
     const result = await deps.providerRegistry.listModels(id);
-    if (result.ok)
-      return c.json({ models: serializeModels(result.value) }, 200);
+    if (result.ok) return c.json(serializeModels(result.value), 200);
     if (result.code === 'internal_error')
       return c.json(failureBody(result), 500);
     return c.json(failureBody(result), 400);
@@ -705,8 +705,7 @@ export function deleteKnownModel(
       return c.json(failureBody(changed), 404);
     }
     const result = await deps.providerRegistry.listModels(id);
-    if (result.ok)
-      return c.json({ models: serializeModels(result.value) }, 200);
+    if (result.ok) return c.json(serializeModels(result.value), 200);
     if (result.code === 'internal_error')
       return c.json(failureBody(result), 500);
     return c.json(failureBody(result), 400);

@@ -1,10 +1,29 @@
 ---
-title: Die Seele des Bots
-description: Steuern Sie, wie Klex-Bots agieren und sich verhalten, mithilfe ihrer Seele.
+title: Die Seele eines Klex-Bots
+description: Wie die Seele den Charakter eines Bots beschreibt und wie Sie sie verwalten.
+related:
+  - /bot/concepts/identity
+  - /bot/concepts/god-messages
+  - /bot/concepts/memory
+  - /bot/concepts/data-directory
 ---
 
-Die Seele beschreibt Zweck, Charakter und Verhalten des Bots. Sie wird im Datenverzeichnis gespeichert und in den Kontext geladen.
+Die Seele beschreibt die Persönlichkeit, Ausdrucksweise, Aufgabe und Prioritäten eines Bots. Sie ist von seinem [Gedächtnis](/bot/concepts/memory) getrennt und Teil des Kontexts seiner regulären Session.
 
-Erstellen oder aktualisieren Sie die Seele in der CLI unter `Settings -> Soul`. Beschreiben Sie Zweck, Charakter und erwartetes Verhalten. Die dedizierte API bietet `GET /v1/soul`, `POST /v1/soul` zum Erstellen und `PATCH /v1/soul` zum Aktualisieren. Eine Aktualisierung mit leeren Anweisungen optimiert die bestehende Seele.
+<a id="erstellung-der-bot-seele"></a>
+<a id="creator-mode"></a>
+<a id="creator-modus-nur-cloud"></a>
+<a id="god-message-mode"></a>
+<a id="god-message-modus"></a>
 
-Chat-Sessions lesen die Seele nur und können sie nicht bearbeiten. Ohne Seele führt der Bot keine Chat-Inferenz aus.
+## Eine Seele erstellen oder aktualisieren
+
+Öffnen Sie in der selbst gehosteten Klex-App 0.30.1 **Settings → Soul**. Sie können die gespeicherte Seele einsehen, sie anhand von Anweisungen erstellen oder aktualisieren oder sie von Grund auf neu erstellen. Die Generierung verwendet Ihre konfigurierten Chat-Modelle und speichert erfolgreiche Ergebnisse. Reguläre Sessions sind pausiert, bis eine Seele gespeichert wurde.
+
+In den Anweisungen können Sie beispielsweise die Aufgabe des Bots, seinen bevorzugten Ton und seinen Umgang mit Entscheidungen beschreiben. Überprüfen Sie die generierte Seele und aktualisieren Sie sie, wenn sie nicht Ihren Vorstellungen entspricht.
+
+Klex unterstützt auch [God Messages](/bot/concepts/god-messages), mit denen eine Änderung der Seele angefordert werden kann. Sie sind nicht die einzige Möglichkeit, eine Seele zu erstellen oder zu aktualisieren.
+
+## Speicherung und Zugriff
+
+Die Seele wird im [Datenverzeichnis](/bot/concepts/data-directory) des Bots gespeichert. In Klex 0.30.1 kann die Admin API des Bots die Seele lesen und anhand von Administratoranweisungen eine neue oder aktualisierte Seele generieren. In der regulären Session steht kein Tool zum Schreiben der Seele zur Verfügung.

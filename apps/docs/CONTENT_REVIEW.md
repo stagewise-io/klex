@@ -41,6 +41,8 @@
 
 - **Enrollment token in Klex 0.30.1:** `cli/cli.ts` accepts `KLEX_CLOUD_ENROLLMENT_TOKEN` when no `--cloud-enroll-token` argument is present, including for `--create-bot`; tests in `cli/cli.test.ts` cover the environment fallback. Prefer an approved secret-management process and avoid showing literal tokens in shell commands.
 
+- **Sessions in Klex 0.30.1:** `application/application.ts` installs MCP ingress in the default session and creates a separate god session. The consult extension can create temporary child sessions and report advice (`session/chat/extensions/consult/consult.ts` and `main-system-prompt.md`). Do not guarantee simultaneous request processing or specific completion times.
+
 - **Activity API in Klex 0.30.1:** `admin-api/routes/v1/sessions.ts` lists persisted session instances and paginated messages; the message response reports `trimmedMessageCount`. `usage.ts` and `schemas.ts` expose model-call usage with time grouping and unreported-token counts. `admin-api/server.ts` serves `/v1/openapi.json`. `admin-api/admin-api.ts` binds the optional local port to `127.0.0.1` without authentication; it is not enabled by default. Do not claim the activity history is complete or that usage equals an invoice.
 
 - **Reminders in Klex 0.30.1:** `session/chat/extensions/todos/todos.ts` implements one-shot reminder times; the system prompt directs the Bot to use calendars for official or recurring events (`todos/system-prompt.md`). The docs should not present built-in to-dos as recurring schedules or imply that a schedule guarantees task completion. Specific scheduling integrations and their available capabilities remain unconfirmed.

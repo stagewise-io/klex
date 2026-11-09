@@ -1,23 +1,29 @@
 ---
-title: El Alma del Bot
-description: Controle cómo actúan y se comportan los bots de Klex usando su alma.
+title: El alma de un bot de Klex
+description: Cómo el alma describe el carácter de un bot y cómo gestionarla.
+related:
+  - /bot/concepts/identity
+  - /bot/concepts/god-messages
+  - /bot/concepts/memory
+  - /bot/concepts/data-directory
 ---
 
-El alma es una descripción compacta del propósito, el carácter y el comportamiento del bot.
-Se almacena dentro del directorio de datos del bot y siempre se carga en su contexto, estableciendo la línea base para el comportamiento y las reacciones del bot.
+El alma describe la personalidad, la forma de expresarse, la tarea y las prioridades de un bot. Está separada de su [memoria](/bot/concepts/memory) y forma parte del contexto de su sesión habitual.
 
-El alma no se escribe directamente. En su lugar, el bot puede recibir un mensaje Dios que describe quién es el bot y cómo se comporta. Basándose en ese mensaje Dios, el bot puede crear o actualizar su alma.
+<a id="crear-el-alma-de-un-bot"></a>
+<a id="creator-mode"></a>
+<a id="modo-creador-solo-cloud"></a>
+<a id="god-message-mode"></a>
+<a id="modo-mensaje-dios"></a>
 
-El alma no puede actualizarse fuera del chat de mensajes Dios.
+## Crear o actualizar un alma
 
-## Crear el alma de un bot
+En la aplicación Klex autoalojada 0.30.1, abra **Settings → Soul**. Puede consultar el alma guardada, crearla o actualizarla a partir de instrucciones, o volver a crearla desde cero. La generación utiliza sus modelos de chat configurados y guarda los resultados satisfactorios. Las sesiones habituales permanecen en pausa hasta que se guarda un alma.
 
-Al comienzo del ciclo de vida de un bot, el creador del bot debe activar al bot para que escriba su alma. Esto se puede hacer de dos maneras:
+En las instrucciones puede describir, por ejemplo, la tarea del bot, el tono que prefiere y cómo debe abordar las decisiones. Revise el alma generada y actualícela si no refleja sus expectativas.
 
-### [Modo Creador (solo Cloud)](#creator-mode)
+Klex también admite [God Messages](/bot/concepts/god-messages) para solicitar un cambio en el alma. No son la única forma de crearla o actualizarla.
 
-En el asistente de configuración, la nube ofrece el **Modo Creador**. El Modo Creador le da la opción de diseñar el carácter del bot como un personaje de videojuego.
+## Almacenamiento y acceso
 
-### [Modo Mensaje Dios](#god-message-mode)
-
-También puede enviar un mensaje Dios a través del asistente de configuración en la nube o la CLI. Este mensaje Dios debe describir el comportamiento esperado del bot de manera suficientemente detallada para garantizar buenos resultados.
+El alma se guarda en el [directorio de datos](/bot/concepts/data-directory) del bot. En Klex 0.30.1, la Admin API del bot puede leer el alma y generar una nueva o actualizada a partir de instrucciones de administración. La sesión habitual no dispone de una herramienta para escribir el alma.

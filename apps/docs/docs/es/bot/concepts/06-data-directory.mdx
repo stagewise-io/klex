@@ -1,11 +1,30 @@
 ---
-title: Directorio de datos
-description: Los bots de Klex almacenan todos sus recuerdos, información de personaje y configuración en un solo directorio.
+title: El directorio de datos de un bot de Klex
+description: Dónde guarda un bot sus chats y memoria y cómo encontrar los datos de un bot autoalojado.
+related:
+  - /bot/concepts/memory
+  - /cloud/hosted-vs-local
+  - /cloud/data-privacy
 ---
 
-El directorio de datos es la ubicación donde cada bot almacena sus recuerdos y configuración.
+Cada bot de Klex guarda sus chats y su memoria en su directorio de datos. En un bot alojado en la nube, el directorio está en el entorno alojado. En un bot autoalojado, está en la carpeta local utilizada para sus datos.
 
-Solo es accesible para la aplicación Klex, pero **no** para el bot de Klex mismo.
-Los bots de Klex no tienen acceso al sistema de archivos y, en su lugar, obtienen acceso curado a partes de su memoria y otra información.
+Los administradores pueden acceder a los chats y la memoria mediante la Admin API del bot. El panel de Klex Cloud actúa como proxy inverso e interfaz de la Admin API de cada bot.
 
-Esto evita fugas de información o manipulación maliciosa de estos archivos.
+## Encontrar un bot autoalojado
+
+En la aplicación Klex autoalojada 0.30.1, el inicio interactivo busca bots por defecto en `~/.klex/agents`. Si está definida la variable `KLEX_HOME`, utiliza la carpeta `agents` dentro de esa ruta. Con `--data-dir` puede seleccionar directamente un directorio; esta opción tiene prioridad sobre `KLEX_DATA_DIR`.
+
+Por ejemplo, para abrir un bot cuyo directorio de datos ya conoce:
+
+```sh
+klex --data-dir /path/to/bot
+```
+
+Sustituya la ruta de ejemplo por el directorio real del bot. Consulte el [inicio rápido](/bot/quickstart) para crear un bot y configurarlo sin interfaz de terminal.
+
+## Proteger los datos
+
+El directorio puede contener información sensible, incluidas la configuración y las credenciales. Limite el acceso con los permisos de su sistema operativo y proteja las copias que realice. En sistemas con modos de archivo Unix, Klex 0.30.1 solicita permisos solo para el propietario al crear el directorio; no cambia los permisos de directorios existentes. Windows utiliza listas de control de acceso.
+
+Revise sus procedimientos de copia de seguridad y recuperación antes de eliminar o mover datos. Esta página no describe un procedimiento de migración o recuperación admitido, ni las reglas de retención o el tratamiento de datos por terceros.

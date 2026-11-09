@@ -222,6 +222,7 @@ class SummarizerModule implements Summarizer {
       endedAt: episode?.endedAt ?? createdAt,
       createdAt,
       modelId,
+      sources: episode?.origins ?? [],
     });
     this.processed += 1;
     this.lastError = null;

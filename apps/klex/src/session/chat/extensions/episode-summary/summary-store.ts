@@ -1,11 +1,14 @@
 import { type Client, createClient } from '@libsql/client';
+import { z } from 'zod';
 
+import type { ActivityOrigin } from '@/activity-history';
 import {
   initializeSqliteStore,
   inspectSqliteStore,
   migrateSqliteStore,
   type SqliteStoreDefinition,
 } from '@/local-data';
+import { LOCAL_DATA_MIGRATIONS } from '@/local-data-migrations';
 import { KLEX_VERSION } from '@/release';
 
 export const EPISODE_SUMMARY_STORE_DEFINITION: SqliteStoreDefinition = {
@@ -14,9 +17,11 @@ export const EPISODE_SUMMARY_STORE_DEFINITION: SqliteStoreDefinition = {
   relativePath: 'extensions/io.stagewise/episode-summary/summaries.sqlite',
   required: false,
   createIfMissing: true,
-  schemaVersion: 1,
+  schemaVersion: 2,
+  // Older binaries reject schema v2; no separate floor is needed.
   compatibilityVersion: 2,
-  minimumKlexVersion: '0.28.1',
+  // First release storing summary sources.
+  minimumKlexVersion: '0.33.0',
   initSql: `
     CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS summaries (
@@ -26,7 +31,8 @@ export const EPISODE_SUMMARY_STORE_DEFINITION: SqliteStoreDefinition = {
       started_at TEXT NOT NULL,
       ended_at TEXT NOT NULL,
       created_at TEXT NOT NULL,
-      model_id TEXT
+      model_id TEXT,
+      sources TEXT
     );
     CREATE INDEX IF NOT EXISTS summaries_listing
       ON summaries (status, started_at DESC, episode_id DESC);
@@ -35,7 +41,7 @@ export const EPISODE_SUMMARY_STORE_DEFINITION: SqliteStoreDefinition = {
       value TEXT NOT NULL
     );
   `,
-  migrations: [],
+  migrations: LOCAL_DATA_MIGRATIONS['episode-summaries'].migrations,
   validate: async (client) => {
     const tables = await client.execute(
       "SELECT name FROM sqlite_master WHERE type = 'table'",
@@ -58,6 +64,7 @@ export const EPISODE_SUMMARY_STORE_DEFINITION: SqliteStoreDefinition = {
       'ended_at',
       'created_at',
       'model_id',
+      'sources',
     ]);
     for (const row of columns.rows) {
       if (typeof row.name === 'string') required.delete(row.name);
@@ -83,6 +90,8 @@ export interface SummaryRow {
   endedAt: string;
   createdAt: string;
   modelId: string | null;
+  /** Input origins of the episode; persisted as JSON. */
+  sources: readonly ActivityOrigin[];
 }
 
 export interface StoredSummary {
@@ -91,6 +100,8 @@ export interface StoredSummary {
   startedAt: string;
   endedAt: string;
   createdAt: string;
+  /** Absent for rows written before sources were stored. */
+  sources?: ActivityOrigin[];
 }
 
 export interface StoredSummaryPage {
@@ -113,6 +124,22 @@ export interface SummaryStore {
   commit(row: SummaryRow): Promise<void>;
   list(options: { limit: number; cursor?: string }): Promise<StoredSummaryPage>;
   close(): Promise<void>;
+}
+
+const storedSourcesSchema = z.array(
+  z.object({ env: z.string().min(1), sourceId: z.string().min(1).nullable() }),
+);
+
+function parseSources(value: unknown): ActivityOrigin[] | undefined {
+  if (typeof value !== 'string') return undefined;
+  try {
+    const parsed = storedSourcesSchema.safeParse(JSON.parse(value));
+    return parsed.success
+      ? parsed.data.map(({ env, sourceId }) => ({ env, sourceId }))
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 const CURSOR_KEY = 'cursor';
@@ -172,8 +199,8 @@ class SummaryStoreModule implements SummaryStore {
       [
         {
           sql: `INSERT OR IGNORE INTO summaries
-            (episode_id, status, title, started_at, ended_at, created_at, model_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            (episode_id, status, title, started_at, ended_at, created_at, model_id, sources)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           args: [
             row.episodeId,
             row.status,
@@ -182,6 +209,7 @@ class SummaryStoreModule implements SummaryStore {
             row.endedAt,
             row.createdAt,
             row.modelId,
+            JSON.stringify(row.sources),
           ],
         },
         {
@@ -201,7 +229,7 @@ class SummaryStoreModule implements SummaryStore {
     const client = this.requireClient();
     const result = options.cursor
       ? await client.execute({
-          sql: `SELECT episode_id, title, started_at, ended_at, created_at
+          sql: `SELECT episode_id, title, started_at, ended_at, created_at, sources
             FROM summaries
             WHERE status = 'titled'
               AND (started_at, episode_id) < (
@@ -212,20 +240,24 @@ class SummaryStoreModule implements SummaryStore {
           args: [options.cursor, limit + 1],
         })
       : await client.execute({
-          sql: `SELECT episode_id, title, started_at, ended_at, created_at
+          sql: `SELECT episode_id, title, started_at, ended_at, created_at, sources
             FROM summaries
             WHERE status = 'titled'
             ORDER BY started_at DESC, episode_id DESC
             LIMIT ?`,
           args: [limit + 1],
         });
-    const items = result.rows.slice(0, limit).map((row) => ({
-      episodeId: String(row.episode_id),
-      title: String(row.title ?? ''),
-      startedAt: String(row.started_at),
-      endedAt: String(row.ended_at),
-      createdAt: String(row.created_at),
-    }));
+    const items = result.rows.slice(0, limit).map((row): StoredSummary => {
+      const sources = parseSources(row.sources);
+      return {
+        episodeId: String(row.episode_id),
+        title: String(row.title ?? ''),
+        startedAt: String(row.started_at),
+        endedAt: String(row.ended_at),
+        createdAt: String(row.created_at),
+        ...(sources ? { sources } : {}),
+      };
+    });
     const hasMore = result.rows.length > limit;
     return {
       items,

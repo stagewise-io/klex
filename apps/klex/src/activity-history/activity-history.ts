@@ -8,6 +8,10 @@ import type {
   SessionHistory,
 } from '@/session-history';
 
+import {
+  type ActivityOrigin,
+  collectActivityOrigins,
+} from './activity-origins';
 import { collectActivityHistory } from './history-projection';
 
 export interface ActivityPage {
@@ -29,6 +33,8 @@ export interface ActivityBatch extends ActivityPage {
   startedAt: string;
   endedAt: string;
   recordCount: number;
+  /** Environments whose input the batch handled, in first-seen order. */
+  origins: ActivityOrigin[];
 }
 
 export interface ActivityLimits {
@@ -226,6 +232,7 @@ class ActivityHistoryModule implements ActivityHistory {
       startedAt: first.persistedAt,
       endedAt: end.persistedAt,
       recordCount: count,
+      origins: collectActivityOrigins(selected.map((row) => row.message)),
       text: blocks.join(RECORD_SEPARATOR),
       offset: 0,
       nextOffset: null,
@@ -314,6 +321,7 @@ class ActivityHistoryModule implements ActivityHistory {
       startedAt: first.persistedAt,
       endedAt: last.persistedAt,
       recordCount: count,
+      origins: collectActivityOrigins(selected.map((row) => row.message)),
       text: blocks.join(RECORD_SEPARATOR),
       offset: 0,
       nextOffset: null,

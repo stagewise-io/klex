@@ -95,6 +95,7 @@ function fakeFeed(
         startedAt: '2026-10-01T10:00:00.000Z',
         endedAt: '2026-10-01T10:30:00.000Z',
         recordCount: selected.length,
+        origins: [],
         text: selected.map(textOf).join('\n'),
         offset: 0,
         nextOffset: null,

@@ -10,5 +10,6 @@ export {
   type EpisodeSummaryLog,
   type EpisodeSummaryLogHub,
   type EpisodeSummaryPage,
+  type EpisodeSummarySource,
 } from './summary-log';
 export { EPISODE_SUMMARY_STORE_DEFINITION } from './summary-store';

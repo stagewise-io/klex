@@ -34,7 +34,11 @@ function original(id: string): string {
   return JSON.parse(Buffer.from(id.slice(8), 'base64url').toString())[2];
 }
 
-function episode(id: string, recordCount = 3): ActivityBatch {
+function episode(
+  id: string,
+  recordCount = 3,
+  origins: ActivityBatch['origins'] = [],
+): ActivityBatch {
   return {
     id: canonical(id),
     offset: 0,
@@ -44,6 +48,7 @@ function episode(id: string, recordCount = 3): ActivityBatch {
     startedAt: `2026-10-01T10:0${id.at(-1)}:00.000Z`,
     endedAt: `2026-10-01T10:0${id.at(-1)}:30.000Z`,
     recordCount,
+    origins,
     text: `text of ${id}`,
   };
 }
@@ -276,6 +281,23 @@ describe('summarizer', () => {
     summarizer.wake();
     await settle(summarizer);
     expect(generateText).toHaveBeenCalledTimes(2);
+  });
+
+  it('stores the input origins of each episode with its summary', async () => {
+    const origins = [
+      { env: 'slack', sourceId: 'C123' },
+      { env: 'klex-cloud', sourceId: 'chat:conv-1' },
+    ];
+    const { store, summarizer } = setup({
+      episodes: [episode('e1', 3, origins), episode('e2')],
+      generateText: async (args) => success(`Did ${args.prompt}`),
+    });
+
+    summarizer.wake();
+    await settle(summarizer);
+
+    expect(store.rows.get('e1')?.sources).toEqual(origins);
+    expect(store.rows.get('e2')?.sources).toEqual([]);
   });
 
   it('keeps the cursor on model failure and retries on the next wake', async () => {

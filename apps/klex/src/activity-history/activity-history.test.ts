@@ -44,6 +44,40 @@ describe('canonical activity view', () => {
     ).toBeNull();
   });
 
+  it('reports the input origins of a pending batch', async () => {
+    const { activities, sync, now } = await setup();
+    const input = (
+      id: string,
+      sourceEnv: string,
+      sourceId: string,
+    ): ExtendedUIMessage => ({
+      id,
+      role: 'user',
+      parts: [
+        {
+          type: 'data-context',
+          data: {
+            sourceEnv,
+            metadata: { sourceId },
+            content: [{ type: 'text', text: `from ${sourceEnv}` }],
+          },
+        },
+      ],
+    });
+    await sync([
+      input('in-1', 'slack', 'C1'),
+      { id: 'out-1', role: 'assistant', parts: [{ type: 'text', text: 'ok' }] },
+      input('in-2', 'klex-cloud', 'chat:conv-1'),
+      input('in-3', 'slack', 'C1'),
+    ]);
+
+    const batch = await activities.readPending(null, ready(now() + 600_000));
+    expect(batch?.origins).toEqual([
+      { env: 'slack', sourceId: 'C1' },
+      { env: 'klex-cloud', sourceId: 'chat:conv-1' },
+    ]);
+  });
+
   it('uses idle readiness without confusing an active long step for inactivity', async () => {
     const { activities, append, now } = await setup();
     await append('still working');

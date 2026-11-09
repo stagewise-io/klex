@@ -21,6 +21,10 @@ import {
 } from '@/model-call-logger';
 import { KLEX_VERSION } from '@/release';
 import {
+  createSummaryStore,
+  EPISODE_SUMMARY_STORE_DEFINITION,
+} from '@/session/chat/extensions/episode-summary/summary-store';
+import {
   createLearningState,
   LEARNING_STATE_STORE_DEFINITION,
 } from '@/session/chat/extensions/learning/learning-state';
@@ -234,6 +238,55 @@ describe('frozen SQLite upgrades', () => {
       },
     );
   }
+});
+
+describe('frozen episode-summary upgrades', () => {
+  it('loads v1 through registered startup and its owner without sources', async () => {
+    const store = EPISODE_SUMMARY_STORE_DEFINITION;
+    const dataDirectory = await directory();
+    const path = join(dataDirectory, store.relativePath);
+    await mkdir(dirname(path), { recursive: true });
+    await seedSqlite(path, 'episode-summaries-v1.sql');
+    const start = async () => {
+      const localData = createLocalData({
+        logging,
+        dataDirectory,
+        klexVersion: KLEX_VERSION,
+        stores: [store],
+      });
+      await localData.start();
+      await localData.close();
+    };
+    await start();
+    await assertSqliteMetadata(path, store);
+    const beforeRestart = await snapshot(dataDirectory);
+    await start();
+    expect(await snapshot(dataDirectory)).toEqual(beforeRestart);
+
+    const owner = createSummaryStore(path, dataDirectory);
+    await owner.start();
+    try {
+      expect(await owner.getCursor()).toEqual({
+        initialized: true,
+        episodeId: 'episode-skipped',
+      });
+      expect(await owner.list({ limit: 10 })).toEqual({
+        items: [
+          {
+            episodeId: 'episode-titled',
+            title: 'Fixed the flaky login test',
+            startedAt: '2026-10-01T10:00:00.000Z',
+            endedAt: '2026-10-01T10:05:00.000Z',
+            createdAt: '2026-10-01T10:06:00.000Z',
+          },
+        ],
+        nextCursor: null,
+        hasMore: false,
+      });
+    } finally {
+      await owner.close();
+    }
+  });
 });
 
 describe('frozen learning-state upgrades', () => {

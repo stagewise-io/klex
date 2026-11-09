@@ -14,6 +14,7 @@ import { configV7ToV8 } from './config/v7-to-v8/migration';
 import { configV8 } from './config/v7-to-v8/schemas';
 import { configV8ToV9 } from './config/v8-to-v9/migration';
 import { configV9 } from './config/v8-to-v9/schemas';
+import { episodeSummariesV1ToV2 } from './episode-summaries/v1-to-v2/migration';
 import { episodicSearchV1ToV2 } from './episodic-search-index/v1-to-v2/migration';
 import { learningStateV1ToV2 } from './learning-extension-state/v1-to-v2/migration';
 import {
@@ -58,4 +59,5 @@ export const LOCAL_DATA_MIGRATIONS = {
   'model-calls': { migrations: [modelCallsV1ToV2, modelCallsV2ToV3] },
   sessions: { migrations: [sessionsV1ToV2, sessionsV2ToV3, sessionsV3ToV4] },
   'episodic-search-index': { migrations: [episodicSearchV1ToV2] },
+  'episode-summaries': { migrations: [episodeSummariesV1ToV2] },
 };

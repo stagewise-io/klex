@@ -53,6 +53,36 @@ describe('episode summaries route', () => {
     expect(list).toHaveBeenCalledWith({ limit: 20 });
   });
 
+  it('returns sources and omits them for legacy summaries', async () => {
+    const { log, list } = createLog();
+    const withSources: EpisodeSummary = {
+      ...summary,
+      episodeId: 'episode-3',
+      sources: [
+        { env: 'slack', sourceId: 'C1' },
+        { env: 'klex-cloud', sourceId: 'chat:conv-1' },
+        { env: 'phone', sourceId: null },
+      ],
+    };
+    const internal: EpisodeSummary = {
+      ...summary,
+      episodeId: 'episode-1',
+      sources: [],
+    };
+    list.mockResolvedValueOnce({
+      items: [withSources, summary, internal],
+      nextCursor: internal.episodeId,
+      hasMore: true,
+    });
+    const res = await createApp(log).request('/v1/episode-summaries');
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { summaries: EpisodeSummary[] };
+    expect(body.summaries[0]?.sources).toEqual(withSources.sources);
+    expect(body.summaries[1]).not.toHaveProperty('sources');
+    expect(body.summaries[2]?.sources).toEqual([]);
+  });
+
   it('forwards limit and cursor', async () => {
     const { log, list } = createLog();
     const res = await createApp(log).request(

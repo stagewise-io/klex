@@ -1116,6 +1116,20 @@ export const deleteSkillResponseSchema = z
 
 // --- Episode summaries ---
 
+const episodeSummarySourceSchema = z
+  .object({
+    env: z
+      .string()
+      .describe('MCP namespace (`sourceEnv`) that delivered the input'),
+    sourceId: z
+      .string()
+      .nullable()
+      .describe(
+        'Push Notification `sourceId`, e.g. `chat:<conversationId>`; null when the event had none',
+      ),
+  })
+  .openapi('EpisodeSummarySource');
+
 const episodeSummarySchema = z
   .object({
     episodeId: z
@@ -1130,6 +1144,12 @@ const episodeSummarySchema = z
       .describe('When the episode started; the log is sorted by this'),
     endedAt: z.string().datetime().describe('When the episode ended'),
     createdAt: z.string().datetime().describe('When the title was written'),
+    sources: z
+      .array(episodeSummarySourceSchema)
+      .optional()
+      .describe(
+        'Environments whose input the episode handled, deduplicated in order of first appearance. Empty for purely internal episodes; absent for summaries written before sources were recorded',
+      ),
   })
   .openapi('EpisodeSummary');
 

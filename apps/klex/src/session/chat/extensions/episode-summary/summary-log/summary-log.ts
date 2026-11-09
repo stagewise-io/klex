@@ -1,9 +1,18 @@
+export interface EpisodeSummarySource {
+  /** MCP namespace that delivered the input. */
+  env: string;
+  /** Push Notification `sourceId`, e.g. `chat:<conversationId>`. */
+  sourceId: string | null;
+}
+
 export interface EpisodeSummary {
   episodeId: string;
   title: string;
   startedAt: string;
   endedAt: string;
   createdAt: string;
+  /** Absent for summaries written before sources were stored. */
+  sources?: EpisodeSummarySource[];
 }
 
 export interface EpisodeSummaryPage {

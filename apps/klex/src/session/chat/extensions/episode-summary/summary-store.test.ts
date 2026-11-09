@@ -43,6 +43,7 @@ function row(
     endedAt: startedAt,
     createdAt: '2026-10-03T00:00:00.000Z',
     modelId: 'test:model',
+    sources: [],
     ...overrides,
   };
 }
@@ -76,7 +77,7 @@ describe('episode summary store', () => {
         EPISODE_SUMMARY_STORE_DEFINITION,
         directory,
       ),
-    ).toMatchObject({ legacy: false, metadata: { schemaVersion: 1 } });
+    ).toMatchObject({ legacy: false, metadata: { schemaVersion: 2 } });
   });
 
   it('commits idempotently and advances the cursor', async () => {
@@ -96,6 +97,7 @@ describe('episode summary store', () => {
         startedAt: first.startedAt,
         endedAt: first.endedAt,
         createdAt: first.createdAt,
+        sources: [],
       },
     ]);
     expect(await store.getCursor()).toEqual({
@@ -157,13 +159,13 @@ describe('episode summary store', () => {
     const client = createClient({ url: `file:${file}` });
     await client.execute({
       sql: 'UPDATE meta SET value = ? WHERE key = ?',
-      args: ['2', 'schemaVersion'],
+      args: ['3', 'schemaVersion'],
     });
     client.close();
 
     const store = createSummaryStore(file, directory);
     stores.push(store);
-    await expect(store.start()).rejects.toThrow(/schema=2/u);
+    await expect(store.start()).rejects.toThrow(/schema=3/u);
 
     const verification = createClient({ url: `file:${file}` });
     const result = await verification.execute({
@@ -171,6 +173,35 @@ describe('episode summary store', () => {
       args: ['schemaVersion'],
     });
     verification.close();
-    expect(result.rows[0]?.value).toBe('2');
+    expect(result.rows[0]?.value).toBe('3');
+  });
+
+  it('round-trips sources in order', async () => {
+    const { directory, file } = await fixturePath();
+    const store = await openStore(file, directory);
+    const sources = [
+      { env: 'github', sourceId: null },
+      { env: 'klex-cloud', sourceId: 'chat:conv-1' },
+    ];
+    await store.commit(row('a', '2026-10-01T10:00:00.000Z', { sources }));
+
+    expect((await store.list({ limit: 10 })).items[0]?.sources).toEqual(
+      sources,
+    );
+  });
+
+  it('omits unreadable stored sources instead of failing the page', async () => {
+    const { directory, file } = await fixturePath();
+    const store = await openStore(file, directory);
+    await store.commit(row('a', '2026-10-01T10:00:00.000Z'));
+    const client = createClient({ url: `file:${file}` });
+    await client.execute(
+      "UPDATE summaries SET sources = '[{\"env\":1}]' WHERE episode_id = 'a'",
+    );
+    client.close();
+
+    const [item] = (await store.list({ limit: 10 })).items;
+    expect(item).toBeDefined();
+    expect(item).not.toHaveProperty('sources');
   });
 });

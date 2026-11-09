@@ -10,6 +10,13 @@
 - **Access management and stopping:** Users can review Bot activity in the dashboard and connect or disconnect MCP servers. For other connected apps and accounts, Glenn recommends configuring their permissions directly. A self-hosted Bot can be stopped by closing its app; a Cloud Bot can be stopped with the dashboard's Stop control.
 - **Safety controls:** Action approvals and restrictions are not implemented today. Advanced tracking and behavioral-analysis tooling is planned; do not describe it as available, or publish roadmap details, without approval.
 
+## Additional confirmations from Glenn (30 Oct 2026)
+
+- **Connections:** A machine is connected through MCP. An MCP server can expose a full machine or an app; Klex offers built-in MCP servers and supports connecting other MCP servers.
+- **Connection and identity:** An MCP connection is either connected or not. For most MCPs, a Bot acts through its own account or identity, configured per Bot with permissions and access grants. Do not invent a separate MCP-level permission model.
+- **Current Memory:** Klex Bot Memory currently stores skills and learnings. Facts, individual people, and trust are planned, not confirmed as current capabilities.
+- **Page structure and diagrams:** Keep Connections as its own page. Glenn requested Mermaid diagrams; renderer support was verified with Blume 2.2.5, but no established brand style for diagrams has been confirmed.
+
 ## Confirmed from the repository; check release scope
 
 - The provider-registry README lists 25 provider types. It describes provider types and model discovery, not a fixed exhaustive model catalogue. Exact available models depend on the provider and configured account.
@@ -18,7 +25,7 @@
 
 ## Open questions: do not infer
 
-- Memory behavior: what information is remembered, how memories are created or recalled, scope across chats/channels, and user/admin controls. Also unconfirmed: retention, deletion, backups, and exact file layout.
+- Memory behavior beyond current skills and learnings: how memories are created or recalled, scope across chats/channels, and user/admin controls. Also unconfirmed: retention, deletion, backups, and exact file layout.
 - Cloud staff access, third-party/model-provider processing, provider credential storage, and security/encryption guarantees.
 - Detailed limits or guarantees around sessions, identity, channel access, and connector permissions.
 - Recommended model configuration, including primary/fallback or task-specific choices.

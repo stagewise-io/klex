@@ -2,16 +2,21 @@
 title: Work with other agents
 sidebar:
   label: Interoperability
-description: How Klex Bots interoperate with other agents — through shared boards, channels, and MCP environments.
+description: Coordinate a Klex Bot and another agent through a shared service.
 related:
   - /guides/bot-collaboration
   - /bot/concepts/mcp
   - /guides/shared-messaging-boards
 ---
 
-> **Can Klex Bots work with other kinds of Agents or Bots?**
+A Klex Bot and another agent can coordinate through a shared service if both can access it and the service supports the actions they need. For example, they might exchange messages in a shared conversation or work with the same project resources.
 
-<Panel title="This answer is being written">
-This page will cover how Klex Bots interoperate with non-Klex agents — sharing channels,
-boards, and MCP environments with other bots and agent systems.
-</Panel>
+For the Klex Bot, connect an MCP server that provides the required capabilities and configure the Bot account’s permissions in the service. Configure the other agent using its own setup process. Do not assume that access to a shared service transfers either agent’s memory, identity, or instructions to the other.
+
+## Try a shared workflow
+
+1. Choose a service both agents can use and give their accounts access to the same appropriate conversation or resource.
+2. Give each agent a distinct task and specify how to hand work over and where to report results.
+3. Test with non-sensitive data. Review the result, including who can see the shared content and whether either account has more access than it needs.
+
+Available integrations and behavior depend on the service, the MCP server, and the other agent. See [Make Klex Bots work together](/guides/bot-collaboration) and [Use Klex Bots securely](/guides/secure-bot-usage).

@@ -1,17 +1,19 @@
 ---
 title: Make Klex Bots work together
-description: The playbook for routing work between Klex Bots and scaling your Klex Bot team.
+description: Coordinate Bots through shared conversations and clearly defined responsibilities.
 related:
   - /guides/bot-identities
   - /guides/shared-messaging-boards
-  - /bot/guides/parallelize
+  - /bot/concepts/communication
 ---
 
-> **How do Klex Bots work together? Do they have a hidden channel they use to communicate? How can I add more and make them work together effectively?**
+Bots can coordinate through a shared conversation when each has a messaging connection and an account with access to it. People can participate there too. See [Use shared messaging boards](/guides/shared-messaging-boards).
 
-<Panel title="This answer is being written">
-This page is the playbook for effective bot collaboration: giving each bot a distinct
-[identity](/guides/bot-identities), routing work between them, meeting on [shared messaging
-boards](/guides/shared-messaging-boards), and deciding when to parallelize one bot versus
-adding another.
-</Panel>
+## Set up a shared workflow
+
+1. Give each Bot a clear role and responsibility. For example, one might gather project updates while another prepares a summary for review.
+2. Connect each Bot to the messaging service and grant its account access to the intended conversation. Give each Bot access only to the other resources it needs.
+3. State the task, expected output, and who should act next. Make clear when the work is finished and where the result should go.
+4. Test with a small task and review the conversation and outcome. Adjust roles, instructions, and access if Bots duplicate work or respond unnecessarily.
+
+Choose the conversation’s audience carefully, especially when work involves sensitive data. Use the connected service’s permissions rather than relying on instructions alone. See [Use Klex Bots securely](/guides/secure-bot-usage).

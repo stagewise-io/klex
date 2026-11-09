@@ -35,11 +35,13 @@
 
 - **Agent Skills in Klex 0.30.1:** `apps/klex/src/skills/skills.ts` stores each skill under `skills/{namespace}/{name}/SKILL.md` in the data directory. The skills extension exposes descriptions and a `readSkill` tool (`session/chat/extensions/skills/skills.ts`); the learning extension can create, update and remove learned skills. Admin routes list, read, update and delete qualified skills (`admin-api/routes/v1/skills.ts`). An admin edit is informational and does not prevent later learning changes. Do not infer automatic sharing between Bots from template support.
 
+- **Messaging:** Glenn confirmed dashboard chat, connections via MCP, and that most Bots act through accounts with permissions configured in the app. In Klex 0.30.1, MCP ingress maps push events to the default session (`session/chat/extensions/mcp-ingress/push-notification-adapter.ts`), and the session prompt directs text replies to the originating MCP conversation (`session/chat/utils/system-prompt.md`). These are implementation and prompt behaviors, not guarantees of correct routing or identity recognition. No specific channel recommendation or exhaustive messaging-app support list has been confirmed.
+
 ## Open questions: do not infer
 
 - Memory behavior beyond current skills and learnings: how memories are created or recalled, scope across chats/channels, and user/admin controls. Also unconfirmed: retention, deletion, backups, and exact file layout.
 - Cloud staff access, third-party/model-provider processing, provider credential storage, encryption details beyond the confirmed Cloud-hosted scope, and other security guarantees.
-- Detailed limits or guarantees around sessions, identity, channel access, and connector permissions.
+- Detailed limits or guarantees around sessions, identity, channel access, and connector permissions; how the Bot identifies the exact person speaking; channel recommendations; and how existing customers use Bots.
 - Recommended model configuration, including primary/fallback or task-specific choices.
 - Product claims in the Bot landing page, Soul, Identity, and MCP pages that are not recorded above. Verify claims about autonomy, Bot identity, memory format/access, and protocol behavior before carrying them into an overview or describing them as guaranteed.
 

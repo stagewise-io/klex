@@ -64,7 +64,7 @@ export const workflowMarkup = (panels: string[]) => `
               .map(
                 ({ id, phase, title, description }, index) => `
               <li class="new-workflow-step" data-active="${index === 0}">
-                <h3 id="${id}" data-markdown-text="Step ${index + 1}: ${phase} — ${title}">
+                <h3 id="${id}" data-markdown-text="${html('Step {{number}}: {{phase}}', { number: index + 1, phase: t(phase) })} — ${html(title)}">
                   <button class="new-workflow-step-button" type="button" data-step="${index}" aria-controls="new-workflow-panel-${index}" aria-current="${index === 0 ? 'step' : 'false'}">
                     <span class="new-workflow-step-number"><span class="new-workflow-step-index">${String(index + 1).padStart(2, '0')}</span> · ${html(phase)}</span>
                     ${workflowTitleMarkup(t(title))}

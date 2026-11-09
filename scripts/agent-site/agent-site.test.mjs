@@ -24,6 +24,69 @@ const request = (url, accept, method = 'GET') =>
   });
 
 describe('representation negotiation', () => {
+  it.each(['/', '/index.md', '/brand.md', '/press.md'])(
+    'negotiates translated Markdown at %s without locale URLs',
+    (url) => {
+      const result = site.response({
+        url,
+        headers: {
+          accept: 'text/markdown',
+          'accept-language': 'fr;q=0.4,de-DE;q=0.9',
+        },
+      });
+      expect(result.status).toBe(200);
+      expect(result.headers['Content-Language']).toBe('de');
+      expect(result.headers.Vary).toBe('Accept, Accept-Language, Cookie');
+      expect(result.headers['Cache-Control']).toBe('no-store');
+      expect(result.body).toBe(
+        manifest.pages[
+          url === '/' || url === '/index.md' ? '/' : url.replace('.md', '')
+        ].markdownLocales.de,
+      );
+    },
+  );
+  it('lets a shared cookie override Accept-Language and Auto follow it', () => {
+    for (const [cookie, expected] of [
+      ['fr', 'fr'],
+      ['auto', 'de'],
+      ['invalid', 'de'],
+    ]) {
+      const result = site.response({
+        url: '/',
+        headers: {
+          accept: 'text/markdown',
+          cookie: `klex-language=${cookie}`,
+          'accept-language': 'de',
+        },
+      });
+      expect(result.headers['Content-Language']).toBe(expected);
+    }
+  });
+  it('generates all twelve homepage variants with translated FAQ and headings', () => {
+    expect(Object.keys(manifest.pages['/'].markdownLocales)).toHaveLength(12);
+    expect(manifest.pages['/'].markdownLocales.de).toContain(
+      'Dein eigenes Team',
+    );
+    expect(manifest.pages['/'].markdownLocales.de).toContain(
+      'Auf welche Informationen',
+    );
+    expect(manifest.pages['/'].markdownLocales.de).toContain(
+      'Jonathan (Klex Bot) entwickelt die Karriereseite',
+    );
+    expect(manifest.pages['/'].markdownLocales.de).not.toContain(
+      'Kristine plans.',
+    );
+    expect(manifest.pages['/'].markdownLocales.ja).toContain('あなた');
+  });
+  it('does not translate legal source Markdown', () => {
+    const result = site.response({
+      url: '/legal/privacy',
+      headers: { accept: 'text/markdown', cookie: 'klex-language=de' },
+    });
+    expect(result.headers['Content-Language']).toBe('en');
+    expect(result.body).toBe(manifest.pages['/legal/privacy'].markdown);
+  });
+
   it.each([
     undefined,
     '*/*',
@@ -48,7 +111,7 @@ describe('representation negotiation', () => {
     const result = request('/?tracking=test', accept);
     expect(result.status).toBe(200);
     expect(result.headers['Content-Type']).toContain('text/markdown');
-    expect(result.headers.Vary).toBe('Accept');
+    expect(result.headers.Vary).toBe('Accept, Accept-Language, Cookie');
     expect(result.headers['CDN-Cache-Control']).toBe('no-store');
     expect(result.body).toContain('# Your own team of digital coworkers.');
     expect(result.body).not.toContain('<svg');

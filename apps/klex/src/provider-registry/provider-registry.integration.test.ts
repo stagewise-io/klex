@@ -388,6 +388,79 @@ describe('provider registry module integration', () => {
     },
   );
 
+  it.each(['discovered', 'manual'] as const)(
+    'rejects %s Decision models at the language-model boundary',
+    async (source) => {
+      const config = createConfig({
+        logging,
+        dataDirectory: await createDataDirectory(),
+      });
+      await config.start();
+      const createLanguageModel = vi.fn(
+        openRouterProviderDefinition.createLanguageModel,
+      );
+      const registry = createProviderRegistry({
+        logging,
+        config,
+        definitions: [{ ...openRouterProviderDefinition, createLanguageModel }],
+      });
+      await registry.start();
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (url: URL) =>
+          Response.json({
+            data: url.searchParams.has('output_modalities')
+              ? [
+                  {
+                    id: 'future/decision',
+                    architecture: { output_modalities: ['decisions'] },
+                  },
+                ]
+              : [],
+          }),
+        ),
+      );
+      try {
+        expect(
+          (
+            await registry.addInstance({
+              id: 'router',
+              type: 'openrouter',
+              settings: { apiKey: 'synthetic' },
+              ...(source === 'manual' && {
+                knownModels: {
+                  'future/decision': { kind: 'evaluation' as const },
+                },
+              }),
+            })
+          ).ok,
+        ).toBe(true);
+        if (source === 'discovered')
+          expect((await registry.listModels('router', true)).ok).toBe(true);
+        const entry = { providerId: 'router', modelId: 'future/decision' };
+        expect(registry.resolveModel(entry).kind).toBe('evaluation');
+        expect(
+          registry.resolveInstinctCandidates([
+            { ...entry, api: 'evaluation' },
+          ])[0]?.status,
+        ).toBe('ready');
+        expect(
+          registry.resolveInstinctCandidates([
+            { ...entry, api: 'generation' },
+          ])[0]?.status,
+        ).toBe('unavailable');
+        expect(() => registry.getLanguageModel(entry)).toThrow(
+          'Evaluation-only',
+        );
+        expect(createLanguageModel).not.toHaveBeenCalled();
+      } finally {
+        vi.unstubAllGlobals();
+        await registry.close();
+        await config.close();
+      }
+    },
+  );
+
   it('round-trips OpenRouter decision configuration through disk and local-data restart', async () => {
     const dataDirectory = await createDataDirectory();
     const configPath = join(dataDirectory, CONFIG_FILE_NAME);

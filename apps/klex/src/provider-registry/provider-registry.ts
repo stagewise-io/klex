@@ -1473,7 +1473,7 @@ class ProviderRegistryModule implements ProviderRegistry {
 
   getLanguageModel(reference: ModelSelectionEntry): LanguageModelV4 {
     this.assertStarted();
-    this.resolveModel(reference);
+    const resolved = this.resolveModel(reference);
     const instance = this.getInstance(reference.providerId);
     if (!instance.ok) throw new Error(instance.message);
     const definition = this.requireDefinition(instance.value.type);
@@ -1481,6 +1481,8 @@ class ProviderRegistryModule implements ProviderRegistry {
       throw new Error(
         `Provider '${instance.value.type}' does not support generation`,
       );
+    if (resolved.kind === 'evaluation')
+      throw new Error('Evaluation-only model cannot generate chat messages');
     return withRemoteInputMapping(
       definition.createLanguageModel(
         instance.value,

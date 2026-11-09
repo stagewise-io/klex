@@ -72,10 +72,11 @@ async function discoverModels(
 ): Promise<ProviderOperationResult<readonly ProviderModel[]>> {
   try {
     // The default catalog omits decision models. Fetch both surfaces, using
-    // the same credentials and cancellation signal, before publishing a list.
+    // the same credentials and cancellation signal. Either catalog can fail
+    // independently without hiding models from the other catalog.
     const decisionsUrl = modelListUrl(instance, BASE_URL);
     decisionsUrl.searchParams.set('output_modalities', 'decisions');
-    const bodies = await Promise.all(
+    const results = await Promise.allSettled(
       [modelListUrl(instance, BASE_URL), decisionsUrl].map((url) =>
         fetchJson(
           url,
@@ -87,9 +88,14 @@ async function discoverModels(
         ),
       ),
     );
-    const items = bodies.flatMap((body) =>
-      isRecord(body) && Array.isArray(body.data) ? body.data : [],
-    );
+    signal.throwIfAborted();
+    if (results.every((result) => result.status === 'rejected'))
+      throw new Error('All OpenRouter model catalogs failed');
+    const items = results.flatMap((result) => {
+      if (result.status !== 'fulfilled') return [];
+      const body = result.value;
+      return isRecord(body) && Array.isArray(body.data) ? body.data : [];
+    });
     return available([
       ...new Map(
         items

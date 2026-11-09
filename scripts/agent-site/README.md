@@ -43,6 +43,12 @@ Patterns match canonical pathnames: exact `/page`, `*` within one segment, and `
 
 Marketing emits a private build diagnostic at `.vercel/output/content-report.json`: meaningful main-text characters, raw HTML size, SVG size, H1 count and heading skips. The ratio is explicitly a diagnostic, not a reproduction of Ora's undocumented calculation. Static office polygon/polyline runs are now extracted automatically into a content-hashed same-origin SVG sprite served with one-year immutable caching. External use references preserve paint order and inherited theme variables; bot portal hosts, human figures, React islands and animated artwork remain inline. Homepage HTML drops by about 114 KB (roughly 27%); the 5% text ratio target is not yet met.
 
+## Localized marketing Markdown
+
+The website build renders independent locale-specific marketing markup from the same translation catalogs, then converts each semantic main to Markdown. The packaged function selects a variant at the existing URL (including `/index.md`, `/brand.md`, and `/press.md`): valid `klex-language` cookie first, then quality-ranked `Accept-Language` for absent/invalid/`auto` cookies, then English. Regional tags match their supported base language. Responses include `Content-Language`, `Vary: Accept, Accept-Language, Cookie`, and all three no-store cache headers. No locale URL or query parameter is required. HTML rendering and docs routes are unchanged. Legal Markdown remains English; dated source artifacts retain their exact bytes. Static-only `dist` hosting does not provide language negotiation; use the packaged function deployment.
+
+`llms.txt`, `llms-full.txt`, and discovery metadata remain English. Only marketing page Markdown is localized by this feature.
+
 ## Progressive animated mascots
 
 The 11 prerendered animated feature mascots now render cached image placeholders on the server and the first client render. IntersectionObserver upgrades them near the viewport using a lazy-loaded runtime component. Suspense/error boundaries retain the image when loading is pending or fails; reduced motion retains the image. Reserved dimensions avoid layout collapse. On-ready callbacks restore current pause/resume, speech and reaction state, and the tool conveyor waits for the live handle before issuing movement commands. Hero/workflow/office mascots were already runtime-mounted and remain unchanged.

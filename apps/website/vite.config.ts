@@ -7,51 +7,74 @@ import { type Connect, createServer, defineConfig, type Plugin } from 'vite';
 import { createLegalPlugin } from './src/legal/node/index.ts';
 import { staticMascots } from './static-mascot-plugin.ts';
 
+async function renderMarketingLocale(
+  locale = 'en',
+): Promise<Record<string, string>> {
+  const server = await createServer({
+    configFile: false,
+    root: fileURLToPath(new URL('.', import.meta.url)),
+    appType: 'custom',
+    resolve: {
+      alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
+    },
+    server: { middlewareMode: true, hmr: false, ws: false, watch: null },
+    optimizeDeps: { noDiscovery: true, include: [] },
+    ssr: { noExternal: ['@klex/mascot', '@stagewise/ui'] },
+    plugins: [staticMascots()],
+    build: { assetsInlineLimit: 0 },
+  });
+  try {
+    const { i18n } = await server.ssrLoadModule('/src/i18n/i18n.ts');
+    await i18n.changeLanguage(locale);
+    const { prerenderLandingPage } = await server.ssrLoadModule(
+      '/src/new/prerender.tsx',
+    );
+    const { resourceMarkup } = await server.ssrLoadModule(
+      '/src/new/resources/page-markup.ts',
+    );
+    return {
+      '/index.html': prerenderLandingPage(),
+      '/brand/index.html': resourceMarkup(false),
+      '/press/index.html': resourceMarkup(true),
+    };
+  } finally {
+    await server.close();
+  }
+}
+
 function prerenderPages(): Plugin {
   let pages: Promise<Record<string, string>> | undefined;
   return {
     name: 'klex-prerender-pages',
     apply: 'build',
+    async generateBundle() {
+      const localized: Record<string, Record<string, string>> = {};
+      for (const locale of [
+        'zh',
+        'ja',
+        'ko',
+        'de',
+        'fr',
+        'es',
+        'pt',
+        'hi',
+        'uk',
+        'ru',
+        'ar',
+      ]) {
+        localized[locale] = await renderMarketingLocale(locale);
+      }
+      this.emitFile({
+        type: 'asset',
+        fileName: '__localized-markup.json',
+        source: JSON.stringify(localized),
+      });
+    },
     transformIndexHtml: {
       order: 'pre',
       async handler(html, context) {
         if (context.path === '/legal/index.html') return html;
-        pages ??= (async () => {
-          const server = await createServer({
-            configFile: false,
-            root: fileURLToPath(new URL('.', import.meta.url)),
-            appType: 'custom',
-            resolve: {
-              alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
-            },
-            server: {
-              middlewareMode: true,
-              hmr: false,
-              ws: false,
-              watch: null,
-            },
-            optimizeDeps: { noDiscovery: true, include: [] },
-            ssr: { noExternal: ['@klex/mascot', '@stagewise/ui'] },
-            plugins: [staticMascots()],
-            build: { assetsInlineLimit: 0 },
-          });
-          try {
-            const { prerenderLandingPage } = await server.ssrLoadModule(
-              '/src/new/prerender.tsx',
-            );
-            const pageMarkup = prerenderLandingPage();
-            const { resourceMarkup } = await server.ssrLoadModule(
-              '/src/new/resources/page-markup.ts',
-            );
-            return {
-              '/index.html': pageMarkup,
-              '/brand/index.html': resourceMarkup(false),
-              '/press/index.html': resourceMarkup(true),
-            };
-          } finally {
-            await server.close();
-          }
-        })();
+        pages ??= renderMarketingLocale();
         const markup = (await pages)[context.path];
         if (!markup)
           throw new Error(`No prerendered markup for ${context.path}`);

@@ -11,7 +11,7 @@ pnpm format
 pnpm format:check
 ```
 
-The artifact tests require both builds first. Preview marketing with `pnpm --filter @klex/website preview`; preview docs with `node scripts/agent-site/preview.mjs docs --port 4174`. Vite development remains the interactive frontend development server; protocol checks use the built preview, not Vite dev.
+The artifact tests require both builds first. Preview marketing with `pnpm --filter @klex/website preview`; preview docs with `node scripts/agent-site/preview.mjs docs --port 4174`. Vite development also serves live marketing Markdown for `/`, `/brand`, `/press` and their `.md` mirrors, using the production negotiation and extraction helpers. Locale renders are cached until a watched source changes. For example: `curl http://localhost:5173/ -H 'Accept: text/markdown' -H 'Accept-Language: de'`. Legal/discovery artifacts and full deployment-protocol checks still use the built preview. Run `pnpm exec vitest run scripts/agent-site/dev.test.mjs` to check live Vite Markdown without building first.
 
 ## Content contract
 

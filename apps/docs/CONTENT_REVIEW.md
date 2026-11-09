@@ -33,6 +33,8 @@
 - The provider-registry README lists 25 provider types, but the Klex 0.30.1 registry source also registers TypeSafe AI and Vercel AI Gateway (`apps/klex/src/provider-registry/providers/providers.ts`). The README is not an exhaustive model catalogue. Exact available models depend on the provider and configured account. TypeSafe’s native provider is for evaluation, not chat (`providers/typesafe-ai.ts`); don’t imply every provider supports every task.
 - No single recommended model setup was found in the repository; Glenn has not yet confirmed model-selection advice.
 
+- **Agent Skills in Klex 0.30.1:** `apps/klex/src/skills/skills.ts` stores each skill under `skills/{namespace}/{name}/SKILL.md` in the data directory. The skills extension exposes descriptions and a `readSkill` tool (`session/chat/extensions/skills/skills.ts`); the learning extension can create, update and remove learned skills. Admin routes list, read, update and delete qualified skills (`admin-api/routes/v1/skills.ts`). An admin edit is informational and does not prevent later learning changes. Do not infer automatic sharing between Bots from template support.
+
 ## Open questions: do not infer
 
 - Memory behavior beyond current skills and learnings: how memories are created or recalled, scope across chats/channels, and user/admin controls. Also unconfirmed: retention, deletion, backups, and exact file layout.

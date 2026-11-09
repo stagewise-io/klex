@@ -18,6 +18,19 @@ export type Translations = readonly [
   ar: string,
 ];
 export const messages = {
+  Default: [
+    '默认',
+    'デフォルト',
+    '기본값',
+    'Standard',
+    'Par défaut',
+    'Predeterminado',
+    'Padrão',
+    'डिफ़ॉल्ट',
+    'Типова',
+    'По умолчанию',
+    'الافتراضية',
+  ],
   'Self hosted': [
     '自行托管',
     'セルフホスト',

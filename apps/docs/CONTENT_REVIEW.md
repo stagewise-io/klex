@@ -26,6 +26,8 @@
 
 ## Confirmed from the repository; check release scope
 
+- **Soul in Klex 0.30.1:** The self-hosted CLI has a Soul screen for viewing, creating, updating, and re-creating a soul from instructions (`apps/klex/src/cli-ui/screens/soul.tsx`). The Admin API provides GET, POST, and PATCH soul routes; POST and PATCH use one-shot model generation, not a god session (`apps/klex/src/admin-api/routes/v1/soul.ts`). Regular sessions have no soul-writing tool. God messages remain available in a dedicated session, but are not the only way to update the soul (`apps/klex/src/application/application.ts`). Do not claim ordinary conversations guarantee safety, or that the Cloud UI cannot display a soul without checking the current Cloud interface.
+
 - **MCP in Klex 0.30.1:** The released source at `baff8a40ce9b896fdd17146dfe9906cefe7c2697` installs MCP ingress in the default session (`apps/klex/src/application/application.ts`). Its `addMcpServer` tool can add new remote HTTP(S) servers but not edit or remove existing ones (`apps/klex/src/session/chat/extensions/mcp-ingress/mcp-ingress.ts`, tests in the same directory). Resources and the push-notification extension are implemented in `apps/klex/src/mcp/connection.ts` and `apps/klex/src/mcp/architecture.md`; capabilities depend on the server. The release tag `v0.30.1` resolves to that commit. A switch controlling Bot-added servers remains unconfirmed; do not claim one exists.
 
 - The provider-registry README lists 25 provider types. It describes provider types and model discovery, not a fixed exhaustive model catalogue. Exact available models depend on the provider and configured account.

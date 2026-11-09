@@ -108,7 +108,7 @@ try {
         .click();
       await page.locator('[data-language-placement="menu"]').click();
       await page
-        .getByRole('option', { name: 'Auto — Deutsch', exact: true })
+        .getByRole('option', { name: 'Deutsch (Standard)', exact: true })
         .waitFor();
       await page.keyboard.press('Escape');
       await page
@@ -128,12 +128,26 @@ try {
       assert.equal(headerStyle.border, '1px');
       await headerTrigger.click();
       await page
-        .getByRole('option', { name: 'Auto — Deutsch', exact: true })
+        .getByRole('option', { name: 'Deutsch (Standard)', exact: true })
         .waitFor();
       await page.keyboard.press('Escape');
     }
     await page.locator('[data-language-placement="footer"]').focus();
     await page.keyboard.press('Enter');
+    assert.equal(
+      await page
+        .locator('[data-language-menu="footer"]')
+        .getByRole('option')
+        .count(),
+      12,
+    );
+    assert.equal(
+      await page
+        .locator('[data-language-menu="footer"]')
+        .getByRole('option', { name: 'Deutsch', exact: true })
+        .count(),
+      0,
+    );
     await page
       .locator('[data-language-menu="footer"]')
       .getByRole('option', { name: 'Français', exact: true })

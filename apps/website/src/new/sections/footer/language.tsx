@@ -26,7 +26,7 @@ export function LanguageSelector({
   const automaticLocale = browserLocale();
   return (
     <Select
-      value={value}
+      value={value === automaticLocale ? 'auto' : value}
       onValueChange={(next) => {
         if (next === 'auto' || isLocale(next)) changeLanguagePreference(next);
       }}
@@ -70,19 +70,26 @@ export function LanguageSelector({
         alignItemWithTrigger={false}
         className="w-max max-w-[calc(100vw-2rem)]"
       >
-        <SelectItem value="auto">
+        <SelectItem
+          value="auto"
+          onClick={() => {
+            if (value === automaticLocale) changeLanguagePreference('auto');
+          }}
+        >
           <span lang={automaticLocale} dir="auto">
-            {t('Auto', { lng: automaticLocale })} —{' '}
-            {localeNames[automaticLocale]}
+            {localeNames[automaticLocale]} (
+            {t('Default', { lng: automaticLocale })})
           </span>
         </SelectItem>
-        {locales.map((locale) => (
-          <SelectItem key={locale} value={locale}>
-            <span lang={locale} dir="auto">
-              {localeNames[locale]}
-            </span>
-          </SelectItem>
-        ))}
+        {locales
+          .filter((locale) => locale !== automaticLocale)
+          .map((locale) => (
+            <SelectItem key={locale} value={locale}>
+              <span lang={locale} dir="auto">
+                {localeNames[locale]}
+              </span>
+            </SelectItem>
+          ))}
       </SelectContent>
     </Select>
   );

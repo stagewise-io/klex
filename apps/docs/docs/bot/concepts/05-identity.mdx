@@ -1,25 +1,18 @@
 ---
-title: How Klex Bot identity works
+title: Klex Bot identity
 sidebar:
   label: Identity
-description: The two sides of Klex Bot identity — who the Klex Bot is, and how it recognizes the exact person talking to it.
+description: How a Bot’s name, soul, and connected accounts contribute to its identity.
 related:
   - /bot/concepts/soul
-  - /bot/concepts/memory
   - /bot/concepts/communication
+  - /bot/concepts/brain-and-computers
 ---
 
-> **How does a Klex Bot know who it is — and which exact person is talking to it?**
+A Klex Bot has a name and a [soul](/bot/concepts/soul), which describes its character and priorities. Its connected accounts determine how it appears and what it can access in external apps.
 
-Identity has two sides for a Klex Bot: who the Klex Bot itself is, and who it is talking to. Who the Klex Bot is lives in its [soul](/bot/concepts/soul) — a character description that only the admin can change through god messages. Who it is talking to is something the Klex Bot keeps track of itself: it maps every conversation partner, across all Connectors, to a person in its memory.
+In the self-hosted Klex 0.30.1 app, **Settings → Bot Identity** shows the Bot’s official name and lets you update it. The Bot’s configured name is included in its session context.
 
-## Who the Klex Bot is
+## Identity in connected apps
 
-The soul defines the Klex Bot's character and identity — its nature, rather than the memories and skills it picks up along the way. It is written by the Klex Bot itself and can only be changed through god messages in the god session, so no ordinary conversation can rewrite who the Klex Bot is. See [The soul of a Klex Bot](/bot/concepts/soul) for what it contains and how it is created and updated.
-
-## Recognizing who it is talking to
-
-<Panel title="This section is being written">
-This section will explain how a Klex Bot maps messages across Connectors and platforms to the exact
-person talking to it.
-</Panel>
+For most connected apps, a Bot acts through its own account. Configure that account’s permissions in the app itself. See [Connections](/bot/concepts/brain-and-computers) for how to connect environments.

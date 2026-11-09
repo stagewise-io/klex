@@ -111,6 +111,7 @@ describe('OpenRouter decision models', () => {
       );
       expect(await discoverModels(instance, signal())).toMatchObject({
         ok: true,
+        partial: true,
         value: [
           {
             modelId: failDecisions ? 'vendor/chat' : 'future/decision',
@@ -121,10 +122,25 @@ describe('OpenRouter decision models', () => {
     },
   );
 
-  it('reports discovery failure when both catalogs fail', async () => {
+  it.each([401, 429, 503])(
+    'preserves HTTP %s when both catalogs fail',
+    async (status) => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => new Response('unavailable', { status })),
+      );
+      expect(await discoverModels(instance, signal())).toMatchObject({
+        ok: false,
+        code: 'discovery_failed',
+        message: `Provider returned HTTP ${status}`,
+      });
+    },
+  );
+
+  it('treats malformed catalogs as failures rather than complete empty lists', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => new Response('unavailable', { status: 503 })),
+      vi.fn(async () => Response.json({ data: null })),
     );
     expect(await discoverModels(instance, signal())).toMatchObject({
       ok: false,

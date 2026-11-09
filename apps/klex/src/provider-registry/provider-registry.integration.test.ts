@@ -461,6 +461,88 @@ describe('provider registry module integration', () => {
     },
   );
 
+  it.each(['standard', 'decisions'] as const)(
+    'retains cached models during partial %s catalog failures and replaces them after recovery',
+    async (failedCatalog) => {
+      const config = createConfig({
+        logging,
+        dataDirectory: await createDataDirectory(),
+      });
+      await config.start();
+      const registry = createProviderRegistry({
+        logging,
+        config,
+        definitions: [openRouterProviderDefinition],
+      });
+      await registry.start();
+      let phase: 'full' | 'partial' | 'empty' | 'malformed' | 'recovered' =
+        'full';
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (url: URL) => {
+          const decisions = url.searchParams.has('output_modalities');
+          const failing = decisions === (failedCatalog === 'decisions');
+          if (phase !== 'full' && phase !== 'recovered' && failing)
+            return new Response('unavailable', { status: 503 });
+          if (phase === 'malformed') return Response.json({ data: null });
+          const id = decisions
+            ? 'future/decision'
+            : phase === 'full'
+              ? 'vendor/old'
+              : 'vendor/new';
+          return Response.json({
+            data:
+              phase === 'empty'
+                ? []
+                : [
+                    {
+                      id,
+                      architecture: {
+                        output_modalities: [decisions ? 'decisions' : 'text'],
+                      },
+                    },
+                  ],
+          });
+        }),
+      );
+      try {
+        expect(
+          (
+            await registry.addInstance({
+              id: 'router',
+              type: 'openrouter',
+              settings: { apiKey: 'synthetic' },
+            })
+          ).ok,
+        ).toBe(true);
+        const ids = async (refresh = true) => {
+          const result = await registry.listModels('router', refresh);
+          expect(result.ok).toBe(true);
+          return result.ok ? result.value.map((model) => model.modelId) : [];
+        };
+        expect(await ids()).toEqual(['future/decision', 'vendor/old']);
+        phase = 'partial';
+        const partial = await ids();
+        expect(partial).toContain('vendor/old');
+        expect(partial).toContain('future/decision');
+        if (failedCatalog === 'decisions')
+          expect(partial).toContain('vendor/new');
+        phase = 'empty';
+        expect(await ids()).toEqual(partial);
+        expect(await ids(false)).toEqual(partial);
+        phase = 'malformed';
+        expect(await ids()).toEqual(partial);
+        phase = 'recovered';
+        expect(await ids()).toEqual(['future/decision', 'vendor/new']);
+        expect(await ids(false)).toEqual(['future/decision', 'vendor/new']);
+      } finally {
+        vi.unstubAllGlobals();
+        await registry.close();
+        await config.close();
+      }
+    },
+  );
+
   it('round-trips OpenRouter decision configuration through disk and local-data restart', async () => {
     const dataDirectory = await createDataDirectory();
     const configPath = join(dataDirectory, CONFIG_FILE_NAME);

@@ -80,6 +80,13 @@ export type ProviderOperationResult<T = undefined> =
   | ProviderOperationSuccess<T>
   | ProviderOperationFailure;
 
+export type ProviderModelDiscoveryResult = ProviderOperationResult<
+  readonly ProviderModel[]
+> & {
+  /** A partial catalog must not evict previously discovered models. */
+  partial?: boolean;
+};
+
 export interface ProviderCapabilities {
   modelDiscovery: boolean;
   voiceDiscovery: boolean;
@@ -278,7 +285,7 @@ export interface ProviderDefinition {
     instance: ProviderInstance,
     signal: AbortSignal,
     context?: ProviderContext,
-  ): Promise<ProviderOperationResult<readonly ProviderModel[]>>;
+  ): Promise<ProviderModelDiscoveryResult>;
   listVoices?(
     instance: ProviderInstance,
     modelId: string,
@@ -1646,12 +1653,26 @@ class ProviderRegistryModule implements ProviderRegistry {
       );
     const generation = this.configGeneration;
     const context = this.contextFor(definition, instance);
-    const request = this.runHook((signal) =>
-      discoverModels(instance, signal, context),
+    const request: Promise<ProviderModelDiscoveryResult> = this.runHook(
+      (signal) => discoverModels(instance, signal, context),
     );
     this.pendingDiscovery.set(id, request);
     try {
-      const result = await request;
+      let result = await request;
+      const cached = this.modelCache.get(id);
+      if (result.ok && result.partial && cached?.signature === signature) {
+        result = {
+          ...result,
+          value: [
+            ...new Map(
+              [...cached.models, ...result.value].map((model) => [
+                model.modelId,
+                model,
+              ]),
+            ).values(),
+          ],
+        };
+      }
       if (result.ok && generation === this.configGeneration) {
         this.modelCache.set(id, { signature, models: result.value });
         while (this.modelCache.size > 128) {

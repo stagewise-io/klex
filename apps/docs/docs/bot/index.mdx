@@ -1,43 +1,29 @@
 ---
 title: Introduction
-description: "What Klex Bots are — and where to start: quickstart, concepts, guides, and FAQ."
+description: What Klex Bots are and where to start with concepts, setup, and guides.
 related:
   - /bot/quickstart
-  - /bot/use-cases
+  - /bot/concepts/how-bots-work
   - /bot/faq
 ---
 
-Klex is an open-source, self-hostable system for creating and running Klex Bots (fully autonomous agents), and is purpose-built for teams to extend their workforce with AI-powered digital coworkers. Klex is built by [stagewise](https://stagewise.io) and licensed under Apache-2.0.
+Klex is an open-source, self-hostable system for creating and running Klex Bots: AI agents that can work with people and other agents. It is built by [stagewise](https://stagewise.io) and licensed under Apache-2.0.
 
 <GithubInfo owner="stagewise-io" repo="klex" />
 
-A single Klex bot acts like an individual identity. It has its own personality, its own memories, and its own identity in all your work platforms.
+Each Bot has its own identity and memory. Its own environment keeps the Bot running and manages its memory; it works in computers and apps connected through [MCP](/bot/concepts/mcp). For most MCP connections, the Bot acts through its own account or identity, with permissions configured for that Bot.
 
-We **don't** like to call Klex Bots "assistants", because while you *can* create a Klex Bot that has the job of being your assistant,
-Klex Bots are much more powerful than that: you can create a full team of them that works together with their coworkers, no matter if they're humans, Klex Bots, or other agents.
+## Start here
 
-## Find your way
+- [Create a Bot](/bot/quickstart): start with the recommended Cloud-hosted setup.
+- [How Klex Bots work](/bot/concepts/how-bots-work): understand the Bot environment, memory, and connected work environments.
+- [Connections](/bot/concepts/brain-and-computers): choose computers and apps and manage the Bot’s access.
+- [FAQ](/bot/faq): find answers by question.
 
-- **New to bots?** Start with the [quickstart](/bot/quickstart) to create your first Klex Bot, then browse [what to use Klex Bots for](/bot/use-cases).
-- **Used another agent?** See [what makes Klex different and how to migrate](/bot/migrate-from-another-agent).
-- **Just exploring?** The [FAQ](/bot/faq) lists every common question with a link to its answer.
+## Choose where to host
 
-## Our core principles
+Klex recommends hosting your Bot in Klex Cloud. You can also run a Bot in your own environment, with or without Cloud enrollment. The standalone experience is less complete. Compare the options in [Cloud-hosted and self-hosted Bots](/cloud/hosted-vs-local).
 
-Everything we build is guided by six principles:
+## Review and control
 
-- **Open-source and model-agnostic** — No vendor lock-in. Change models at any time, or run Klex Bots on your own infrastructure.
-- **Own identity** — Klex Bots act as themselves, not on behalf of someone else. Every integration is built with this in mind.
-- **Ease of use** — An AI-powered workforce should be available to everyone. We favor **ease of use over customization** and keep setup and maintenance simple.
-- **Standard-compliance** — All external communication goes through [**MCP**](https://modelcontextprotocol.io/docs/2026-07-28/getting-started/intro) — no custom gateways. Communication platforms connect via MCP plus a small extension that lets apps proactively trigger the bot. The memory system is also compatible with [**Agent Skills**](https://agentskills.io/home) for storing procedural memory.
-- **Introspectability** — The Klex Bot's memory is stored in pure Markdown. You can read and inspect everything the Klex Bot knows at any time.
-- **Adaptability** — Klex Bots only access computers explicitly connected via MCP — never the host they run on. They can't introspect their own raw memory, change their personality, or alter host settings. This keeps operations safe by design.
-
-## Klex Cloud
-
-[Klex Cloud](/cloud) is an optional service for connecting Klex Bots to work platforms with their own identities. See **Use the Klex Cloud** for an overview and cloud-assisted setup.
-
-## Next steps
-
-- [Install Klex](/bot/quickstart) and create your first bot.
-- Understand [how Klex Bots work](/bot/concepts/how-bots-work) and how they interact with the outside world.
+You can review a Bot’s activity and chat with it in the dashboard. You can connect or disconnect MCP servers and configure the Bot’s account permissions in the connected apps. For details, see [Review Bot activity](/bot/guides/observability) and [Control and limits](/bot/guides/control-and-limits).

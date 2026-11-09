@@ -15,7 +15,7 @@
 - **Connections:** A machine is connected through MCP. An MCP server can expose a full machine or an app; Klex offers built-in MCP servers and supports connecting other MCP servers.
 - **Connection and identity:** An MCP connection is either connected or not. For most MCPs, a Bot acts through its own account or identity, configured per Bot with permissions and access grants. Do not invent a separate MCP-level permission model.
 - **Current Memory:** Klex Bot Memory currently stores skills and learnings. Facts, individual people, and trust are planned, not confirmed as current capabilities.
-- **Page structure and diagrams:** Keep Connections as its own page. Glenn requested Mermaid diagrams; renderer support was verified with Blume 2.2.5, but no established brand style for diagrams has been confirmed.
+- **Page structure and diagrams:** Keep Connections as its own page. Glenn approved the V4 Overview art style and colors as a reference for future docs illustrations; the vertical arrangement is not a prescribed layout. Use editable SVGs where appropriate.
 
 ## Additional confirmations from Glenn (9 Nov 2026)
 
@@ -25,6 +25,8 @@
 - **Memory scope:** Describe implemented capabilities only; do not include planned features in the Memory page.
 
 ## Confirmed from the repository; check release scope
+
+- **MCP in Klex 0.30.1:** The released source at `baff8a40ce9b896fdd17146dfe9906cefe7c2697` installs MCP ingress in the default session (`apps/klex/src/application/application.ts`). Its `addMcpServer` tool can add new remote HTTP(S) servers but not edit or remove existing ones (`apps/klex/src/session/chat/extensions/mcp-ingress/mcp-ingress.ts`, tests in the same directory). Resources and the push-notification extension are implemented in `apps/klex/src/mcp/connection.ts` and `apps/klex/src/mcp/architecture.md`; capabilities depend on the server. The release tag `v0.30.1` resolves to that commit. A switch controlling Bot-added servers remains unconfirmed; do not claim one exists.
 
 - The provider-registry README lists 25 provider types. It describes provider types and model discovery, not a fixed exhaustive model catalogue. Exact available models depend on the provider and configured account.
 - Source also registers TypeSafe AI and Vercel AI Gateway, but apps/klex/src/local-data/architecture.md describes those provider types as unreleased and says config/model-call changes first ship in 0.18.0. Do not describe them as currently available without release confirmation.

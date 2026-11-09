@@ -2,7 +2,7 @@
 title: How Klex Bots work
 sidebar:
   label: Overview
-description: Learn how a Klex Bot runs, remembers, and works through connected machines and apps.
+description: Learn how a Klex Bot runs, remembers, and works through connected computers and apps.
 related:
   - /bot/quickstart
   - /bot/concepts/brain-and-computers
@@ -12,17 +12,16 @@ related:
 
 A Klex Bot is an autonomous agent with its own identity and memory. It runs in a Bot environment and works in other environments connected through MCP (Model Context Protocol).
 
-The distinction matters: the Bot's own environment keeps it running and manages its memory. Its work happens in connected machines and apps, not inside that environment.
+The distinction matters: the Bot's own environment keeps it running and manages its memory. Its work happens in connected computers and apps, not inside that environment.
 
 ```mermaid
-flowchart LR
-    subgraph BotEnv["Bot environment"]
-      Bot["Klex Bot"]
-      Memory["Memory and active sessions"]
-      Bot --- Memory
-    end
-    Bot -->|"MCP connection"| Machine["Connected machine"]
-    Bot -->|"MCP connection"| App["Connected app"]
+flowchart TB
+    accTitle: Klex Bot connections
+    accDescr: The Bot and its memory are in its own environment. The Bot uses MCP to connect to computers and apps.
+    BotEnv["Klex Bot<br/>and memory"]
+    BotEnv --> MCP["MCP connections"]
+    MCP --> Computer["Connected computer"]
+    MCP --> App["Connected app"]
 ```
 
 ## Where the Bot runs
@@ -31,9 +30,9 @@ The Bot environment manages the Bot's active sessions and memory. It keeps the B
 
 You can use a Cloud-hosted Bot or run a Bot in your own environment. Klex recommends Cloud hosting; a self-hosted Bot can also be enrolled in Klex Cloud. Cloud enrollment is not technically required for a self-hosted Bot, although the standalone experience is less complete. See [hosted vs. self-hosted](/cloud/hosted-vs-local).
 
-## How the Bot works with machines and apps
+## How the Bot works with computers and apps
 
-A Bot connects to an MCP server to reach an external environment. That environment can be a full machine or an app such as GitHub or Google Workspace. A machine is also connected through MCP.
+A Bot connects to an MCP server to reach an external environment. That environment can be a full computer or an app such as GitHub or Google Workspace. A computer is also connected through MCP.
 
 For most MCPs, the Bot acts through an account or identity of its own. That identity is configured per Bot and can have permissions and access grants. See [Connections](/bot/concepts/brain-and-computers) for the connection and access model.
 
@@ -44,5 +43,5 @@ Klex Bot Memory currently stores skills and learnings. Chats and memory are stor
 ## Next steps
 
 - [Create a Bot](/bot/quickstart)
-- [Connect machines and apps](/bot/concepts/brain-and-computers)
+- [Connect computers and apps](/bot/concepts/brain-and-computers)
 - [Explore Memory](/bot/concepts/memory)

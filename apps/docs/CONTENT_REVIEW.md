@@ -17,6 +17,12 @@
 - **Current Memory:** Klex Bot Memory currently stores skills and learnings. Facts, individual people, and trust are planned, not confirmed as current capabilities.
 - **Page structure and diagrams:** Keep Connections as its own page. Glenn requested Mermaid diagrams; renderer support was verified with Blume 2.2.5, but no established brand style for diagrams has been confirmed.
 
+## Additional confirmations from Glenn (9 Nov 2026)
+
+- **Cloud data encryption:** All Cloud-hosted Bot data, including memory, is encrypted in transit and at rest. Do not extend this claim to self-hosted Bots without confirmation.
+- **Terminology:** Use “computer” rather than “machine” in reader-facing docs.
+- **Memory scope:** Describe implemented capabilities only; do not include planned features in the Memory page.
+
 ## Confirmed from the repository; check release scope
 
 - The provider-registry README lists 25 provider types. It describes provider types and model discovery, not a fixed exhaustive model catalogue. Exact available models depend on the provider and configured account.
@@ -26,11 +32,11 @@
 ## Open questions: do not infer
 
 - Memory behavior beyond current skills and learnings: how memories are created or recalled, scope across chats/channels, and user/admin controls. Also unconfirmed: retention, deletion, backups, and exact file layout.
-- Cloud staff access, third-party/model-provider processing, provider credential storage, and security/encryption guarantees.
+- Cloud staff access, third-party/model-provider processing, provider credential storage, encryption details beyond the confirmed Cloud-hosted scope, and other security guarantees.
 - Detailed limits or guarantees around sessions, identity, channel access, and connector permissions.
 - Recommended model configuration, including primary/fallback or task-specific choices.
 - Product claims in the Bot landing page, Soul, Identity, and MCP pages that are not recorded above. Verify claims about autonomy, Bot identity, memory format/access, and protocol behavior before carrying them into an overview or describing them as guaranteed.
 
 ## Drafting rule
 
-Keep the page map and reader questions, but replace implementation detail with only confirmed behavior. Separate current capabilities from plans. For privacy, security, retention, and data-handling claims, record the confirming source or owner before publication.
+Keep the page map and reader questions, but replace implementation detail with only confirmed behavior. Describe implemented capabilities only in published Memory documentation. For privacy, security, retention, and data-handling claims, record the confirming source or owner before publication.

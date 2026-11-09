@@ -9,11 +9,7 @@ related:
   - /cloud/hosted-vs-local
 ---
 
-Klex Bot Memory currently stores **skills and learnings**. It is managed in the Bot's own environment, alongside the active sessions that keep the Bot running.
-
-## Current and planned memory
-
-Today, Memory stores skills and learnings. Memory for facts, individual people, and trust is planned, not a current capability. Details of how memories are created and recalled, including across chats, still need product confirmation.
+Klex Bot Memory stores **skills and learnings**. It is managed in the Bot's own environment, alongside the active sessions that keep the Bot running.
 
 ## Where chats and memory are stored
 
@@ -22,10 +18,8 @@ Chats and memory are stored in the Bot's data directory:
 - For a **Cloud-hosted Bot**, the directory is in the hosted environment.
 - For a **self-hosted Bot**, it is in the local folder used for the Bot's data.
 
+All Cloud-hosted Bot data, including memory, is encrypted in transit and at rest.
+
 ## How administrators access them
 
 Administrators can access chats and memory through the Bot's Admin API. The Klex Cloud dashboard is a frontend and reverse proxy for each Bot's Admin API. For more on storage, see [the data directory](/bot/concepts/data-directory).
-
-<Panel title="Memory details are still being documented">
-The scope of recall, user and administrator controls, retention, deletion, backups, and exact file layout need product confirmation. This page does not yet describe those behaviors.
-</Panel>

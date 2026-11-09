@@ -22,6 +22,7 @@ import {
   type ProviderDefinition,
 } from './provider-registry';
 import { azureOpenAiProviderDefinition } from './providers/azure-openai';
+import { openRouterProviderDefinition } from './providers/openrouter';
 import { vercelAiGatewayProviderDefinition } from './providers/vercel-ai-gateway';
 import { voicePreviewInstructions } from './providers/voice-preview-context';
 
@@ -310,57 +311,172 @@ describe('provider registry module integration', () => {
       await config.close();
     }
   });
-  it('resolves persisted Gateway Jev for evaluation but rejects generation and chat', async () => {
-    const config = createConfig({
-      logging,
-      dataDirectory: await createDataDirectory(),
-    });
+  it.each([
+    {
+      definition: vercelAiGatewayProviderDefinition,
+      modelId: 'typesafe-ai/jev',
+      provider: 'gateway',
+    },
+    {
+      definition: openRouterProviderDefinition,
+      modelId: 'perplexity/pplx-decider-v1.2',
+      provider: 'openrouter',
+    },
+    {
+      definition: openRouterProviderDefinition,
+      modelId: 'morph/reflex',
+      provider: 'openrouter',
+    },
+  ])(
+    'resolves persisted $modelId for evaluation but rejects generation and chat',
+    async ({ definition, modelId, provider }) => {
+      const config = createConfig({
+        logging,
+        dataDirectory: await createDataDirectory(),
+      });
+      await config.start();
+      const registry = createProviderRegistry({
+        logging,
+        config,
+        definitions: [definition],
+      });
+      await registry.start();
+      try {
+        expect(
+          (
+            await registry.addInstance({
+              id: 'gateway',
+              type: definition.type,
+              settings: { apiKey: 'synthetic' },
+            })
+          ).ok,
+        ).toBe(true);
+        const entry = {
+          providerId: 'gateway',
+          modelId,
+          api: 'evaluation' as const,
+        };
+        expect(
+          (await registry.updateModelSelection({ instincts: [entry] })).ok,
+        ).toBe(true);
+        expect(
+          registry.resolveInstinctCandidates(
+            config.get().modelSelection.instincts,
+          )[0],
+        ).toMatchObject({
+          status: 'ready',
+          api: 'evaluation',
+          model: { modelId, provider },
+        });
+        expect(
+          registry.resolveInstinctCandidates([
+            { ...entry, api: 'generation' },
+          ])[0]?.status,
+        ).toBe('unavailable');
+        expect(
+          (
+            await registry.updateModelSelection({
+              chat: [{ providerId: 'gateway', modelId }],
+            })
+          ).ok,
+        ).toBe(false);
+        expect(() => registry.getLanguageModel(entry)).toThrow();
+      } finally {
+        await registry.close();
+        await config.close();
+      }
+    },
+  );
+
+  it('round-trips OpenRouter decision configuration through disk and local-data restart', async () => {
+    const dataDirectory = await createDataDirectory();
+    const configPath = join(dataDirectory, CONFIG_FILE_NAME);
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: Config must preserve the environment reference on disk.
+    const apiKey = '${env:OPENROUTER_TEST_KEY}';
+    const env = { OPENROUTER_TEST_KEY: 'synthetic-resolved-key' };
+    const entries = [
+      'perplexity/pplx-decider-v1.2',
+      'morph/reflex',
+      'future/decision',
+    ].map((modelId) => ({
+      providerId: 'router',
+      modelId,
+      api: 'evaluation' as const,
+      attemptTimeoutMs: 1500,
+      providerOptions: {
+        openrouter: { provider: { order: ['Synthetic'] }, session_id: 'test' },
+      },
+    }));
+    let config = createConfig({ logging, dataDirectory, env });
     await config.start();
-    const registry = createProviderRegistry({
+    let registry = createProviderRegistry({
       logging,
       config,
-      definitions: [vercelAiGatewayProviderDefinition],
+      definitions: [openRouterProviderDefinition],
     });
     await registry.start();
     try {
       expect(
         (
           await registry.addInstance({
-            id: 'gateway',
-            type: 'vercel-ai-gateway',
-            settings: { apiKey: 'synthetic' },
+            id: 'router',
+            type: 'openrouter',
+            settings: { apiKey },
+            knownModels: { 'future/decision': { kind: 'evaluation' } },
           })
         ).ok,
       ).toBe(true);
-      const entry = {
-        providerId: 'gateway',
-        modelId: 'typesafe-ai/jev',
-        api: 'evaluation' as const,
-      };
       expect(
-        (await registry.updateModelSelection({ instincts: [entry] })).ok,
+        (await registry.updateModelSelection({ instincts: entries })).ok,
       ).toBe(true);
-      expect(
-        registry.resolveInstinctCandidates(
-          config.get().modelSelection.instincts,
-        )[0],
-      ).toMatchObject({
-        status: 'ready',
-        api: 'evaluation',
-        model: { modelId: 'typesafe-ai/jev', provider: 'gateway' },
-      });
-      expect(
-        registry.resolveInstinctCandidates([{ ...entry, api: 'generation' }])[0]
-          ?.status,
-      ).toBe('unavailable');
-      expect(
-        (
-          await registry.updateModelSelection({
-            chat: [{ providerId: 'gateway', modelId: 'typesafe-ai/jev' }],
-          })
-        ).ok,
-      ).toBe(false);
-      expect(() => registry.getLanguageModel(entry)).toThrow();
+      await registry.close();
+      await config.close();
+      const before = await readFile(configPath, 'utf8');
+      expect(before).toContain(apiKey);
+      expect(before).not.toContain(env.OPENROUTER_TEST_KEY);
+      for (let restart = 0; restart < 2; restart++) {
+        await createLocalData({
+          logging,
+          dataDirectory,
+          klexVersion: KLEX_VERSION,
+          stores: [CONFIG_STORE_DEFINITION],
+        }).start();
+        config = createConfig({ logging, dataDirectory, env });
+        await config.start();
+        registry = createProviderRegistry({
+          logging,
+          config,
+          definitions: [openRouterProviderDefinition],
+        });
+        await registry.start();
+        expect(config.get().modelSelection.instincts).toEqual(entries);
+        expect(config.getRuntime().providers.router?.settings.apiKey).toBe(
+          env.OPENROUTER_TEST_KEY,
+        );
+        expect(config.get().providers.router?.knownModels).toEqual({
+          'future/decision': { kind: 'evaluation' },
+        });
+        expect(
+          registry.resolveInstinctCandidates(
+            config.get().modelSelection.instincts,
+          ),
+        ).toMatchObject(
+          entries.map((entry) => ({
+            status: 'ready',
+            api: 'evaluation',
+            entry,
+            model: { provider: 'openrouter', modelId: entry.modelId },
+          })),
+        );
+        expect(
+          registry.resolveInstinctCandidates(
+            entries.map((entry) => ({ ...entry, api: 'generation' })),
+          ),
+        ).toMatchObject(entries.map(() => ({ status: 'unavailable' })));
+        expect(await readFile(configPath, 'utf8')).toBe(before);
+        await registry.close();
+        await config.close();
+      }
     } finally {
       await registry.close();
       await config.close();

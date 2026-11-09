@@ -88,6 +88,68 @@ describe('OpenRouter decision models', () => {
     }
   });
 
+  it.each([false, true])(
+    'preserves discovery when the decisions catalog fails: %s',
+    async (failDecisions) => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (url: URL) => {
+          const decisions = url.searchParams.has('output_modalities');
+          return decisions === failDecisions
+            ? new Response('unavailable', { status: 503 })
+            : Response.json({
+                data: [
+                  {
+                    id: decisions ? 'future/decision' : 'vendor/chat',
+                    architecture: {
+                      output_modalities: [decisions ? 'decisions' : 'text'],
+                    },
+                  },
+                ],
+              });
+        }),
+      );
+      expect(await discoverModels(instance, signal())).toMatchObject({
+        ok: true,
+        value: [
+          {
+            modelId: failDecisions ? 'vendor/chat' : 'future/decision',
+            kind: failDecisions ? 'language' : 'evaluation',
+          },
+        ],
+      });
+    },
+  );
+
+  it('reports discovery failure when both catalogs fail', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('unavailable', { status: 503 })),
+    );
+    expect(await discoverModels(instance, signal())).toMatchObject({
+      ok: false,
+      code: 'discovery_failed',
+    });
+  });
+
+  it('does not publish a partial catalog after cancellation', async () => {
+    const controller = new AbortController();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: URL) => {
+        if (url.searchParams.has('output_modalities')) {
+          controller.abort();
+          throw controller.signal.reason;
+        }
+        return Response.json({ data: [{ id: 'vendor/chat' }] });
+      }),
+    );
+    expect(await discoverModels(instance, controller.signal)).toMatchObject({
+      ok: false,
+      code: 'discovery_failed',
+    });
+  });
+
   it.each(models)('keeps %s evaluation-only before discovery', (modelId) => {
     expect(resolveModelMetadata(modelId)).toMatchObject({
       kind: 'evaluation',

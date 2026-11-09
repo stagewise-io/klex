@@ -345,7 +345,7 @@ describe('ProviderRegistry', () => {
     const openRouter = builtIn('openrouter');
     vi.stubGlobal(
       'fetch',
-      vi.fn().mockResolvedValue(
+      vi.fn(async () =>
         Response.json({
           data: [
             {

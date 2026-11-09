@@ -1,17 +1,25 @@
 ---
-title: Control your Klex Bot and set limits
+title: Control your Klex Bot
 sidebar:
-  label: Control & limits
-description: Stopping and pausing Klex Bots, limits on connected environments, and running Klex Bots without computer access.
+  label: Control
+description: Stop a Klex Bot and manage its access to connected computers and apps.
 related:
-  - /guides/secure-bot-usage
-  - /guides/trust-critical-operations
+  - /bot/guides/observability
   - /bot/concepts/brain-and-computers
+  - /guides/secure-bot-usage
 ---
 
-> **Can I stop my Klex Bots at any time? Is there a recommended or hard upper bound on MCPs or computers? How many Klex Bots can I use? Can I effectively use Klex Bots without giving them access to a computer?**
+You can stop a Klex Bot and manage what it can access through its connections and accounts.
 
-<Panel title="This answer is being written">
-This page will cover stopping and pausing bots, limits on connected environments, and
-running bots with no computer access at all.
-</Panel>
+## Stop a Bot
+
+- **Cloud-hosted Bot:** Use **Stop** in the Klex Cloud dashboard.
+- **Self-hosted Bot running in the app:** Close the app.
+
+## Manage access
+
+Connect or disconnect a Bot's MCP servers in the Cloud dashboard. Configure permissions for the accounts and apps the Bot uses directly in those accounts and apps. See [Connections to computers and apps](/bot/concepts/brain-and-computers) for how connections and account permissions relate.
+
+Klex does not currently support approvals or restrictions for individual actions. Configure the Bot's account and app permissions accordingly.
+
+You can also [review the Bot's activity](/bot/guides/observability) in the dashboard.

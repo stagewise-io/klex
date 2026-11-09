@@ -1,26 +1,31 @@
 ---
-title: Arquitetura Cognitiva
-description: Os bots Klex têm uma arquitetura cognitiva fortemente inspirada na Teoria do Espaço de Trabalho Global.
+title: Sessões de um bot Klex
+description: Como um bot Klex usa a sessão habitual e sessões separadas para tarefas e instruções de administração.
+related:
+  - /bot/concepts/how-bots-work
+  - /bot/concepts/memory
+  - /bot/concepts/god-messages
 ---
 
-Um único bot Klex atua como uma identidade única e uma instância de consciência, estando limitado na quantidade de multitarefa que pode realizar. Isto não significa, no entanto, que o bot consista numa única conversa interna.
+Um bot Klex é executado no seu próprio ambiente, que gere as suas sessões ativas e a sua [memória](/bot/concepts/memory). O bot trabalha em computadores e aplicações externos ligados por [MCP](/bot/concepts/mcp).
 
-Pelo contrário, a arquitetura dos bots Klex usa paralelização de uma forma aproximadamente análoga a como a [Teoria do Espaço de Trabalho Global (GWT)](https://en.wikipedia.org/wiki/Global_workspace_theory) concebe o funcionamento do cérebro humano.
+<a id="o-fundamento-técnico"></a>
+<a id="sessão-principal"></a>
 
-## O fundamento técnico
+## Sessão habitual
 
-Um único bot Klex tem um número variável de **sessões** que operam concorrentemente. Cada sessão é uma conversa entre um agente LLM e um ambiente interno, e pode operar durante durações arbitrariamente longas graças à compactação automática de contexto. Apenas uma sessão aberta tem acesso ao ambiente e pode interagir com o mundo exterior para expressar comportamento (o «palco principal iluminado» segundo a GWT).
+No Klex 0.30.1, a sessão habitual tem acesso aos servidores MCP ligados. Nela, o bot processa eventos recebidos e pode trabalhar nos ambientes ligados. As ações possíveis dependem das ligações e das respetivas permissões.
 
-Outras sessões servem propósitos diferentes, p. ex. filtrar sinais recebidos ou atualizar e consolidar memórias. Elas atuam independentemente da sessão principal, mas podem influenciá-la passando contexto para ela.
+<a id="sessões-utilitárias"></a>
 
-### Sessão principal
+## Tarefas separadas
 
-A sessão principal representa o comportamento e as ações reais do bot. Apenas esta sessão tem acesso aos MCPs, permitindo-lhe interagir com as suas ligações ao ambiente. No entanto, não lida com tarefas como criar ou consolidar memórias, e pode focar-se puramente no trabalho real com base em eventos recebidos do mundo exterior, ou gatilhos internos como lembretes ou tarefas.
+Um bot pode usar sessões separadas para tarefas internas. Por exemplo, pode pedir uma consulta sobre uma questão difícil e ter em conta o resultado no seu trabalho. Não assuma que vários pedidos serão processados simultaneamente ou concluídos num prazo específico.
 
-### Sessões utilitárias
+<a id="sessão-deus"></a>
 
-As sessões utilitárias não têm acesso ao mundo exterior, mas podem interagir com o diretório de dados do bot. Elas lidam com tarefas como analisar sessões existentes para construir novas memórias, eliminar memórias obsoletas, afinar competências (memórias de procedimento) e ligar as experiências do bot a entidades na memória.
+## God Messages
 
-### Sessão Deus
+As [God Messages](/bot/concepts/god-messages) são instruções de administração processadas numa sessão separada das conversas habituais. Podem, por exemplo, pedir uma alteração à [alma](/bot/concepts/soul). No Klex 0.30.1, os administradores também podem criar e atualizar a alma nas definições Soul ou através da Admin API.
 
-A sessão Deus é uma sessão dedicada que tem acesso limitado ao mundo exterior e só é utilizável através da API de Admin. Não recebe entradas do mundo exterior além das [mensagens Deus](/bot/concepts/god-messages) dedicadas, e o seu propósito é realizar tarefas administrativas que exigem permissões elevadas, como ordenar ao bot criar ou atualizar a sua [alma](/bot/concepts/soul).
+Para saber mais sobre o ambiente e as ligações do bot, consulte [Como funcionam os bots Klex](/bot/concepts/how-bots-work).

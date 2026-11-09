@@ -294,6 +294,7 @@ export interface ProviderDefinition {
   resolveModelMetadata?(
     modelId: string,
   ): Omit<ProviderModel, 'modelId'> | undefined;
+  /** Returns `invalid_configuration` only when there is no model to test with. */
   testConnection(
     instance: ProviderInstance,
     signal: AbortSignal,
@@ -646,11 +647,7 @@ class ProviderRegistryModule implements ProviderRegistry {
       Object.entries(validated).map(([key, value]) => [
         key,
         isProviderSecretSetting(type, key)
-          ? {
-              configured:
-                (typeof value === 'string' && value.length > 0) ||
-                (isRecord(value) && Object.keys(value).length > 0),
-            }
+          ? { configured: isConfiguredSecret(value) }
           : structuredClone(value),
       ]),
     );
@@ -725,6 +722,8 @@ class ProviderRegistryModule implements ProviderRegistry {
     );
     if (!preflight.ok) return preflight;
     const stored: ProviderInstance = { ...instance, settings: preflight.value };
+    const verified = await this.verifyStoredCredentials(definition, stored);
+    if (!verified.ok) return verified;
     try {
       // A reused id must never inherit an earlier instance's sign-in.
       await this.forgetAuthorization(stored.id);
@@ -733,6 +732,43 @@ class ProviderRegistryModule implements ProviderRegistry {
       return failure('internal_error', sanitizedError(error));
     }
     return success(this.instanceInfo(stored));
+  }
+
+  /**
+   * Tests credentials stored in the settings before they are saved. Instances
+   * that sign in after creation or use ambient credentials have none yet, and
+   * a provider without a test model has nothing to call; both save untested.
+   * Any other failure rejects the instance, including transient ones, because
+   * an unverified key must not look verified; the caller can retry.
+   */
+  private async verifyStoredCredentials(
+    definition: ProviderDefinition,
+    instance: ProviderInstance,
+  ): Promise<ProviderOperationResult> {
+    if (!hasStoredCredential(instance)) return success(undefined);
+    const config = this.requireConfig();
+    const connection = await this.runHook((signal) =>
+      definition.testConnection(
+        {
+          ...instance,
+          settings: config.resolveEnvironment(instance.settings),
+        },
+        signal,
+      ),
+    );
+    if (connection.ok || connection.code === 'invalid_configuration')
+      return success(undefined);
+    if (connection.message === 'Provider returned HTTP 401')
+      return failure(
+        'authentication_required',
+        'The provider rejected the credentials. Check your API key and try again.',
+      );
+    if (connection.message === 'Provider returned HTTP 403')
+      return failure(
+        'authentication_required',
+        'The provider denied access. Check your API key permissions and try again.',
+      );
+    return connection;
   }
 
   updateInstance(
@@ -799,13 +835,6 @@ class ProviderRegistryModule implements ProviderRegistry {
     const config = this.requireConfig();
     const currentConfig = config.get().providers[id];
     if (!currentConfig) return failure('not_found', `Unknown provider '${id}'`);
-    if (isProviderReferenced(config.get().modelSelection, id)) {
-      return failure(
-        'referential_integrity',
-        `Provider '${id}' is referenced by model selection`,
-        'Remove this provider from every model-selection purpose first.',
-      );
-    }
     const instance: ProviderInstance = { id, ...currentConfig };
     const definition = this.definitions.get(instance.type);
     if (!definition)
@@ -1684,10 +1713,6 @@ class ProviderRegistryModule implements ProviderRegistry {
 
   private instanceInfo(instance: ProviderInstance): ProviderInstanceInfo {
     const definition = this.requireDefinition(instance.type);
-    const removeBlocked = isProviderReferenced(
-      this.requireConfig().get().modelSelection,
-      instance.id,
-    );
     const authorization = this.authorizationInfo(definition, instance);
     return {
       id: instance.id,
@@ -1697,15 +1722,7 @@ class ProviderRegistryModule implements ProviderRegistry {
       ...(authorization && { authorization }),
       operations: {
         update: { available: true },
-        remove: removeBlocked
-          ? {
-              available: false,
-              code: 'referential_integrity',
-              message: `Provider '${instance.id}' is referenced by model selection`,
-              remediation:
-                'Remove this provider from every model-selection purpose first.',
-            }
-          : { available: true },
+        remove: { available: true },
       },
     };
   }
@@ -1892,6 +1909,20 @@ function withoutId(instance: ProviderInstance): Omit<ProviderInstance, 'id'> {
   return stored;
 }
 
+function isConfiguredSecret(value: unknown): boolean {
+  return (
+    (typeof value === 'string' && value.length > 0) ||
+    (isRecord(value) && Object.keys(value).length > 0)
+  );
+}
+
+function hasStoredCredential(instance: ProviderInstance): boolean {
+  return Object.entries(instance.settings).some(
+    ([key, value]) =>
+      isProviderSecretSetting(instance.type, key) && isConfiguredSecret(value),
+  );
+}
+
 function modelSelectionEntries(
   selection: ModelSelection,
 ): readonly (readonly [string, readonly ModelSelectionEntry[]])[] {
@@ -1910,15 +1941,6 @@ function modelSelectionEntries(
 function voiceCapabilityForPurpose(purpose: string): 'sts' | undefined {
   if (purpose === 'voice.sts') return 'sts';
   return undefined;
-}
-
-function isProviderReferenced(
-  selection: ModelSelection,
-  providerId: string,
-): boolean {
-  return modelSelectionEntries(selection).some(([, entries]) =>
-    entries.some((entry) => entry.providerId === providerId),
-  );
 }
 
 function sanitizedError(error: unknown): string {

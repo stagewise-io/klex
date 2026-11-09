@@ -137,6 +137,16 @@ untrusted server content. Render text safely and apply consumer-side URL and
 image policies before opening links or fetching images. The agent forwards icon
 sources, including data URIs, without fetching or interpreting them.
 
+Provider creation tests the connection before saving when the settings hold a
+credential, such as an API key. Rejected credentials or a failed connection,
+including a temporary one, leave the configuration unchanged; clients should
+keep the form open, display the returned error and let the user retry. Providers
+without a stored credential save untested: those that sign in after creation,
+use a local session or ambient cloud credentials, or need no key. So do providers
+without model discovery or a default test model unless `settings.testModelId` or
+a known model gives the test something to call. Environment references are
+expanded only for the test and remain references in the saved configuration.
+
 ## MCP OAuth authorization
 
 Version 0.2 adds the consolidated MCP authorization contract. Authorization is

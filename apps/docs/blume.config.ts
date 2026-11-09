@@ -74,7 +74,7 @@ export default defineConfig({
   },
   // Keep published URLs working: pre-tab URLs in every locale, plus English
   // pages that moved again when the Bot tab was re-sectioned into concepts/
-  // guides/reliability/faq (other locales keep their first-sectioned paths).
+  // guides/reliability/faq. Locale placeholders use the current fallback paths.
   redirects: [
     // English: pre-tab URLs → current (re-sectioned) paths.
     { from: '/', to: '/bot' },
@@ -94,7 +94,7 @@ export default defineConfig({
     },
     { from: '/bot/concepts/model-providers', to: '/bot/concepts/models' },
     { from: '/bot/concepts/model-selection', to: '/bot/concepts/models' },
-    // Locales: pre-tab URLs → their (unchanged) first-sectioned paths.
+    // Locale URLs: map renamed placeholders to their current fallback pages.
     ...[
       '/zh',
       '/ja',
@@ -107,22 +107,31 @@ export default defineConfig({
       '/uk',
       '/ru',
       '/ar',
-    ].flatMap((locale) =>
-      [
+    ].flatMap((locale) => {
+      const renamed = [
+        ['/architecture', '/concepts/how-bots-work'],
+        ['/concepts/model-providers', '/concepts/models'],
+        ['/concepts/model-selection', '/concepts/models'],
+      ];
+      const unchanged = [
         '',
         '/quickstart',
-        '/architecture',
         '/concepts/cognitive-architecture',
         '/concepts/soul',
         '/concepts/god-messages',
-        '/concepts/model-providers',
-        '/concepts/model-selection',
         '/concepts/data-directory',
-      ].map((path) => ({
-        from: `${locale}${path}`,
-        to: `${locale}/bot${path}`,
-      })),
-    ),
+      ];
+      return [
+        ...unchanged.map((path) => ({
+          from: `${locale}${path}`,
+          to: `${locale}/bot${path}`,
+        })),
+        ...renamed.flatMap(([oldPath, newPath]) => [
+          { from: `${locale}${oldPath}`, to: `${locale}/bot${newPath}` },
+          { from: `${locale}/bot${oldPath}`, to: `${locale}/bot${newPath}` },
+        ]),
+      ];
+    }),
   ],
   // Discoverability: SEO + AEO. Most features are on by default, but
   // deployment.site must be set (done above) for absolute URLs to work.

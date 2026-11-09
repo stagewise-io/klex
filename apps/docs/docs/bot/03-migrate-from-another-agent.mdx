@@ -1,33 +1,28 @@
 ---
 title: Migrate from another agent
-description: How Klex Bots compare to other agent products, and how to convert an existing setup.
+description: A practical checklist for recreating an existing agent workflow with a Klex Bot.
 related:
   - /bot/quickstart
-  - /bot/concepts/how-bots-work
-  - /bot/use-cases
+  - /bot/concepts/soul
+  - /bot/concepts/brain-and-computers
+  - /guides/secure-bot-usage
 ---
 
-> **I've used a Bot or autonomous Agent before — like a Grok Bot, OpenClaw, or Hermes. What makes Klex Bots better, and how do I convert from them?**
+To move a workflow from another agent to Klex, start by recreating its role, connections, and tasks. Do not assume that its configuration, memory, skills, or conversation history will transfer automatically.
 
-<Panel title="This answer is being written">
-This page compares Klex Bots with other agent products and walks through converting from
-each of them.
-</Panel>
+## Prepare the workflow
 
-## [Grok Bot](#grok-bot)
+List what the existing agent does, the apps and data it needs, its recurring tasks, and where it reports results. Identify any sensitive permissions and schedules that need special care.
 
-<Panel title="This section is being written">
-What differs between a Grok Bot and a Klex Bot, and how to bring your setup over.
-</Panel>
+## Set up the Klex Bot
 
-## [OpenClaw](#openclaw)
+1. [Create a Bot](/bot/quickstart). Describe its purpose, priorities, and preferred style when setting up its [soul](/bot/concepts/soul).
+2. [Connect the required apps and computers](/bot/concepts/brain-and-computers) through MCP servers with the capabilities needed for the workflow. Configure the Bot account’s permissions in each connected service.
+3. Provide the Bot with the task instructions and relevant context it needs. Review them for accuracy and remove unnecessary secrets. See [Agent Skills](/bot/concepts/agent-skills) for reusable procedures.
+4. Set up any recurring work using a suitable connected scheduling service, and check that it can deliver events to the Bot. See [Automate recurring tasks](/bot/guides/recurring-tasks).
 
-<Panel title="This section is being written">
-What differs between OpenClaw and Klex, and how to bring your setup over.
-</Panel>
+## Test before switching over
 
-## [Hermes](#hermes)
+Run a small, non-sensitive task and compare the result with what you expect. Check permissions, output destinations, and any schedules. Keep an independent review step for high-impact actions; see [Use Klex Bots securely](/guides/secure-bot-usage).
 
-<Panel title="This section is being written">
-What differs between Hermes and Klex, and how to bring your setup over.
-</Panel>
+Once the new workflow is working, review and remove any old agent access or schedules that are no longer needed. Platform-specific import and compatibility details need to be checked separately.

@@ -18,7 +18,7 @@ The distinction matters: the Bot's own environment keeps it running and manages 
 flowchart TB
     accTitle: Klex Bot connections
     accDescr: The Bot and its memory are in its own environment. The Bot uses MCP to connect to computers and apps.
-    BotEnv["Klex Bot<br/>and memory"]
+    BotEnv["Bot environment<br/>Klex Bot and memory"]
     BotEnv --> MCP["MCP connections"]
     MCP --> Computer["Connected computer"]
     MCP --> App["Connected app"]

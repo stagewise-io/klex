@@ -1,16 +1,25 @@
 ---
 title: Use Klex Bots securely
-description: Managing permissions per app — least privilege first, and what to review when a Klex Bot joins a new tool.
+description: Scope a Bot’s access in connected apps and review it as its work changes.
 related:
-  - /guides/prevent-information-theft
   - /guides/limit-blast-radius
-  - /bot/concepts/mcp
+  - /guides/trust-critical-operations
+  - /bot/concepts/brain-and-computers
 ---
 
-> **How do I manage permissions for my Klex Bots in individual apps?**
+For most connected apps, a Bot acts through its own account. Configure that account’s permissions in the app. Give the Bot only the access it needs for its assigned work, and review that access when the work changes.
 
-<Panel title="This answer is being written">
-This page will cover the least-privilege baseline for company deployments: which
-permissions to grant per app, how to scope each bot's access, and what to review when a
-bot joins a new tool.
-</Panel>
+## Before connecting an app
+
+1. Identify the resources and actions the Bot needs. Start with read-only access when that is enough.
+2. Give the Bot’s account access to the relevant projects, folders, or conversations rather than the entire organization, where the app supports that scope.
+3. Check whether the account can share data, change settings, delete resources, or perform other sensitive actions. Remove permissions it does not need.
+4. Test the intended workflow with non-sensitive data and review the results.
+
+Repeat this review for each connection, including connected computers. An MCP connection makes capabilities available to the Bot; the connected account and environment determine the access those capabilities have. See [Connections](/bot/concepts/brain-and-computers).
+
+## Review and remove access
+
+Review permissions periodically and when the Bot’s role changes. If access is no longer needed, revoke it in the connected app and disconnect the relevant MCP server where appropriate. Disconnecting a server does not itself revoke the account’s permissions in the app. For a suspected incident, follow your organization’s incident process and consider stopping the Bot while access is reviewed.
+
+Klex does not currently support approvals or restrictions for individual actions. Do not rely on a prompt alone to enforce a permission boundary; use the connected app’s access controls. See [Control your Klex Bot](/bot/guides/control-and-limits).

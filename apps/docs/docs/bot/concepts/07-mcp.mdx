@@ -1,15 +1,28 @@
 ---
-title: MCP
-description: How Klex Bots use MCP — tools, push notifications, resources — and how their self-connection to MCP servers is controlled.
+title: MCP and Klex Bots
+sidebar:
+  label: MCP
+description: How Klex Bots use MCP servers to work with computers and apps.
 related:
   - /bot/concepts/brain-and-computers
+  - /bot/guides/control-and-limits
   - /guides/secure-bot-usage
-  - /guides/prevent-information-theft
 ---
 
-> **Can I use MCP with Klex Bots? Can the Klex Bots connect to MCPs themselves — and can I configure whether they're allowed to?**
+[Model Context Protocol (MCP)](https://modelcontextprotocol.io/) connects a Klex Bot to external environments. An MCP server can expose a computer or an app; the Bot uses the capabilities the server provides to work there.
 
-<Panel title="This answer is being written">
-This page will explain MCP as the environment boundary of Klex Bots: tools, push
-notifications, resources — and how bots self-connecting to MCP servers is controlled.
-</Panel>
+Klex offers built-in MCP servers and supports other MCP servers. The capabilities available depend on the server:
+
+- **Tools** let the Bot request actions or information from the server.
+- **Resources** provide content the Bot can discover and open.
+- **Push notifications**, when supported by the server, can deliver events to the Bot. Klex uses an MCP extension for these notifications.
+
+## Adding a server
+
+You can manage a Bot’s MCP connections in the Cloud dashboard. In Klex 0.30.1, a Bot can also add a new remote HTTP or HTTPS MCP server itself. The add-server capability cannot edit or remove existing server configurations. If the new server requires OAuth, a user can authorize it in the Cloud interface.
+
+Only connect servers you trust. A connection makes the server’s capabilities available to the Bot; access within an app also depends on the account and permissions configured there. Review the Bot’s connections and grant its accounts only the access they need. See [Connections to computers and apps](/bot/concepts/brain-and-computers) for more on managing access.
+
+## If a connection needs attention
+
+A server may need authorization or fail to connect. Check its connection status and complete any required authorization. If it still cannot connect, check the server address, credentials, and whether the server is available. The Bot can only use capabilities a connected server exposes.

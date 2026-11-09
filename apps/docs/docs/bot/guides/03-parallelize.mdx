@@ -1,17 +1,22 @@
 ---
-title: Parallelize your Klex Bot's work
+title: Parallelize your Klex Bot’s work
 sidebar:
   label: Parallelize work
-description: How much a single Klex Bot can do at once — and when to add more Klex Bots.
+description: Divide independent work among Klex Bots and test the results.
 related:
-  - /bot/concepts/memory
   - /guides/bot-collaboration
   - /bot/guides/observability
+  - /guides/limit-blast-radius
 ---
 
-> **Can a single Klex Bot do many things at once? If not, how do I make my Klex Bots achieve more at once?**
+A single Bot may receive multiple requests, but don’t assume they will run simultaneously or finish by a particular time. Test your workload before relying on a specific level of concurrency.
 
-<Panel title="This answer is being written">
-This page will cover how much a single bot can parallelize, when to add more bots, and how
-to scale work across them.
-</Panel>
+To divide independent work, you can use multiple Bots. For example, assign one Bot to review a project’s open issues and another to summarize a separate project’s updates. Give each Bot its own task, the connections and permissions it needs, and a clear place to report its result.
+
+## Coordinate and review
+
+- Split work so that Bots aren’t unknowingly editing the same resource. If work overlaps, define who owns each change and how conflicts are resolved.
+- Use a shared conversation for handoffs when the Bots’ messaging accounts have access. See [Make Klex Bots work together](/guides/bot-collaboration).
+- Start with a small test. Review results, duplicate work, access, and model-provider usage before increasing the workload.
+
+Adding Bots does not guarantee faster or correct results. Connected services, model availability, and the work itself can affect the outcome.

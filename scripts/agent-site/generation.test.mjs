@@ -82,6 +82,11 @@ it('filters docs aggregates and removes Markdown mirrors without removing HTML p
     await save('docs/index.mdx', '# Introduction');
     await save('docs/01-quickstart.mdx', '# Quickstart');
     await save('docs/02-architecture.mdx', '# Architecture');
+    // Blume route groups do not appear in the published URL.
+    await save(
+      'docs/guides/(security)/limit-blast-radius.mdx',
+      '# Limit blast radius',
+    );
     await save('discovery.config.json', {
       sitemap: ['/architecture'],
       agents: ['/quickstart'],

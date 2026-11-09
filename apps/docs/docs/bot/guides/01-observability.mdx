@@ -13,4 +13,15 @@ In the [Klex Cloud dashboard](https://cloud.klex.bot), you can see what your Bot
 
 Administrators can also access a Bot's chats and memory through its Admin API. The Cloud dashboard provides a frontend to each Bot's Admin API. For where that data is stored, see [the data directory](/bot/concepts/data-directory).
 
+## Review activity with the Admin API
+
+In Klex 0.30.1, administrators using the Admin API can:
+
+- List persisted session instances with `GET /v1/sessions`, then retrieve a session's messages with `GET /v1/sessions/{instanceId}/messages`. Follow `nextCursor` to retrieve older pages. Some older messages may have been trimmed; check `trimmedMessageCount`.
+- Query recorded model-call usage with `GET /v1/usage`. Results can be grouped by model or provider and aggregated over time. Token totals may be incomplete when a provider does not report usage; check `tokenUsageUnreportedCount`.
+
+Use `GET /v1/openapi.json` for the API's available routes and query parameters. Session messages and tool outputs can contain sensitive information; limit who can access and retain them.
+
+The self-hosted app does not expose a local Admin API port by default. Its optional local port is unauthenticated and bound to `127.0.0.1`; other local processes can access it. Do not expose or forward it to an untrusted network.
+
 To stop a Bot or change its connected access, see [Control your Klex Bot](/bot/guides/control-and-limits).

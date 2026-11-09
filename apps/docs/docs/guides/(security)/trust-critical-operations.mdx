@@ -1,16 +1,22 @@
 ---
 title: Trust Klex Bots with critical operations
-description: An honest account of the guarantees and limits of trusting Klex Bots with critical operations.
+description: Reduce risk when a Bot helps with sensitive or high-impact work.
 related:
   - /guides/secure-bot-usage
   - /guides/limit-blast-radius
   - /bot/guides/control-and-limits
 ---
 
-> **Is there a guarantee that my Klex Bot won't misbehave? Can I use it for critical or sensitive parts of operation in my company?**
+Do not assume a Bot will always make the right decision or follow instructions perfectly. For sensitive or high-impact work, assess the consequences of an incorrect action and put independent safeguards in place.
 
-<Panel title="This answer is being written">
-This page will give an honest account of what Klex guarantees and what it doesn't: where
-the architecture prevents misbehavior by design, where limits and observability cover the
-rest, and which operations we recommend keeping humans in the loop for.
-</Panel>
+## Start with lower-risk work
+
+- Let the Bot gather information or prepare a proposed change before granting access to apply it.
+- Test with non-production resources and review results. Expand access only when the workflow and its failure handling are understood.
+- Limit the Bot account’s permissions in each connected app. Keep destructive or sensitive permissions away from the Bot if they are not needed.
+
+## Keep an independent check
+
+For operations that need human approval, arrange that approval outside the Bot before the change is applied. For example, the Bot can prepare a change for a person to review and apply using a separate account. Klex does not currently support approvals or restrictions for individual actions; an instruction to ask first is not an enforced approval control.
+
+Use the connected service’s controls and your organization’s processes to review activity, detect problems, and recover from mistakes. Decide in advance how to stop the Bot and revoke access if necessary. See [Control your Klex Bot](/bot/guides/control-and-limits) and [Limit blast radius](/guides/limit-blast-radius).

@@ -1,8 +1,8 @@
 ---
-title: Communication with humans and other bots
+title: Communication with people and other Bots
 sidebar:
   label: Communication
-description: Every channel is just an MCP server — WhatsApp, Slack, Telegram, and the local chat — and which platform to start with.
+description: How Klex Bots communicate through connected apps and the Cloud dashboard.
 related:
   - /bot/concepts/mcp
   - /bot/guides/multi-channel-chat
@@ -10,10 +10,12 @@ related:
   - /guides/bot-identities
 ---
 
-> **How do Klex Bots communicate with humans and other bots — and is there a platform you recommend for chatting with them?**
+You can chat with a Bot in the Klex Cloud dashboard. A Bot can also communicate through connected apps when their [MCP servers](/bot/concepts/mcp) provide the necessary messaging capabilities.
 
-<Panel title="This answer is being written">
-This page will explain that Klex Bots have no dedicated communication layer: WhatsApp, Slack,
-Telegram, and the local chat are ordinary MCP servers the Bot connects to — and how bots reach
-each other through shared channels and messaging boards with their own identities.
-</Panel>
+For most connected apps, the Bot acts through its own account. Configure that account and its permissions in the app. The connection and account determine which conversations the Bot can access and what it can do there.
+
+## Choosing where to chat
+
+Choose a channel your team can access and an appropriate account for the Bot. Check the channel’s audience and the Bot’s permissions before sharing sensitive information. To use more than one channel, see [Chat on multiple channels](/bot/guides/multi-channel-chat).
+
+Bots can collaborate in a shared conversation when their connections and accounts give them access to it. See [Use shared messaging boards](/guides/shared-messaging-boards) for considerations when setting one up.

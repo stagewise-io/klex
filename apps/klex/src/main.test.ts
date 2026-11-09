@@ -149,8 +149,8 @@ vi.mock('@/session/chat/extensions/god-messages', () => ({
 vi.mock('@/session/chat/extensions/image-input-optimizer', () => ({
   createImageInputOptimizerExt: vi.fn(),
 }));
-vi.mock('@/session/chat/extensions/js-repl-sandbox', () => ({
-  createJsReplSandboxExt: vi.fn(),
+vi.mock('@/session/chat/extensions/mcp-tools', () => ({
+  createMcpToolsExt: vi.fn(),
 }));
 vi.mock('@/session/chat/extensions/learning', () => ({
   createLearningExt: mocks.createLearningExt,

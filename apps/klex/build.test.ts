@@ -1,18 +1,10 @@
 import { resolve } from 'node:path';
-import { once } from 'node:events';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { Worker } from 'node:worker_threads';
 import { runInNewContext } from 'node:vm';
 
 import { build } from 'esbuild';
 import { describe, expect, it } from 'vitest';
 
 import { createBuildOptions } from './build';
-import {
-  encodingCases,
-  encodingErrors,
-} from './src/session/chat/extensions/js-repl-sandbox/encoding.fixture';
 
 // Exercise the actual Vitest load hook, including its query-suffix handling.
 const prompts = import.meta.glob<string>(
@@ -47,15 +39,7 @@ describe('markdown loader parity', () => {
 
   it('uses the text loader in both targets and build modes', () => {
     for (const isSea of [false, true]) {
-      for (const target of ['main', 'worker'] as const) {
-        expect(createBuildOptions(isSea)[target].loader?.['.md']).toBe('text');
-        expect(createBuildOptions(isSea)[target].loader?.['.wasm']).toBe(
-          'binary',
-        );
-        expect(createBuildOptions(isSea)[target].loader?.['.so']).toBe(
-          'binary',
-        );
-      }
+      expect(createBuildOptions(isSea).main.loader?.['.md']).toBe('text');
     }
   });
 
@@ -87,57 +71,9 @@ describe('markdown loader parity', () => {
 });
 
 describe('createBuildOptions', () => {
-  it('runs the SEA worker with all embedded extension binaries outside the repository', async () => {
-    const bundle = await build({
-      ...createBuildOptions(true).worker,
-      write: false,
-    });
-    const directory = await mkdtemp(resolve(tmpdir(), 'klex-wasm-test-'));
-    let worker: Worker | undefined;
-    try {
-      const path = resolve(directory, 'worker.mjs');
-      await writeFile(path, bundle.outputFiles[0]!.contents);
-      worker = new Worker(path);
-      const ready = once(worker, 'message');
-      worker.postMessage({ type: 'initialize' });
-      expect(await ready).toEqual([{ type: 'ready' }]);
-      for (const { code, expected } of encodingCases) {
-        const complete = once(worker, 'message');
-        worker.postMessage({
-          type: 'execute',
-          executionId: 'embedded-wasm',
-          source: code,
-          snapshot: { namespaces: [] },
-          deadline: Date.now() + 5_000,
-        });
-        expect(await complete).toEqual([
-          { type: 'complete', executionId: 'embedded-wasm', result: expected },
-        ]);
-      }
-      for (const { code, name } of encodingErrors) {
-        const failure = once(worker, 'message');
-        worker.postMessage({
-          type: 'execute',
-          executionId: 'embedded-error',
-          source: code,
-          snapshot: { namespaces: [] },
-          deadline: Date.now() + 5_000,
-        });
-        expect(await failure).toEqual([
-          expect.objectContaining({
-            type: 'failure',
-            fatal: false,
-            error: expect.objectContaining({
-              name,
-              message: expect.stringMatching(/.+/),
-            }),
-          }),
-        ]);
-      }
-    } finally {
-      await worker?.terminate();
-      await rm(directory, { recursive: true, force: true });
-    }
+  it('builds only the application, without guest worker assets', () => {
+    expect(Object.keys(createBuildOptions(true))).toEqual(['main']);
+    expect(createBuildOptions(true).main.loader).toEqual({ '.md': 'text' });
   });
 
   it('embeds the application version in both build modes', () => {
@@ -148,19 +84,15 @@ describe('createBuildOptions', () => {
     // the package.json version at runtime, which looks like a correct build and
     // reports the wrong version to every installed user.
     for (const isSea of [false, true]) {
-      const { main, worker } = createBuildOptions(isSea);
+      const { main } = createBuildOptions(isSea);
       expect(main.define?.__KLEX_VERSION__, `main, isSea=${isSea}`).toBeTypeOf(
         'string',
       );
-      expect(
-        worker.define?.__KLEX_VERSION__,
-        `worker, isSea=${isSea}`,
-      ).toBeTypeOf('string');
     }
   });
 
   it('defines production mode only for SEA artifacts', () => {
-    for (const target of ['main', 'worker'] as const) {
+    for (const target of ['main'] as const) {
       expect(
         createBuildOptions(true)[target].define?.['process.env.NODE_ENV'],
       ).toBe(JSON.stringify('production'));

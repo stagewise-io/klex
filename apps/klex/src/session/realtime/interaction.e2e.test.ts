@@ -1,7 +1,6 @@
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { jsonSchema } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -18,6 +17,7 @@ import {
 import type { ChatSessionDependencies } from '@/session/chat/chat-session';
 import type { ExtensionFactory } from '@/session/chat/extensions/extension-api';
 import { createMcpIngressExt } from '@/session/chat/extensions/mcp-ingress';
+import { createMcpToolsExt } from '@/session/chat/extensions/mcp-tools';
 import { createSessionHost } from '@/session/session-host';
 import type { ChatSessionHandle, SessionFactory } from '@/session/types';
 
@@ -57,7 +57,7 @@ function createConfig(servers: Record<string, McpServerConfig>): Config {
 function seededMcpToolExtension(): ExtensionFactory {
   return {
     identifier: 'io.stagewise/test-e2e',
-    create: (deps) => ({
+    create: () => ({
       historyTransformer: (history) => [
         {
           id: 'seed-framing',
@@ -71,23 +71,6 @@ function seededMcpToolExtension(): ExtensionFactory {
         },
         ...history,
       ],
-      getTools: () => ({
-        echo: {
-          description: 'Echo through the connected MCP server',
-          inputSchema: jsonSchema<{ value: string }>({
-            type: 'object',
-            properties: { value: { type: 'string' } },
-            required: ['value'],
-            additionalProperties: false,
-          }),
-          execute: (input, options) =>
-            deps.mcp!.invoke({ namespace: 'voice', name: 'echo' }, input, {
-              executionId: options.toolCallId,
-              sessionId: deps.sessionId,
-              signal: options.abortSignal ?? new AbortController().signal,
-            }),
-        },
-      }),
     }),
   };
 }
@@ -188,7 +171,11 @@ describe('realtime and default chat interaction', () => {
         modelResolver,
         mcp: params.mcp,
         sessionContext: params.sessionContext,
-        extensionFactories: [createMcpIngressExt(), seededMcpToolExtension()],
+        extensionFactories: [
+          createMcpIngressExt(),
+          createMcpToolsExt,
+          seededMcpToolExtension(),
+        ],
         dataDirectory: join(tmpdir(), 'klex-interaction-e2e'),
         introspectionScope: params.introspectionScope,
         hooks: params.hooks,
@@ -277,7 +264,16 @@ describe('realtime and default chat interaction', () => {
     );
     expect(processor.context.updateWatermark).toBe(0);
     expect(processor.context.tools).toEqual(
-      expect.arrayContaining([expect.objectContaining({ name: 'echo' })]),
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'runTool',
+          inputSchema: expect.objectContaining({
+            properties: expect.objectContaining({
+              params: expect.objectContaining({ type: 'object' }),
+            }),
+          }),
+        }),
+      ]),
     );
 
     const push = {
@@ -309,8 +305,12 @@ describe('realtime and default chat interaction', () => {
       eventId: 'tool-call-1',
       request: {
         executionId: 'execution-1',
-        name: 'echo',
-        input: { value: 'hello' },
+        name: 'runTool',
+        input: {
+          mcpServer: 'voice',
+          toolName: 'echo',
+          params: { value: 'hello' },
+        },
       },
     });
     await vi.waitFor(() =>

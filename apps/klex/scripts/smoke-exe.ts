@@ -70,10 +70,6 @@ export function resolveNativeAssetChecks(
       ),
     },
     {
-      name: 'sandbox worker',
-      path: resolve(distributionDirectory, 'javascript-sandbox-worker.js'),
-    },
-    {
       name: 'LiveKit RTC addon',
       path: resolve(distributionDirectory, 'livekit-rtc.node'),
     },

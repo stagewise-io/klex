@@ -107,7 +107,6 @@ export function createKlexAgentPackagerConfig(
     outputDirectory: 'dist',
     mainFormat: 'module',
     assets: {
-      'javascript-sandbox-worker.js': 'dist/javascript-sandbox-worker.js',
       'livekit-rtc.node': resolveLiveKitNativeAddon(),
     },
     // Node SEA does not support code cache with ESM main bundles.

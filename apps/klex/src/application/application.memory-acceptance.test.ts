@@ -49,29 +49,6 @@ vi.mock('@/admin-api', async (importOriginal) => {
     },
   };
 });
-// Source-mode tests need the same built worker used by existing sandbox tests.
-vi.mock(
-  '@/session/chat/extensions/js-repl-sandbox/javascript',
-  async (importOriginal) => {
-    const actual =
-      await importOriginal<
-        typeof import('@/session/chat/extensions/js-repl-sandbox/javascript')
-      >();
-    return {
-      ...actual,
-      createJavaScriptTool: (
-        deps: Parameters<typeof actual.createJavaScriptTool>[0],
-      ) =>
-        actual.createJavaScriptTool({
-          ...deps,
-          workerUrl: new URL(
-            '../../dist/javascript-sandbox-worker.js',
-            import.meta.url,
-          ),
-        }),
-    };
-  },
-);
 vi.mock('@/cli-ui', () => ({
   createCliUi: () => {
     throw new Error('Headless acceptance must not create a UI');

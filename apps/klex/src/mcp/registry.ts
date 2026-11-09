@@ -9,50 +9,68 @@ import {
   assertJsonValue,
   type JsonObject,
   type JsonValue,
-  type ToolDescription,
 } from '@/tool-provider';
 
 import type { McpConnection } from './connection';
+import { compileToolValidator } from './tool-validation';
 
 export interface RegisteredMcpTool {
   readonly tool: McpToolDefinition;
-  readonly descriptor: ToolDescription;
+  readonly validate: (input: JsonObject) => void;
 }
 
 export interface RegisteredMcpNamespace {
   readonly connection: McpConnection;
   readonly tools: ReadonlyMap<string, RegisteredMcpTool>;
+  readonly definitions: readonly McpToolDefinition[];
 }
 
 export type McpRegistry = ReadonlyMap<string, RegisteredMcpNamespace>;
 
 export function buildMcpRegistry(
   connections: ReadonlyMap<string, McpConnection>,
+  previous: McpRegistry = new Map(),
 ): McpRegistry {
   const registry = new Map<string, RegisteredMcpNamespace>();
-  for (const namespace of [...connections.keys()].sort()) {
+  namespaces: for (const namespace of [...connections.keys()].sort()) {
     const connection = connections.get(namespace);
     if (!connection) continue;
-    const tools = new Map<string, RegisteredMcpTool>();
-    for (const tool of [...connection.tools].sort((a, b) =>
-      a.name.localeCompare(b.name),
-    )) {
-      if (tools.has(tool.name))
-        throw new Error(`Duplicate MCP tool name: ${namespace}.${tool.name}`);
-      const inputSchema = normalizeInputSchema(tool.inputSchema);
-      tools.set(tool.name, {
-        tool,
-        descriptor: {
-          reference: { namespace, name: tool.name },
-          ...(tool.description ? { description: tool.description } : {}),
-          inputSchema,
-          ...(tool.outputSchema
-            ? { outputSchema: tool.outputSchema as JsonObject }
-            : {}),
-        },
-      });
+    const old = previous.get(namespace);
+    if (
+      old?.connection === connection &&
+      old.definitions === connection.tools
+    ) {
+      registry.set(namespace, old);
+      continue;
     }
-    registry.set(namespace, { connection, tools });
+    const tools = new Map<string, RegisteredMcpTool>();
+    for (const tool of connection.tools) {
+      // An ambiguous catalog is unavailable, without poisoning healthy servers.
+      if (tools.has(tool.name)) continue namespaces;
+      let compiled: ((input: JsonObject) => void) | undefined;
+      // Compile lazily once per generation, including failures. Catalog publication
+      // must not compile thousands of untrusted schemas on the connection path.
+      const validate = (input: JsonObject) => {
+        if (!compiled) {
+          try {
+            compiled = compileToolValidator(
+              normalizeInputSchema(tool.inputSchema),
+            );
+          } catch (error) {
+            compiled = () => {
+              throw error;
+            };
+          }
+        }
+        compiled(input);
+      };
+      tools.set(tool.name, { tool, validate });
+    }
+    registry.set(namespace, {
+      connection,
+      tools,
+      definitions: connection.tools,
+    });
   }
   return registry;
 }

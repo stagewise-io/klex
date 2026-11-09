@@ -101,6 +101,34 @@ afterEach(async () => {
 });
 
 describe('canonical activity queries', () => {
+  it('restores historical sandbox tool parts without loading an executable extension', async () => {
+    const { history, directory } = await setup();
+    const archived = {
+      id: 'legacy-sandbox',
+      role: 'assistant',
+      parts: [
+        {
+          type: 'tool-runInSandbox',
+          toolCallId: 'legacy-call',
+          state: 'output-available',
+          input: { code: 'return 42' },
+          output: 42,
+        },
+      ],
+    } as unknown as ExtendedUIMessage;
+    const recorder = history.openRecorder(meta());
+    recorder.scheduleSync(() => [message('legacy-request'), archived]);
+    await history.flush();
+    await history.close();
+    const restarted = await setup({ directory });
+    const restored = await restarted.history.loadWindow('default', {
+      fallbackMaxBytes: 10000,
+    });
+    expect(restored.entries.map((entry) => entry.message)).toContainEqual(
+      archived,
+    );
+  });
+
   it('keeps revisions stable across other recorder syncs and restarts', async () => {
     const { history, directory } = await setup();
     const first = history.openRecorder(meta());

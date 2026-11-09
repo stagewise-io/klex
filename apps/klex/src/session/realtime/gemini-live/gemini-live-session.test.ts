@@ -1,11 +1,15 @@
 import { EventEmitter } from 'node:events';
 
+import { asSchema, type ToolSet } from 'ai';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { RootLogger } from '@stagewise/logger';
 
+import type { Mcp } from '@/mcp';
 import type { AudioFrame, AudioSource } from '@/media-transport';
 import { BoundedAsyncQueue } from '@/media-transport/async-queue';
+import type { ExtensionDeps } from '@/session/chat/extensions/extension-api';
+import { createMcpToolsExt } from '@/session/chat/extensions/mcp-tools';
 import type { SessionInboxEvent } from '@/session/inbox';
 import {
   appendExternalInteractionContext,
@@ -131,6 +135,37 @@ async function activate(contextOverride?: Partial<PreparedInferenceContext>) {
 }
 
 describe('Gemini live processor', () => {
+  it('publishes the real MCP gateway schema without closing generic params', async () => {
+    const extension = createMcpToolsExt.create({
+      mcp: {} as Mcp,
+      sessionId: 'wire',
+    } as ExtensionDeps);
+    const tools = extension.getTools!({} as never) as ToolSet;
+    const descriptors = await Promise.all(
+      Object.entries(tools).map(async ([name, tool]) => ({
+        name,
+        inputSchema: { ...(await asSchema(tool.inputSchema).jsonSchema) },
+      })),
+    );
+    const { setupMsg, processor } = await activate({ tools: descriptors });
+    try {
+      const declarations = setupMsg.setup.tools[0].functionDeclarations;
+      expect(declarations.map((tool: { name: string }) => tool.name)).toEqual([
+        'runTool',
+        'listTools',
+        'getToolInfo',
+      ]);
+      expect(declarations[0].parametersJsonSchema).toEqual(
+        descriptors[0]!.inputSchema,
+      );
+      expect(declarations[0].parametersJsonSchema.properties.params.type).toBe(
+        'object',
+      );
+    } finally {
+      await processor.close();
+    }
+  });
+
   it('sends a selected prebuilt voice and omits speechConfig for the default', async () => {
     for (const voiceId of [undefined, 'Puck']) {
       const harness = await setup(1_000, undefined, voiceId);

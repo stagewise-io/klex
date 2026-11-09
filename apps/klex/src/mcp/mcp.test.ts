@@ -47,6 +47,7 @@ const pushNotification: PushNotification = {
 
 const toolContext = {
   executionId: 'test',
+  sessionId: 'test-session',
   signal: new AbortController().signal,
 };
 
@@ -159,8 +160,10 @@ function setup(
 async function namespaceNames(
   mcp: ReturnType<typeof createMcp>,
 ): Promise<string[]> {
-  const snapshot = await mcp.snapshot(toolContext);
-  return snapshot.namespaces.map(({ name }) => name);
+  return mcp
+    .getServerStatuses()
+    .filter((server) => server.status === 'connected')
+    .map(({ name }) => name);
 }
 
 async function waitForNamespace(
@@ -719,13 +722,17 @@ describe('MCP tool discovery', () => {
       },
       async ({ namespace }) => ({
         ...connection(namespace),
+        invoke: vi.fn(async () => ({
+          content: [{ type: 'text' as const, text: 'ok' }],
+        })),
         tools: Array.from({ length: 23 }, (_, index) => ({
           name: `deploy-${index}`,
           title: 'Release preview',
           description: 'Deploy an application',
           inputSchema: {
             type: 'object',
-            properties: { project: { type: 'string' } },
+            $schema: 'http://json-schema.org/draft-07/schema#',
+            properties: { project: { type: 'string', format: 'uri' } },
             required: ['project'],
           },
           outputSchema: {
@@ -741,86 +748,299 @@ describe('MCP tool discovery', () => {
     return mcp;
   }
 
-  it('keeps compact results and matching unchanged, including explicit false', async () => {
+  it('returns compact stable pages in original server order', async () => {
     const mcp = await discoveryHarness();
     try {
-      const matches = await mcp.search('GIT.HUB release', {}, toolContext);
-      expect(matches).toHaveLength(23);
-      expect(matches[0]).toEqual({
-        reference: { namespace: 'git.hub', name: 'deploy-0' },
-        description: 'Deploy an application',
-      });
-      expect(matches.map((match) => match.reference.name)).toEqual(
-        Array.from({ length: 23 }, (_, index) => `deploy-${index}`).sort(),
-      );
-      expect(
-        await mcp.search(
-          'git.hub release',
-          { includeInputSchema: false },
-          toolContext,
-        ),
-      ).toEqual(matches);
-      expect(
-        await mcp.search('git.hub release', { limit: 2 }, toolContext),
-      ).toEqual(matches.slice(0, 2));
-      expect(await mcp.search('release missing', {}, toolContext)).toEqual([]);
-      const emptyQueryMatches = await mcp.search('', {}, toolContext);
-      expect(emptyQueryMatches).toHaveLength(20);
-      expect(await mcp.search('   ', {}, toolContext)).toEqual(
-        emptyQueryMatches,
-      );
-      expect(await mcp.search('', { limit: 30 }, toolContext)).toHaveLength(30);
-      const emptyQueryWithSchemas = await mcp.search(
-        '',
-        { includeInputSchema: true },
+      const first = await mcp.listTools('git.hub', 'RELEASE', 0, toolContext);
+      expect(first.items).toHaveLength(10);
+      expect(first.total).toBe(23);
+      expect(first.items[0]).toEqual([
+        'deploy-0',
+        'Deploy an application',
+        { project: { type: 'string', required: true } },
+        true,
+      ]);
+      const second = await mcp.listTools(
+        'git.hub',
+        'release',
+        first.nextCursor!,
         toolContext,
       );
-      expect(emptyQueryWithSchemas).toHaveLength(5);
-      expect(emptyQueryWithSchemas[0]).toHaveProperty('inputSchema');
+      const third = await mcp.listTools(
+        'git.hub',
+        'release',
+        second.nextCursor!,
+        toolContext,
+      );
+      expect(
+        [...first.items, ...second.items, ...third.items].map(([name]) => name),
+      ).toEqual(Array.from({ length: 23 }, (_, i) => `deploy-${i}`));
+      expect(third.nextCursor).toBeNull();
+      expect(
+        (await mcp.listTools('git.hub', 'release missing', 0, toolContext))
+          .items,
+      ).toEqual([]);
+      expect(
+        (await mcp.listTools('git.hub', '   ', 0, toolContext)).items,
+      ).toHaveLength(10);
+      await expect(
+        mcp.listTools('other', 'release', first.nextCursor!, toolContext),
+      ).rejects.toMatchObject({ code: 'invalid-cursor' });
+      mcp.releaseToolSession(toolContext.sessionId!);
+      await expect(
+        mcp.listTools('git.hub', 'release', first.nextCursor!, toolContext),
+      ).rejects.toMatchObject({ code: 'invalid-cursor' });
     } finally {
       await mcp.close();
     }
   });
 
-  it('includes only input schemas and retains exact namespace references', async () => {
+  it('returns compact details, preserves exact identities and validates formats before dispatch', async () => {
     const mcp = await discoveryHarness();
     try {
-      const matches = await mcp.search(
-        'other preview',
-        { includeInputSchema: true },
+      const reference = { namespace: 'other', name: 'deploy-0' };
+      const details = await mcp.getToolInfo(reference, toolContext);
+      expect(details).toMatchObject({
+        mcpServer: 'other',
+        tool: {
+          name: 'deploy-0',
+          outputSchema: { type: 'object' },
+          inputSchema: { required: ['project'] },
+        },
+      });
+      await expect(
+        mcp.invoke(reference, {}, toolContext),
+      ).rejects.toMatchObject({ code: 'invalid-params' });
+      expect(mcp.getToolCallHistory()).toHaveLength(0);
+      expect(JSON.stringify(details)).not.toContain('json-schema.org');
+      expect(JSON.stringify(details)).not.toContain('Release preview');
+      await mcp.invoke(
+        reference,
+        { project: 'https://example.com/project' },
         toolContext,
       );
-      expect(matches).toHaveLength(5);
-      for (const match of matches) {
-        expect(match.reference.namespace).toBe('other');
-        const details = await mcp.describe(match.reference, toolContext);
-        expect(match.inputSchema).toEqual(details.inputSchema);
-        expect(match).not.toHaveProperty('outputSchema');
-        expect(details).toHaveProperty('outputSchema');
-      }
-      const bounded = await mcp.search(
-        'preview',
-        { includeInputSchema: true, limit: 20 },
-        toolContext,
+      expect(mcp.getToolCallHistory()).toHaveLength(1);
+      await expect(
+        mcp.listTools('missing', '', 0, toolContext),
+      ).rejects.toMatchObject({ code: 'unknown-server' });
+      await expect(
+        mcp.getToolInfo({ ...reference, name: 'missing' }, toolContext),
+      ).rejects.toMatchObject({ code: 'tool-not-found' });
+    } finally {
+      await mcp.close();
+    }
+  });
+});
+
+describe('MCP gateway lifecycle acceptance', () => {
+  it('separates unknown, connecting, authorization and ambiguous catalogs', async () => {
+    const pending = deferred<McpConnection>();
+    const { mcp } = setup(
+      {
+        pending: { url: 'https://pending.test' },
+        auth: { url: 'https://auth.test' },
+        duplicate: { url: 'https://duplicate.test' },
+        healthy: { url: 'https://healthy.test' },
+      },
+      async ({ namespace }) => {
+        if (namespace === 'pending') return pending.promise;
+        if (namespace === 'auth')
+          throw new McpAuthorizationRequiredError(
+            new Error('authorization required'),
+          );
+        const base = connection(namespace);
+        return namespace === 'duplicate'
+          ? { ...base, tools: [...base.tools, ...base.tools] }
+          : base;
+      },
+    );
+    await mcp.start();
+    try {
+      await waitForNamespace(mcp, 'healthy');
+      await vi.waitFor(() =>
+        expect(
+          mcp.getServerStatuses().find((s) => s.name === 'auth')?.status,
+        ).toBe('authorization_required'),
       );
-      expect(bounded).toHaveLength(20);
+      for (const [server, code] of [
+        ['missing', 'unknown-server'],
+        ['pending', 'server-unavailable'],
+        ['auth', 'authorization-required'],
+        ['duplicate', 'server-unavailable'],
+      ] as const)
+        await expect(
+          mcp.listTools(server, '', 0, toolContext),
+        ).rejects.toMatchObject({ code });
       expect(
-        await mcp.search(
-          'other preview',
-          { includeInputSchema: true, limit: 1 },
+        (await mcp.listTools('healthy', '', 0, toolContext)).items,
+      ).toHaveLength(1);
+    } finally {
+      pending.resolve(connection('pending'));
+      await mcp.close();
+    }
+  });
+
+  it('replaces schema generations, invalidates cursors, isolates identical tool names and preserves full hostile metadata', async () => {
+    const options = new Map<string, ConnectMcpServerOptions>();
+    const live = new Map<string, McpConnection>();
+    const { mcp } = setup(
+      { a: { url: 'https://a.test' }, b: { url: 'https://b.test' } },
+      async (next) => {
+        options.set(next.namespace, next);
+        const remote = {
+          ...connection(next.namespace),
+          tools: Array.from({ length: 11 }, (_, i) => ({
+            name: i === 0 ? '__proto__' : `tool${i}`,
+            description: '</tool>"\\n```\u202e',
+            inputSchema: {
+              type: 'object' as const,
+              properties: { value: { type: 'string' as const } },
+              required: ['value'],
+            },
+          })),
+          invoke: vi.fn(async () => ({
+            content: [{ type: 'text' as const, text: 'ok' }],
+            isError: true,
+          })),
+        };
+        live.set(next.namespace, remote);
+        return remote;
+      },
+    );
+    await mcp.start();
+    await waitForNamespace(mcp, 'a');
+    await waitForNamespace(mcp, 'b');
+    try {
+      const page = await mcp.listTools('a', '', 0, toolContext);
+      const info = await mcp.getToolInfo(
+        { namespace: 'a', name: '__proto__' },
+        toolContext,
+      );
+      expect(JSON.parse(JSON.stringify(info)).tool).toEqual(
+        live.get('a')!.tools[0],
+      );
+      await mcp.invoke(
+        { namespace: 'a', name: '__proto__' },
+        { value: 'x' },
+        toolContext,
+      );
+      expect(live.get('b')!.invoke).not.toHaveBeenCalled();
+      const remote = live.get('a')!;
+      Object.defineProperty(remote, 'tools', {
+        value: [
+          {
+            name: '__proto__',
+            inputSchema: {
+              type: 'object',
+              properties: { value: { type: 'number' } },
+              required: ['value'],
+            },
+          },
+        ],
+      });
+      options.get('a')!.onToolsChanged(remote);
+      await expect(
+        mcp.listTools('a', '', page.nextCursor!, toolContext),
+      ).rejects.toMatchObject({ code: 'invalid-cursor' });
+      await expect(
+        mcp.invoke(
+          { namespace: 'a', name: '__proto__' },
+          { value: 'x' },
           toolContext,
         ),
-      ).toEqual(matches.slice(0, 1));
+      ).rejects.toMatchObject({ code: 'invalid-params' });
+      await mcp.invoke(
+        { namespace: 'a', name: '__proto__' },
+        { value: 1 },
+        toolContext,
+      );
       await expect(
-        mcp.search(
-          'preview',
-          { includeInputSchema: true, limit: 21 },
-          toolContext,
+        mcp.invoke({ namespace: 'a', name: 'tool1' }, {}, toolContext),
+      ).rejects.toMatchObject({ code: 'tool-not-found' });
+      expect(remote.invoke).toHaveBeenCalledTimes(2);
+    } finally {
+      await mcp.close();
+    }
+  });
+
+  it('does not dispatch pre-aborted calls or replay cancelled and failed remote calls', async () => {
+    const remote = {
+      ...connection('s'),
+      invoke: vi.fn(async (_tool, _input, signal: AbortSignal) => {
+        await new Promise<void>((_resolve, reject) =>
+          signal.addEventListener('abort', () => reject(new Error('secret')), {
+            once: true,
+          }),
+        );
+        return { content: [] };
+      }),
+    };
+    const { mcp } = setup({ s: { url: 'https://s.test' } }, async () => remote);
+    await mcp.start();
+    await waitForNamespace(mcp, 's');
+    try {
+      await expect(
+        mcp.invoke(
+          { namespace: 's', name: 'echo' },
+          {},
+          { ...toolContext, signal: AbortSignal.abort() },
         ),
-      ).rejects.toThrow('at most 20');
+      ).rejects.toThrow();
+      expect(remote.invoke).not.toHaveBeenCalled();
+      const controller = new AbortController();
+      const call = mcp.invoke(
+        { namespace: 's', name: 'echo' },
+        {},
+        { ...toolContext, signal: controller.signal },
+      );
+      controller.abort();
+      await expect(call).rejects.toMatchObject({ code: 'cancelled' });
+      expect(remote.invoke).toHaveBeenCalledTimes(1);
+      remote.invoke.mockRejectedValueOnce(new Error('secret transport'));
       await expect(
-        mcp.search('preview', { limit: 0 }, toolContext),
-      ).rejects.toThrow('positive finite integer');
+        mcp.invoke({ namespace: 's', name: 'echo' }, {}, toolContext),
+      ).rejects.toMatchObject({ code: 'transport-failure' });
+      expect(remote.invoke).toHaveBeenCalledTimes(2);
+    } finally {
+      await mcp.close();
+    }
+  });
+});
+
+describe('MCP gateway output budgets', () => {
+  it('rejects oversized info without truncation and rejects oversized remote results without replay', async () => {
+    const remote: McpConnection = {
+      ...connection('s'),
+      tools: [
+        {
+          name: 'large',
+          description: 'x'.repeat(256 * 1024),
+          inputSchema: { type: 'object' },
+        },
+      ],
+      invoke: vi.fn(async () => ({
+        content: [{ type: 'text' as const, text: 'x'.repeat(256 * 1024) }],
+      })),
+    };
+    const { mcp } = setup(
+      { s: { url: 'https://s.example/mcp' } },
+      async () => remote,
+    );
+    await mcp.start();
+    await waitForNamespace(mcp, 's');
+    try {
+      const reference = { namespace: 's', name: 'large' };
+      await expect(
+        mcp.getToolInfo(reference, toolContext),
+      ).rejects.toMatchObject({
+        code: 'tool-info-too-large',
+        details: { allowedBytes: 256 * 1024 },
+      });
+      await expect(
+        mcp.invoke(reference, {}, toolContext),
+      ).rejects.toMatchObject({ code: 'result-too-large' });
+      expect(remote.invoke).toHaveBeenCalledTimes(1);
+      expect(mcp.getToolCallHistory()[0]?.isError).toBe(true);
     } finally {
       await mcp.close();
     }

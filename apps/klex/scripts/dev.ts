@@ -114,10 +114,6 @@ async function main(): Promise<void> {
       ...options.main,
       plugins: [...(options.main.plugins ?? []), watchPlugin('main')],
     }),
-    context({
-      ...options.worker,
-      plugins: [...(options.worker.plugins ?? []), watchPlugin('worker')],
-    }),
   ]);
 
   // watch() runs its own initial build, whose onEnd starts the first agent.

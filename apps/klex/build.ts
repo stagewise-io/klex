@@ -88,14 +88,11 @@ const sharedOptions: BuildOptions = {
   keepNames: false,
   loader: {
     '.md': 'text',
-    '.wasm': 'binary',
-    '.so': 'binary',
   },
 };
 
 export function createBuildOptions(isSea: boolean): {
   main: BuildOptions;
-  worker: BuildOptions;
 } {
   return {
     main: {
@@ -133,34 +130,15 @@ export function createBuildOptions(isSea: boolean): {
         : {}),
       external: isSea ? ['@livekit/rtc-ffi-bindings-*'] : undefined,
     },
-    worker: {
-      ...sharedOptions,
-      ...(isSea
-        ? {
-            define: {
-              ...sharedOptions.define,
-              'process.env.NODE_ENV': JSON.stringify('production'),
-            },
-          }
-        : {}),
-      entryPoints: [
-        'src/session/chat/extensions/js-repl-sandbox/worker-entry.ts',
-      ],
-      outfile: 'dist/javascript-sandbox-worker.js',
-      format: 'esm',
-    },
   };
 }
 
 async function main(): Promise<void> {
   const isSea = process.argv.includes('--sea');
   const options = createBuildOptions(isSea);
-  await Promise.all([
-    esbuild.build(options.main),
-    esbuild.build(options.worker),
-  ]);
+  await esbuild.build(options.main);
   console.log(
-    `Build complete → ${isSea ? 'dist/main.mjs (ESM/SEA)' : 'dist/main.js (ESM)'} + dist/javascript-sandbox-worker.js`,
+    `Build complete → ${isSea ? 'dist/main.mjs (ESM/SEA)' : 'dist/main.js (ESM)'}`,
   );
 }
 

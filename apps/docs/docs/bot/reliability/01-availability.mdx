@@ -1,15 +1,16 @@
 ---
 title: Availability
-description: When Klex Bots are active, what wakes them, and what happens while you are away.
+description: What keeps a Klex Bot available and how to plan for scheduled work.
 related:
   - /bot/reliability/updates
   - /bot/guides/recurring-tasks
   - /cloud/hosted-vs-local
 ---
 
-> **Do Klex Bots have to 'sleep' or can they work 24/7?**
+A Klex Bot can be available around the clock while its hosting environment is running. It can be idle between tasks rather than continuously generating responses. New events from a connected MCP server or a one-time reminder can prompt it to resume work.
 
-<Panel title="This answer is being written">
-This page will cover bot availability: when bots are active, what wakes them, and what
-keeps them running around the clock.
-</Panel>
+Availability is not a guarantee that every task will run or succeed. The Bot also needs working model access and the connections required for its task. Event delivery depends on the connected service and MCP server.
+
+For scheduled work, keep the Bot and its connections available when the task is due, and check important results. Use a suitable connected scheduling service for recurring work; internal reminders are one-time. See [Automate recurring tasks](/bot/guides/recurring-tasks).
+
+A self-hosted Bot stops when you close its app. You can stop a Cloud-hosted Bot using the dashboard’s Stop control.

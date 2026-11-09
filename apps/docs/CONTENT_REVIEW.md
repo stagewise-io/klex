@@ -30,8 +30,7 @@
 
 - **MCP in Klex 0.30.1:** The released source at `baff8a40ce9b896fdd17146dfe9906cefe7c2697` installs MCP ingress in the default session (`apps/klex/src/application/application.ts`). Its `addMcpServer` tool can add new remote HTTP(S) servers but not edit or remove existing ones (`apps/klex/src/session/chat/extensions/mcp-ingress/mcp-ingress.ts`, tests in the same directory). Resources and the push-notification extension are implemented in `apps/klex/src/mcp/connection.ts` and `apps/klex/src/mcp/architecture.md`; capabilities depend on the server. The release tag `v0.30.1` resolves to that commit. A switch controlling Bot-added servers remains unconfirmed; do not claim one exists.
 
-- The provider-registry README lists 25 provider types. It describes provider types and model discovery, not a fixed exhaustive model catalogue. Exact available models depend on the provider and configured account.
-- Source also registers TypeSafe AI and Vercel AI Gateway, but apps/klex/src/local-data/architecture.md describes those provider types as unreleased and says config/model-call changes first ship in 0.18.0. Do not describe them as currently available without release confirmation.
+- The provider-registry README lists 25 provider types, but the Klex 0.30.1 registry source also registers TypeSafe AI and Vercel AI Gateway (`apps/klex/src/provider-registry/providers/providers.ts`). The README is not an exhaustive model catalogue. Exact available models depend on the provider and configured account. TypeSafe’s native provider is for evaluation, not chat (`providers/typesafe-ai.ts`); don’t imply every provider supports every task.
 - No single recommended model setup was found in the repository; Glenn has not yet confirmed model-selection advice.
 
 ## Open questions: do not infer

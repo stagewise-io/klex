@@ -1,15 +1,18 @@
 ---
 title: Data privacy
-description: Where Klex Bot memory lives in hosted and local setups, who can read it, and how it is protected.
+description: Where Bot chats and memory are stored and what is confirmed about Cloud data protection.
 related:
   - /cloud/hosted-vs-local
   - /bot/concepts/data-directory
   - /guides/prevent-information-theft
 ---
 
-> **Will the memory of my hosted Klex Bot be shared with any third party, or is it accessible to stagewise? What about the memory of local Klex Bots?**
+A Bot’s chats and memory are stored in its [data directory](/bot/concepts/data-directory). For a Cloud-hosted Bot, that directory is in the hosted environment. For a self-hosted Bot, it is in the environment where you run the Bot. Administrators can access this data through the Bot’s Admin API.
 
-<Panel title="This answer is being written">
-This page will cover where bot memory lives in hosted and local setups, who can read it,
-and how provider credentials and secrets are stored.
-</Panel>
+All Cloud-hosted Bot data, including memory, is encrypted in transit and at rest. This statement does not describe encryption for self-hosted Bots; protect your own hosting environment and storage appropriately.
+
+## Access and connected services
+
+A Bot can work with connected apps using the permissions of its accounts. Review the data and actions each account can access, and the policies of connected services and model providers before using sensitive information. See [Use Klex Bots securely](/guides/secure-bot-usage).
+
+This page does not yet establish whether Klex staff can access hosted data, which third parties process it, how credentials are stored, or the retention and deletion terms. Contact Klex for current details before relying on a particular privacy or compliance requirement.

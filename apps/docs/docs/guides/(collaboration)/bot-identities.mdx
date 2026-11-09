@@ -1,8 +1,21 @@
 ---
 title: Create distinct identities
-description: Give every Klex Bot its own identity in each app — separate accounts, restricted permissions, and traceable actions.
+description: Use separate app accounts to manage each Bot’s access.
+related:
+  - /guides/secure-bot-usage
+  - /guides/bot-collaboration
+  - /bot/concepts/identity
 ---
 
-Whenever a bot uses an application **it should act as a distinct identity** - that allows **separate, restricted permissions** for every bot and enables **tracing of a bot's actions** within any third-party application.
+For most connected apps, a Bot acts through an account configured for it. Where an app supports separate accounts, give each Bot its own account rather than sharing a person’s account or another Bot’s. This lets you configure access separately.
 
-It also allows **interoperability and communication** between bots - a Product Manager Bot called *Sarah* could assign an Engineering Bot called *Joe* to an issue in Linear, followed by a discussion of those bots in the comment section.
+## Set up and review access
+
+1. Create or assign an account using the connected app’s own process.
+2. Give it only the projects, conversations, data, and actions the Bot needs. Check what it can read, share, change, or delete.
+3. Connect the app to the Bot and test a small task. Check the result and, where the app provides them, its activity logs.
+4. Review access when the Bot’s role changes. Revoke unneeded permissions in the app and disconnect the server where appropriate.
+
+A distinct account can help you identify which account performed an action, but the available audit details depend on the app. It does not guarantee that a Bot’s actions are correct or that it can identify every person speaking to it.
+
+Configure app permissions in the connected service; the Bot’s name and soul do not set them. See [Klex Bot identity](/bot/concepts/identity) and [Use Klex Bots securely](/guides/secure-bot-usage).

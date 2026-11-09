@@ -37,6 +37,8 @@
 
 - **Messaging:** Glenn confirmed dashboard chat, connections via MCP, and that most Bots act through accounts with permissions configured in the app. In Klex 0.30.1, MCP ingress maps push events to the default session (`session/chat/extensions/mcp-ingress/push-notification-adapter.ts`), and the session prompt directs text replies to the originating MCP conversation (`session/chat/utils/system-prompt.md`). These are implementation and prompt behaviors, not guarantees of correct routing or identity recognition. No specific channel recommendation or exhaustive messaging-app support list has been confirmed.
 
+- **Enrollment token in Klex 0.30.1:** `cli/cli.ts` accepts `KLEX_CLOUD_ENROLLMENT_TOKEN` when no `--cloud-enroll-token` argument is present, including for `--create-bot`; tests in `cli/cli.test.ts` cover the environment fallback. Prefer an approved secret-management process and avoid showing literal tokens in shell commands.
+
 - **Reminders in Klex 0.30.1:** `session/chat/extensions/todos/todos.ts` implements one-shot reminder times; the system prompt directs the Bot to use calendars for official or recurring events (`todos/system-prompt.md`). The docs should not present built-in to-dos as recurring schedules or imply that a schedule guarantees task completion. Specific scheduling integrations and their available capabilities remain unconfirmed.
 
 ## Open questions: do not infer

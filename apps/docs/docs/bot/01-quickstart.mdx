@@ -48,13 +48,13 @@ To receive events from an external channel, connect an MCP server that supports 
 
 ## Create a self-hosted Bot without the picker
 
-For Cloud enrollment, obtain an enrollment token from Klex Cloud, then run:
+For Cloud enrollment, obtain an enrollment token from Klex Cloud and make it available to the process as `KLEX_CLOUD_ENROLLMENT_TOKEN` using your approved secret-management process. Then run:
 
 ```sh
-klex --create-bot --cloud-enroll-token YOUR_ENROLLMENT_TOKEN
+klex --create-bot
 ```
 
-Alternatively, provide the token in `KLEX_CLOUD_ENROLLMENT_TOKEN` rather than as a command-line argument. Treat the token as a secret and avoid putting it in shell history. Add `--headless` to run without the terminal interface.
+Treat the token as a secret: avoid placing it in scripts, command-line arguments, or shell history, and restrict access to the process environment. Add `--headless` to run without the terminal interface.
 
 For a standalone Bot, supply a name instead:
 
@@ -64,4 +64,4 @@ klex --create-bot --no-cloud --bot-name Ada
 
 Configure its provider, model, and connections before expecting it to work. `--create-bot` cannot be combined with `--data-dir` or `KLEX_DATA_DIR`: those identify an existing Bot.
 
-If Cloud enrollment fails, the new Bot directory is retained and its path is printed. Retry with `klex --data-dir PATH --cloud-enroll-token YOUR_ENROLLMENT_TOKEN`, replacing `PATH` with the printed directory, instead of creating another Bot.
+If Cloud enrollment fails, the new Bot directory is retained and its path is printed. With the enrollment token available in `KLEX_CLOUD_ENROLLMENT_TOKEN`, retry with `klex --data-dir PATH`, replacing `PATH` with the printed directory, instead of creating another Bot.

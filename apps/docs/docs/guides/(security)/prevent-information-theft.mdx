@@ -1,15 +1,25 @@
 ---
 title: Prevent information theft
-description: The threat model for externally reachable Klex Bots — social engineering, manipulation, and hardening access.
+description: Reduce the risk of unauthorized access and sensitive information disclosure.
 related:
   - /guides/secure-bot-usage
   - /guides/limit-blast-radius
   - /guides/support-bot-secrets
 ---
 
-> **How do I prevent strangers or malicious people from accessing Klex Bots? How likely is it that Klex Bots share sensitive information — and is there a hard lock to prevent them from doing that?**
+A Bot that can access sensitive information and communicate with others could disclose information inappropriately. Treat messages and content from external sources as untrusted: they can include misleading instructions or attempts to impersonate an authorized person.
 
-<Panel title="This answer is being written">
-This page will cover the threat model for externally reachable bots: social engineering,
-prompt injection, and impersonation — and the controls that stop abusers at each hop.
-</Panel>
+## Limit access and exposure
+
+- Restrict who can reach the Bot through the access controls available in each connected service. Check the audience of each conversation.
+- Give the Bot’s accounts only the data and actions needed for their work. Avoid granting access to sensitive information a public-facing Bot does not need.
+- Separate public-facing work from sensitive workflows. Use distinct accounts and appropriately scoped resources where supported.
+- Review connected accounts and the Bot’s activity regularly. Follow your incident process if you suspect unauthorized access or disclosure.
+
+See [Use Klex Bots securely](/guides/secure-bot-usage) and [Limit blast radius](/guides/limit-blast-radius).
+
+## Use independent safeguards
+
+Do not rely solely on instructions telling a Bot not to disclose information. Enforce access restrictions in connected services and use your organization’s existing controls for sensitive data. Klex does not currently provide action-level approvals or restrictions.
+
+These steps reduce risk but cannot guarantee that information will never be disclosed. Test with non-sensitive data and review the full workflow, including what the Bot can read and where it can send responses.

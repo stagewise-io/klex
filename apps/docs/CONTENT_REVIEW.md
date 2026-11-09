@@ -19,6 +19,7 @@
 
 ## Additional confirmations from Glenn (9 Nov 2026)
 
+- **Dashboard activity:** Users can see what the Bot is doing and chat with it in the dashboard. Glenn described the activity visibility as basically everything the Bot does; specific views and navigation have not been confirmed.
 - **Cloud data encryption:** All Cloud-hosted Bot data, including memory, is encrypted in transit and at rest. Do not extend this claim to self-hosted Bots without confirmation.
 - **Terminology:** Use “computer” rather than “machine” in reader-facing docs.
 - **Memory scope:** Describe implemented capabilities only; do not include planned features in the Memory page.

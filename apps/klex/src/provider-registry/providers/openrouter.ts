@@ -1,8 +1,7 @@
 import type {
   ProviderDefinition,
   ProviderInstance,
-  ProviderModel,
-  ProviderOperationResult,
+  ProviderModelDiscoveryResult,
 } from '../provider-registry';
 import { resolveCatalogMetadata } from './model-catalog-helpers';
 import { createOpenRouterEvaluationModel } from './openrouter-evaluation';
@@ -69,7 +68,7 @@ export const openRouterProviderDefinition: ProviderDefinition = {
 async function discoverModels(
   instance: ProviderInstance,
   signal: AbortSignal,
-): Promise<ProviderOperationResult<readonly ProviderModel[]>> {
+): Promise<ProviderModelDiscoveryResult> {
   try {
     // The default catalog omits decision models. Fetch both surfaces, using
     // the same credentials and cancellation signal. Either catalog can fail
@@ -85,82 +84,96 @@ async function discoverModels(
             ...gatewayAttributionHeaders(),
           },
           signal,
-        ),
+        ).then((body) => {
+          if (!isRecord(body) || !Array.isArray(body.data))
+            throw new Error('Invalid OpenRouter model catalog');
+          return body.data;
+        }),
       ),
     );
     signal.throwIfAborted();
+    const failure = results.find((result) => result.status === 'rejected');
     if (results.every((result) => result.status === 'rejected'))
-      throw new Error('All OpenRouter model catalogs failed');
-    const items = results.flatMap((result) => {
-      if (result.status !== 'fulfilled') return [];
-      const body = result.value;
-      return isRecord(body) && Array.isArray(body.data) ? body.data : [];
-    });
-    return available([
-      ...new Map(
-        items
-          .flatMap((item) => {
-            if (!isRecord(item) || typeof item.id !== 'string') return [];
-            const createdAt = parseModelCreatedAt(item.created);
-            const architecture = isRecord(item.architecture)
-              ? item.architecture
-              : undefined;
-            const inputModalities = stringArray(architecture?.input_modalities);
-            const outputModalities = stringArray(
-              architecture?.output_modalities,
-            );
-            // Extraction-only models share the decisions modality but require a
-            // different API and cannot answer evaluation questions.
-            const endpoints = stringArray(item.endpoints);
-            if (
-              outputModalities.includes('decisions') &&
-              endpoints.length > 0 &&
-              !endpoints.includes('/api/alpha/decisions')
-            )
-              return [];
-            const supportedParameters = stringArray(item.supported_parameters);
-            const tools = supportedParameters.includes('tools');
-            const reasoning =
-              supportedParameters.includes('reasoning') ||
-              supportedParameters.includes('reasoning_effort') ||
-              supportedParameters.includes('include_reasoning');
-            const kind = outputModalities.includes('decisions')
-              ? ('evaluation' as const)
-              : outputModalities.includes('image') &&
-                  !outputModalities.includes('text')
-                ? ('image-generation' as const)
-                : outputModalities.includes('text')
-                  ? ('language' as const)
-                  : undefined;
-            return [
-              {
-                modelId: item.id,
-                ...(createdAt && { createdAt }),
-                ...(kind && { kind }),
-                ...((architecture || supportedParameters.length > 0) && {
-                  capabilities: {
-                    ...(architecture && {
-                      input: {
-                        ...(inputModalities.includes('image') && { image: {} }),
-                        ...(inputModalities.includes('audio') && { audio: {} }),
-                      },
-                    }),
-                    ...(tools && { tools: true }),
-                    ...(reasoning && { reasoning: true }),
-                  },
-                }),
-                ...(typeof item.name === 'string' && {
-                  displayName: item.name,
-                }),
-                ...(typeof item.context_length === 'number' && {
-                  contextSize: item.context_length,
-                }),
-              },
-            ];
-          })
-          .map((model) => [model.modelId, model] as const),
-      ).values(),
-    ]);
+      throw failure?.reason;
+    const items = results.flatMap((result) =>
+      result.status === 'fulfilled' ? result.value : [],
+    );
+    return {
+      partial: failure !== undefined,
+      ...available([
+        ...new Map(
+          items
+            .flatMap((item) => {
+              if (!isRecord(item) || typeof item.id !== 'string') return [];
+              const createdAt = parseModelCreatedAt(item.created);
+              const architecture = isRecord(item.architecture)
+                ? item.architecture
+                : undefined;
+              const inputModalities = stringArray(
+                architecture?.input_modalities,
+              );
+              const outputModalities = stringArray(
+                architecture?.output_modalities,
+              );
+              // Extraction-only models share the decisions modality but require a
+              // different API and cannot answer evaluation questions.
+              const endpoints = stringArray(item.endpoints);
+              if (
+                outputModalities.includes('decisions') &&
+                endpoints.length > 0 &&
+                !endpoints.includes('/api/alpha/decisions')
+              )
+                return [];
+              const supportedParameters = stringArray(
+                item.supported_parameters,
+              );
+              const tools = supportedParameters.includes('tools');
+              const reasoning =
+                supportedParameters.includes('reasoning') ||
+                supportedParameters.includes('reasoning_effort') ||
+                supportedParameters.includes('include_reasoning');
+              const kind = outputModalities.includes('decisions')
+                ? ('evaluation' as const)
+                : outputModalities.includes('image') &&
+                    !outputModalities.includes('text')
+                  ? ('image-generation' as const)
+                  : outputModalities.includes('text')
+                    ? ('language' as const)
+                    : undefined;
+              return [
+                {
+                  modelId: item.id,
+                  ...(createdAt && { createdAt }),
+                  ...(kind && { kind }),
+                  ...((architecture || supportedParameters.length > 0) && {
+                    capabilities: {
+                      ...(architecture && {
+                        input: {
+                          ...(inputModalities.includes('image') && {
+                            image: {},
+                          }),
+                          ...(inputModalities.includes('audio') && {
+                            audio: {},
+                          }),
+                        },
+                      }),
+                      ...(tools && { tools: true }),
+                      ...(reasoning && { reasoning: true }),
+                    },
+                  }),
+                  ...(typeof item.name === 'string' && {
+                    displayName: item.name,
+                  }),
+                  ...(typeof item.context_length === 'number' && {
+                    contextSize: item.context_length,
+                  }),
+                },
+              ];
+            })
+            .map((model) => [model.modelId, model] as const),
+        ).values(),
+      ]),
+    };
   } catch (error) {
     return unavailable('discovery_failed', sanitizedError(error));
   }

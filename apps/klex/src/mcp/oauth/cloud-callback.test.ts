@@ -1,6 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { createCloudOAuthAuthorizationSessionFactory } from './cloud-callback';
+import {
+  createAgentClientMetadataUrlResolver,
+  createCloudOAuthAuthorizationSessionFactory,
+} from './cloud-callback';
 import { McpPendingAuthorizationRegistry } from './pending-authorizations';
 
 const context = {
@@ -23,7 +26,44 @@ describe('createCloudOAuthAuthorizationSessionFactory', () => {
       expect(session.redirectUrl.toString()).toBe(
         'https://cloud.example.com/v1/mcp-oauth/callback',
       );
+      expect(session.clientMetadataUrl?.toString()).toBe(
+        'https://cloud.example.com/v1/mcp-oauth/client.json',
+      );
     }
+  });
+
+  it('keeps dynamic registration for an HTTP cloud, since CIMD needs HTTPS', async () => {
+    const resolveAgentClientMetadataUrl = vi.fn();
+    const factory = createCloudOAuthAuthorizationSessionFactory({
+      registry: new McpPendingAuthorizationRegistry(),
+      getCloudBaseUrl: () => 'http://localhost:5173',
+      resolveAgentClientMetadataUrl,
+    });
+    const session = await factory.start(context);
+    expect(session.clientMetadataUrl).toBeUndefined();
+    expect(resolveAgentClientMetadataUrl).not.toHaveBeenCalled();
+  });
+
+  it('prefers the agent metadata document and falls back to the shared one', async () => {
+    const agentUrl = new URL(
+      'https://cloud.example.com/v1/agents/a/mcp-oauth/client.json',
+    );
+    const resolveAgentClientMetadataUrl = vi
+      .fn()
+      .mockResolvedValueOnce(agentUrl)
+      .mockResolvedValueOnce(undefined);
+    const factory = createCloudOAuthAuthorizationSessionFactory({
+      registry: new McpPendingAuthorizationRegistry(),
+      getCloudBaseUrl: () => 'https://cloud.example.com',
+      resolveAgentClientMetadataUrl,
+    });
+    expect((await factory.start(context)).clientMetadataUrl).toBe(agentUrl);
+    expect((await factory.start(context)).clientMetadataUrl?.toString()).toBe(
+      'https://cloud.example.com/v1/mcp-oauth/client.json',
+    );
+    expect(resolveAgentClientMetadataUrl).toHaveBeenCalledWith(
+      'https://cloud.example.com',
+    );
   });
 
   it('registers a pending authorization that the registry can complete', async () => {
@@ -71,5 +111,102 @@ describe('createCloudOAuthAuthorizationSessionFactory', () => {
         state: 'secret',
       }),
     ).rejects.toThrow('timed out');
+  });
+});
+
+describe('createAgentClientMetadataUrlResolver', () => {
+  const baseUrl = 'https://cloud.example.com/';
+  const agentUrl =
+    'https://cloud.example.com/v1/agents/a/mcp-oauth/client.json';
+
+  function setup(responses: Array<Response | Error>) {
+    const getAccessToken = vi.fn(async () => 'agent-token');
+    const onError = vi.fn();
+    const fetch = vi.fn(
+      async (_url: string | URL | Request, _init?: RequestInit) => {
+        const next = responses.shift();
+        if (!next || next instanceof Error) throw next ?? new Error('no reply');
+        return next;
+      },
+    );
+    const resolve = createAgentClientMetadataUrlResolver({
+      getAccessToken,
+      onError,
+      fetch,
+    });
+    return { fetch, getAccessToken, onError, resolve };
+  }
+
+  it('asks Cloud with the agent token and caches the URL', async () => {
+    const { fetch, getAccessToken, resolve } = setup([
+      Response.json({ clientMetadataUrl: agentUrl }),
+    ]);
+    expect((await resolve(baseUrl))?.toString()).toBe(agentUrl);
+    expect((await resolve(baseUrl))?.toString()).toBe(agentUrl);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(getAccessToken).toHaveBeenCalledWith(
+      'https://cloud.example.com/v1',
+      ['agent:access'],
+    );
+    const [url, init] = fetch.mock.calls[0] ?? [];
+    expect(url?.toString()).toBe(
+      'https://cloud.example.com/v1/agent/mcp-oauth/client',
+    );
+    expect(new Headers(init?.headers).get('authorization')).toBe(
+      'Bearer agent-token',
+    );
+  });
+
+  it('falls back on 404 without reporting an error and asks again later', async () => {
+    const { fetch, onError, resolve } = setup([
+      Response.json({ error: 'not_found' }, { status: 404 }),
+      Response.json({ clientMetadataUrl: agentUrl }),
+    ]);
+    expect(await resolve(baseUrl)).toBeUndefined();
+    expect(onError).not.toHaveBeenCalled();
+    expect((await resolve(baseUrl))?.toString()).toBe(agentUrl);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ['a server error', Response.json({}, { status: 503 })],
+    ['a network error', new Error('offline')],
+    ['a missing URL', Response.json({})],
+    [
+      'an HTTP URL',
+      Response.json({ clientMetadataUrl: 'http://cloud.example.com/x' }),
+    ],
+  ])('falls back on %s', async (_label, reply) => {
+    const { onError, resolve } = setup([reply]);
+    expect(await resolve(baseUrl)).toBeUndefined();
+    expect(onError).toHaveBeenCalledOnce();
+  });
+
+  it('falls back when no agent token is available', async () => {
+    const resolve = createAgentClientMetadataUrlResolver({
+      getAccessToken: () => Promise.reject(new Error('not enrolled')),
+      fetch: vi.fn(),
+    });
+    expect(await resolve(baseUrl)).toBeUndefined();
+  });
+
+  it('falls back once the lookup budget runs out, token wait included', async () => {
+    const onError = vi.fn();
+    const resolve = createAgentClientMetadataUrlResolver({
+      getAccessToken: () => new Promise<string>(() => undefined),
+      onError,
+      fetch: vi.fn(),
+      timeoutMs: 20,
+    });
+    expect(await resolve(baseUrl)).toBeUndefined();
+    expect(onError).toHaveBeenCalledOnce();
+  });
+
+  it('passes the lookup budget to the Cloud request', async () => {
+    const { fetch, resolve } = setup([
+      Response.json({ clientMetadataUrl: agentUrl }),
+    ]);
+    await resolve(baseUrl);
+    expect(fetch.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
   });
 });

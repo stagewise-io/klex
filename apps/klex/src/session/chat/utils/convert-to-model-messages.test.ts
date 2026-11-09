@@ -328,7 +328,7 @@ describe('data-context materialization', () => {
               type: 'resource',
               resource: {
                 uri: 'slack://T1/files/F1',
-                mimeType: ' APPLICATION/PDF ',
+                mimeType: ' APPLICATION/PDF ; charset=utf-8',
                 blob: 'ZG9j\n',
               },
             },

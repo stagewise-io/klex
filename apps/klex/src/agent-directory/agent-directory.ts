@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { mkdir, readdir, readFile, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -25,7 +26,8 @@ export interface DiscoveredAgent {
 export interface AgentDirectory {
   ensureRoot(): Promise<void>;
   discover(): Promise<DiscoveredAgent[]>;
-  create(officialName: string): Promise<DiscoveredAgent>;
+  /** Omit the name for a cloud agent with a stable UUID directory. */
+  create(officialName?: string): Promise<DiscoveredAgent>;
 }
 
 export interface AgentDirectoryDependencies {
@@ -49,7 +51,7 @@ class AgentDirectoryModule implements AgentDirectory {
       });
     } catch (error) {
       throw new Error(
-        `Failed to create the agent storage directory at "${this.deps.rootDirectory}"`,
+        `Failed to create the bot storage directory at "${this.deps.rootDirectory}"`,
         { cause: error },
       );
     }
@@ -91,7 +93,7 @@ class AgentDirectoryModule implements AgentDirectory {
         });
         this.deps.logger.warn(
           { directory, error },
-          'Found incompatible agent directory during discovery',
+          'Found incompatible bot directory during discovery',
         );
       }
     }
@@ -99,15 +101,17 @@ class AgentDirectoryModule implements AgentDirectory {
     return agents.sort((a, b) => a.officialName.localeCompare(b.officialName));
   }
 
-  async create(officialName: string): Promise<DiscoveredAgent> {
-    const name = validateAgentName(officialName);
+  async create(officialName?: string): Promise<DiscoveredAgent> {
+    const name =
+      officialName === undefined ? 'Bot' : validateAgentName(officialName);
+    const directoryName = officialName === undefined ? randomUUID() : name;
     await this.ensureRoot();
-    const directory = join(this.deps.rootDirectory, name);
+    const directory = join(this.deps.rootDirectory, directoryName);
 
     try {
       await mkdir(directory, { recursive: false, mode: DIRECTORY_MODE });
     } catch (error) {
-      throw new Error(`Could not create agent directory "${name}"`, {
+      throw new Error(`Could not create bot directory "${directoryName}"`, {
         cause: error,
       });
     }
@@ -125,7 +129,7 @@ class AgentDirectoryModule implements AgentDirectory {
         imageVision: [],
         audioListening: [],
         instincts: [],
-        voice: { sts: [], tts: [], stt: [] },
+        voice: { sts: [] },
       },
       mcpServers: {},
       extensions: {
@@ -150,7 +154,7 @@ class AgentDirectoryModule implements AgentDirectory {
       await rm(directory, { recursive: true, force: true }).catch(
         () => undefined,
       );
-      throw new Error(`Could not initialize agent "${name}"`, { cause: error });
+      throw new Error(`Could not initialize bot "${name}"`, { cause: error });
     }
 
     return { directory, officialName: name, inUse: false };
@@ -193,7 +197,7 @@ function validateAgentName(value: string): string {
     /[\\/\0]/.test(name)
   ) {
     throw new Error(
-      'Agent name must be at least two characters and a single directory name',
+      'Bot name must be at least two characters and a single directory name',
     );
   }
   return name;

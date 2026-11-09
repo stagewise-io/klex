@@ -2,6 +2,10 @@ import { getToolName, isToolUIPart } from 'ai';
 
 import { isDataPartOf } from '@/session/chat/extensions/extension-api';
 import type { ContextDataUIPart } from '@/session/inbox';
+import {
+  describeMediaContent,
+  extractContentOutputText,
+} from '@/shared-utilities/tool-result';
 
 import { serializeValue, truncateText } from './truncate';
 import type {
@@ -89,6 +93,13 @@ function projectPart(
     return { kind: 'reasoning', text: truncateText(value, reasoning.limit) };
   }
 
+  if (part.type === 'file' && filter.text && filter.text.roles.includes(role)) {
+    return {
+      kind: 'text',
+      text: truncateText(describeMediaContent(part), filter.text.limit),
+    };
+  }
+
   if (part.type === 'dynamic-tool' || isToolUIPart(part)) {
     return filter.tools ? projectTool(part, filter.tools) : null;
   }
@@ -150,7 +161,10 @@ function projectTool(
   }
   if (part.state === 'output-available' && part.output !== undefined) {
     if (options.output) {
-      const output = serializeValue(part.output, options.output);
+      const output = serializeValue(
+        extractContentOutputText(part.output) ?? part.output,
+        options.output,
+      );
       if (output !== null) record.output = output;
     }
   } else if (part.state === 'output-error' && options.error) {

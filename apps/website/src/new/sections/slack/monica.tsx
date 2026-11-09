@@ -1,3 +1,5 @@
+import { t } from '@/i18n';
+
 import { type BotSpot, workflowActor } from '../workflow/actors';
 import { STEP_ENTER, STEP_LEAVE } from '../workflow/stage';
 
@@ -32,7 +34,7 @@ export function mountSlackMonica(host: HTMLElement) {
       }
       const writing = phase === 'replying' || phase === 'working';
       monica?.setActivity(writing ? 'working' : 'idle');
-      monica?.say(phase === 'replying' ? 'Writing…' : null);
+      monica?.say(phase === 'replying' ? t('Writing…') : null);
       if (phase === 'done') monica?.emote('happy-nod');
     },
     dispose: () => {

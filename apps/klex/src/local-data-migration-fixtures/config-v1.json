@@ -1,0 +1,43 @@
+{
+  "_klex": {
+    "store": "config",
+    "schemaVersion": 1,
+    "compatibilityVersion": 1,
+    "minimumKlexVersion": "0.17.0",
+    "writtenByKlexVersion": "0.17.0"
+  },
+  "officialName": "Frozen Upgrade Agent",
+  "providers": {
+    "primary": {
+      "preset": "openai",
+      "auth": { "apiKey": "{env:PRIMARY_API_KEY}" },
+      "knownModels": { "tts-1": { "kind": "text-to-speech" } }
+    }
+  },
+  "modelSelection": {
+    "chat": [
+      {
+        "model": "primary:gpt-4.1",
+        "providerOptions": { "openai": { "reasoningEffort": "high" } }
+      }
+    ],
+    "compaction": [],
+    "memory": [],
+    "imageVision": [],
+    "audioListening": ["primary:whisper-1"],
+    "consult": [],
+    "voice": {
+      "sts": ["primary:gpt-realtime"],
+      "tts": ["primary:tts-1"],
+      "stt": ["primary:whisper-1"]
+    }
+  },
+  "mcpServers": {
+    "workspace": {
+      "command": "workspace-mcp",
+      "args": ["--root", "/workspace"]
+    }
+  },
+  "episodeFinishIdleTriggerTimeMs": 450000,
+  "telemetry": { "level": "disabled" }
+}

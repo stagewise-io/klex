@@ -26,6 +26,7 @@ export interface HomeScreenProps {
   apiClient: AdminApiClient;
   sessions: SessionInfo[];
   cloud: CloudStatus | null;
+  cloudEnrollmentCompleted?: boolean;
   dangerousLocalAdminApiPort: number | undefined;
   onRefreshGlobal: () => void;
   onOpenSettings: () => void;
@@ -36,6 +37,7 @@ export function HomeScreen({
   apiClient,
   sessions,
   cloud,
+  cloudEnrollmentCompleted = false,
   dangerousLocalAdminApiPort,
   onRefreshGlobal,
   onOpenSettings,
@@ -86,13 +88,25 @@ export function HomeScreen({
 
   return (
     <Box flexDirection="column" gap={1}>
+      {cloudEnrollmentCompleted ? (
+        <ScreenSection title="Your bot is alive!">
+          <Text>Head back to Klex Cloud to finish setting up your bot.</Text>
+          <Box marginTop={1}>
+            <Text dimColor>
+              Note: This bot runs on this computer. Closing this window stops
+              it. To start it again, open a terminal, run <Text bold>klex</Text>
+              , and select this Klex Bot by name.
+            </Text>
+          </Box>
+        </ScreenSection>
+      ) : null}
       {unsafeCloudConnection ? (
         <ScreenSection title="Unsafe cloud connection" tone="yellow">
           <Text>
             Cloud traffic uses an unencrypted connection ({cloud.cloudBaseUrl}).
           </Text>
           <Text dimColor>
-            Credentials and agent data may be visible in transit. Use HTTPS in
+            Credentials and bot data may be visible in transit. Use HTTPS in
             production.
           </Text>
         </ScreenSection>

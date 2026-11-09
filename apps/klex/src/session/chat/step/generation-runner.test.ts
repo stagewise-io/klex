@@ -122,6 +122,138 @@ describe('GenerationRunner — success', () => {
     setupDefaultMocks();
   });
 
+  it.each([
+    'explicit',
+    'output-available',
+    'output-denied',
+    'output-error',
+    'approval-responded',
+    'model-tool',
+  ])('completes an empty stop after tools via %s', async (mode) => {
+    const deps = makeDeps();
+    if (mode === 'explicit') deps.allowEmptyStop = true;
+    else if (mode === 'model-tool')
+      deps.modelMessages.push({ role: 'tool', content: [] });
+    else
+      deps.messages.push(
+        makeAssistantMessage([
+          {
+            type: 'dynamic-tool',
+            toolName: 'testTool',
+            toolCallId: 'call-1',
+            state: mode,
+            input: {},
+          } as ExtendedUIMessage['parts'][number],
+        ]),
+      );
+    const original = [...deps.messages];
+    const success = vi.spyOn(
+      deps.fallbackManager,
+      'recordSuccessfulGeneration',
+    );
+    const response = makeGenResult(makeAssistantMessage(), 'stop');
+    vi.mocked(runStreamedGeneration).mockResolvedValueOnce(response);
+
+    const result = await new GenerationRunner(deps).run();
+
+    expect(runStreamedGeneration).toHaveBeenCalledWith(
+      expect.objectContaining({ allowEmptyStop: true }),
+    );
+    expect(deps.messages).toEqual(original);
+    expect(success).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({
+      shouldContinue: false,
+      generationFailed: false,
+      modelFallbackOccurred: false,
+      requestRejected: false,
+      fatalError: false,
+      generation: { finishReason: 'stop', usage: response.usage },
+      toolCalls: [],
+    });
+    expect(result.generation?.modelId).toBeTruthy();
+  });
+
+  it.each(['initial', 'unresolved', 'no-tools', 'override'])(
+    'does not allow empty stops for %s history',
+    async (mode) => {
+      const deps = makeDeps();
+      if (mode === 'unresolved')
+        deps.messages.push(
+          makeAssistantMessage([
+            {
+              type: 'dynamic-tool',
+              toolName: 'testTool',
+              toolCallId: 'call-1',
+              state: 'input-available',
+              input: {},
+            },
+          ]),
+        );
+      if (mode === 'no-tools')
+        deps.messages.push(
+          makeAssistantMessage([{ type: 'text', text: 'done' }]),
+        );
+      if (mode === 'override') {
+        deps.allowEmptyStop = false;
+        deps.modelMessages.push({ role: 'tool', content: [] });
+      }
+      await new GenerationRunner(deps).run();
+      expect(runStreamedGeneration).toHaveBeenCalledWith(
+        expect.objectContaining({ allowEmptyStop: false }),
+      );
+    },
+  );
+
+  it.each(['other', 'length', 'error'] as const)(
+    'falls back on an empty post-tool %s response',
+    async (finishReason) => {
+      const deps = makeDeps({ allowEmptyStop: true });
+      const fallback = vi.spyOn(deps.fallbackManager, 'fallbackToNextModel');
+      const success = vi.spyOn(
+        deps.fallbackManager,
+        'recordSuccessfulGeneration',
+      );
+      vi.mocked(runStreamedGeneration).mockResolvedValueOnce(
+        makeGenResult(makeAssistantMessage(), finishReason),
+      );
+      const result = await new GenerationRunner(deps).run();
+      expect(result.modelFallbackOccurred).toBe(true);
+      expect(result.generation).toBeNull();
+      expect(fallback).toHaveBeenCalledOnce();
+      expect(success).not.toHaveBeenCalled();
+      expect(deps.messages).toEqual([]);
+    },
+  );
+
+  it.each(['thrown', 'stream'])(
+    'carries sanitized post-classification details for a %s provider failure',
+    async (mode) => {
+      const error = makeApiError({
+        statusCode: 429,
+        message:
+          'TPM: 30000 RPM: 500 sk-private https://private.example prompt: private-content',
+      });
+      if (mode === 'thrown')
+        vi.mocked(runStreamedGeneration).mockRejectedValueOnce(error);
+      else
+        vi.mocked(runStreamedGeneration).mockResolvedValueOnce(
+          makeGenResult(makeAssistantMessage(), 'error', error),
+        );
+      const result = await new GenerationRunner(makeDeps()).run();
+      expect(result.generationFailure).toMatchObject({
+        providerType: 'openai',
+        providerId: 'work',
+        modelId: 'model-a',
+        statusCode: 429,
+        category: 'rate_limit',
+      });
+      expect(JSON.stringify(result.generationFailure)).not.toMatch(
+        /sk-private|private.example|private-content/,
+      );
+      expect(result.modelFallbackOccurred).toBe(true);
+    },
+  );
+
   it('returns shouldContinue=true on stop finish reason', async () => {
     const runner = new GenerationRunner(makeDeps());
     const result = await runner.run();
@@ -131,7 +263,7 @@ describe('GenerationRunner — success', () => {
     expect(result.fatalError).toBe(false);
     expect(result.generationFailed).toBe(false);
     expect(result.generation).not.toBeNull();
-    expect(result.generation!.usage).toEqual({
+    expect(result.generation?.usage).toEqual({
       inputTokens: 10,
       outputTokens: 5,
     });
@@ -147,7 +279,7 @@ describe('GenerationRunner — success', () => {
 
     expect(result.shouldContinue).toBe(true);
     expect(result.forceNextStep).toBe(false);
-    expect(result.generation!.usage).toEqual({
+    expect(result.generation?.usage).toEqual({
       inputTokens: 10,
       outputTokens: 5,
     });

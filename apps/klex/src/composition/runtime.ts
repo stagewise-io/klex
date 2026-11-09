@@ -1,5 +1,7 @@
 import type { RootLogger } from '@stagewise/logger';
 
+import { closeWithTimeout } from '@/shutdown-coordinator';
+
 /** Shutdown contract shared by runtime modules and adopted resources. */
 export interface ClosableResource {
   close(): Promise<void>;
@@ -14,6 +16,7 @@ export interface RuntimeResource extends ClosableResource {
 export interface RuntimeStartupModules {
   modelCallLogger: RuntimeResource;
   sessionHistory: RuntimeResource;
+  skillRegistry: RuntimeResource;
   adminApi: RuntimeResource;
   cloudConnectivity: RuntimeResource;
   sessionHost: RuntimeResource;
@@ -51,6 +54,8 @@ export function runtimeStartupOrder(
     { name: 'model-call-logger', resource: modules.modelCallLogger },
     // Sessions and the admin API read/write it; start before both.
     { name: 'session-history', resource: modules.sessionHistory },
+    // Extensions and the admin API read/write skills; start before both.
+    { name: 'skill-registry', resource: modules.skillRegistry },
     { name: 'admin-api', resource: modules.adminApi },
     { name: 'cloud-connectivity', resource: modules.cloudConnectivity },
     { name: 'session-host', resource: modules.sessionHost },
@@ -132,6 +137,8 @@ function runtimeShutdownOrder(
     'session-host',
     'cloud-connectivity',
     'admin-api',
+    // After sessions and the admin API, its last writers.
+    'skill-registry',
     'model-call-logger',
     // Last: closing sessions flush their final transcript sync into it.
     'session-history',
@@ -145,15 +152,22 @@ async function closeReverse(
   resources: readonly ClosableResource[],
   logger: Pick<RootLogger, 'error'>,
 ): Promise<void> {
-  await closeInOrder(resources.toReversed(), logger);
+  await closeInOrder(resources.toReversed(), logger, true);
 }
 
 async function closeInOrder(
   resources: readonly ClosableResource[],
   logger: Pick<RootLogger, 'error'>,
+  rollback = false,
 ): Promise<void> {
   for (const resource of resources) {
-    await resource.close().catch((error: unknown) => {
+    // Only startup rollback may abandon a stalled step to keep recovery alive.
+    // Normal shutdown must wait for transcript writers before closing storage;
+    // its process-level deadline is owned by the shutdown coordinator.
+    const closing = rollback
+      ? closeWithTimeout(() => resource.close())
+      : Promise.resolve().then(() => resource.close());
+    await closing.catch((error: unknown) => {
       logger.error({ error }, 'Resource shutdown failed');
     });
   }

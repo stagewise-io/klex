@@ -26,6 +26,64 @@ describe('AdminApiClient', () => {
     });
   });
 
+  describe('soul', () => {
+    it('reads the soul string or null', async () => {
+      const fetcher = vi
+        .fn<typeof fetch>()
+        .mockResolvedValueOnce(jsonResponse(null))
+        .mockResolvedValueOnce(jsonResponse('Saved soul'));
+      const client = new AdminApiClient('http://test', fetcher);
+      expect(await client.getSoul()).toBeNull();
+      expect(await client.getSoul()).toBe('Saved soul');
+      expect(fetcher).toHaveBeenCalledWith(
+        'http://test/v1/soul',
+        expect.objectContaining({ method: 'GET' }),
+      );
+    });
+
+    it.each([
+      ['createSoul', 'POST', { instructions: 'Be direct' }],
+      ['updateSoul', 'PATCH', { instructions: 'Be direct' }],
+    ] as const)(
+      '%s sends instructions and propagates cancellation',
+      async (method, verb, body) => {
+        const fetcher = mockFetch(
+          jsonResponse('Generated soul', verb === 'POST' ? 201 : 200),
+        );
+        const client = new AdminApiClient('http://test', fetcher);
+        const controller = new AbortController();
+        expect(await client[method]('Be direct', controller.signal)).toBe(
+          'Generated soul',
+        );
+        expect(fetcher).toHaveBeenCalledWith(
+          'http://test/v1/soul',
+          expect.objectContaining({
+            method: verb,
+            body: JSON.stringify(body),
+            signal: controller.signal,
+          }),
+        );
+      },
+    );
+
+    it('preserves generation error details for retry guidance', async () => {
+      const client = new AdminApiClient(
+        'http://test',
+        mockFetch(
+          jsonResponse(
+            { error: 'Configure a chat model', code: 'no_chat_models' },
+            503,
+          ),
+        ),
+      );
+      await expect(client.createSoul('Be direct')).rejects.toMatchObject({
+        statusCode: 503,
+        code: 'no_chat_models',
+        message: 'Configure a chat model',
+      });
+    });
+  });
+
   describe('providers', () => {
     it('getProviders sends GET to /v1/providers', async () => {
       const fetchMock = mockFetch(jsonResponse({ providers: [] }));

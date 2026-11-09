@@ -1,5 +1,6 @@
 import './stage.css';
 
+import type { EmoteId, KlexActivity } from '@klex/mascot';
 import {
   type ComponentType,
   type Ref,
@@ -11,8 +12,6 @@ import {
   useState,
 } from 'react';
 import { createRoot } from 'react-dom/client';
-
-import type { EmoteId, KlexActivity } from '../../klex';
 
 export const STEP_ENTER = 'new-workflow-step-enter';
 export const STEP_LEAVE = 'new-workflow-step-leave';

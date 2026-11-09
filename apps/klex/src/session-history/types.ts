@@ -1,6 +1,11 @@
 import type { ExtendedUIMessage } from '@/session/chat/message-types';
 import type { SessionKind } from '@/session/types';
 
+import type {
+  GenerationFailure,
+  GenerationHealthError,
+} from './generation-health';
+
 /** Static metadata of one `ChatSession` instance. */
 export interface SessionHistoryRecorderMetadata {
   /** Unique per `ChatSession` instance; stable for its lifetime. */
@@ -25,6 +30,12 @@ export interface SessionHistoryRecorderMetadata {
  * failures are logged and retried on the next sync.
  */
 export interface SessionHistoryRecorder {
+  recordGenerationFailure(
+    failure: GenerationFailure,
+    kind: GenerationHealthError['kind'],
+    consecutiveFailures: number,
+  ): Promise<void>;
+  clearGenerationFailure(): Promise<void>;
   readonly instanceId: string;
   /**
    * Schedule a transcript sync. Calls are coalesced; the getter is invoked
@@ -56,6 +67,28 @@ export interface SessionHistoryRecorder {
   end(reason: string): Promise<void>;
 }
 
+/** Canonical default-session evidence; no persisted activity grouping. */
+export interface ActivitySource {
+  id: string;
+  ordinal: number;
+  persistedAt: string;
+  bytes: number;
+  revision: string;
+}
+
+export interface ActivityMessage extends ActivitySource {
+  /** Null when this message exceeds the remaining read budget. */
+  message: ExtendedUIMessage | null;
+}
+
+export interface ActivityQuery {
+  after?: number;
+  through?: number;
+  descending?: boolean;
+  limit?: number;
+  maxBytes?: number;
+}
+
 /** One persisted message of a restored window. */
 export interface SessionHistoryWindowEntry {
   message: ExtendedUIMessage;
@@ -85,6 +118,8 @@ export interface SessionHistoryWindowQuery {
 }
 
 export interface SessionHistoryRecord {
+  /** Latest unresolved failed turn; cleared by recovery in this logical session. */
+  generationError: GenerationHealthError | null;
   instanceId: string;
   sessionId: string;
   kind: SessionKind;

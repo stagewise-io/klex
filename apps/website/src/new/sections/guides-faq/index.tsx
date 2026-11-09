@@ -8,10 +8,12 @@ import {
 } from '@stagewise/ui';
 import { IconPlusOutline18 } from '@stagewise/ui/icons/nucleo/ui-outline-18/IconPlusOutline18.tsx';
 
+import { docsUrl, html, t } from '@/i18n';
+
 import { mountIsland } from '../../island';
 
 export const guidesFaqMarkup = `
-  <section class="new-guides-faq" id="guides-faq" aria-label="Guides and FAQs">
+  <section class="new-guides-faq" id="guides-faq" aria-label="${html('Guides and FAQs')}">
     <div class="new-guides-faq-mount"></div>
   </section>
 `;
@@ -23,7 +25,7 @@ const guides = [
     slug: 'bot-identities',
   },
   { title: 'Use shared messaging boards', slug: 'shared-messaging-boards' },
-];
+] as const;
 
 const questions = [
   {
@@ -56,20 +58,25 @@ const questions = [
     answer:
       'You should use more than one Klex Bot. Every Bot should get a distinct identity and a narrow job. The Bots will collaborate as a team.',
   },
-];
+] as const;
 
 export function GuidesFaq() {
   return (
     <>
-      <nav className="guides-intro" id="guides" aria-labelledby="guides-title">
+      <nav
+        data-markdown="include"
+        className="guides-intro"
+        id="guides"
+        aria-labelledby="guides-title"
+      >
         <h2 id="guides-title">
-          Best practices for building a Bot-native team.
+          {t('Best practices for building a Bot-native team.')}
         </h2>
         <ul className="guides-links">
           {guides.map(({ title, slug }) => (
             <li key={slug}>
-              <a href={`https://docs.klex.bot/guides/${slug}`}>
-                <span>{title}</span>
+              <a href={docsUrl(`/guides/${slug}`)}>
+                <span>{t(title)}</span>
                 <span aria-hidden="true">→</span>
               </a>
             </li>
@@ -77,7 +84,7 @@ export function GuidesFaq() {
         </ul>
       </nav>
       <section className="guides-faq" id="faq" aria-labelledby="faq-title">
-        <h2 id="faq-title">Frequently Asked Questions</h2>
+        <h2 id="faq-title">{t('Frequently Asked Questions')}</h2>
         <Accordion defaultValue={[questions[0].question]}>
           {questions.map(({ question, answer }) => (
             <AccordionItem
@@ -86,13 +93,13 @@ export function GuidesFaq() {
               className="guides-faq-item"
             >
               <AccordionTrigger className="guides-faq-trigger">
-                <span>{question}</span>
+                <span>{t(question)}</span>
                 <span className="guides-faq-icon" aria-hidden="true">
                   <IconPlusOutline18 size={24} />
                 </span>
               </AccordionTrigger>
               <AccordionContent keepMounted className="guides-faq-answer">
-                <p>{answer}</p>
+                <p>{t(answer)}</p>
               </AccordionContent>
             </AccordionItem>
           ))}

@@ -1,17 +1,18 @@
-import { copyFile, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ModuleLogger } from '@stagewise/logger';
 
-import { createEpisodeFeed } from '@/session/chat/extensions/memory';
+import { createSkillRegistry } from '@/skills';
 
+import { LEARNING_EXTENSION_ID } from './learning';
+import { LEARNING_SKILL_NAMESPACE } from './learning-config';
 import { createLearningState } from './learning-state';
 import { createLearningWorker } from './learning-worker';
-import { createSkillStore } from './skill-store';
+import { sourceEpisodesOf } from './prompts';
+import { learningActivities } from './test-activities';
 import { type ChildReply, childHarness, reply as ok } from './test-child';
 
 // The real prompt text, so the test sees the sections the model sees.
@@ -33,7 +34,6 @@ vi.mock('./consolidation-prompt.md', async () => {
     ),
   };
 });
-vi.mock('./system-prompt-part.md', () => ({ default: '## Learned skills\n' }));
 // Only the episode feed is real; the rest of the memory barrel pulls in the
 // whole extension graph and its Markdown imports.
 vi.mock('@/session/chat/extensions/memory/memory', () => ({
@@ -46,45 +46,21 @@ vi.mock('@/session/chat/extensions/time/system-prompt.md', () => ({
   default: '',
 }));
 
-const FIXTURES = fileURLToPath(new URL('./fixtures/', import.meta.url));
-
-/** Fixture file → episode id, in feed order. */
-const EPISODES = [
-  ['feedback.jsonl', '2026-10-01/1-09-00.jsonl'],
-  ['fix-after-failure.jsonl', '2026-10-01/2-11-00.jsonl'],
-  ['no-lesson.jsonl', '2026-10-01/3-15-00.jsonl'],
-] as const;
-
-const directories: string[] = [];
+const cleanup: (() => Promise<void>)[] = [];
 
 afterEach(async () => {
-  await Promise.all(
-    directories
-      .splice(0)
-      .map((directory) => rm(directory, { recursive: true, force: true })),
-  );
+  for (const close of cleanup.splice(0).reverse()) await close();
 });
 
 function reply(...operations: object[]): ChildReply {
   return ok(JSON.stringify({ operations }));
 }
 
-async function recordLines(file: string): Promise<number> {
-  const content = await readFile(join(FIXTURES, file), 'utf8');
-  return content.split('\n').filter((line) => line.trim() !== '').length - 1;
-}
-
 async function harness() {
-  const root = await mkdtemp(join(tmpdir(), 'klex-learning-fixtures-'));
-  directories.push(root);
-  const episodicDir = join(root, 'episodic');
-  await mkdir(join(episodicDir, '2026-10-01'), { recursive: true });
-  for (const [file, id] of EPISODES) {
-    await copyFile(join(FIXTURES, file), join(episodicDir, id));
-  }
-
-  const episodes = createEpisodeFeed();
-  episodes.attach({ episodicDir, getOpenEpisode: async () => null });
+  const fixture = await learningActivities();
+  cleanup.push(() => fixture.close());
+  const root = fixture.directory;
+  const episodes = fixture.activities;
 
   const logger = {
     debug: vi.fn(),
@@ -92,40 +68,54 @@ async function harness() {
     warn: vi.fn(),
     error: vi.fn(),
   } as unknown as ModuleLogger;
-  const dataDir = join(root, 'learning');
-  const store = createSkillStore(join(dataDir, 'skills'), logger);
-  const state = createLearningState(dataDir);
-  await Promise.all([store.start(), state.start()]);
+  const registry = createSkillRegistry({ dataDirectory: root, logger });
+  const state = createLearningState(join(root, 'learning'));
+  await Promise.all([registry.start(), state.start()]);
+  registry.claimNamespace(LEARNING_EXTENSION_ID, LEARNING_SKILL_NAMESPACE);
+  const skills = registry.forNamespace(LEARNING_SKILL_NAMESPACE);
 
   const { runChild, createChildSession } = childHarness();
   const worker = createLearningWorker({
-    episodes,
-    store,
+    activities: episodes,
+    getLimits: () => fixture.limits,
+    skills,
     state,
     createChildSession,
     getModelPurpose: () => 'memory',
     getAgent: () => ({ name: 'Atlas', soul: 'Product manager.' }),
     logger,
-    now: () => Date.parse('2026-10-02T00:00:00.000Z'),
+    now: fixture.now,
   });
-  return { root, episodes, store, state, runChild, worker };
+  cleanup.push(
+    () => registry.close(),
+    () => worker.close(),
+  );
+  return { root, episodes, ids: fixture.ids, skills, state, runChild, worker };
 }
 
 describe('learning fixtures', () => {
-  it('are valid episodes the feed reads completely', async () => {
-    const { episodes } = await harness();
-    const refs = await episodes.listLatestCompleted(10);
-    expect(refs.map((ref) => ref.id)).toEqual(EPISODES.map(([, id]) => id));
-    for (const [file, id] of EPISODES) {
-      const episode = await episodes.read(id);
-      // Every line parsed: guards the fixtures against format drift.
-      expect(episode?.recordCount).toBe(await recordLines(file));
+  it('reads raw SQLite fixtures through the filtered history view', async () => {
+    const { episodes, ids } = await harness();
+    expect((await episodes.manifest()).map((ref) => ref.id)).toEqual(ids);
+    for (const id of ids) {
+      const page = await episodes.readPage(id, {
+        offset: 0,
+        limit: 12000,
+        maxBytes: 10000,
+      });
+      expect(page?.text).toContain('your_output');
+      expect(page?.truncated).toBe(false);
     }
   });
 
   it('runs extraction end to end and records provenance', async () => {
-    const { store, state, runChild, worker } = await harness();
-    const [feedbackId, fixId, noLessonId] = EPISODES.map(([, id]) => id);
+    const {
+      skills,
+      state,
+      runChild,
+      worker,
+      ids: [feedbackId, fixId, noLessonId],
+    } = await harness();
 
     runChild
       .mockImplementationOnce(async ({ system, prompt }) => {
@@ -134,7 +124,7 @@ describe('learning fixtures', () => {
         expect(system).toContain('<soul>Product manager.</soul>');
         expect(system).not.toMatch(/\{\{[A-Z_]+\}\}/);
         expect(prompt).toContain('<skills>\n(none)\n</skills>');
-        expect(prompt).toContain(`<episode id="${feedbackId}"`);
+        expect(prompt).toContain(`<activity id="${feedbackId}"`);
         expect(prompt).toContain('always ask before changing a core contract');
         return reply({
           op: 'create',
@@ -149,7 +139,7 @@ describe('learning fixtures', () => {
         expect(prompt).toContain(
           '<skill name="ask-before-core-contract-changes">',
         );
-        expect(prompt).toContain(`<episode id="${fixId}"`);
+        expect(prompt).toContain(`<activity id="${fixId}"`);
         expect(prompt).toContain('Node.js 26 is required');
         return reply({
           op: 'create',
@@ -162,7 +152,7 @@ describe('learning fixtures', () => {
       })
       .mockImplementationOnce(async ({ prompt }) => {
         expect(prompt).toContain('<skill name="use-pinned-node-version">');
-        expect(prompt).toContain(`<episode id="${noLessonId}"`);
+        expect(prompt).toContain(`<activity id="${noLessonId}"`);
         expect(prompt).toContain('team lunch');
         return reply();
       });
@@ -170,27 +160,25 @@ describe('learning fixtures', () => {
     expect(await worker.runOnce()).toBe('processed');
     expect(runChild).toHaveBeenCalledTimes(3);
 
-    expect(
-      store
-        .list()
-        .map((skill) => skill.name)
-        .sort(),
-    ).toEqual(['ask-before-core-contract-changes', 'use-pinned-node-version']);
+    expect(skills.list().map((skill) => skill.name)).toEqual([
+      'ask-before-core-contract-changes',
+      'use-pinned-node-version',
+    ]);
+    const sources = (name: string) => {
+      const skill = skills.get(name);
+      return skill ? sourceEpisodesOf(skill) : null;
+    };
+    expect(sources('ask-before-core-contract-changes')).toEqual([feedbackId]);
+    expect(sources('use-pinned-node-version')).toEqual([fixId]);
     const current = state.get();
     expect(current.cursor).toBe(noLessonId);
-    expect(
-      current.skills['ask-before-core-contract-changes']?.sourceEpisodes,
-    ).toEqual([feedbackId]);
-    expect(current.skills['use-pinned-node-version']?.sourceEpisodes).toEqual([
-      fixId,
-    ]);
     expect(current.changedRunsSinceConsolidation).toBe(0);
     expect(current.lastConsolidationAt).toBeNull();
     expect(current.pendingChangeWeight).toBe(4);
     expect(current.processedEpisodeCount).toBe(3);
   });
 
-  it('writes learned skills as Agent Skills files', async () => {
+  it('writes learned skills as Agent Skills files in the learning namespace', async () => {
     const { root, runChild, worker } = await harness();
     runChild
       .mockResolvedValueOnce(
@@ -209,8 +197,8 @@ describe('learning fixtures', () => {
     const content = await readFile(
       join(
         root,
-        'learning',
         'skills',
+        LEARNING_SKILL_NAMESPACE,
         'ask-before-core-contract-changes',
         'SKILL.md',
       ),

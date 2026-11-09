@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -14,8 +14,10 @@ import { createLocalData } from '@/local-data';
 import { KLEX_VERSION } from '@/release';
 import type { ExtendedUIMessage } from '@/session/chat/message-types';
 
+import { summarizeGenerationFailure } from './generation-health';
 import {
   CHECKPOINT_PART_TYPE,
+  SESSION_HISTORY_INIT_SQL,
   SESSION_HISTORY_RELATIVE_PATH,
   SESSION_HISTORY_STORE_DEFINITION,
 } from './schema';
@@ -98,6 +100,171 @@ afterEach(async () => {
   );
 });
 
+describe('canonical activity queries', () => {
+  it('keeps revisions stable across other recorder syncs and restarts', async () => {
+    const { history, directory } = await setup();
+    const first = history.openRecorder(meta());
+    first.scheduleSync(() => [message('first')]);
+    await history.flush();
+    const [source] = await history.activityManifest();
+    const second = history.openRecorder(meta());
+    second.scheduleSync(() => [message('second')]);
+    await history.flush();
+    expect((await history.activityManifest())[0]).toEqual(source);
+    await history.close();
+    const restarted = await setup({ directory });
+    expect((await restarted.history.activityManifest())[0]).toEqual(source);
+    const repaired = restarted.history.openRecorder(meta());
+    const restored = await restarted.history.loadWindow('default', {
+      fallbackMaxBytes: 10000,
+    });
+    repaired.seed(restored);
+    const messages = restored.entries.map((entry) => entry.message);
+    // Same-size repairs must change the content revision, not just a size field.
+    repaired.scheduleSync(() =>
+      messages.map((entry) =>
+        entry.id === 'first' ? message('first', 'other') : entry,
+      ),
+    );
+    await restarted.history.flush();
+    expect((await restarted.history.activityManifest())[0]?.revision).not.toBe(
+      source?.revision,
+    );
+  });
+
+  it('migrates frozen v3 through registered startup, recovers failure and rejects old writers', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'klex-history-v3-'));
+    directories.push(directory);
+    const path = join(directory, SESSION_HISTORY_RELATIVE_PATH);
+    const raw = createClient({ url: `file:${path}` });
+    await raw.executeMultiple(
+      await readFile(
+        new URL(
+          '../local-data-migration-fixtures/sessions-v3.sql',
+          import.meta.url,
+        ),
+        'utf8',
+      ),
+    );
+    const before = (await raw.execute('SELECT * FROM messages ORDER BY ord'))
+      .rows;
+    raw.close();
+    const migrate = (store: SqliteStoreDefinition) =>
+      createLocalData({
+        logging: logger,
+        dataDirectory: directory,
+        klexVersion: KLEX_VERSION,
+        stores: [store],
+      }).start();
+    const broken = {
+      ...SESSION_HISTORY_STORE_DEFINITION,
+      migrations: SESSION_HISTORY_STORE_DEFINITION.migrations.map((step) =>
+        step.to === 4
+          ? {
+              ...step,
+              up: async (client: Parameters<typeof step.up>[0]) => {
+                await step.up(client);
+                throw new Error('injected revision migration failure');
+              },
+            }
+          : step,
+      ),
+    };
+    await expect(migrate(broken)).rejects.toThrow(/restored/);
+    const restored = createClient({ url: `file:${path}` });
+    expect(
+      (await restored.execute('SELECT * FROM messages ORDER BY ord')).rows,
+    ).toEqual(before);
+    expect(
+      (
+        await restored.execute(
+          "SELECT value FROM meta WHERE key = 'schemaVersion'",
+        )
+      ).rows[0]?.value,
+    ).toBe('3');
+    restored.close();
+    const first = await setup({ directory });
+    const sources = await first.history.activityManifest();
+    expect(sources[0]?.revision).toBe('2026-08-14T10:00:00.000Z:78');
+    await first.history.close();
+    const migrated = createClient({ url: `file:${path}` });
+    const rows = (await migrated.execute('SELECT * FROM messages ORDER BY ord'))
+      .rows;
+    expect(
+      rows.map(({ content_revision, ...row }) => {
+        expect(content_revision).toBeNull();
+        return row;
+      }),
+    ).toEqual(before);
+    expect(
+      (
+        await migrated.execute(
+          "SELECT value FROM meta WHERE key = 'schemaVersion'",
+        )
+      ).rows[0]?.value,
+    ).toBe('4');
+    migrated.close();
+    const bytes = await readFile(path);
+    await migrate(SESSION_HISTORY_STORE_DEFINITION);
+    expect(await readFile(path)).toEqual(bytes);
+    await expect(
+      migrate({
+        ...SESSION_HISTORY_STORE_DEFINITION,
+        schemaVersion: 3,
+        minimumKlexVersion: '0.26.0',
+        migrations: SESSION_HISTORY_STORE_DEFINITION.migrations.filter(
+          (step) => step.to <= 3,
+        ),
+      }),
+    ).rejects.toThrow(/schema=4.*schema=3/);
+    expect(await readFile(path)).toEqual(bytes);
+    const second = await setup({ directory });
+    expect(await second.history.activityManifest()).toEqual(sources);
+  });
+
+  it('pages across instances, excludes children, and advances oversized sources', async () => {
+    const { history } = await setup();
+    const first = history.openRecorder(meta());
+    const child = history.openRecorder(
+      meta({ sessionId: 'child', kind: 'child' }),
+    );
+    const hints = { count: 0 };
+    const detach = history.subscribeActivity(() => hints.count++);
+    first.scheduleSync(() => [message('one', 'first', 'assistant')]);
+    child.scheduleSync(() => [message('hidden', 'secret', 'assistant')]);
+    await history.flush();
+    const second = history.openRecorder(meta());
+    second.scheduleSync(() => [message('two', 'second', 'assistant')]);
+    await history.flush();
+    const manifest = await history.activityManifest();
+    expect(manifest).toHaveLength(2);
+    expect(manifest[1]!.ordinal).toBeGreaterThan(manifest[0]!.ordinal);
+    const page = await history.readActivity({ limit: 1, maxBytes: 1 });
+    expect(page[0]?.message).toBeNull();
+    expect(
+      (await history.readActivity({ after: page[0]!.ordinal }))[0]?.message?.id,
+    ).toBe('two');
+    expect(hints.count).toBeGreaterThan(0);
+    detach();
+  });
+
+  it('reflects same-size repairs and rollback deletion in manifests', async () => {
+    const { history } = await setup();
+    const recorder = history.openRecorder(meta());
+    recorder.scheduleSync(() => [message('one', 'before', 'assistant')]);
+    await history.flush();
+    const before = (await history.activityManifest())[0]!;
+    recorder.scheduleSync(() => [message('one', 'after!', 'assistant')]);
+    await history.flush();
+    expect((await history.activityManifest())[0]!.revision).not.toBe(
+      before.revision,
+    );
+    recorder.scheduleSync(() => []);
+    await history.flush();
+    expect(await history.activityManifest()).toEqual([]);
+  });
+});
+
 describe('resolveSessionHistoryMaxBytes', () => {
   it('uses the default unless the config overrides it', () => {
     const config = klexConfigSchema.parse({});
@@ -114,6 +281,271 @@ describe('resolveSessionHistoryMaxBytes', () => {
 });
 
 describe('session history sync', () => {
+  it.each(['{broken', '{"category":"rate_limit"}', 'null', '[]'])(
+    'ignores invalid stored generation health (%s) and replaces it',
+    async (value) => {
+      const { history, directory } = await setup();
+      const recorder = history.openRecorder(meta());
+      const failure = summarizeGenerationFailure(
+        new Error('rate limit TPM: 30000'),
+      );
+      await recorder.recordGenerationFailure(failure, 'turn_failed', 1);
+      const raw = createClient({
+        url: `file:${join(directory, SESSION_HISTORY_RELATIVE_PATH)}`,
+      });
+      try {
+        await raw.execute({
+          sql: 'UPDATE sessions SET generation_error = ? WHERE instance_id = ?',
+          args: [value, recorder.instanceId],
+        });
+        expect(
+          (await history.getSession(recorder.instanceId))?.generationError,
+        ).toBeNull();
+        expect(
+          (await history.listSessions({ limit: 10 })).sessions,
+        ).toMatchObject([
+          { instanceId: recorder.instanceId, generationError: null },
+        ]);
+        await expect(
+          recorder.recordGenerationFailure(failure, 'turn_failed', 2),
+        ).resolves.toBeUndefined();
+        expect(
+          (await history.getSession(recorder.instanceId))?.generationError,
+        ).toMatchObject({
+          ...failure,
+          consecutiveFailures: 2,
+          occurrenceCount: 1,
+        });
+      } finally {
+        raw.close();
+      }
+    },
+  );
+
+  it('does not reject generation health writes when SQLite rejects updates or the store is closed', async () => {
+    const { history, directory } = await setup();
+    const recorder = history.openRecorder(meta());
+    const failure = summarizeGenerationFailure(new Error('rate limit'));
+    await recorder.recordGenerationFailure(failure, 'turn_failed', 1);
+    const raw = createClient({
+      url: `file:${join(directory, SESSION_HISTORY_RELATIVE_PATH)}`,
+    });
+    try {
+      await raw.execute(`CREATE TRIGGER reject_health BEFORE UPDATE ON sessions
+        BEGIN SELECT RAISE(FAIL, 'injected write failure'); END`);
+      await expect(
+        recorder.recordGenerationFailure(failure, 'turn_failed', 2),
+      ).resolves.toBeUndefined();
+      await expect(recorder.clearGenerationFailure()).resolves.toBeUndefined();
+      expect(
+        (await history.getSession(recorder.instanceId))?.generationError
+          ?.occurrenceCount,
+      ).toBe(1);
+    } finally {
+      raw.close();
+    }
+    await history.close();
+    await expect(
+      recorder.recordGenerationFailure(failure, 'turn_failed', 3),
+    ).resolves.toBeUndefined();
+    await expect(recorder.clearGenerationFailure()).resolves.toBeUndefined();
+  });
+
+  it('retains unresolved warning metadata when the size cap evicts its transcript', async () => {
+    const { history, setMaxBytes } = await setup();
+    const recorder = history.openRecorder(
+      meta({ kind: 'child', sessionId: 'child' }),
+    );
+    recorder.scheduleSync(() => [message('large', 'x'.repeat(1000))]);
+    await recorder.recordGenerationFailure(
+      summarizeGenerationFailure(new Error('rate limit')),
+      'terminated',
+      5,
+    );
+    await recorder.end('failed');
+    setMaxBytes(1);
+    await history.enforceSizeCap();
+    expect(await history.getSession(recorder.instanceId)).toMatchObject({
+      byteSize: 0,
+      trimmedMessageCount: 1,
+      generationError: { kind: 'terminated' },
+    });
+    expect(await storedIds(history, recorder.instanceId)).toEqual([]);
+  });
+
+  it('supersedes warnings with tied instance timestamps and resets counts for a different failure', async () => {
+    const { history } = await setup();
+    const createdAt = '2026-01-01T00:00:00.000Z';
+    const old = history.openRecorder(meta({ createdAt }));
+    const replacement = history.openRecorder(meta({ createdAt }));
+    const failure = summarizeGenerationFailure(new Error('rate limit'));
+    await old.recordGenerationFailure(failure, 'turn_failed', 1);
+    await replacement.recordGenerationFailure(failure, 'turn_failed', 1);
+    await old.clearGenerationFailure();
+    expect(
+      (await history.getSession(old.instanceId))?.generationError,
+    ).toBeNull();
+    expect(
+      (await history.getSession(replacement.instanceId))?.generationError,
+    ).not.toBeNull();
+    // A late failure is a newer occurrence, so there must still be only one warning.
+    await old.recordGenerationFailure(failure, 'turn_failed', 2);
+    expect(
+      (await history.getSession(replacement.instanceId))?.generationError,
+    ).toBeNull();
+    await old.recordGenerationFailure(
+      summarizeGenerationFailure(new Error('billing quota exhausted')),
+      'turn_failed',
+      3,
+    );
+    expect(
+      (await history.getSession(old.instanceId))?.generationError,
+    ).toMatchObject({ category: 'quota', occurrenceCount: 1 });
+    await replacement.clearGenerationFailure();
+    expect(
+      (await history.getSession(old.instanceId))?.generationError,
+    ).toBeNull();
+  });
+
+  it('migrates v2 additively, restores failed migrations, and rejects downgrade writes', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'klex-history-v2-'));
+    directories.push(directory);
+    const v2: SqliteStoreDefinition = {
+      ...SESSION_HISTORY_STORE_DEFINITION,
+      schemaVersion: 2,
+      minimumKlexVersion: '0.23.0',
+      initSql: SESSION_HISTORY_INIT_SQL.replace(
+        '  generation_error TEXT,\n',
+        '',
+      ).replace('  content_revision TEXT,\n', ''),
+      migrations: SESSION_HISTORY_STORE_DEFINITION.migrations.filter(
+        (migration) => migration.to <= 2,
+      ),
+      validate: async (client) => {
+        await client.execute('SELECT instance_id FROM sessions LIMIT 1');
+      },
+    };
+    const migrate = (store: SqliteStoreDefinition) =>
+      createLocalData({
+        logging: logger,
+        dataDirectory: directory,
+        klexVersion: KLEX_VERSION,
+        stores: [store],
+      }).start();
+    await migrate(v2);
+    const raw = createClient({
+      url: `file:${join(directory, SESSION_HISTORY_RELATIVE_PATH)}`,
+    });
+    await raw.execute(
+      "INSERT INTO sessions (instance_id, session_id, kind, name, created_at, updated_at) VALUES ('old', 'default', 'default', 'old', '2026-01-01', '2026-01-01')",
+    );
+    raw.close();
+    const broken: SqliteStoreDefinition = {
+      ...SESSION_HISTORY_STORE_DEFINITION,
+      migrations: [
+        ...v2.migrations,
+        {
+          from: 2,
+          to: 3,
+          name: 'failure',
+          up: async (db) => {
+            await db.execute(
+              'ALTER TABLE sessions ADD COLUMN generation_error TEXT',
+            );
+            throw new Error('injected migration failure');
+          },
+        },
+        ...SESSION_HISTORY_STORE_DEFINITION.migrations.filter(
+          (migration) => migration.from >= 3,
+        ),
+      ],
+    };
+    await expect(migrate(broken)).rejects.toThrow(/restored/);
+    await migrate(v2);
+    await migrate(SESSION_HISTORY_STORE_DEFINITION);
+    const { history } = await setup({ directory });
+    expect(await history.getSession('old')).toMatchObject({
+      generationError: null,
+      name: 'old',
+    });
+    await history.close();
+    await expect(migrate(v2)).rejects.toThrow(/schema=4.*schema=2/);
+  });
+
+  it('persists and deduplicates zero-message failures through sync, end, and restart', async () => {
+    const { history, directory } = await setup();
+    const recorder = history.openRecorder(meta());
+    const failure = summarizeGenerationFailure(
+      new Error('rate limit TPM: 30000'),
+    );
+    await recorder.recordGenerationFailure(failure, 'turn_failed', 1);
+    const first = (await history.getSession(recorder.instanceId))
+      ?.generationError;
+    expect(first).toMatchObject({ occurrenceCount: 1, consecutiveFailures: 1 });
+    for (let count = 2; count <= 5; count++)
+      await recorder.recordGenerationFailure(
+        failure,
+        count === 5 ? 'terminated' : 'turn_failed',
+        count,
+      );
+    recorder.scheduleSync(() => []);
+    await recorder.end('max_consecutive_failures');
+    await history.close();
+    const reopened = await setup({ directory });
+    expect(
+      await reopened.history.getSession(recorder.instanceId),
+    ).toMatchObject({
+      live: false,
+      messageCount: 0,
+      generationError: {
+        kind: 'terminated',
+        occurrenceCount: 5,
+        consecutiveFailures: 5,
+        firstSeenAt: first?.firstSeenAt,
+      },
+    });
+  });
+
+  it('retains an ended failure until replacement failure or success, independently of child sessions', async () => {
+    const { history } = await setup();
+    const old = history.openRecorder(
+      meta({ createdAt: '2026-01-01T00:00:00.000Z' }),
+    );
+    const child = history.openRecorder(
+      meta({ sessionId: 'child', kind: 'child' }),
+    );
+    const failure = summarizeGenerationFailure(new Error('rate limit'));
+    await old.recordGenerationFailure(failure, 'terminated', 5);
+    await old.end('failed');
+    await child.recordGenerationFailure(failure, 'request_rejected', 1);
+    const replacement = history.openRecorder(
+      meta({ createdAt: '2026-01-02T00:00:00.000Z' }),
+    );
+    expect(
+      (await history.getSession(old.instanceId))?.generationError,
+    ).not.toBeNull();
+    await replacement.recordGenerationFailure(failure, 'turn_failed', 1);
+    expect(
+      (await history.getSession(old.instanceId))?.generationError,
+    ).toBeNull();
+    replacement.scheduleSync(() => [message('after-failure')]);
+    await history.flush();
+    expect(
+      (await history.getSession(replacement.instanceId))?.messageCount,
+    ).toBe(1);
+    await replacement.end('failed');
+    const recovered = history.openRecorder(
+      meta({ createdAt: '2026-01-03T00:00:00.000Z' }),
+    );
+    await recovered.clearGenerationFailure();
+    expect(
+      (await history.getSession(replacement.instanceId))?.generationError,
+    ).toBeNull();
+    expect(
+      (await history.getSession(child.instanceId))?.generationError,
+    ).not.toBeNull();
+  });
+
   it('persists in-place mutations of older messages', async () => {
     const { history } = await setup();
     const recorder = history.openRecorder(meta());

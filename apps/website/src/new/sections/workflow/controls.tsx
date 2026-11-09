@@ -6,6 +6,8 @@ import { createRoot } from 'react-dom/client';
 
 import { Button, Progress } from '@stagewise/ui';
 
+import { t } from '@/i18n';
+
 const PROGRESS = 'new-workflow-progress';
 
 /** Stories publish milestones; controls never unlock before completion. */
@@ -133,8 +135,8 @@ function Controls({
         variant="outline"
         size="icon"
         className="rounded-full"
-        aria-label="Replay this step"
-        title="Replay this step"
+        aria-label={t('Replay this step')}
+        title={t('Replay this step')}
         onClick={onReplay}
       >
         <ReplayIcon />
@@ -142,7 +144,7 @@ function Controls({
       <div className="new-workflow-next" data-ready={done}>
         <Progress
           value={value}
-          aria-label="Current step progress"
+          aria-label={t('Current step progress')}
           aria-hidden={done}
           className="new-workflow-progress"
         />
@@ -165,7 +167,7 @@ function Controls({
               />
             ))}
           {last && <ReplayIcon data-icon="inline-start" />}
-          <span>{last ? 'Start over' : 'Next'}</span>
+          <span>{t(last ? 'Start over' : 'Next')}</span>
           {!last && (
             <svg
               data-icon="inline-end"
@@ -187,8 +189,8 @@ function Controls({
           variant="outline"
           size="icon"
           className="new-workflow-pause-button rounded-full"
-          aria-label="Pause autoplay"
-          title="Pause autoplay"
+          aria-label={t('Pause autoplay')}
+          title={t('Pause autoplay')}
           onClick={() => {
             onPause();
             nextButton.current?.focus();

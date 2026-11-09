@@ -1,30 +1,32 @@
-import { copyFile, mkdir, mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import type { LanguageModelV4StreamPart } from '@ai-sdk/provider';
 import { MockLanguageModelV4 } from 'ai/test';
 import { describe, expect, it, vi } from 'vitest';
 
-import type { RootLogger } from '@stagewise/logger';
+import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
+import {
+  createActivityFixture,
+  TEST_ACTIVITY_LIMITS,
+} from '@/activity-history/test-support';
 import type { Config } from '@/config';
 import { createIntrospector } from '@/introspection';
 import {
   type ChatSessionDependencies,
   createChatSession,
 } from '@/session/chat';
-import { createEpisodeFeed } from '@/session/chat/extensions/memory';
 import type { ChatSessionHandle, SessionFactory } from '@/session/types';
+import { createSkillRegistry } from '@/skills';
 
 import { createLearningExt } from './learning';
-import { createSkillCatalog } from './skill-store';
+import { sourceEpisodesOf } from './prompts';
 
 vi.mock('./extraction-prompt.md', () => ({
   default: 'Extract. {{NAME}} {{SOUL}}',
 }));
 vi.mock('./consolidation-prompt.md', () => ({ default: 'Consolidate.' }));
-vi.mock('./system-prompt-part.md', () => ({ default: '## Learned skills\n' }));
 vi.mock('@/session/chat/extensions/time/system-prompt.md', () => ({
   default: '',
 }));
@@ -77,17 +79,25 @@ function toolStream(toolName: string, input: unknown, id: string) {
 
 describe('learning child session execution', () => {
   it('investigates and persists through streamed steps, then idles and releases parent quiescence', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'klex-learning-session-'));
-    const id = '2026-10-01/1-09-00.jsonl';
-    const episodicDir = join(root, 'episodic');
-    await mkdir(join(episodicDir, '2026-10-01'), { recursive: true });
-    await copyFile(
-      new URL('./fixtures/feedback.jsonl', import.meta.url),
-      join(episodicDir, id),
+    const fixture = await createActivityFixture();
+    // Always idle relative to the worker's real clock, even on the fixture date.
+    fixture.setTime(new Date(Date.now() - 24 * 60 * 60_000).toISOString());
+    const root = fixture.directory;
+    const { id } = await fixture.append(
+      'Always ask before changing a core contract. Propose the change first, explain downstream impact, and wait for approval. '.repeat(
+        5,
+      ),
     );
-    const episodes = createEpisodeFeed();
-    const read = vi.spyOn(episodes, 'readPage');
-    const catalog = createSkillCatalog();
+    const activities = fixture.activities;
+    const availability = vi
+      .spyOn(activities, 'isAvailable')
+      .mockReturnValue(false);
+    const read = vi.spyOn(activities, 'readPage');
+    const skillRegistry = createSkillRegistry({
+      dataDirectory: join(root, 'registry'),
+      logger: logger as unknown as ModuleLogger,
+    });
+    await skillRegistry.start();
     const introspection = createIntrospector({ logging });
     const finish = Promise.withResolvers<void>();
     const finalStep = Promise.withResolvers<void>();
@@ -97,7 +107,7 @@ describe('learning child session execution', () => {
         const current = step++;
         if (current === 0)
           return toolStream(
-            'readEpisode',
+            'readActivity',
             { id, offset: 0, limit: 1000 },
             'read',
           );
@@ -135,6 +145,7 @@ describe('learning child session execution', () => {
     const config = {
       get: () => ({
         officialName: 'Atlas',
+        extensions: { memory: { episodes: TEST_ACTIVITY_LIMITS } },
         instinct: { enabled: false },
         modelSelection: { chat: ['test:model'], memory: ['test:model'] },
       }),
@@ -178,10 +189,10 @@ describe('learning child session execution', () => {
       modelResolver,
       dataDirectory: root,
       mcp: null,
+      skillRegistry,
       extensionFactories: [
         createLearningExt({
-          episodes,
-          skillCatalog: catalog,
+          activities,
           getSoul: () => 'Product manager.',
         }),
       ],
@@ -193,7 +204,8 @@ describe('learning child session execution', () => {
     try {
       await parent.start();
       expect(parent.isQuiescent()).toBe(true);
-      episodes.attach({ episodicDir, getOpenEpisode: async () => null });
+      availability.mockRestore();
+      await fixture.append('wake the worker', 'user');
       await vi.waitFor(() => expect(step).toBe(3));
       await finalStep.promise;
       expect(parent.isQuiescent()).toBe(false);
@@ -216,19 +228,20 @@ describe('learning child session execution', () => {
           child.sessionId,
         ]),
       ).toBeDefined();
-      expect(catalog.get('ask-first')?.body).toContain('Ask for approval');
-      expect(catalog.getUsage('ask-first')?.sourceEpisodes).toEqual([id]);
-      expect(read).toHaveBeenCalledTimes(2);
+      const learned = skillRegistry.get('learning/ask-first');
+      expect(learned?.body).toContain('Ask for approval');
+      expect(learned && sourceEpisodesOf(learned)).toEqual([id]);
+      expect(read).toHaveBeenCalledTimes(1);
       expect(model.doStreamCalls).toHaveLength(3);
       expect(JSON.stringify(model.doStreamCalls[1]?.prompt)).toContain(
-        'readEpisode',
+        'readActivity',
       );
       finish.resolve();
       await vi.waitFor(() =>
         expect(child.getSessionInfo().status).toBe('terminated'),
       );
       await vi.waitFor(() => expect(parent.isQuiescent()).toBe(true));
-      expect(catalog.get('ask-first')).not.toBeNull();
+      expect(skillRegistry.get('learning/ask-first')).not.toBeNull();
       expect(
         await introspection.read([
           'default',
@@ -239,7 +252,9 @@ describe('learning child session execution', () => {
     } finally {
       finish.resolve();
       await parent.close();
+      await skillRegistry.close();
       expect(parent.isQuiescent()).toBe(true);
+      await fixture.close();
       await rm(root, { recursive: true, force: true });
     }
   });

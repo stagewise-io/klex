@@ -13,6 +13,7 @@ import {
   runInferenceContextTransformers,
   runInferenceHistoryTransformers,
 } from '@/session/interaction';
+import { summarizeGenerationFailure } from '@/session-history/generation-health';
 import type { TelemetryMetrics } from '@/telemetry-metrics';
 
 import type { ExtensionHandler } from '../extension-handler';
@@ -153,6 +154,15 @@ class StepModule implements Step {
         const complete = async (event: StepCompleteEvent) => {
           const result: StepCompleteEvent = {
             ...event,
+            ...(event.fatalError && !event.generationFailure
+              ? {
+                  generationFailure: summarizeGenerationFailure(
+                    null,
+                    this.deps.fallbackManager.getChatModelEntry(),
+                    event.fatalErrorReason ?? '',
+                  ),
+                }
+              : {}),
             ...(instinctSummary !== undefined && {
               instinct: instinctSummary,
             }),
@@ -178,7 +188,10 @@ class StepModule implements Step {
         // 2.2.1: Notify extensions that a step is starting. This fires
         // before any processing — inbox drain, history repair, or the
         // step decision — so extensions can reset per-step state.
-        await this.deps.extensionHandler.runStepStartHooks();
+        const shouldRun = this.deps.extensionHandler.shouldRunStep(
+          this.deps.messages,
+        );
+        if (shouldRun) await this.deps.extensionHandler.runStepStartHooks();
         if (this.stepAbort.signal.aborted) return abortPreparation();
 
         // 2.2.2.1: Repair history before making any step decision.
@@ -188,7 +201,9 @@ class StepModule implements Step {
         // Without this, a stale tool call would cause `canStepBeExecuted`
         // to return false, skipping the step and permanently stucking the
         // session.
-        const repairResult = checkAndFixHistory(this.deps.messages);
+        const repairResult = shouldRun
+          ? checkAndFixHistory(this.deps.messages)
+          : { repaired: [] };
         if (repairResult.repaired.length > 0) {
           stepSpan.addEvent('step.history_repaired', {
             'step.repairCount': repairResult.repaired.length,
@@ -207,7 +222,7 @@ class StepModule implements Step {
           },
         });
 
-        const canRunStep = this.canStepBeExecuted();
+        const canRunStep = shouldRun && this.canStepBeExecuted();
         const lastMsg = this.deps.messages[this.deps.messages.length - 1];
         const lastRole = lastMsg?.role ?? 'none';
         const lastMsgHasToolCalls =
@@ -220,6 +235,8 @@ class StepModule implements Step {
             lastRole === 'user'
               ? 'last message is user input'
               : 'last assistant message has all tool calls resolved';
+        } else if (!shouldRun) {
+          decisionReason = 'skipped by extension';
         } else {
           decisionReason =
             lastRole === 'none'
@@ -359,6 +376,11 @@ class StepModule implements Step {
             );
             this.deps.fallbackManager.fallbackToNextModel();
             const unusableModelEvent: StepCompleteEvent = {
+              generationFailure: summarizeGenerationFailure(
+                error,
+                entry,
+                'configuration error',
+              ),
               shouldContinue: true,
               forceNextStep: false,
               fatalError: false,
@@ -430,6 +452,7 @@ class StepModule implements Step {
           ...instinctProvisional,
           ...provisionalContext.parts,
         ];
+        const allowEmptyStop = this.isPostToolContinuation();
         const provisionalMessageId =
           provisionalParts.length > 0 ? randomUUID() : null;
         if (provisionalMessageId !== null) {
@@ -627,6 +650,7 @@ class StepModule implements Step {
             this.deps.extensionHandler.getSystemPromptParts();
           if (this.stepAbort.signal.aborted) return abortPreparation();
           const runner = createGenerationRunner({
+            allowEmptyStop,
             logger: this.deps.logger,
             sessionId: this.deps.sessionId,
             stepSpan,
@@ -652,6 +676,7 @@ class StepModule implements Step {
           try {
             const result = await runner.run();
             retainProvisionalContext =
+              result.shouldContinue &&
               !result.generationFailed &&
               !result.modelFallbackOccurred &&
               !result.requestRejected &&
@@ -766,6 +791,11 @@ class StepModule implements Step {
 
     if (lastMsg?.role === 'user') return true;
 
+    return this.isPostToolContinuation();
+  }
+
+  private isPostToolContinuation(): boolean {
+    const lastMsg = this.deps.messages.at(-1);
     if (lastMsg?.role === 'assistant') {
       const toolCallParts = lastMsg.parts.filter((p) => isToolUIPart(p));
       if (toolCallParts.length === 0) return false;

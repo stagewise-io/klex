@@ -1,7 +1,7 @@
+import { popTransition } from '@klex/mascot';
 import { motion } from 'motion/react';
 import { type ReactNode, useEffectEvent, useLayoutEffect, useRef } from 'react';
 
-import { popTransition } from '../../../klex/transitions';
 import { WindowLabel } from '../../build/safari';
 
 /** Work scenes are drawn at this size and scaled down to fit the window. */
@@ -36,6 +36,8 @@ export function WorkWindow({
     const element = frame.current;
     const layer = element?.offsetParent;
     if (!element || !layer) return;
+    const owner = findBot();
+    owner?.setAttribute('data-work-active', '');
     const copy = layer
       .closest('.new-hero')
       ?.querySelectorAll('h1, .new-description, .new-hero-cta');
@@ -111,6 +113,7 @@ export function WorkWindow({
     });
     resize.observe(layer);
     return () => {
+      owner?.removeAttribute('data-work-active');
       resize.disconnect();
       cancelAnimationFrame(pending);
     };

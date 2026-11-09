@@ -13,9 +13,11 @@ import {
   TableRow,
 } from '@stagewise/ui';
 
+import { t } from '@/i18n';
+
 import { heroLooks } from '../../bot-looks';
 import { mountIsland } from '../../island';
-import { Klex } from '../../klex';
+import { ProgressiveMascot } from '../../static-mascot';
 
 export const coworkersMarkup = `
   <section class="new-coworkers" id="coworkers" aria-labelledby="coworkers-title">
@@ -60,9 +62,9 @@ const comparisons = [
       text: 'Learn skills, relationships, and ways of working.',
     },
   },
-];
+] as const;
 
-type BotName = keyof typeof heroLooks;
+type BotName = 'jonathan' | 'kristine' | 'monica' | 'jeff';
 type Kind = 'you' | 'person' | 'company' | 'assistant' | BotName;
 type Member = {
   x: number;
@@ -147,7 +149,7 @@ function Glyph({ kind, small }: { kind: Kind; small?: boolean }) {
   if (kind === 'assistant' || kind === 'you') {
     return (
       <span className="coworkers-label">
-        {kind === 'assistant' ? 'AI' : 'You'}
+        {kind === 'assistant' ? 'AI' : t('You')}
       </span>
     );
   }
@@ -177,7 +179,8 @@ function Glyph({ kind, small }: { kind: Kind; small?: boolean }) {
     );
   }
   return (
-    <Klex
+    <ProgressiveMascot
+      snapshot={kind}
       {...heroLooks[kind]}
       size={small ? 15 : 20}
       layout="avatar"
@@ -261,17 +264,14 @@ export function Coworkers() {
   return (
     <>
       <h2 id="coworkers-title" className="coworkers-title">
-        <span>
-          Personal <span className="coworkers-nowrap">AI-Assistants</span> don't
-          work for your business.
-        </span>{' '}
-        <span>Klex Bots are digital coworkers that do.</span>
+        <span>{t('Personal AI Assistants don’t work for your business.')}</span>{' '}
+        <span>{t('Klex Bots are digital coworkers that do.')}</span>
       </h2>
       <Card className="coworkers-card ring-0">
         <CardContent className="px-0">
           <Table className="coworkers-comparison">
             <TableCaption className="sr-only">
-              Personal AI Assistant compared with Klex Bots
+              {t('Personal AI Assistant compared with Klex Bots')}
             </TableCaption>
             <TableHeader>
               <TableRow>
@@ -279,17 +279,22 @@ export function Coworkers() {
                   <div className="coworkers-product" aria-hidden="true">
                     <span className="coworkers-assistant-symbol">AI</span>
                   </div>
-                  <span className="coworkers-column-title" data-font="plain">
-                    Personal AI Assistant
+                  <span
+                    data-markdown="include"
+                    className="coworkers-column-title"
+                    data-font="plain"
+                  >
+                    {t('Personal AI Assistant')}
                   </span>
-                  <p>Built around you.</p>
+                  <p data-markdown="exclude">{t('Built around you.')}</p>
                 </TableHead>
                 <TableHead scope="col">
                   <div className="coworkers-product" aria-hidden="true">
                     {(['monica', 'jonathan', 'kristine'] as const).map(
                       (bot) => (
-                        <Klex
+                        <ProgressiveMascot
                           key={bot}
+                          snapshot={bot}
                           {...heroLooks[bot]}
                           size={64}
                           layout="avatar"
@@ -299,15 +304,16 @@ export function Coworkers() {
                     )}
                   </div>
                   <span className="coworkers-column-title">Klex Bots</span>
-                  <p>Built into your team.</p>
+                  <p data-markdown="exclude">{t('Built into your team.')}</p>
                   <Button
                     size="lg"
+                    data-markdown="exclude"
                     className="coworkers-cta rounded-full px-4"
                     nativeButton={false}
                     role="link"
                     render={<a href="https://cloud.klex.bot" />}
                   >
-                    Create a Klex Bot
+                    {t('Create a Klex Bot')}
                   </Button>
                 </TableHead>
               </TableRow>
@@ -323,7 +329,7 @@ export function Coworkers() {
                       id={`coworkers-${topic.toLowerCase()}-title`}
                       className="coworkers-topic-title"
                     >
-                      {sectionTitle}
+                      {t(sectionTitle)}
                     </h3>
                   </TableHead>
                 </TableRow>
@@ -331,8 +337,10 @@ export function Coworkers() {
                   {[assistant, coworker].map(({ title, text }, index) => (
                     <TableCell key={title}>
                       <MiniDiagram topic={topic} team={index === 1} />
-                      <strong className="coworkers-cell-title">{title}</strong>
-                      <p>{text}</p>
+                      <strong className="coworkers-cell-title">
+                        {t(title)}
+                      </strong>
+                      <p>{t(text)}</p>
                     </TableCell>
                   ))}
                 </TableRow>

@@ -41,9 +41,7 @@ type Purpose =
   | 'imageVision'
   | 'audioListening'
   | 'instincts'
-  | 'voice.sts'
-  | 'voice.tts'
-  | 'voice.stt';
+  | 'voice.sts';
 
 type ModelReference = ModelSelectionEntry | InstinctModelSelectionEntry;
 
@@ -71,8 +69,6 @@ const PURPOSES: { key: Purpose; label: string }[] = [
   { key: 'imageVision', label: 'Image Vision' },
   { key: 'audioListening', label: 'Audio Listening' },
   { key: 'voice.sts', label: 'Voice — Speech-to-Speech' },
-  { key: 'voice.tts', label: 'Voice — Text-to-Speech' },
-  { key: 'voice.stt', label: 'Voice — Speech-to-Text' },
 ];
 
 function fuzzyIncludes(value: string, query: string): boolean {
@@ -117,9 +113,8 @@ function supportsPurpose(model: KnownModel, purpose: Purpose): boolean {
     return model.capabilities?.input?.image !== undefined;
   if (purpose === 'audioListening')
     return model.capabilities?.input?.audio !== undefined;
-  if (purpose.startsWith('voice.')) {
-    const voice = purpose.split('.')[1] as 'sts' | 'tts' | 'stt';
-    return model.capabilities?.voice?.[voice] === true;
+  if (purpose === 'voice.sts') {
+    return model.capabilities?.voice?.sts === true;
   }
   return (
     model.kind === undefined ||
@@ -236,12 +231,10 @@ export function ModelSelectionScreen({
     };
     let detailModelCount = 0;
     if (selectedPurpose && selection) {
-      detailModelCount = selectedPurpose.startsWith('voice.')
-        ? selection.voice[
-            selectedPurpose.split('.')[1] as 'sts' | 'tts' | 'stt'
-          ].length
-        : selection[selectedPurpose as Exclude<Purpose, `voice.${string}`>]
-            .length;
+      detailModelCount =
+        selectedPurpose === 'voice.sts'
+          ? selection.voice.sts.length
+          : selection[selectedPurpose].length;
     }
     const detailKeys = [{ key: 'a', label: 'Add' }];
     if (detailIndex > 0) detailKeys.push({ key: 'shift+↑', label: 'Move up' });
@@ -333,11 +326,10 @@ export function ModelSelectionScreen({
 
   function getModels(purpose: Purpose): ModelReference[] {
     if (!selection) return [];
-    if (purpose.startsWith('voice.')) {
-      const voiceKey = purpose.split('.')[1] as 'sts' | 'tts' | 'stt';
-      return selection.voice[voiceKey];
+    if (purpose === 'voice.sts') {
+      return selection.voice.sts;
     }
-    return selection[purpose as Exclude<Purpose, `voice.${string}`>] ?? [];
+    return selection[purpose] ?? [];
   }
 
   async function patchPurpose(
@@ -349,14 +341,10 @@ export function ModelSelectionScreen({
     mutationLock.current = true;
     setMutationState({ pending: true });
     let patchBody: Record<string, unknown>;
-    if (purpose.startsWith('voice.')) {
-      const voiceKey = purpose.split('.')[1] as 'sts' | 'tts' | 'stt';
+    if (purpose === 'voice.sts') {
       patchBody = {
         voice: {
-          sts: selection.voice.sts,
-          tts: selection.voice.tts,
-          stt: selection.voice.stt,
-          [voiceKey]: references,
+          sts: references,
         },
       };
     } else {

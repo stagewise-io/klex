@@ -23,6 +23,7 @@ import {
   renderInteractionUpdateText,
 } from '@/session/interaction';
 
+import { assembleRealtimeInstructions } from '../instructions';
 import type {
   RealtimeModelEvent,
   RealtimeModelSession,
@@ -237,7 +238,13 @@ export class GeminiLiveSession implements RealtimeModelSession {
         inputAudioTranscription: {},
         outputAudioTranscription: {},
         systemInstruction: {
-          parts: [{ text: this.context?.instructions ?? DEFAULT_INSTRUCTIONS }],
+          parts: [
+            {
+              text: assembleRealtimeInstructions(
+                this.context?.instructions ?? DEFAULT_INSTRUCTIONS,
+              ),
+            },
+          ],
         },
         ...(tools.length > 0 && {
           tools: [

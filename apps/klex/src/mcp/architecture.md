@@ -66,6 +66,22 @@ Key invariants:
 - Only the current connection owns the namespace's event worker.
 - Late connections from superseded attempts close immediately.
 
+## Server metadata
+
+Each connection snapshots the SDK's server identity, capabilities, instructions,
+selected protocol revision and era, and discovery-supported versions when present.
+`McpServerMetadata` uses the public SDK `Implementation`, `ServerCapabilities`, and
+`ProtocolEra` types. Metadata reads return detached copies, so admin consumers
+cannot mutate connection state. `getServerStatuses()` includes only the active
+connection's metadata; disconnects and configuration replacement discard it.
+Reconnection captures fresh values. Metadata is process-local, not persisted.
+
+The existing admin list and single-server routes forward these fields. They do
+not perform additional discovery or external enrichment. Configured namespace
+and URL stay separate from server-advertised name and website. Advertised
+capabilities are not operational support guarantees. Text, instructions, links,
+and icons remain untrusted server content for consumers to handle safely.
+
 ## OAuth authorization
 
 OAuth-protected HTTP MCP servers are authorized through one of two `OAuthAuthorizationSession` implementations. `connection.ts` calls `sessionFactory.start()` once per connection attempt and awaits `session.authorize()`.
@@ -83,6 +99,10 @@ Selection happens per `start()` call: the cloud channel is used when cloud conne
 The cloud channel is **pull-based** — Klex Cloud reaches the agent's admin API through the tunnel. The callback endpoint is unauthenticated by necessity; security rests on the OAuth `state` parameter (32 random bytes, timing-safe compared, single-use, expiring). PKCE verifiers, client secrets, and tokens never leave the agent.
 
 Pending authorizations are in-memory: each is a live, blocked connection attempt. A restart drops them, and the cloud simply starts a new authorization.
+
+Removing a server through the admin API calls `mcp.removeServer()`. It removes the configuration, cancels pending authorization, closes the connection, and deletes that namespace's OAuth state, including credentials for previous URLs and legacy entries. Closed providers cannot write late token responses back into the store. A replacement with the same namespace waits for cleanup to finish. Normal reconnects and shutdown preserve credentials.
+
+After local deletion, Klex discovers each saved token issuer's revocation endpoint and attempts RFC 7009 revocation of refresh and access tokens. Discovery and revocation share a five-second timeout. Missing endpoints, unsupported client authentication, and provider failures do not block local removal. Remote revocation is best effort; provider grants may still need to be removed in the provider's settings. Local storage errors fail the request and allow cleanup to be retried by namespace. The credential file's schema and compatibility versions are unchanged.
 
 ## Interface to session
 

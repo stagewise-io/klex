@@ -161,8 +161,18 @@ test('workflow validates before publishing and releases the helper before consum
     new URL('../.github/workflows/release.yml', import.meta.url),
     'utf8',
   );
+  // The frozen full install runs inside the shared setup action.
+  const setup = await readFile(
+    new URL('../.github/actions/setup-workspace/action.yml', import.meta.url),
+    'utf8',
+  );
+  assert.ok(setup.includes('pnpm install --frozen-lockfile'));
+  assert.ok(
+    !workflow.includes('install-filter'),
+    'Release must install the full workspace',
+  );
   const order = [
-    'pnpm install --frozen-lockfile',
+    'uses: ./.github/actions/setup-workspace',
     'node scripts/verify-mcp-extension-packages.mjs',
     'node scripts/mcp-extension-release-plugin.mjs --preflight',
     '--extends ./packages/mcp-proxy-sdk/.releaserc.js',

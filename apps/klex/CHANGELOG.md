@@ -2,6 +2,168 @@
 
 All notable Klex changes are documented here.
 
+## 0.30.1 (2026-11-07)
+
+### Bug Fixes
+
+- keep rotated refresh tokens and reset 401 budget on re-auth (0c111aa)
+- address MCP OAuth review findings (ff81bac)
+- coordinate MCP OAuth refresh and log token failures (58d3905)
+
+## 0.30.0 (2026-11-06)
+
+### Features
+
+- show setup handoff after cloud enrollment (025fa4f)
+- create and enroll agents noninteractively (16579c8)
+- use agent-specific CIMD client metadata URL (917ed69)
+- identify cloud MCP OAuth clients with Klex Cloud's CIMD (1db2b4a)
+- support customer-registered MCP OAuth clients (d0668c2)
+
+### Bug Fixes
+
+- complete enrollment teardown after cleanup failures (f1e0899)
+- release cancelled enrollment resources and use bot naming (3c19f33)
+- bound agent CIMD lookup to a 3s budget (54baa7e)
+- keep searching OAuth discovery documents for revocation (863d5a2)
+- stop registered OAuth client setup when removing MCP servers (8e94238)
+- preserve OIDC revocation metadata (ac153eb)
+- clean up OAuth credentials when removing MCP servers (aebacf1)
+- keep MCP authorization usable when a client replacement fails (ecf6154)
+- document 400 for invalid OAuth client bodies (34f2e65)
+- keep released MCP OAuth store schema unchanged (36b4ae0)
+- invalidate truncated resource baselines across generations (dd74f0f)
+- preserve identity in bounded resource updates (cc004b1)
+- preserve MCP resource baselines across compaction (5d24f89)
+
+## 0.29.0 (2026-11-04)
+
+### Features
+
+- sign in to ChatGPT Codex via device code without the CLI (8d24deb)
+
+### Bug Fixes
+
+- classify sign-in errors behind status-less API errors (68185a0)
+- classify missing sign-in and guard sign-out races (27da99c)
+
+## 0.28.2 (2026-11-03)
+
+### Bug Fixes
+
+- bound episodic search index rebuild memory (2c8e99e)
+- optimize episodic search index reconciliation (a3dae52)
+- complete turn on silent stop after resolved tool calls (f10eea0)
+- exclude readAttachment remote URLs from compaction media projection (9e7f8a3)
+
+## 0.28.1 (2026-11-03)
+
+### Bug Fixes
+
+- set canonical activity storage floor to 0.28.1 (1e84d7d)
+- report which provider settings failed validation (120f0c0)
+- harden activity generation and deferred retries (65dbe2c)
+- harden canonical activity consumers (0c6768a)
+- persist stable activity revisions (2777dfd)
+
+### Other Changes
+
+- generate structured activity titles (27e57d5)
+- derive episodic memory from SQLite history (c8073fe)
+
+## 0.28.0 (2026-11-02)
+
+### Features
+
+- add template skill namespace and sync route (8834e4f)
+- add soul management API and CLI (363814f)
+- nudge prompt to acknowledge, queue, and prioritize concurrent requests (KLEX-76) (c08d038)
+- add central namespaced skill registry (fd74f1c)
+- greet user on call connect and report startup errors (KLEX-75) (caf933e)
+
+### Bug Fixes
+
+- enforce soul checks during realtime bootstrap (4ba233d)
+- clarify voice vs MCP output visibility during live voice calls (KLEX-77) (cde7a4a)
+- keep import seeds and pause learning on failed imports (04c16c8)
+- harden legacy skill import and registry writes (27ffcad)
+- send initial realtime greeting before forwarding queued inbox updates (KLEX-75) (33dffab)
+- preserve tool media and reject invalid compaction summaries (443dbb6)
+- preserve structured-only MCP tool results (c905a7f)
+- recognize MCP structuredContent and resource blocks in tool results (4770f77)
+- tighten MCP tool envelope check and propagate adaptation aborts (50d0e41)
+
+### Other Changes
+
+- isolate migration restart checks from owner writes (7a98fe2)
+- keep resolveName out of the legacy removal set (6157299)
+- tag skill registry compatibility code for removal (a2aecd9)
+- use typed deterministic lease in greeting ordering test (4cb40ae)
+
+## 0.27.2 (2026-10-30)
+
+### Bug Fixes
+
+- limit provider cleanup deadlines to startup rollback (11ff391)
+- preserve shutdown ordering and cleanup failures (99ffea8)
+- run automatic updates before agent startup (9ee2847)
+- preserve released config serialization order (953b308)
+- freeze local data migration history (ca10508)
+
+### Other Changes
+
+- isolate migrations by store and version (470beec)
+
+## 0.27.1 (2026-10-29)
+
+### Fix existing config startup
+
+Fixes the startup failure introduced in 0.27.0 when loading existing configs. Supports both legacy schema-6 configs and STS-only configs written by 0.27.0. The migration removes obsolete TTS/STT model selections while preserving STS voices, provider options, audio-listening selections, providers, and instinct settings.
+
+### Bug Fixes
+
+- migrate legacy voice selections without breaking startup (e610aa1)
+
+### Other Changes
+
+- simplify release notes and clarify migration rules (29670bf)
+
+## 0.27.0 (2026-10-29)
+
+### Features
+
+- remove TTS/STT model selections and fix gpt-audio-* audio listening (835f843)
+- preserve custom models in provider copies (603f99a)
+- add opt-in provider credential export (6f43186)
+- forward advertised MCP server metadata (205c74a)
+
+### Bug Fixes
+
+- scope provider export env resolution (00f1c97)
+- redact resolved MCP server URLs (86f60a9)
+- preserve configured MCP URL in status (ce27193)
+
+## 0.26.0 (2026-10-27)
+
+### Features
+
+- use bot officialName as MCP OAuth DCR client_name (58fa981)
+- allow bots to add remote HTTP MCP servers (KLEX-70) (4797106)
+
+### Bug Fixes
+
+- relay OAuth issuer in MCP callbacks (329b7d2)
+
+## 0.25.1 (2026-10-26)
+
+### Bug Fixes
+
+- move GenerationHealthErrorSchema to generation-health (764118b)
+- guard generation health persistence and add end-to-end turn test (d6d3771)
+- add StepCompleteEvent.generationFailure and preserve rate-limit/quota classification (c1fa6c9)
+- preserve rate_limit and quota categories over incidental auth/config wording (bf29bf2)
+- restore swapped no-soul prompts for default and god sessions (fb84187)
+
 ## 0.25.0 (2026-10-23)
 
 ### Features

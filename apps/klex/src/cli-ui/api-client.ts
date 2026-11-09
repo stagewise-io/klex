@@ -172,8 +172,6 @@ export interface ModelSelection {
   instincts: InstinctModelSelectionEntry[];
   voice: {
     sts: ModelSelectionEntry[];
-    tts: ModelSelectionEntry[];
-    stt: ModelSelectionEntry[];
   };
   warnings?: Array<{ modelId: string; message: string }>;
 }
@@ -308,10 +306,12 @@ export class AdminApiClient {
       method?: string;
       body?: unknown;
       contentType?: string;
+      signal?: AbortSignal;
     },
   ): Promise<T> {
     const response = await this.fetcher(`${this.baseUrl}${path}`, {
       method: options?.method ?? 'GET',
+      ...(options?.signal ? { signal: options.signal } : {}),
       headers:
         options?.body !== undefined
           ? { 'Content-Type': options?.contentType ?? 'application/json' }
@@ -498,6 +498,28 @@ export class AdminApiClient {
     return this.request<CloudEnrollResult>('/v1/cloud/enroll', {
       method: 'POST',
       body: { enrollmentCode },
+    });
+  }
+
+  // --- Soul ---
+
+  getSoul(signal?: AbortSignal): Promise<string | null> {
+    return this.request<string | null>('/v1/soul', { signal });
+  }
+
+  createSoul(instructions: string, signal?: AbortSignal): Promise<string> {
+    return this.request<string>('/v1/soul', {
+      method: 'POST',
+      body: { instructions },
+      signal,
+    });
+  }
+
+  updateSoul(instructions: string, signal?: AbortSignal): Promise<string> {
+    return this.request<string>('/v1/soul', {
+      method: 'PATCH',
+      body: { instructions },
+      signal,
     });
   }
 

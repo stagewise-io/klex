@@ -4,10 +4,19 @@ import { context } from '@opentelemetry/api';
 import { isToolUIPart, type LanguageModel } from 'ai';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { SessionHistoryRecorder } from '@/session-history';
+
+import {
+  CHECKPOINT_DATA_PART_TRANSFORMERS,
+  createCheckpointManager,
+} from '../checkpoint';
+import { createContextCompactionExt } from '../extensions/context-compaction/context-compaction';
 import type {
+  ExtensionDeps,
   InstinctSummary,
   StepCompleteEvent,
 } from '../extensions/extension-api';
+import { createTimeExt } from '../extensions/time/time';
 import type { InstinctRunner } from '../instinct';
 import type { ExtendedUIMessage } from '../message-types';
 import {
@@ -15,6 +24,7 @@ import {
   makeExtensionHandler,
   makeFallbackManager,
   makeModelResolver,
+  makeTestSpan,
 } from '../test-helpers';
 import {
   checkAndFixHistory,
@@ -125,6 +135,49 @@ function setupDefaultMocks() {
 }
 
 // --- tests ---
+
+describe('Step — extension skip', () => {
+  it('keeps new canonical history when an extension skips without removing it', async () => {
+    vi.clearAllMocks();
+    setupDefaultMocks();
+    const messages = [makeUserMessage('Keep this for later')];
+    const original = structuredClone(messages);
+    const handler = makeExtensionHandler();
+    handler.shouldRunStep.mockReturnValue(false);
+    const result = await createStep(
+      makeDeps({ messages, extensionHandler: handler as never }),
+    ).run();
+    expect(result).toMatchObject({ shouldContinue: false, generation: null });
+    expect(messages).toEqual(original);
+    expect(createGenerationRunner).not.toHaveBeenCalled();
+    expect(handler.runStepCompleteHooks).toHaveBeenCalledOnce();
+  });
+
+  it('allows history removal and skips hooks, repair, instinct, model resolution and generation', async () => {
+    vi.clearAllMocks();
+    setupDefaultMocks();
+    const messages = [makeUserMessage()];
+    const handler = makeExtensionHandler();
+    handler.shouldRunStep.mockImplementation(() => {
+      messages.splice(0);
+      return false;
+    });
+    const deps = makeDeps({ messages, extensionHandler: handler as never });
+    const result = await createStep(deps).run();
+    expect(messages).toEqual([]);
+    expect(result).toMatchObject({
+      shouldContinue: false,
+      generation: null,
+      fatalError: false,
+    });
+    expect(handler.runStepStartHooks).not.toHaveBeenCalled();
+    expect(checkAndFixHistory).not.toHaveBeenCalled();
+    expect(handler.hasInstinctParticipants).not.toHaveBeenCalled();
+    expect(deps.modelResolver.getLanguageModel).not.toHaveBeenCalled();
+    expect(createGenerationRunner).not.toHaveBeenCalled();
+    expect(handler.runStepCompleteHooks).toHaveBeenCalledOnce();
+  });
+});
 
 describe('Step — preparation cancellation and completion', () => {
   const summary: InstinctSummary = {
@@ -719,6 +772,196 @@ describe('Step — provisional step context', () => {
     setupDefaultMocks();
   });
 
+  it.each([
+    'user',
+    'output-available',
+    'output-denied',
+    'output-error',
+    'approval-responded',
+  ])(
+    'captures %s history before provisional context and rolls back on completion',
+    async (state) => {
+      const original =
+        state === 'user'
+          ? makeUserMessage()
+          : makeAssistantMessage([makeToolPart('call-1', state)]);
+      const messages = [original];
+      const extensionHandler = makeExtensionHandler();
+      const parts = [{ type: 'text' as const, text: 'additional context' }];
+      extensionHandler.getProvisionalStepContext.mockResolvedValue({
+        parts: parts as never[],
+      });
+      const result: StepCompleteEvent = {
+        ...SUCCESS_RESULT,
+        shouldContinue: false,
+        generation: {
+          modelId: 'model-a',
+          finishReason: 'stop',
+          usage: { inputTokens: 10, outputTokens: 0 } as never,
+        },
+      };
+      vi.mocked(createGenerationRunner).mockImplementationOnce((deps) => {
+        expect(deps.allowEmptyStop).toBe(state !== 'user');
+        expect(messages.at(-1)).toMatchObject({ role: 'user', parts });
+        expect(messages).toHaveLength(2);
+        return {
+          run: vi.fn(async () => result),
+          abort: vi.fn(),
+          abortTools: vi.fn(),
+        } as never;
+      });
+      expect(
+        await createStep(
+          makeDeps({
+            messages,
+            extensionHandler: extensionHandler as never,
+          }),
+        ).run(),
+      ).toEqual(result);
+      expect(createGenerationRunner).toHaveBeenCalledOnce();
+      expect(messages).toEqual([original]);
+    },
+  );
+
+  it('continues a compacted tool-heavy turn with its audio prompt and clock in the header', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const old = makeUserMessage('previous turn');
+    old.parts.push(
+      { type: 'data-time', data: { timestamp: now, tz: 'UTC' } } as never,
+      { type: 'data-timezone', data: { timestamp: now, tz: 'UTC' } } as never,
+    );
+    const active = makeUserMessage('Act on this voice message');
+    active.parts.push({
+      type: 'file',
+      mediaType: 'audio/ogg',
+      url: 'data:audio/ogg;base64,YXVkaW8=',
+    });
+    const tail = [
+      active,
+      ...Array.from({ length: 15 }, (_, i) =>
+        makeAssistantMessage([
+          {
+            type: 'dynamic-tool',
+            toolName: 'read',
+            toolCallId: `call-${i}`,
+            state: 'output-available',
+            input: { i },
+            output: `result ${i}`,
+          },
+        ]),
+      ),
+    ];
+    const messages = [
+      old,
+      makeAssistantMessage([{ type: 'text', text: 'previous answer' }]),
+      ...tail,
+    ];
+    const time = createTimeExt({
+      timezone: 'UTC',
+      timeUpdatePeriod: 300,
+    }).create({} as ExtensionDeps);
+    const extensionHandler = makeExtensionHandler();
+    const manager = createCheckpointManager({
+      logger,
+      span: makeTestSpan(),
+      messages,
+      extensionHandler: () => ({
+        collectCheckpointCarry: async (dropped) => {
+          if (!time.getCheckpointCarry)
+            throw new Error('Time extension must provide checkpoint carry');
+          const carry = await time.getCheckpointCarry(dropped);
+          if (!carry) throw new Error('Expected time checkpoint carry');
+          return carry;
+        },
+        runCheckpointApplyingHooks: async () => ({ defer: false }),
+      }),
+      recorder: {
+        commitCheckpoint: vi.fn(async () => {}),
+        markTrimmed: vi.fn(),
+      } as unknown as SessionHistoryRecorder,
+      onApplied: vi.fn(),
+    });
+    const compaction = createContextCompactionExt.create({
+      logger,
+      config: { getModelSelection: () => ['test:model'] },
+      modelResolver: { resolveModelInfo: () => ({ contextSize: 1_000 }) },
+      getHistory: () => messages,
+      checkpoints: manager,
+      generateText: vi.fn(async () => ({
+        success: true,
+        text: 'Previous work summarized',
+      })),
+    } as unknown as ExtensionDeps);
+    if (!compaction.onStepComplete)
+      throw new Error('Compaction extension must provide onStepComplete');
+    await compaction.onStepComplete({
+      ...SUCCESS_RESULT,
+      generation: {
+        modelId: 'test:model',
+        finishReason: 'tool-calls',
+        usage: { inputTokens: 100_000 } as never,
+      },
+    });
+    await vi.waitFor(() => expect(manager.hasPending).toBe(true));
+    await manager.applyPending();
+    expect(messages.slice(1)).toEqual(tail);
+
+    Object.assign(extensionHandler, {
+      getProvisionalStepContext: vi.fn(
+        async (history: readonly ExtendedUIMessage[]) => {
+          if (!time.getProvisionalStepContext)
+            throw new Error('Time extension must provide step context');
+          const context = await time.getProvisionalStepContext(
+            history,
+            {} as never,
+          );
+          if (!context) throw new Error('Expected time step context');
+          return context;
+        },
+      ),
+    });
+    extensionHandler.getDataPartTransformers.mockReturnValue({
+      ...CHECKPOINT_DATA_PART_TRANSFORMERS,
+      ...time.dataPartTransformers,
+    });
+    const actual = await vi.importActual<
+      typeof import('../utils/convert-to-model-messages')
+    >('../utils/convert-to-model-messages');
+    vi.mocked(convertToModelMessagesExtended).mockImplementationOnce(
+      actual.convertToModelMessagesExtended,
+    );
+    await createStep(
+      makeDeps({ messages, extensionHandler: extensionHandler as never }),
+    ).run();
+
+    const generationCall = vi.mocked(createGenerationRunner).mock.calls.at(-1);
+    if (!generationCall) throw new Error('Expected a generation runner call');
+    const modelMessages = generationCall[0].modelMessages;
+    expect(modelMessages[0]).toMatchObject({
+      role: 'user',
+      content: [
+        { type: 'text', text: '<summary>Previous work summarized</summary>' },
+        { type: 'text', text: expect.stringContaining('<time>') },
+        { type: 'text', text: expect.stringContaining('<timezone>UTC') },
+      ],
+    });
+    expect(modelMessages[1]).toMatchObject({
+      role: 'user',
+      content: [
+        { type: 'text', text: 'Act on this voice message' },
+        { type: 'file', mediaType: 'audio/ogg' },
+      ],
+    });
+    expect(modelMessages.at(-1)?.role).toBe('tool');
+    expect(
+      modelMessages.filter((message) => message.role === 'tool'),
+    ).toHaveLength(15);
+    expect(
+      modelMessages.filter((message) => message.role === 'user'),
+    ).toHaveLength(2);
+    expect(messages.slice(1)).toEqual(tail);
+  });
+
   it('calls getProvisionalStepContext after model resolution with messages and resolved model', async () => {
     const extensionHandler = makeExtensionHandler();
     extensionHandler.getProvisionalStepContext.mockResolvedValue({ parts: [] });
@@ -1078,9 +1321,10 @@ describe('Step — model selection', () => {
       new Error('unsupported model format'),
     );
     const fallbackManager = makeFallbackManager();
-    fallbackManager.getChatModelEntry.mockReturnValue(
-      'speech:text-to-speech' as never,
-    );
+    fallbackManager.getChatModelEntry.mockReturnValue({
+      providerId: 'speech',
+      modelId: 'text-to-speech',
+    } as never);
     const extensionHandler = makeExtensionHandler();
 
     const result = await createStep(
@@ -1094,6 +1338,12 @@ describe('Step — model selection', () => {
 
     expect(fallbackManager.fallbackToNextModel).toHaveBeenCalledOnce();
     expect(result).toEqual({
+      generationFailure: expect.objectContaining({
+        category: 'configuration',
+        providerId: 'speech',
+        modelId: 'text-to-speech',
+        providerType: null,
+      }),
       shouldContinue: true,
       forceNextStep: false,
       fatalError: false,

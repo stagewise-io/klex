@@ -10,6 +10,8 @@ import { z } from 'zod';
 
 import { providerTypeSchema } from '@/config';
 
+import { ProviderCredentialError } from './authorization/credential-manager';
+
 export const modelValidationInputSchema = z
   .object({
     provider: z.union([
@@ -39,8 +41,6 @@ export const modelValidationInputSchema = z
         'imageVision',
         'audioListening',
         'voice.sts',
-        'voice.tts',
-        'voice.stt',
       ])
       .default('chat'),
     providerOptions: z
@@ -268,6 +268,16 @@ export function classifyModelValidationError(
 ): ModelValidationResult {
   // The SDK can wrap upstream failures. Never return raw bodies, messages, or URLs.
   for (let depth = 0; depth < 5; depth++) {
+    if (
+      error instanceof ProviderCredentialError &&
+      error.failure.code === 'authentication_required'
+    )
+      return modelValidationResult(
+        'invalid',
+        'authentication_required',
+        'The provider is not signed in.',
+        'Sign in to the provider, then retry.',
+      );
     if (NoSuchModelError.isInstance(error))
       return modelValidationResult(
         'invalid',
@@ -289,6 +299,11 @@ export function classifyModelValidationError(
       );
     if (APICallError.isInstance(error)) {
       const status = error.statusCode;
+      // Fetch rejections can surface as status-less wrappers. Classify the cause.
+      if (status === undefined && error.cause instanceof Error) {
+        error = error.cause;
+        continue;
+      }
       if (status === 401)
         return modelValidationResult(
           'invalid',

@@ -1,7 +1,7 @@
 export const getSystemPromptPart = (soul: string) => {
-  return `## Your Soul
+  return `## Soul
 
-The \`<soul>\` block contains your own thoughts about yourself. Act reliably upon it, as it describes how you view yourself and who you are.
+Inside \`<soul>\` block. Describes your personality, behavioral traits, and what makes you the bot that you are.
 
 <soul>
 ${soul}

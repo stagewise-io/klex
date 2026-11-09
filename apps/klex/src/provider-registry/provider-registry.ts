@@ -23,10 +23,14 @@ import {
   modelSelectionSchema,
   type ProviderType,
   parseProviderSettings,
+  providerSettingKeysForAuthMode,
   type ResolvedModelConfig,
   type ResolvedRealtimeProvider,
 } from '@/config';
 
+import { ProviderCredentialManager } from './authorization/credential-manager';
+import type { ProviderCredentialStore } from './authorization/credential-store';
+import { DeviceAuthorizations } from './authorization/device-authorizations';
 import { mergeProviderModels } from './model-metadata';
 import {
   ModelValidation,
@@ -76,6 +80,13 @@ export type ProviderOperationResult<T = undefined> =
   | ProviderOperationSuccess<T>
   | ProviderOperationFailure;
 
+export type ProviderModelDiscoveryResult = ProviderOperationResult<
+  readonly ProviderModel[]
+> & {
+  /** A partial catalog must not evict previously discovered models. */
+  partial?: boolean;
+};
+
 export interface ProviderCapabilities {
   modelDiscovery: boolean;
   voiceDiscovery: boolean;
@@ -84,6 +95,8 @@ export interface ProviderCapabilities {
   customModels: boolean;
   generation: boolean;
   evaluation: boolean;
+  /** The provider can sign in interactively through registry-owned credentials. */
+  interactiveAuthorization: boolean;
 }
 
 export interface ProviderMetadata {
@@ -160,6 +173,94 @@ export interface ProviderConnectionResult {
   target?: string;
 }
 
+/** Registry-owned credential obtained through interactive authorization. */
+export interface ProviderCredential {
+  accessToken: string;
+  refreshToken: string;
+  idToken?: string;
+  /** ISO timestamp of access-token expiry, when known. */
+  expiresAt?: string;
+  accountId?: string;
+}
+
+/** Sign-in capability shown to the user. Never log it. */
+export interface DeviceAuthorizationChallenge {
+  verificationUri: string;
+  userCode: string;
+  /** ISO timestamp after which the attempt can no longer succeed. */
+  expiresAt: string;
+  intervalMs: number;
+  /** Opaque provider state passed back to `poll`. */
+  handle: unknown;
+}
+
+export type DeviceAuthorizationPollResult =
+  | { status: 'pending' }
+  | { status: 'authorized'; credential: ProviderCredential };
+
+/**
+ * Interactive authorization protocol. The registry owns storage, polling,
+ * refresh serialization and lifecycle; the provider owns only HTTP exchanges.
+ * Return `authentication_required` for permanent failures (denied sign-in,
+ * revoked or reused refresh token); other failure codes are treated as
+ * transient.
+ */
+export interface ProviderAuthorization {
+  method: 'device-code';
+  isRequired(settings: ProviderSettings): boolean;
+  /**
+   * Settings the credential is bound to, e.g. the endpoint it is sent to.
+   * The registry discards the credential when this value changes so a
+   * settings edit cannot redirect a bearer token to a different host.
+   */
+  credentialScope?(settings: ProviderSettings): string;
+  start(
+    instance: ProviderInstance,
+    signal: AbortSignal,
+  ): Promise<ProviderOperationResult<DeviceAuthorizationChallenge>>;
+  poll(
+    instance: ProviderInstance,
+    handle: unknown,
+    signal: AbortSignal,
+  ): Promise<ProviderOperationResult<DeviceAuthorizationPollResult>>;
+  refresh(
+    instance: ProviderInstance,
+    credential: ProviderCredential,
+    signal: AbortSignal,
+  ): Promise<ProviderOperationResult<ProviderCredential>>;
+}
+
+/** Per-instance access to registry-owned credentials. */
+export interface ProviderContext {
+  /** Current credential, refreshed first when it is about to expire. */
+  credential(): Promise<ProviderCredential | undefined>;
+  /** Force one refresh, e.g. after a 401. */
+  invalidate(): Promise<ProviderCredential | undefined>;
+}
+
+export type ProviderAuthorizationStatus =
+  | 'required'
+  | 'pending'
+  | 'authorized'
+  | 'expired'
+  | 'failed'
+  | 'revoked';
+
+export interface ProviderAuthorizationInfo {
+  method: 'device-code';
+  status: ProviderAuthorizationStatus;
+  accountId?: string;
+  pending?: { id: string; expiresAt: string };
+  message?: string;
+}
+
+export interface ProviderAuthorizationStarted {
+  id: string;
+  verificationUri: string;
+  userCode: string;
+  expiresAt: string;
+}
+
 export interface ProviderDefinition {
   type: ProviderType;
   /** Developer guidance: intended service/protocol, authentication, adjacent types, and when to use an alternative. */
@@ -169,18 +270,22 @@ export interface ProviderDefinition {
     settings: ProviderSettings,
     signal: AbortSignal,
   ): Promise<ProviderOperationResult>;
+  authorization?: ProviderAuthorization;
   createLanguageModel?(
     instance: ProviderInstance,
     modelId: string,
+    context?: ProviderContext,
   ): LanguageModelV4;
   createEvaluationModel?(
     instance: ProviderInstance,
     modelId: string,
+    context?: ProviderContext,
   ): EvaluationModelV4;
   discoverModels?(
     instance: ProviderInstance,
     signal: AbortSignal,
-  ): Promise<ProviderOperationResult<readonly ProviderModel[]>>;
+    context?: ProviderContext,
+  ): Promise<ProviderModelDiscoveryResult>;
   listVoices?(
     instance: ProviderInstance,
     modelId: string,
@@ -199,6 +304,7 @@ export interface ProviderDefinition {
   testConnection(
     instance: ProviderInstance,
     signal: AbortSignal,
+    context?: ProviderContext,
   ): Promise<ProviderOperationResult<ProviderConnectionResult>>;
 }
 
@@ -225,7 +331,10 @@ export interface ProviderInstanceInfo {
   id: ProviderInstanceId;
   type: ProviderType;
   settings: SerializedProviderSettings;
+  knownModels?: Record<string, ModelDefinition>;
   metadata: ProviderMetadata;
+  /** Present when the instance's settings require interactive authorization. */
+  authorization?: ProviderAuthorizationInfo;
   operations: {
     update: { available: true };
     remove:
@@ -293,7 +402,10 @@ export interface ProviderRegistry extends ProviderModelResolver {
     type: ProviderType,
     settings: ProviderSettings,
   ): SerializedProviderSettings;
-  listInstances(): readonly ProviderInstanceInfo[];
+  /** Explicitly opt into resolved secrets. Callers must enforce authorization. */
+  listInstances(options?: {
+    includeSecrets?: boolean;
+  }): readonly ProviderInstanceInfo[];
   resolveRealtimeProvider(): ResolvedRealtimeProvider | undefined;
   preflightCreate(
     type: ProviderType,
@@ -335,6 +447,12 @@ export interface ProviderRegistry extends ProviderModelResolver {
   testConnection(
     id: ProviderInstanceId,
   ): Promise<ProviderOperationResult<ProviderConnectionResult>>;
+  /** Start or return the live sign-in. The result is a capability; never log it. */
+  startAuthorization(
+    id: ProviderInstanceId,
+  ): Promise<ProviderOperationResult<ProviderAuthorizationStarted>>;
+  cancelAuthorization(id: ProviderInstanceId): Promise<ProviderOperationResult>;
+  signOut(id: ProviderInstanceId): Promise<ProviderOperationResult>;
 }
 
 export interface ProviderRegistryDependencies {
@@ -342,6 +460,7 @@ export interface ProviderRegistryDependencies {
   definitions: readonly ProviderDefinition[];
   config?: Config;
   getSoul?: () => string | null;
+  credentials?: ProviderCredentialStore;
 }
 
 class ProviderRegistryModule implements ProviderRegistry {
@@ -368,13 +487,33 @@ class ProviderRegistryModule implements ProviderRegistry {
       definitions: readonly ProviderDefinition[];
       config?: Config;
       getSoul?: () => string | null;
+      credentials?: ProviderCredentialStore;
     },
   ) {
     this.definitions = validateDefinitions(deps.definitions);
+    const runHook = this.runHook.bind(this);
+    this.credentials = new ProviderCredentialManager({
+      ...(deps.credentials && { store: deps.credentials }),
+      runHook,
+      logger: deps.logger,
+    });
+    this.authorizations = new DeviceAuthorizations({
+      runHook,
+      credentials: this.credentials,
+      logger: deps.logger,
+      onAuthorized: (id) => {
+        this.modelCache.delete(id);
+        this.pendingDiscovery.delete(id);
+      },
+    });
   }
+
+  private readonly credentials: ProviderCredentialManager;
+  private readonly authorizations: DeviceAuthorizations;
 
   async start(): Promise<void> {
     if (this.started) return;
+    await this.credentials.load();
     this.unsubscribe = this.deps.config?.subscribe(() => {
       this.voices.invalidate((id, signature) => {
         const instance = this.getInstance(id);
@@ -399,6 +538,7 @@ class ProviderRegistryModule implements ProviderRegistry {
     this.started = false;
     this.voices.close();
     this.modelValidation.close();
+    this.authorizations.close();
     this.unsubscribe?.();
     this.unsubscribe = undefined;
     this.configGeneration += 1;
@@ -466,8 +606,9 @@ class ProviderRegistryModule implements ProviderRegistry {
           'Choose a language model for this selection.',
         );
       const signature = this.settingsSignature(instance.settings);
+      const context = this.contextFor(definition, instance);
       return await this.modelValidation.run(
-        () => createLanguageModel(instance, input.modelId),
+        () => createLanguageModel(instance, input.modelId, context),
         input,
         signal,
         () => {
@@ -522,10 +663,28 @@ class ProviderRegistryModule implements ProviderRegistry {
     );
   }
 
-  listInstances(): readonly ProviderInstanceInfo[] {
+  listInstances({
+    includeSecrets = false,
+  }: {
+    includeSecrets?: boolean;
+  } = {}): readonly ProviderInstanceInfo[] {
     const config = this.requireConfig();
     return Object.entries(config.get().providers)
-      .map(([id, instance]) => this.instanceInfo({ id, ...instance }))
+      .map(([id, instance]) => {
+        const info = this.instanceInfo({ id, ...instance });
+        return includeSecrets
+          ? {
+              ...info,
+              settings: structuredClone(
+                parseProviderSettings(
+                  instance.type,
+                  config.resolveEnvironment(instance.settings),
+                ),
+              ),
+              knownModels: structuredClone(instance.knownModels ?? {}),
+            }
+          : info;
+      })
       .sort((left, right) => left.id.localeCompare(right.id));
   }
 
@@ -574,6 +733,8 @@ class ProviderRegistryModule implements ProviderRegistry {
     if (!preflight.ok) return preflight;
     const stored: ProviderInstance = { ...instance, settings: preflight.value };
     try {
+      // A reused id must never inherit an earlier instance's sign-in.
+      await this.forgetAuthorization(stored.id);
       await config.writeProviderInstance(stored.id, withoutId(stored));
     } catch (error) {
       return failure('internal_error', sanitizedError(error));
@@ -602,7 +763,10 @@ class ProviderRegistryModule implements ProviderRegistry {
         'invalid_configuration',
         `Unknown provider type '${current.type}'`,
       );
-    const settings = applySettingsPatch(current.settings, patch.settings);
+    const settings = applySettingsPatch(
+      settingsForModeSwitch(current, patch.settings),
+      patch.settings,
+    );
     const validated = validateSettings(current.type, settings);
     if (!validated.ok) return validated;
     const preflight = definition.preflightCreate;
@@ -615,7 +779,17 @@ class ProviderRegistryModule implements ProviderRegistry {
       settings: validated.value,
     };
     try {
+      // Forget first: a failed config write then leaves the instance signed
+      // out rather than its credential bound to settings it was not issued for.
+      const unbound = credentialUnbound(
+        definition,
+        current.settings,
+        updated.settings,
+      );
+      if (unbound) await this.forgetAuthorization(id);
       await config.writeProviderInstance(id, withoutId(updated));
+      // Discards a sign-in started against the old settings during the write.
+      if (unbound) await this.forgetAuthorization(id);
     } catch (error) {
       return failure('internal_error', sanitizedError(error));
     }
@@ -647,11 +821,132 @@ class ProviderRegistryModule implements ProviderRegistry {
         `Unknown provider type '${instance.type}'`,
       );
     try {
+      // Credentials go first so a failure cannot orphan a bearer token.
+      await this.forgetAuthorization(id);
       await config.deleteProviderInstance(id);
+      // Discards a sign-in started while the delete was in flight.
+      await this.forgetAuthorization(id);
     } catch (error) {
       return failure('internal_error', sanitizedError(error));
     }
     return success(undefined);
+  }
+
+  /**
+   * Not serialized with config mutations, so a slow device-code request
+   * cannot block sign-out or removal. Mutations that unbind a credential
+   * forget again after their config write to discard sign-ins that started
+   * while the write was in flight.
+   */
+  async startAuthorization(
+    id: ProviderInstanceId,
+  ): Promise<ProviderOperationResult<ProviderAuthorizationStarted>> {
+    const resolved = this.resolveAuthorization(id);
+    if (!resolved.ok) return resolved;
+    const { instance, authorization } = resolved.value;
+    if (this.credentials.record(id)?.status === 'authorized')
+      return failure(
+        'conflict',
+        `Provider '${id}' is already signed in`,
+        'Sign out first to sign in with a different account.',
+      );
+    return this.authorizations.start(instance, authorization);
+  }
+
+  async cancelAuthorization(
+    id: ProviderInstanceId,
+  ): Promise<ProviderOperationResult> {
+    const resolved = this.resolveAuthorization(id);
+    if (!resolved.ok) return resolved;
+    if (!this.authorizations.cancel(id))
+      return failure('not_found', `Provider '${id}' has no pending sign-in`);
+    return success(undefined);
+  }
+
+  signOut(id: ProviderInstanceId): Promise<ProviderOperationResult> {
+    return this.mutateExclusive(async () => {
+      const resolved = this.resolveAuthorization(id);
+      if (!resolved.ok) return resolved;
+      try {
+        await this.forgetAuthorization(id);
+      } catch (error) {
+        return failure('internal_error', sanitizedError(error));
+      }
+      return success(undefined);
+    });
+  }
+
+  private resolveAuthorization(
+    id: ProviderInstanceId,
+  ): ProviderOperationResult<{
+    instance: ProviderInstance;
+    authorization: ProviderAuthorization;
+  }> {
+    const instance = this.getInstance(id);
+    if (!instance.ok) return instance;
+    const authorization = this.requireDefinition(
+      instance.value.type,
+    ).authorization;
+    if (!authorization?.isRequired(instance.value.settings))
+      return failure(
+        'unsupported_operation',
+        `Provider '${id}' does not use interactive authorization`,
+      );
+    return success({ instance: instance.value, authorization });
+  }
+
+  private async forgetAuthorization(id: ProviderInstanceId): Promise<void> {
+    this.authorizations.cancel(id);
+    await this.credentials.delete(id);
+    this.modelCache.delete(id);
+    this.pendingDiscovery.delete(id);
+  }
+
+  /** Context for providers whose current settings use interactive authorization. */
+  private contextFor(
+    definition: ProviderDefinition,
+    instance: ProviderInstance,
+  ): ProviderContext | undefined {
+    const authorization = definition.authorization;
+    if (!authorization?.isRequired(instance.settings)) return undefined;
+    return this.credentials.contextFor(instance, authorization);
+  }
+
+  private authorizationInfo(
+    definition: ProviderDefinition,
+    instance: ProviderInstance,
+  ): ProviderAuthorizationInfo | undefined {
+    const authorization = definition.authorization;
+    if (!authorization?.isRequired(instance.settings)) return undefined;
+    const attempt = this.authorizations.status(instance.id);
+    if (attempt?.state === 'pending')
+      return {
+        method: authorization.method,
+        status: 'pending',
+        pending: { id: attempt.id, expiresAt: attempt.expiresAt },
+      };
+    const record = this.credentials.record(instance.id);
+    if (record?.status === 'authorized' && record.credential)
+      return {
+        method: authorization.method,
+        status: 'authorized',
+        ...(record.credential.accountId && {
+          accountId: record.credential.accountId,
+        }),
+      };
+    if (record?.status === 'revoked')
+      return {
+        method: authorization.method,
+        status: 'revoked',
+        ...(record.failure && { message: record.failure.message }),
+      };
+    if (attempt)
+      return {
+        method: authorization.method,
+        status: attempt.state,
+        ...(attempt.message && { message: attempt.message }),
+      };
+    return { method: authorization.method, status: 'required' };
   }
 
   addKnownModel(
@@ -760,7 +1055,7 @@ class ProviderRegistryModule implements ProviderRegistry {
       audioListening: patch.audioListening ?? [],
       consult: patch.consult ?? [],
       instincts: patch.instincts ?? [],
-      voice: patch.voice ?? { sts: [], tts: [], stt: [] },
+      voice: patch.voice ?? { sts: [] },
     };
     const warnings: ModelSelectionWarning[] = [];
     for (const [purpose, entries] of modelSelectionEntries(changed)) {
@@ -1177,14 +1472,15 @@ class ProviderRegistryModule implements ProviderRegistry {
     const instance = this.getInstance(id);
     if (!instance.ok) return instance;
     const definition = this.requireDefinition(instance.value.type);
+    const context = this.contextFor(definition, instance.value);
     return this.runHook((signal) =>
-      definition.testConnection(instance.value, signal),
+      definition.testConnection(instance.value, signal, context),
     );
   }
 
   getLanguageModel(reference: ModelSelectionEntry): LanguageModelV4 {
     this.assertStarted();
-    this.resolveModel(reference);
+    const resolved = this.resolveModel(reference);
     const instance = this.getInstance(reference.providerId);
     if (!instance.ok) throw new Error(instance.message);
     const definition = this.requireDefinition(instance.value.type);
@@ -1192,8 +1488,14 @@ class ProviderRegistryModule implements ProviderRegistry {
       throw new Error(
         `Provider '${instance.value.type}' does not support generation`,
       );
+    if (resolved.kind === 'evaluation')
+      throw new Error('Evaluation-only model cannot generate chat messages');
     return withRemoteInputMapping(
-      definition.createLanguageModel(instance.value, reference.modelId),
+      definition.createLanguageModel(
+        instance.value,
+        reference.modelId,
+        this.contextFor(definition, instance.value),
+      ),
       instance.value.type,
     );
   }
@@ -1227,6 +1529,7 @@ class ProviderRegistryModule implements ProviderRegistry {
           const model = definition.createEvaluationModel(
             instance,
             entry.modelId,
+            this.contextFor(definition, instance),
           );
           return {
             status: 'ready',
@@ -1244,7 +1547,11 @@ class ProviderRegistryModule implements ProviderRegistry {
           providerType: provider.type,
           api: 'generation',
           model: withRemoteInputMapping(
-            definition.createLanguageModel(instance, entry.modelId),
+            definition.createLanguageModel(
+              instance,
+              entry.modelId,
+              this.contextFor(definition, instance),
+            ),
             provider.type,
           ),
         };
@@ -1345,10 +1652,27 @@ class ProviderRegistryModule implements ProviderRegistry {
         'Provider does not support model discovery',
       );
     const generation = this.configGeneration;
-    const request = this.runHook((signal) => discoverModels(instance, signal));
+    const context = this.contextFor(definition, instance);
+    const request: Promise<ProviderModelDiscoveryResult> = this.runHook(
+      (signal) => discoverModels(instance, signal, context),
+    );
     this.pendingDiscovery.set(id, request);
     try {
-      const result = await request;
+      let result = await request;
+      const cached = this.modelCache.get(id);
+      if (result.ok && result.partial && cached?.signature === signature) {
+        result = {
+          ...result,
+          value: [
+            ...new Map(
+              [...cached.models, ...result.value].map((model) => [
+                model.modelId,
+                model,
+              ]),
+            ).values(),
+          ],
+        };
+      }
       if (result.ok && generation === this.configGeneration) {
         this.modelCache.set(id, { signature, models: result.value });
         while (this.modelCache.size > 128) {
@@ -1387,11 +1711,13 @@ class ProviderRegistryModule implements ProviderRegistry {
       this.requireConfig().get().modelSelection,
       instance.id,
     );
+    const authorization = this.authorizationInfo(definition, instance);
     return {
       id: instance.id,
       type: instance.type,
       settings: this.serializeSettings(instance.type, instance.settings),
       metadata: providerMetadata(definition),
+      ...(authorization && { authorization }),
       operations: {
         update: { available: true },
         remove: removeBlocked
@@ -1423,9 +1749,13 @@ class ProviderRegistryModule implements ProviderRegistry {
     operation: (
       signal: AbortSignal,
     ) => Promise<ProviderOperationResult<T> | undefined>,
+    options?: { timeoutMs?: number },
   ): Promise<ProviderOperationResult<T>> {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10_000);
+    const timeout = setTimeout(
+      () => controller.abort(),
+      options?.timeoutMs ?? 10_000,
+    );
     timeout.unref?.();
     try {
       const result = await operation(controller.signal);
@@ -1459,6 +1789,25 @@ class ProviderRegistryModule implements ProviderRegistry {
     if (!this.started)
       throw new Error('Provider registry has not been started');
   }
+}
+
+/**
+ * A patch that changes `authMode` drops current settings the target mode does
+ * not accept, such as defaults of the previous mode. Shared settings carry
+ * over and the patch itself is never filtered, so its mistakes still fail.
+ */
+function settingsForModeSwitch(
+  current: ProviderInstance,
+  patch: ProviderSettingsPatch | undefined,
+): ProviderSettings {
+  const authMode = patch?.authMode;
+  if (authMode === undefined || authMode === current.settings.authMode)
+    return current.settings;
+  const keys = providerSettingKeysForAuthMode(current.type, authMode);
+  if (!keys) return current.settings;
+  return Object.fromEntries(
+    Object.entries(current.settings).filter(([key]) => keys.has(key)),
+  );
 }
 
 function applySettingsPatch(
@@ -1499,8 +1848,23 @@ function validateSettings(
   try {
     return success(parseProviderSettings(type, input));
   } catch (error) {
-    return failure('invalid_configuration', sanitizedError(error));
+    return failure('invalid_configuration', settingsErrorMessage(error));
   }
+}
+
+// Zod issue messages name paths and expected shapes, never input values, so
+// they are safe to return even when the rejected settings contain secrets.
+function settingsErrorMessage(error: unknown): string {
+  if (!(error instanceof z.ZodError) || error.issues.length === 0)
+    return sanitizedError(error);
+  const issues = error.issues
+    .slice(0, 3)
+    .map((issue) =>
+      issue.path.length > 0
+        ? `${issue.path.map(String).join('.')}: ${issue.message}`
+        : issue.message,
+    );
+  return `Invalid provider settings: ${issues.join('; ')}`;
 }
 
 function hasTrustedModelMetadata(
@@ -1523,6 +1887,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function success<T>(value: T): ProviderOperationResult<T> {
   return { ok: true, code: 'available', value };
+}
+
+/** Whether a settings change invalidates a stored interactive credential. */
+function credentialUnbound(
+  definition: ProviderDefinition,
+  before: ProviderSettings,
+  after: ProviderSettings,
+): boolean {
+  const authorization = definition.authorization;
+  if (!authorization?.isRequired(before)) return false;
+  if (!authorization.isRequired(after)) return true;
+  const scope = authorization.credentialScope;
+  return scope !== undefined && scope(before) !== scope(after);
 }
 
 function failure(
@@ -1550,17 +1927,11 @@ function modelSelectionEntries(
     ['consult', selection.consult],
     ['instincts', selection.instincts],
     ['voice.sts', selection.voice.sts],
-    ['voice.tts', selection.voice.tts],
-    ['voice.stt', selection.voice.stt],
   ];
 }
 
-function voiceCapabilityForPurpose(
-  purpose: string,
-): 'sts' | 'tts' | 'stt' | undefined {
+function voiceCapabilityForPurpose(purpose: string): 'sts' | undefined {
   if (purpose === 'voice.sts') return 'sts';
-  if (purpose === 'voice.tts') return 'tts';
-  if (purpose === 'voice.stt') return 'stt';
   return undefined;
 }
 
@@ -1591,6 +1962,7 @@ function providerMetadata(definition: ProviderDefinition): ProviderMetadata {
       customModels: true,
       generation: definition.createLanguageModel !== undefined,
       evaluation: definition.createEvaluationModel !== undefined,
+      interactiveAuthorization: definition.authorization !== undefined,
     },
   };
 }
@@ -1640,5 +2012,6 @@ export function createProviderRegistry(
     definitions: deps.definitions,
     ...(deps.config && { config: deps.config }),
     ...(deps.getSoul && { getSoul: deps.getSoul }),
+    ...(deps.credentials && { credentials: deps.credentials }),
   });
 }

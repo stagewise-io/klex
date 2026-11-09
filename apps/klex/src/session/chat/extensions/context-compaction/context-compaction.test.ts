@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { LINES_FORMAT_PROMPT } from '@/session/chat/utils/history-view';
 
 import type { ExtendedUIMessage } from '../../message-types';
+import { descriptionCache } from '../audio-input-optimizer/audio-processing';
 import type {
   CheckpointCommitRequest,
   CheckpointCommitResult,
@@ -26,6 +27,30 @@ import {
 
 // --- mocks ---
 
+vi.mock('../audio-input-optimizer/audio-processing', () => ({
+  cache: new Map(),
+  descriptionCache: new Map(),
+  inflightDescriptions: new Map(),
+  resolveEffectiveAudio: (caps: { audio?: object } | undefined) => ({
+    supports: caps?.audio !== undefined,
+  }),
+  extractAudioBuffer: () => Buffer.from('audio'),
+  runOptimization: vi.fn(async (_buffer, part) => ({
+    ...part,
+    mediaType: 'audio/wav',
+  })),
+}));
+
+vi.mock(
+  '../image-input-optimizer/image-processing',
+  async (importOriginal) => ({
+    ...(await importOriginal<
+      typeof import('../image-input-optimizer/image-processing')
+    >()),
+    runOptimization: vi.fn(async (_buffer, part) => ({ ...part })),
+  }),
+);
+
 vi.mock('ai', async (importOriginal) => {
   const actual = await importOriginal<typeof import('ai')>();
   return {
@@ -42,6 +67,7 @@ vi.mock('./compaction-prompt.md', () => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  descriptionCache.clear();
 });
 
 // --- helpers ---
@@ -321,12 +347,569 @@ async function step(
 }
 
 function lastPrompt(deps: ExtensionDeps): string {
-  return vi.mocked(deps.generateText).mock.calls.at(-1)![0].prompt as string;
+  const args = vi.mocked(deps.generateText).mock.calls.at(-1)?.[0];
+  if (!args) throw new Error('Missing compaction request');
+  return (args.prompt ?? args.messages?.[0]?.content) as string;
 }
 
 // --- tests ---
 
+describe('compaction media adaptation', () => {
+  it('keeps readAttachment placeholders without replaying remote URLs', async () => {
+    const source: ExtendedUIMessage = {
+      id: 'attachment-message',
+      role: 'assistant',
+      parts: [
+        {
+          type: 'dynamic-tool',
+          toolName: 'readAttachment',
+          toolCallId: 'attachment',
+          state: 'output-available',
+          input: {},
+          output: {
+            type: 'content',
+            value: [
+              {
+                type: 'file',
+                mediaType: 'image/png',
+                data: {
+                  type: 'url',
+                  url: 'https://example.test/ephemeral.png?token=SECRET',
+                },
+              },
+            ],
+          },
+        },
+      ],
+    };
+    const deps = makeWindowDeps(
+      sliceOf(
+        source,
+        makeTextMessage('assistant', 'Image reviewed.'),
+        makeTextMessage('user', 'active turn'),
+      ),
+      {
+        generateText: vi
+          .fn()
+          .mockResolvedValue(genSuccess('Attachment summary')),
+      },
+    );
+    vi.mocked(deps.modelResolver.resolveModelInfo).mockReturnValue({
+      contextSize: 20000,
+      inputCapabilities: { image: {} },
+    } as never);
+    await step(
+      createContextCompactionExt.create(deps),
+      FALLBACK_COMPACTION_THRESHOLD,
+    );
+    await vi.waitFor(() =>
+      expect(deps.checkpoints.commit).toHaveBeenCalledOnce(),
+    );
+    expect(deps.checkpoints.commit).toHaveBeenCalledWith(
+      expect.objectContaining({ summary: 'Attachment summary' }),
+    );
+    expect(lastPrompt(deps)).toContain('[Image attachment: image/png]');
+    expect(deps.generateText).toHaveBeenCalledOnce();
+    const args = vi.mocked(deps.generateText).mock.calls[0]?.[0];
+    if (!args) throw new Error('Missing compaction request');
+    const request = JSON.stringify({
+      prompt: args.prompt,
+      messages: args.messages,
+    });
+    expect(request).not.toContain('SECRET');
+    expect(request).not.toContain('https://');
+    for (const message of args.messages ?? []) {
+      if (Array.isArray(message.content)) {
+        expect(message.content.every((part) => part.type === 'text')).toBe(
+          true,
+        );
+      }
+    }
+  });
+
+  it.each(['imageVision', 'audioListening'] as const)(
+    'stops compaction when %s adaptation is aborted',
+    async (purpose) => {
+      const mediaType = purpose === 'imageVision' ? 'image/png' : 'audio/wav';
+      const entry = (modelId: string) => ({ providerId: 'test', modelId });
+      const deps = makeWindowDeps(
+        sliceOf(
+          {
+            id: 'aborted-media',
+            role: 'user',
+            parts: [
+              {
+                type: 'file',
+                mediaType,
+                url: `data:${mediaType};base64,YWJvcnQ=`,
+              },
+            ],
+          },
+          makeTextMessage('user', 'active turn'),
+        ),
+      );
+      vi.mocked(deps.config.getModelSelection).mockImplementation((selected) =>
+        selected === purpose
+          ? [entry('helper'), entry('other-helper')]
+          : selected === 'compaction'
+            ? [entry('first'), entry('second')]
+            : selected === 'chat'
+              ? [entry('chat')]
+              : [],
+      );
+      vi.mocked(deps.modelResolver.resolveModelInfo).mockImplementation(
+        ({ modelId }) =>
+          ({
+            contextSize: 20000,
+            inputCapabilities: modelId.includes('helper')
+              ? { image: {}, audio: {} }
+              : {},
+          }) as never,
+      );
+      vi.mocked(deps.generateText).mockResolvedValue(genFailure('aborted'));
+      const ext = createContextCompactionExt.create(deps);
+      await step(ext, 20000);
+      await vi.waitFor(async () =>
+        expect((await ext.introspect?.())?.status).toBe('idle'),
+      );
+      expect(deps.generateText).toHaveBeenCalledTimes(1);
+      expect(deps.generateText).toHaveBeenCalledWith(
+        expect.objectContaining({
+          modelIds: [entry('helper')],
+        }),
+      );
+      expect(deps.checkpoints.commit).not.toHaveBeenCalled();
+      expect(deps.logger.warn).not.toHaveBeenCalledWith(
+        expect.anything(),
+        'Could not adapt compaction candidate',
+      );
+      expect(deps.logger.warn).not.toHaveBeenCalledWith(
+        'All compaction models failed — falling back to chat models',
+      );
+    },
+  );
+  it.each([false, true])(
+    'keeps JSON tool media out of transcript text (wrapped=%s)',
+    async (wrapped) => {
+      const url =
+        'https://example.test/image?token=PRIVATE_TOKEN&signature=PRIVATE_SIGNATURE';
+      const payload = 'UFJJVkFURV9QQVlMT0FE';
+      const value = {
+        content: [
+          { type: 'image-url', url },
+          { type: 'file-data', mediaType: 'image/png', data: payload },
+          {
+            type: 'resource',
+            resource: { uri: url, mimeType: 'audio/ogg', blob: 'PRIVATE_BLOB' },
+          },
+          {
+            type: 'resource',
+            resource: { uri: url, mimeType: 'text/plain', text: url },
+          },
+          { type: 'resource_link', uri: url, mimeType: 'image/jpeg' },
+          { type: 'image-file-id', fileId: 'PRIVATE_FILE_ID' },
+          { type: 'text', text: 'Useful caption after media' },
+        ],
+        structuredContent: { url, data: 'PRIVATE_STRUCTURED_PAYLOAD' },
+      };
+      const source: ExtendedUIMessage = {
+        id: 'json-media',
+        role: 'assistant',
+        parts: [
+          {
+            type: 'dynamic-tool',
+            toolName: 'read',
+            toolCallId: 'read',
+            state: 'output-available',
+            input: {},
+            output: wrapped ? { type: 'json', value } : value,
+          },
+        ],
+      };
+      const window = sliceOf(source, makeTextMessage('user', 'active turn'));
+      const before = structuredClone(window);
+      const deps = makeWindowDeps(window, {
+        generateText: vi.fn().mockResolvedValue(genSuccess('Summary')),
+      });
+      vi.mocked(deps.modelResolver.resolveModelInfo).mockReturnValue({
+        contextSize: 20000,
+        inputCapabilities: { image: {} },
+      } as never);
+      await step(
+        createContextCompactionExt.create(deps),
+        FALLBACK_COMPACTION_THRESHOLD,
+      );
+      await vi.waitFor(() =>
+        expect(deps.checkpoints.commit).toHaveBeenCalledOnce(),
+      );
+      const transcript = lastPrompt(deps);
+      expect(transcript).toContain('Useful caption after media');
+      expect(transcript).toContain('[Image attachment: image-url]');
+      expect(transcript).toContain('[Image attachment: image/png]');
+      expect(transcript).toContain('[Audio attachment: audio/ogg]');
+      expect(transcript).toContain('[Media attachment: text/plain]');
+      expect(transcript).toContain('[Image attachment: image/jpeg]');
+      expect(transcript).toContain('[Image attachment: image-file-id]');
+      for (const secret of [
+        url,
+        'https://',
+        'PRIVATE_TOKEN',
+        'PRIVATE_SIGNATURE',
+        payload,
+        'PRIVATE_BLOB',
+        'PRIVATE_FILE_ID',
+        'PRIVATE_STRUCTURED_PAYLOAD',
+      ])
+        expect(transcript).not.toContain(secret);
+      // The SDK wraps raw MCP output in JSON during conversion. Those media
+      // parts must still reach the native candidate separately from the transcript.
+      if (!wrapped) {
+        const args = vi.mocked(deps.generateText).mock.calls.at(-1)?.[0];
+        expect(args?.messages?.[1]?.content).toEqual([
+          {
+            type: 'text',
+            text: 'Attachments from history message json-media:',
+          },
+          { type: 'image', image: new URL(url) },
+          { type: 'file', mediaType: 'image/png', data: payload },
+        ]);
+      }
+      expect(window).toEqual(before);
+    },
+  );
+  it.each([
+    'unavailable',
+    'failed-helper',
+    'native-fallback',
+    'helper',
+  ] as const)('preserves image history with %s capability', async (mode) => {
+    const text = { providerId: 'test', modelId: 'text' };
+    const native = { providerId: 'test', modelId: 'native' };
+    const helper = { providerId: 'test', modelId: 'helper' };
+    const window = sliceOf(
+      {
+        id: 'image-source',
+        role: 'user',
+        parts: [
+          {
+            type: 'file',
+            mediaType: 'image/png',
+            url: 'https://example.test/image.png?token=SECRET',
+            filename: 'https://example.test/SECRET',
+          },
+        ],
+      },
+      makeTextMessage('user', 'active turn'),
+    );
+    const before = structuredClone(window);
+    const deps = makeWindowDeps(window);
+    vi.mocked(deps.config.getModelSelection).mockImplementation((purpose) =>
+      purpose === 'imageVision'
+        ? mode.includes('helper')
+          ? [helper]
+          : []
+        : purpose === 'compaction'
+          ? [text]
+          : purpose === 'chat' && mode === 'native-fallback'
+            ? [native]
+            : [],
+    );
+    vi.mocked(deps.modelResolver.resolveModelInfo).mockImplementation(
+      (entry) =>
+        ({
+          contextSize: 20000,
+          inputCapabilities: entry.modelId === 'text' ? {} : { image: {} },
+        }) as never,
+    );
+    vi.mocked(deps.generateText).mockImplementation(async (args) =>
+      mode === 'failed-helper'
+        ? genFailure()
+        : genSuccess(
+            args.modelIds[0]?.modelId === 'helper'
+              ? 'A blue folder.'
+              : 'Summary',
+          ),
+    );
+    const ext = createContextCompactionExt.create(deps);
+    await step(ext, FALLBACK_COMPACTION_THRESHOLD);
+    await vi.waitFor(() =>
+      expect(ext.introspect?.()).toMatchObject({ status: 'idle' }),
+    );
+    if (mode === 'unavailable' || mode === 'failed-helper') {
+      expect(deps.checkpoints.commit).not.toHaveBeenCalled();
+      expect(
+        vi
+          .mocked(deps.generateText)
+          .mock.calls.every(([args]) => args.modelIds[0]?.modelId === 'helper'),
+      ).toBe(true);
+    } else {
+      expect(deps.checkpoints.commit).toHaveBeenCalledOnce();
+      const args = vi.mocked(deps.generateText).mock.calls.at(-1)?.[0];
+      if (!args) throw new Error('Missing compaction request');
+      expect(args.messages?.[0]?.content).not.toContain('SECRET');
+      if (mode === 'helper') {
+        expect(args.messages).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              content: expect.arrayContaining([
+                expect.objectContaining({
+                  type: 'text',
+                  text: expect.stringContaining(
+                    '<derived-content source="image"',
+                  ),
+                }),
+              ]),
+            }),
+          ]),
+        );
+        expect(JSON.stringify(args.messages)).toContain('A blue folder.');
+        expect(JSON.stringify(args.messages)).not.toContain('SECRET');
+      } else {
+        expect(args.modelIds).toEqual([native]);
+        expect(JSON.stringify(args.messages)).toContain(
+          'image.png?token=SECRET',
+        );
+      }
+    }
+    expect(window).toEqual(before);
+  });
+
+  it.each([false, true])(
+    'defers a sole active turn (header=%s)',
+    async (header) => {
+      const window = [
+        ...(header ? [makeHeader('Earlier summary')] : []),
+        makeTextMessage('user', 'Keep this active instruction'),
+        ...Array.from({ length: 25 }, (_, i) =>
+          makeToolCallMessage('read', { i }, 'result'.repeat(100)),
+        ),
+      ];
+      const before = structuredClone(window);
+      const deps = makeWindowDeps(window);
+      const ext = createContextCompactionExt.create(deps);
+      await step(ext, FALLBACK_COMPACTION_THRESHOLD);
+      await vi.waitFor(() =>
+        expect(ext.introspect?.()).toMatchObject({ status: 'idle' }),
+      );
+      expect(deps.generateText).not.toHaveBeenCalled();
+      expect(deps.checkpoints.commit).not.toHaveBeenCalled();
+      expect(window).toEqual(before);
+      for (const budget of [0, 100, 1_000_000])
+        expect(selectCheckpointAnchor(window, budget)).toBeNull();
+    },
+  );
+  it('does not checkpoint unheard audio when helpers and native candidates are unavailable', async () => {
+    const audio: ExtendedUIMessage = {
+      id: 'unheard',
+      role: 'user',
+      parts: [
+        {
+          type: 'file',
+          mediaType: 'audio/mp4',
+          url: 'data:audio/mp4;base64,YXVkaW8=',
+        },
+      ],
+    };
+    const window = sliceOf(audio, makeTextMessage('user', 'active turn'));
+    const before = structuredClone(window);
+    const deps = makeWindowDeps(window);
+    vi.mocked(deps.modelResolver.resolveModelInfo).mockReturnValue({
+      contextSize: 20000,
+      inputCapabilities: {},
+    } as never);
+    const ext = createContextCompactionExt.create(deps);
+    await step(ext, FALLBACK_COMPACTION_THRESHOLD);
+    await vi.waitFor(() =>
+      expect(ext.introspect?.()).toMatchObject({ status: 'idle' }),
+    );
+    expect(deps.checkpoints.commit).not.toHaveBeenCalled();
+    expect(deps.generateText).not.toHaveBeenCalled();
+    expect(window).toEqual(before);
+  });
+  it.each([
+    { nativeFirst: true, chatFallback: true },
+    { nativeFirst: false, chatFallback: true },
+    { nativeFirst: true, chatFallback: false },
+    { nativeFirst: false, chatFallback: false },
+  ])(
+    'adapts inline context audio independently: %j',
+    async ({ nativeFirst, chatFallback }) => {
+      const native = { providerId: 'test', modelId: 'native' };
+      const text = { providerId: 'test', modelId: 'text' };
+      const helper = { providerId: 'test', modelId: 'helper' };
+      const candidates = nativeFirst
+        ? ([native, text] as const)
+        : ([text, native] as const);
+      const audioMessage: ExtendedUIMessage = {
+        id: 'audio-source',
+        role: 'user',
+        parts: [
+          {
+            type: 'data-context',
+            data: {
+              sourceEnv: 'telegram',
+              metadata: {},
+              content: [
+                { type: 'text', text: 'Voice instruction' },
+                { type: 'audio', mimeType: 'audio/mp4', data: 'YXVkaW8=' },
+              ],
+            },
+          },
+        ],
+      };
+      const window = sliceOf(
+        audioMessage,
+        makeTextMessage('user', 'active turn'),
+      );
+      const before = structuredClone(window);
+      const deps = makeWindowDeps(window);
+      vi.mocked(deps.config.getModelSelection).mockImplementation((purpose) =>
+        purpose === 'audioListening'
+          ? [helper]
+          : purpose === 'compaction'
+            ? chatFallback
+              ? [candidates[0]]
+              : candidates
+            : [candidates[1]],
+      );
+      vi.mocked(deps.modelResolver.resolveModelInfo).mockImplementation(
+        (entry) =>
+          ({
+            contextSize: 20000,
+            inputCapabilities:
+              entry.modelId === 'text'
+                ? {}
+                : { audio: { mediaTypes: ['audio/wav'] } },
+          }) as never,
+      );
+      vi.mocked(deps.generateText).mockImplementation(async (args) => {
+        if (args.modelIds[0]?.modelId === 'helper')
+          return genSuccess('Bring the blue folder at noon.');
+        if (args.modelIds[0]?.modelId === candidates[0]?.modelId)
+          return genFailure();
+        return genSuccess('Voice requested the blue folder at noon.');
+      });
+      await step(
+        createContextCompactionExt.create(deps),
+        FALLBACK_COMPACTION_THRESHOLD,
+      );
+      await vi.waitFor(() =>
+        expect(deps.checkpoints.commit).toHaveBeenCalled(),
+      );
+      const requests = vi
+        .mocked(deps.generateText)
+        .mock.calls.map(([args]) => args);
+      const nativeRequest = requests.find(
+        (args) => args.modelIds[0]?.modelId === 'native',
+      );
+      const textRequest = requests.find(
+        (args) => args.modelIds[0]?.modelId === 'text',
+      );
+      expect(nativeRequest?.messages).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            role: 'user',
+            content: expect.arrayContaining([
+              expect.objectContaining({ type: 'file', mediaType: 'audio/wav' }),
+            ]),
+          }),
+        ]),
+      );
+      expect(JSON.stringify(textRequest?.messages)).toContain(
+        'Bring the blue folder at noon.',
+      );
+      expect(JSON.stringify(textRequest?.messages)).toContain(
+        'transcription-description',
+      );
+      expect(JSON.stringify(textRequest?.messages)).not.toContain(
+        '"type":"file"',
+      );
+      expect(JSON.stringify(textRequest?.messages)).not.toContain(
+        'listenAudio',
+      );
+      expect(nativeRequest?.messages?.[0]?.content).not.toContain('YXVkaW8=');
+      expect(window).toEqual(before);
+      expect(deps.checkpoints.commit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          summary: 'Voice requested the blue folder at noon.',
+        }),
+      );
+    },
+  );
+});
+
 describe('selectCheckpointAnchor', () => {
+  it('retains the audio prompt and every tool step in a long active turn', () => {
+    const prompt: ExtendedUIMessage = {
+      id: 'voice',
+      role: 'user',
+      parts: [
+        {
+          type: 'file',
+          mediaType: 'audio/ogg',
+          url: 'data:audio/ogg;base64,YXVkaW8=',
+        },
+      ],
+    };
+    const activeTurn = [
+      prompt,
+      ...Array.from({ length: 25 }, (_, i) =>
+        makeToolCallMessage('read', { i }, `result ${i}`),
+      ),
+      {
+        id: 'clock',
+        role: 'user',
+        parts: [{ type: 'data-time', data: { timestamp: 100 } } as never],
+      } as ExtendedUIMessage,
+    ];
+    const window = [
+      makeTextMessage('user', 'earlier'),
+      makeTextMessage('assistant', 'done'),
+      ...activeTurn,
+    ];
+    const selection = selectCheckpointAnchor(window, 1);
+    if (!selection) throw new Error('Missing checkpoint anchor');
+    expect(selection).toEqual({ anchorIndex: 1 });
+    expect(window.slice(selection.anchorIndex + 1)).toEqual(activeTurn);
+  });
+
+  it.each([2, 12, 30])(
+    'preserves the first user or an atomic suffix of %i assistant messages',
+    (count) => {
+      for (const initialRole of ['user', 'assistant'] as const) {
+        const window = [
+          makeTextMessage(initialRole, 'initial'),
+          ...Array.from({ length: count - 1 }, (_, i) =>
+            makeToolCallMessage('read', { i }, `result ${i}`),
+          ),
+        ];
+        for (const budget of [0, 100, 1_000_000]) {
+          const selection = selectCheckpointAnchor(window, budget);
+          if (initialRole === 'user') {
+            expect(selection).toBeNull();
+            continue;
+          }
+          if (!selection) throw new Error('Missing checkpoint anchor');
+          expect(selection.anchorIndex).toBeGreaterThanOrEqual(0);
+          expect(selection.anchorIndex).toBeLessThan(window.length - 1);
+          const tail = window.slice(selection.anchorIndex + 1);
+          expect(tail.length).toBeGreaterThan(0);
+          expect(tail.at(-1)).toBe(window.at(-1));
+          expect(
+            tail.every((message) =>
+              message.parts.every(
+                (part) =>
+                  'state' in part &&
+                  part.state === 'output-available' &&
+                  'output' in part,
+              ),
+            ),
+          ).toBe(true);
+        }
+      }
+    },
+  );
+
   it('keeps the newest messages within the tail budget', () => {
     const window = [
       makeTextMessage('user', 'a'.repeat(500)),
@@ -352,7 +935,7 @@ describe('selectCheckpointAnchor', () => {
     expect(selectCheckpointAnchor(window, 10)).toEqual({ anchorIndex: 0 });
   });
 
-  it('falls back to the minimal tail when the budget covers every message', () => {
+  it('keeps the latest user turn when the budget covers every message', () => {
     const window = [
       makeTextMessage('user', 'u1'),
       makeTextMessage('assistant', 'a1'),
@@ -361,7 +944,7 @@ describe('selectCheckpointAnchor', () => {
     ];
 
     expect(selectCheckpointAnchor(window, 1_000_000)).toEqual({
-      anchorIndex: 2,
+      anchorIndex: 1,
     });
   });
 
@@ -393,11 +976,19 @@ describe('selectCheckpointAnchor', () => {
         ],
         1_000,
       ),
-    ).toEqual({ anchorIndex: 1 });
+    ).toBeNull();
   });
 
   it('returns null for an empty window', () => {
     expect(selectCheckpointAnchor([], 1_000)).toBeNull();
+  });
+
+  it('keeps a non-empty suffix when only the first message is an assistant', () => {
+    const window = [
+      makeTextMessage('assistant', 'done'),
+      makeTextMessage('user', '<todo-reminder>continue</todo-reminder>'),
+    ];
+    expect(selectCheckpointAnchor(window, 0)).toEqual({ anchorIndex: 0 });
   });
 });
 
@@ -499,6 +1090,162 @@ describe('ContextCompactionExt — compaction trigger', () => {
   });
 });
 
+describe('ContextCompactionExt — summary acceptance', () => {
+  const refusal =
+    'Sorry, I can’t help with identifying who’s speaking in this audio clip.';
+  const entry = (modelId: string) => ({ providerId: 'test', modelId });
+
+  it.each([
+    '',
+    ' \n ',
+    '{"error":"no summary"}',
+    '{"status":"denied"}',
+    '{"ref":"message-id","view":"list"}',
+    refusal,
+  ])('keeps the old window and re-arms after rejecting %j', async (summary) => {
+    const window = conversation();
+    const before = structuredClone(window);
+    const deps = makeWindowDeps(window, {
+      generateText: vi.fn().mockResolvedValue(genSuccess(summary)),
+    });
+    vi.mocked(deps.config.getModelSelection).mockImplementation((purpose) =>
+      purpose === 'compaction' ? [entry('summary')] : [],
+    );
+    const ext = createContextCompactionExt.create(deps);
+    await step(ext, FALLBACK_COMPACTION_THRESHOLD);
+    expect(deps.checkpoints.commit).not.toHaveBeenCalled();
+    expect(window).toEqual(before);
+    expect(ext.introspect?.()).toEqual({
+      status: 'idle',
+      latestSummary: null,
+    });
+    await step(ext, FALLBACK_COMPACTION_THRESHOLD);
+    expect(deps.generateText).toHaveBeenCalledTimes(2);
+    expect(deps.checkpoints.commit).not.toHaveBeenCalled();
+  });
+
+  it('tries the next configured candidate after an ordinary successful refusal', async () => {
+    const deps = makeWindowDeps(conversation(), {
+      generateText: vi
+        .fn()
+        .mockResolvedValueOnce(genSuccess(refusal))
+        .mockResolvedValueOnce(genSuccess('Useful replacement summary')),
+    });
+    vi.mocked(deps.config.getModelSelection).mockImplementation((purpose) =>
+      purpose === 'compaction' ? [entry('first'), entry('second')] : [],
+    );
+    await step(
+      createContextCompactionExt.create(deps),
+      FALLBACK_COMPACTION_THRESHOLD,
+    );
+    expect(
+      vi.mocked(deps.generateText).mock.calls.map(([args]) => args.modelIds),
+    ).toEqual([[entry('first')], [entry('second')]]);
+    expect(deps.checkpoints.commit).toHaveBeenCalledWith(
+      expect.objectContaining({ summary: 'Useful replacement summary' }),
+    );
+  });
+
+  it.each([
+    'recover',
+    'no-helper',
+    'helper-aborted',
+    'helper-failed',
+    'second-refusal',
+    'content-filter',
+  ] as const)(
+    'handles native refusal via a bounded helper retry: %s',
+    async (mode) => {
+      const window = sliceOf(
+        {
+          id: 'original-audio',
+          role: 'user',
+          parts: [
+            {
+              type: 'file',
+              mediaType: 'audio/wav',
+              url: 'data:audio/wav;base64,YXVkaW8=',
+            },
+          ],
+        },
+        makeTextMessage('user', 'active input'),
+      );
+      const before = structuredClone(window);
+      const deps = makeWindowDeps(window);
+      vi.mocked(deps.config.getModelSelection).mockImplementation((purpose) =>
+        purpose === 'compaction'
+          ? [entry('native')]
+          : purpose === 'audioListening' && mode !== 'no-helper'
+            ? [entry('helper')]
+            : [],
+      );
+      vi.mocked(deps.modelResolver.resolveModelInfo).mockReturnValue({
+        contextSize: 20000,
+        inputCapabilities: { audio: {} },
+      } as never);
+      vi.mocked(deps.generateText)
+        .mockResolvedValueOnce(
+          mode === 'content-filter'
+            ? genFailure('content-filter')
+            : genSuccess(refusal),
+        )
+        .mockResolvedValueOnce(
+          mode === 'helper-aborted'
+            ? genFailure('aborted')
+            : mode === 'helper-failed'
+              ? genFailure()
+              : genSuccess('The recording discusses ranking benchmarks.'),
+        )
+        .mockResolvedValueOnce(
+          genSuccess(
+            mode === 'second-refusal'
+              ? refusal
+              : 'Summary: ranking benchmarks.',
+          ),
+        );
+      const ext = createContextCompactionExt.create(deps);
+      await step(ext, FALLBACK_COMPACTION_THRESHOLD);
+      await vi.waitFor(() =>
+        expect(ext.introspect?.()).toMatchObject({ status: 'idle' }),
+      );
+      const args = vi
+        .mocked(deps.generateText)
+        .mock.calls.map(([args]) => args);
+      expect(JSON.stringify(args[0]?.messages)).toContain('audio/wav');
+      expect(window).toEqual(before);
+      if (mode === 'recover' || mode === 'content-filter') {
+        expect(args).toHaveLength(3);
+        expect(args[1]?.modelIds).toEqual([entry('helper')]);
+        const derivedParts = args[2]?.messages?.flatMap<{ type: string }>(
+          (message) => (Array.isArray(message.content) ? message.content : []),
+        );
+        expect(derivedParts).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              type: 'text',
+              text: expect.stringContaining('<derived-content source="audio"'),
+            }),
+          ]),
+        );
+        expect(derivedParts?.every((part) => part.type === 'text')).toBe(true);
+        expect(JSON.stringify(args[2]?.messages)).not.toContain(refusal);
+        expect(deps.checkpoints.commit).toHaveBeenCalledWith(
+          expect.objectContaining({ summary: 'Summary: ranking benchmarks.' }),
+        );
+      } else {
+        expect(deps.checkpoints.commit).not.toHaveBeenCalled();
+        expect(ext.introspect?.()).toMatchObject({ latestSummary: null });
+        expect(args).toHaveLength(
+          mode === 'no-helper' ? 1 : mode === 'second-refusal' ? 3 : 2,
+        );
+      }
+      expect(
+        JSON.stringify(vi.mocked(deps.logger.warn).mock.calls),
+      ).not.toContain(refusal);
+    },
+  );
+});
+
 describe('ContextCompactionExt — checkpoint commit', () => {
   it('commits a checkpoint covering everything before the raw tail', async () => {
     const window = conversation();
@@ -509,14 +1256,12 @@ describe('ContextCompactionExt — checkpoint commit', () => {
 
     await step(ext, FALLBACK_COMPACTION_THRESHOLD);
 
-    // Minimal raw tail: the last assistant message.
+    // Raw tail includes the latest user prompt and its answer.
     expect(deps.checkpoints.commit).toHaveBeenCalledWith({
-      coversThroughMessageId: window[2]!.id,
+      coversThroughMessageId: window[1]?.id,
       summary: 'Compressed summary',
     });
-    expect(lastPrompt(deps)).toBe(
-      'user\n¦Hello\n\nyour_output\n¦Hi there\n\nuser\n¦How are you?',
-    );
+    expect(lastPrompt(deps)).toBe('user\n¦Hello\n\nyour_output\n¦Hi there');
     // Core owns the window: no insertion, no inbox delivery.
     expect(deps.insertMessageAfter).not.toHaveBeenCalled();
     expect(deps.inbox.sendMessage).not.toHaveBeenCalled();
@@ -559,9 +1304,9 @@ describe('ContextCompactionExt — checkpoint commit', () => {
     await step(ext, FALLBACK_COMPACTION_THRESHOLD);
 
     expect(lastPrompt(deps)).toContain('summary\n¦old summary text');
-    expect(lastPrompt(deps)).toContain('follow-up');
+    expect(lastPrompt(deps)).not.toContain('follow-up');
     expect(deps.checkpoints.commit).toHaveBeenCalledWith({
-      coversThroughMessageId: window[3]!.id,
+      coversThroughMessageId: window[2]?.id,
       summary: 'Merged summary',
     });
   });
@@ -602,7 +1347,7 @@ describe('ContextCompactionExt — checkpoint commit', () => {
     expect(args.system).toContain(LINES_FORMAT_PROMPT);
   });
 
-  it('delegates model fallback to the session proxy', async () => {
+  it('validates each candidate separately and stops after the first accepted summary', async () => {
     const deps = makeWindowDeps(conversation(), {
       config: {
         getModelSelection: vi.fn(() => ['remote:gpt-4o', 'remote:claude']),
@@ -620,7 +1365,6 @@ describe('ContextCompactionExt — checkpoint commit', () => {
     expect(deps.generateText).toHaveBeenCalledTimes(1);
     expect(vi.mocked(deps.generateText).mock.calls[0]![0].modelIds).toEqual([
       'remote:gpt-4o',
-      'remote:claude',
     ]);
     expect(deps.checkpoints.commit).toHaveBeenCalledTimes(1);
   });
@@ -948,14 +1692,98 @@ describe('ContextCompactionExt — threshold computation', () => {
 });
 
 describe('ContextCompactionExt — transcript rendering', () => {
+  it.each([
+    'https://example.test/file.pdf?token=SECRET',
+    'file:///private/SECRET.pdf',
+    'file.pdf?token=SECRET',
+  ])('omits sensitive filenames from compaction: %s', async (filename) => {
+    const prompt = await promptFor([
+      {
+        id: 'file',
+        role: 'user',
+        parts: [
+          {
+            type: 'file',
+            mediaType: 'application/pdf',
+            filename,
+            url: 'https://example.test/file.pdf?token=SECRET',
+          },
+        ],
+      },
+    ]);
+    expect(prompt).toContain('[File attachment: application/pdf]');
+    expect(prompt).not.toContain('SECRET');
+    expect(prompt).not.toContain('https://');
+    expect(prompt).not.toContain('file:///');
+  });
   async function promptFor(messages: ExtendedUIMessage[]): Promise<string> {
-    const deps = makeWindowDeps(sliceOf(...messages), {
-      generateText: vi.fn().mockResolvedValue(genSuccess('Summary')),
-    });
+    const deps = makeWindowDeps(
+      sliceOf(...messages, makeTextMessage('user', 'current turn')),
+      {
+        generateText: vi.fn().mockResolvedValue(genSuccess('Summary')),
+      },
+    );
+    vi.mocked(deps.modelResolver.resolveModelInfo).mockReturnValue({
+      contextSize: 20000,
+      inputCapabilities: { audio: {}, image: {} },
+    } as never);
     const ext = createContextCompactionExt.create(deps);
     await step(ext, FALLBACK_COMPACTION_THRESHOLD);
+    await vi.waitFor(() => expect(deps.generateText).toHaveBeenCalled());
     return lastPrompt(deps);
   }
+
+  it.each(['user', 'assistant'] as const)(
+    'preserves raw audio, image, and PDF parts in %s messages',
+    async (role) => {
+      for (const [mediaType, label] of [
+        ['audio/ogg', 'Audio'],
+        ['image/png', 'Image'],
+        ['application/pdf', 'File'],
+      ] as const) {
+        const prompt = await promptFor([
+          {
+            id: randomUUID(),
+            role,
+            parts: [
+              {
+                type: 'file',
+                mediaType,
+                filename: 'attachment',
+                url: `data:${mediaType};base64,SECRET_BINARY`,
+              },
+            ],
+          },
+        ]);
+        expect(prompt).toContain(`[${label} attachment: ${mediaType}]`);
+        expect(prompt).not.toContain('SECRET_BINARY');
+      }
+    },
+  );
+
+  it('keeps transcription text and captions alongside attachment notes', async () => {
+    const prompt = await promptFor([
+      {
+        id: randomUUID(),
+        role: 'user',
+        parts: [
+          {
+            type: 'text',
+            text: '[Audio transcription (voice.ogg)]: Please fix the login timeout.',
+          },
+          { type: 'text', text: 'Screenshot of the error' },
+          {
+            type: 'file',
+            mediaType: 'image/png',
+            url: 'data:image/png;base64,SECRET_BINARY',
+          },
+        ],
+      },
+    ]);
+    expect(prompt).toContain('Please fix the login timeout.');
+    expect(prompt).toContain('Screenshot of the error');
+    expect(prompt).toContain('[Image attachment: image/png]');
+  });
 
   it('labels user text by role and assistant text as your_output', async () => {
     expect(
@@ -1044,6 +1872,42 @@ describe('ContextCompactionExt — transcript rendering', () => {
 
     expect(prompt).toContain('result\n¦{"lines":42,"lang":"ts"}');
   });
+
+  it.each(['raw', 'json', 'error-json'] as const)(
+    'preserves structured-only MCP tool results (%s)',
+    async (type) => {
+      const value = {
+        content: [],
+        structuredContent: { status: 'ok', count: 3 },
+      };
+      const output = type === 'raw' ? value : { type, value };
+      const prompt = await promptFor([makeToolCallMessage('read', {}, output)]);
+      expect(prompt).toContain(JSON.stringify(value));
+      expect(prompt).toContain('result\n¦');
+    },
+  );
+
+  it.each(['sdk', 'mcp'])(
+    'preserves %s tool media and following text before truncation',
+    async (format) => {
+      const content = [
+        {
+          type: 'image-data',
+          mediaType: 'image/png',
+          data: 'BINARY'.repeat(1000),
+        },
+        { type: 'text', text: 'The screenshot shows a login error.' },
+      ];
+      const output =
+        format === 'sdk' ? { type: 'content', value: content } : { content };
+      const prompt = await promptFor([
+        makeToolCallMessage('screenshot', {}, output),
+      ]);
+      expect(prompt).toContain('[Image attachment: image/png]');
+      expect(prompt).toContain('The screenshot shows a login error.');
+      expect(prompt).not.toContain('BINARY');
+    },
+  );
 
   it('uses context headers for context parts', async () => {
     const prompt = await promptFor([
@@ -1194,7 +2058,7 @@ describe('ContextCompactionExt — post-compaction baseline & hysteresis', () =>
     expect(lastPrompt(deps)).toContain('summary\n¦summary');
     expect(deps.checkpoints.commit).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        coversThroughMessageId: window.at(-2)!.id,
+        coversThroughMessageId: window.at(-3)?.id,
       }),
     );
   });

@@ -1,6 +1,7 @@
 import { context, type Span, trace } from '@opentelemetry/api';
+import type { ModelMessage } from 'ai';
 
-import type { ModelPurpose } from '@/config';
+import type { ModelPurpose, ModelSelectionEntry } from '@/config';
 import { isCheckpointHeader } from '@/session/chat/checkpoint';
 import {
   CONTEXT_SUMMARY_KEY,
@@ -9,7 +10,10 @@ import {
 } from '@/session/chat/utils/history-view';
 
 import type { ExtendedUIMessage } from '../../message-types';
+import { convertToModelMessagesExtended } from '../../utils/convert-to-model-messages';
 import { startChildSpan } from '../../utils/tracing';
+import { collectMedia } from '../content-adaptation/media-projection';
+import type { GenerateTextResult } from '../extension-api';
 import {
   type Extension,
   type ExtensionDeps,
@@ -18,6 +22,7 @@ import {
   type StepCompleteEvent,
 } from '../extension-api';
 import compactionPrompt from './compaction-prompt.md';
+import { summaryRejectionReason } from './summary-validation';
 
 const COMPACTION_TRANSCRIPT_VIEW = createTranscriptHistoryView();
 const COMPACTION_SYSTEM_PROMPT = `${compactionPrompt}\n\n${LINES_FORMAT_PROMPT}`;
@@ -67,17 +72,18 @@ export const RAW_TAIL_CHARS_PER_TOKEN = 4;
  * Picks the checkpoint anchor: the message right before the raw tail.
  *
  * The raw tail is the newest run of messages whose cumulative serialized
- * size stays within `maxTailChars`, but always includes the last assistant
- * message and everything after it. When the size-bounded tail would cover
- * every raw message, the minimal tail (last assistant onward, or only the
- * newest message) is used instead so the threshold hit still frees space.
- * Returns `null` when even the minimal tail leaves nothing to cover.
+ * size stays within `maxTailChars`. It includes the last assistant onward
+ * and the latest substantive user input whenever earlier raw messages can
+ * be summarized. Otherwise, a non-empty suffix at a UI message boundary
+ * keeps tool calls and their results together while freeing some space.
+ * Returns `null` when fewer than two raw messages remain.
  */
 export function selectCheckpointAnchor(
   window: readonly ExtendedUIMessage[],
   maxTailChars: number,
 ): { anchorIndex: number } | null {
   const firstRawIndex = isCheckpointHeader(window[0]) ? 1 : 0;
+  if (window.length - firstRawIndex < 2) return null;
 
   let tailStart = window.length;
   let tailChars = 0;
@@ -94,9 +100,31 @@ export function selectCheckpointAnchor(
     (message, index) => index >= firstRawIndex && message.role === 'assistant',
   );
   // Minimal tail: the last assistant onward, else only the newest message.
-  const minimalStart = lastAssistant !== -1 ? lastAssistant : window.length - 1;
+  const minimalStart = Math.max(
+    firstRawIndex + 1,
+    lastAssistant !== -1 ? lastAssistant : window.length - 1,
+  );
   tailStart = Math.min(tailStart, minimalStart);
   if (tailStart - 1 < firstRawIndex) tailStart = minimalStart;
+
+  // UI tool parts contain both call and result, so message boundaries are
+  // atomic. Keep the initiating user input too, even for a long tool loop.
+  // Metadata-only user messages (time, reminders, summaries) are not turns.
+  const latestUser = window.findLastIndex(
+    (message, index) =>
+      index >= firstRawIndex &&
+      message.role === 'user' &&
+      message.parts.some(
+        (part) =>
+          part.type === 'file' ||
+          part.type === 'data-context' ||
+          part.type === 'data-god-message' ||
+          (part.type === 'text' &&
+            !/<(?:todo-reminder|resource|time|timezone)>/.test(part.text)),
+      ),
+  );
+  // Defer if the active input is first: no raw anchor can preserve that turn.
+  if (latestUser >= firstRawIndex) tailStart = Math.min(tailStart, latestUser);
 
   const anchorIndex = tailStart - 1;
   if (anchorIndex < firstRawIndex) return null;
@@ -407,13 +435,111 @@ class ContextCompactionExt implements Extension {
     const anchorId = anchorMessage.id;
     span.setAttribute('compaction.lastSliceMessageId', anchorId);
 
-    const result = await this.deps.generateText({
-      modelIds,
-      system: COMPACTION_SYSTEM_PROMPT,
-      prompt: transcript,
-    });
+    const media: ModelMessage[] = [];
+    for (const message of slice) {
+      const converted = await convertToModelMessagesExtended([message], {});
+      const attachments = collectMedia(converted);
+      if (attachments.length > 0)
+        media.push({
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: `Attachments from history message ${message.id}:`,
+            },
+            ...attachments,
+          ],
+        });
+    }
+
+    const validate = (result: GenerateTextResult): GenerateTextResult => {
+      if (!result.success) return result;
+      const reason = summaryRejectionReason(result.text);
+      if (!reason) return result;
+      this.deps.logger.warn(
+        { modelId: result.modelId, reason },
+        'Compaction summary rejected',
+      );
+      span.addEvent('compaction.summary_rejected', { reason });
+      return { success: false, failureReason: 'all-models-failed' };
+    };
+    const summarize = async (
+      candidates: readonly ModelSelectionEntry[],
+    ): Promise<GenerateTextResult> => {
+      let result: GenerateTextResult = {
+        success: false,
+        failureReason: 'no-models',
+      };
+      for (const candidate of candidates) {
+        try {
+          const adapt = media.length
+            ? (await import('../content-adaptation/content-adaptation'))
+                .adaptContent
+            : null;
+          const messages = adapt
+            ? await adapt(media, this.deps, {
+                modelId: candidate.modelId,
+                inputCapabilities:
+                  this.deps.modelResolver.resolveModelInfo(candidate)
+                    .inputCapabilities,
+              })
+            : undefined;
+          const generate = (attachments?: ModelMessage[]) =>
+            this.deps.generateText({
+              modelIds: [candidate],
+              system: COMPACTION_SYSTEM_PROMPT,
+              ...(attachments
+                ? {
+                    messages: [
+                      { role: 'user' as const, content: transcript },
+                      ...attachments,
+                    ],
+                  }
+                : { prompt: transcript }),
+            });
+          const generated = await generate(messages);
+          result = validate(generated);
+          const hasNativeMedia = messages?.some(
+            (message) =>
+              Array.isArray(message.content) &&
+              message.content.some(
+                (part) => part.type === 'file' || part.type === 'image',
+              ),
+          );
+          if (
+            !result.success &&
+            (generated.success ||
+              generated.failureReason === 'content-filter') &&
+            adapt &&
+            hasNativeMedia
+          ) {
+            // One bounded retry through the existing helper projection. Always
+            // re-project originals; a refusal must never become source context.
+            span.addEvent('compaction.retry_with_derived_media');
+            const derived = await adapt(media, this.deps, {
+              modelId: candidate.modelId,
+              inputCapabilities: {},
+            });
+            result = validate(await generate(derived));
+          }
+          if (result.success || result.failureReason === 'aborted')
+            return result;
+        } catch (error) {
+          if (error instanceof Error && error.cause === 'aborted')
+            return { success: false, failureReason: 'aborted' };
+          this.deps.logger.warn(
+            { error },
+            'Could not adapt compaction candidate',
+          );
+          result = { success: false, failureReason: 'all-models-failed' };
+        }
+      }
+      return result;
+    };
+    const result = await summarize(modelIds);
 
     if (!result.success) {
+      if (result.failureReason === 'aborted') return null;
       if (result.failureReason === 'content-filter') {
         this.deps.logger.warn(
           { failureDetails: result.failureDetails },
@@ -436,13 +562,10 @@ class ContextCompactionExt implements Extension {
             'All compaction models failed — falling back to chat models',
           );
           span.addEvent('compaction.fallback_to_chat_models_after_failure');
-          const fallbackResult = await this.deps.generateText({
-            modelIds: chatModelIds,
-            system: COMPACTION_SYSTEM_PROMPT,
-            prompt: transcript,
-          });
+          const fallbackResult = await summarize(chatModelIds);
 
           if (!fallbackResult.success) {
+            if (fallbackResult.failureReason === 'aborted') return null;
             if (fallbackResult.failureReason === 'content-filter') {
               this.deps.logger.warn(
                 'Chat model fallback also returned content-filter — compaction aborted',

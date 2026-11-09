@@ -1,0 +1,363 @@
+import type { Tool } from 'ai';
+import { describe, expect, it, vi } from 'vitest';
+
+import type { ActivityHistory } from '@/activity-history';
+import { createActivityFixture } from '@/activity-history/test-support';
+
+import { createActivityInvestigation } from './activity-tools';
+
+vi.mock('@/session/chat/extensions/time/system-prompt.md', () => ({
+  default: '',
+}));
+
+function fixture(activities?: ActivityHistory) {
+  const controller = new AbortController();
+  const readPage = vi.fn<ActivityHistory['readPage']>(async (id, options) => ({
+    id,
+    text: 'x'.repeat(options.limit),
+    offset: options.offset,
+    nextOffset: options.offset + options.limit,
+    scannedBytes: options.maxBytes,
+    truncated: true,
+    startedAt: 'a',
+    endedAt: 'b',
+  }));
+  const search = vi.fn<ActivityHistory['search']>(async (query, options) => ({
+    matches: Array.from({ length: options.limit }, (_, i) => ({
+      id: `found-${i}`,
+      snippet: query,
+      offset: 0,
+    })),
+    scannedBytes: options.maxBytes,
+    nextOffset: 1,
+    truncated: true,
+  }));
+  const feed: ActivityHistory = {
+    isAvailable: () => true,
+    subscribe: () => () => undefined,
+    manifest: async () => [],
+    latest: async () => [],
+    listNeighbors: async () => [
+      {
+        id: 'neighbor',
+        ordinal: 2,
+        persistedAt: '2026-10-06T12:00:00Z',
+        bytes: 10,
+        revision: 'test',
+      },
+    ],
+    compareIds: (a, b) => a.localeCompare(b),
+    readPending: async () => null,
+    readPage,
+    search,
+  };
+  const investigation = createActivityInvestigation(
+    activities ?? feed,
+    controller.signal,
+    'primary',
+  );
+  const execute = (name: string, input: object) => {
+    // These three local tools all execute object inputs and return plain objects.
+    const tool = investigation.tools[name] as Tool<object, unknown> | undefined;
+    return tool?.execute?.(input, {
+      context: undefined,
+      toolCallId: name,
+      messages: [],
+      abortSignal: controller.signal,
+    });
+  };
+  return { controller, readPage, search, investigation, execute };
+}
+
+describe('episode investigation', () => {
+  it('exposes only read-only tools and treats listings as no evidence', async () => {
+    const { investigation, execute } = fixture();
+    expect(Object.keys(investigation.tools).sort()).toEqual([
+      'listActivityNeighbors',
+      'readActivity',
+      'searchActivities',
+    ]);
+    expect(
+      await execute('listActivityNeighbors', { id: 'primary', count: 5 }),
+    ).toEqual({
+      activities: [
+        {
+          id: 'neighbor',
+          ordinal: 2,
+          persistedAt: '2026-10-06T12:00:00Z',
+          bytes: 10,
+          revision: 'test',
+        },
+      ],
+    });
+    expect([...investigation.evidence]).toEqual(['primary']);
+  });
+  it('reserves budgets before parallel reads and limits distinct evidence', async () => {
+    const { execute, readPage, investigation } = fixture();
+    const results = await Promise.all(
+      Array.from({ length: 8 }, (_, i) =>
+        execute('readActivity', { id: `extra-${i}`, offset: 0, limit: 12_000 }),
+      ),
+    );
+    expect(readPage).toHaveBeenCalledTimes(5);
+    expect(
+      results.filter(
+        (result) =>
+          result &&
+          typeof result === 'object' &&
+          'status' in result &&
+          result.status === 'budget-exhausted',
+      ),
+    ).toHaveLength(3);
+    expect(investigation.evidence.size).toBe(6);
+    expect(
+      readPage.mock.calls.reduce((n, [, options]) => n + options.limit, 0),
+    ).toBe(60_000);
+    expect(
+      readPage.mock.calls.reduce((n, [, options]) => n + options.maxBytes, 0),
+    ).toBeLessThanOrEqual(2_000_000);
+  });
+  it.each(['missing', 'empty', 'throwing'])(
+    'releases evidence slots after %s reads',
+    async (kind) => {
+      const { execute, readPage, investigation } = fixture();
+      if (kind === 'missing') readPage.mockResolvedValueOnce(null);
+      else if (kind === 'throwing')
+        readPage.mockRejectedValueOnce(new Error('read failed'));
+      else
+        readPage.mockImplementationOnce(async (id) => ({
+          id,
+          text: '',
+          offset: 0,
+          nextOffset: null,
+          scannedBytes: 10,
+          truncated: false,
+          startedAt: null,
+          endedAt: null,
+        }));
+      await Promise.resolve(
+        execute('readActivity', { id: 'bad', offset: 0, limit: 100 }),
+      ).catch(() => undefined);
+      for (let index = 0; index < 6; index++) {
+        expect(
+          await execute('readActivity', {
+            id: `valid-${index}`,
+            offset: 0,
+            limit: 100,
+          }),
+        ).toMatchObject({ status: 'ok' });
+      }
+      expect(investigation.evidence.has('bad')).toBe(false);
+      expect(investigation.evidence.size).toBe(7);
+    },
+  );
+
+  it('charges completed search reads when a later SQLite query fails', async () => {
+    const real = await createActivityFixture();
+    try {
+      await real.append('first evidence');
+      const first = await real.append('second evidence');
+      const originalRead = real.activities.readPage.bind(real.activities);
+      const read = vi.spyOn(real.activities, 'readPage');
+      read
+        .mockImplementationOnce(originalRead)
+        .mockRejectedValueOnce(new Error('SQLite read failed'));
+      const search = vi.spyOn(real.activities, 'search');
+      const { execute } = fixture(real.activities);
+      expect(
+        await execute('searchActivities', {
+          query: 'evidence',
+          limit: 5,
+          offset: 0,
+        }),
+      ).toMatchObject({ status: 'ok', truncated: true });
+      await execute('searchActivities', {
+        query: 'evidence',
+        limit: 5,
+        offset: 1,
+      });
+      expect(search.mock.calls[1]?.[1].maxBytes).toBe(2_000_000 - first.bytes);
+      expect(read.mock.calls[2]?.[1].maxBytes).toBe(2_000_000 - first.bytes);
+    } finally {
+      await real.close();
+    }
+  });
+
+  it('refunds unused read budgets after an atomic query failure', async () => {
+    const { execute, readPage, investigation } = fixture();
+    readPage.mockRejectedValueOnce(new Error('SQLite query failed'));
+    await expect(
+      execute('readActivity', { id: 'bad', offset: 0, limit: 12_000 }),
+    ).rejects.toThrow();
+    for (let index = 0; index < 5; index++) {
+      expect(
+        await execute('readActivity', {
+          id: `valid-${index}`,
+          offset: 0,
+          limit: 12_000,
+        }),
+      ).toMatchObject({ status: 'ok' });
+    }
+    expect(
+      readPage.mock.calls.slice(1).map(([, options]) => options.limit),
+    ).toEqual([12_000, 12_000, 12_000, 12_000, 12_000]);
+    expect(investigation.evidence.has('bad')).toBe(false);
+  });
+
+  it.each(['readActivity', 'searchActivities'])(
+    'refunds byte reservations after an atomic failed %s call',
+    async (tool) => {
+      const { execute, readPage, search } = fixture();
+      const error = new Error('SQLite query failed');
+      if (tool === 'readActivity') readPage.mockRejectedValueOnce(error);
+      else search.mockRejectedValueOnce(error);
+      await expect(
+        execute(
+          tool,
+          tool === 'readActivity'
+            ? { id: 'bad', offset: 0, limit: 12_000 }
+            : { query: 'bad', offset: 0 },
+        ),
+      ).rejects.toThrow();
+      expect(
+        await execute('searchActivities', { query: 'valid', offset: 0 }),
+      ).toMatchObject({ status: 'ok' });
+      expect(search.mock.lastCall?.[1]).toMatchObject({ maxBytes: 2_000_000 });
+    },
+  );
+
+  it('refunds search character reservations after failure', async () => {
+    const { execute, readPage, search } = fixture();
+    search.mockRejectedValueOnce(new Error('listing failed'));
+    await expect(
+      execute('searchActivities', { query: 'bad', offset: 0 }),
+    ).rejects.toThrow();
+    for (let index = 0; index < 5; index++)
+      expect(
+        await execute('readActivity', {
+          id: `valid-${index}`,
+          offset: 0,
+          limit: 12_000,
+        }),
+      ).toMatchObject({ status: 'ok' });
+    expect(readPage.mock.calls.map(([, options]) => options.limit)).toEqual([
+      12_000, 12_000, 12_000, 12_000, 12_000,
+    ]);
+  });
+
+  it('keeps a same-ID reservation until all concurrent reads settle', async () => {
+    const { execute, readPage } = fixture();
+    let resolvePending: (value: null) => void = () => {};
+    const pending = new Promise<null>((resolve) => {
+      resolvePending = resolve;
+    });
+    readPage.mockResolvedValueOnce(null).mockReturnValueOnce(pending);
+    const first = execute('readActivity', {
+      id: 'shared',
+      offset: 0,
+      limit: 100,
+    });
+    const second = execute('readActivity', {
+      id: 'shared',
+      offset: 100,
+      limit: 100,
+    });
+    await first;
+    for (let index = 0; index < 5; index++)
+      await execute('readActivity', {
+        id: `valid-${index}`,
+        offset: 0,
+        limit: 100,
+      });
+    expect(
+      await execute('readActivity', { id: 'seventh', offset: 0, limit: 100 }),
+    ).toEqual({ status: 'budget-exhausted' });
+    resolvePending(null);
+    await second;
+    expect(readPage).toHaveBeenCalledTimes(7);
+  });
+
+  it('shares the call budget across same-episode pages and reuse', async () => {
+    const { execute, readPage, investigation } = fixture();
+    for (let i = 0; i < 8; i++)
+      await execute('readActivity', {
+        id: 'primary',
+        offset: i * 100,
+        limit: 100,
+      });
+    expect(
+      await execute('readActivity', { id: 'primary', offset: 800, limit: 100 }),
+    ).toEqual({ status: 'budget-exhausted' });
+    expect(readPage).toHaveBeenCalledTimes(8);
+    expect([...investigation.evidence]).toEqual(['primary']);
+  });
+  it('counts snippets as evidence and returns partial search metadata', async () => {
+    const { execute, search, investigation } = fixture();
+    expect(
+      await execute('searchActivities', { query: 'fix', offset: 0 }),
+    ).toMatchObject({ status: 'ok', truncated: true, nextOffset: 1 });
+    expect(search).toHaveBeenCalledTimes(1);
+    expect(investigation.evidence.size).toBe(7);
+    expect(
+      await execute('readActivity', { id: 'seventh', offset: 0, limit: 100 }),
+    ).toEqual({ status: 'budget-exhausted' });
+  });
+  it('does not charge the primary episode as an additional search result', async () => {
+    const { execute, search, readPage, investigation } = fixture();
+    search.mockResolvedValueOnce({
+      matches: [{ id: 'primary', snippet: 'fix', offset: 0 }],
+      scannedBytes: 10,
+      nextOffset: null,
+      truncated: false,
+    });
+    readPage.mockImplementation(async (id) => ({
+      id,
+      text: 'evidence',
+      offset: 0,
+      nextOffset: null,
+      scannedBytes: 10,
+      truncated: false,
+      startedAt: 'a',
+      endedAt: 'b',
+    }));
+    await execute('searchActivities', { query: 'fix', offset: 0 });
+    for (let index = 0; index < 6; index++)
+      expect(
+        await execute('readActivity', {
+          id: `extra-${index}`,
+          offset: 0,
+          limit: 100,
+        }),
+      ).toMatchObject({ status: 'ok' });
+    expect(readPage).toHaveBeenCalledTimes(6);
+    expect(investigation.evidence.size).toBe(7);
+    expect(
+      await execute('readActivity', { id: 'seventh', offset: 0, limit: 100 }),
+    ).toEqual({ status: 'budget-exhausted' });
+  });
+
+  it('does not expose evidence after cancellation or invoke more I/O', async () => {
+    const { controller, execute, readPage, investigation } = fixture();
+    readPage.mockImplementationOnce(async () => {
+      controller.abort();
+      return {
+        id: 'late',
+        text: 'late',
+        offset: 0,
+        nextOffset: null,
+        scannedBytes: 4,
+        truncated: false,
+        startedAt: 'a',
+        endedAt: 'b',
+      };
+    });
+    expect(
+      await execute('readActivity', { id: 'late', offset: 0, limit: 100 }),
+    ).toEqual({ status: 'cancelled' });
+    expect(investigation.evidence.has('late')).toBe(false);
+    expect(
+      await execute('readActivity', { id: 'later', offset: 0, limit: 100 }),
+    ).toEqual({ status: 'cancelled' });
+    expect(readPage).toHaveBeenCalledTimes(1);
+  });
+});

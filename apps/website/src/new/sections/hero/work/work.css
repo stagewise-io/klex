@@ -1,8 +1,8 @@
-/* Work windows sit on the floor, behind the foreground team. */
+/* Previews cover idle bots but remain behind their owning bot. */
 .new-work-layer {
   position: absolute;
   inset: 0;
-  z-index: 2;
+  z-index: calc(var(--hero-depth) + 3);
   pointer-events: none;
 }
 
@@ -80,7 +80,7 @@
   overflow: hidden;
   transform: scale(var(--work-scale, 0.81818));
   transform-origin: 0 0;
-  text-align: left;
+  text-align: start;
 }
 
 .new-work-scene > * {
@@ -352,7 +352,7 @@
   align-items: center;
   gap: 8px;
   height: 30px;
-  margin-left: 18px;
+  margin-inline-start: 18px;
   padding: 0 12px;
   border-radius: 999px;
   background: #e9eef6;

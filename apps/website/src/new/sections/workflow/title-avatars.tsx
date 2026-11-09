@@ -1,9 +1,9 @@
 import './title-avatars.css';
 
+import { Klex } from '@klex/mascot';
 import { createRoot } from 'react-dom/client';
 
 import { heroLooks } from '../../bot-looks';
-import { Klex } from '../../klex';
 
 export const workflowTitleMarkup = (title: string) =>
   title.replace(

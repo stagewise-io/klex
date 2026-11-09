@@ -5,6 +5,7 @@ import type {
   ProviderInstance,
 } from '../provider-registry';
 import { resolveCatalogMetadata } from './model-catalog-helpers';
+import { withPromptCaching } from './prompt-caching';
 import {
   available,
   customHeaders,
@@ -49,7 +50,10 @@ export const vercelAiGatewayProviderDefinition: ProviderDefinition = {
   createLanguageModel: (instance, modelId) => {
     if (modelId === JEV_MODEL_ID || modelId === 'liquid/d1')
       throw new Error('Evaluation-only model cannot generate language');
-    return createProvider(instance).languageModel(modelId);
+    return withPromptCaching(
+      createProvider(instance).languageModel(modelId),
+      'gateway',
+    );
   },
   createEvaluationModel: (instance, modelId) =>
     createProvider(instance).evaluationModel(modelId),

@@ -7,11 +7,12 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { connectMcpServer } from './connection';
 import { LocalOAuthAuthorizationCoordinator } from './oauth/coordinator';
 import { LocalOAuthCallbackReceiver } from './oauth/local-callback';
+import { McpOAuthProvider } from './oauth/provider';
 import { McpOAuthStore } from './oauth/store';
 
 const temporaryDirectories: string[] = [];
@@ -32,16 +33,21 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 async function readJsonRequest(
   request: IncomingMessage,
 ): Promise<Record<string, unknown>> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of request) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  }
-  const parsed: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  const parsed: unknown = JSON.parse(await readRequestBody(request));
   if (!isRecord(parsed)) throw new Error('Expected a JSON object');
   return parsed;
 }
 
+async function readRequestBody(request: IncomingMessage): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of request) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
+
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(
     temporaryDirectories
       .splice(0)
@@ -50,12 +56,19 @@ afterEach(async () => {
 });
 
 describe('connectMcpServer OAuth lifecycle', () => {
-  it('reauthorizes against a local server and reconnects with a fresh transport', async () => {
+  it('completes OAuth and prevents late refresh writes after closing the connection', async () => {
     let origin = '';
     const requests: string[] = [];
+    let registrationMetadata: Record<string, unknown> | undefined;
     let unauthorizedRequests = 0;
     let authorizedRequests = 0;
     let tokenExchanges = 0;
+    let expired = false;
+    let releaseRefresh = () => {};
+    const refreshGate = new Promise<void>((resolve) => {
+      releaseRefresh = resolve;
+    });
+    const saveTokens = vi.spyOn(McpOAuthProvider.prototype, 'saveTokens');
     const authorizationStatuses: string[] = [];
     const server = createServer(async (request, response) => {
       const requestUrl = new URL(request.url ?? '/', origin);
@@ -81,6 +94,7 @@ describe('connectMcpServer OAuth lifecycle', () => {
       }
       if (requestUrl.pathname === '/register') {
         const metadata = await readJsonRequest(request);
+        registrationMetadata = metadata;
         sendJson(response, 201, {
           ...metadata,
           client_id: 'local-test-client',
@@ -90,15 +104,20 @@ describe('connectMcpServer OAuth lifecycle', () => {
       }
       if (requestUrl.pathname === '/token') {
         tokenExchanges += 1;
+        if (tokenExchanges > 1) await refreshGate;
         sendJson(response, 200, {
           access_token: 'local-test-token',
+          refresh_token: 'local-test-refresh',
           expires_in: 3600,
           token_type: 'Bearer',
         });
         return;
       }
       if (requestUrl.pathname === '/mcp') {
-        if (request.headers.authorization !== 'Bearer local-test-token') {
+        if (
+          expired ||
+          request.headers.authorization !== 'Bearer local-test-token'
+        ) {
           unauthorizedRequests += 1;
           response.writeHead(401, {
             'WWW-Authenticate': `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp"`,
@@ -114,9 +133,19 @@ describe('connectMcpServer OAuth lifecycle', () => {
               id: message.id,
               jsonrpc: '2.0',
               result: {
-                capabilities: {},
+                capabilities: { tools: {} },
                 protocolVersion: '2025-11-25',
                 serverInfo: { name: 'oauth-fixture', version: '1.0.0' },
+              },
+            });
+            return;
+          }
+          if (message.method === 'tools/list') {
+            sendJson(response, 200, {
+              id: message.id,
+              jsonrpc: '2.0',
+              result: {
+                tools: [{ name: 'echo', inputSchema: { type: 'object' } }],
               },
             });
             return;
@@ -169,6 +198,7 @@ describe('connectMcpServer OAuth lifecycle', () => {
         onToolsChanged: () => undefined,
         onAuthorizationStatus: (status) => authorizationStatuses.push(status),
         oauth: {
+          clientName: () => 'Atlas',
           sessionFactory: {
             start: async () => {
               const receiver = await LocalOAuthCallbackReceiver.start();
@@ -190,7 +220,253 @@ describe('connectMcpServer OAuth lifecycle', () => {
       expect(authorizedRequests).toBeGreaterThan(0);
       expect(tokenExchanges).toBe(1);
       expect(requests).toContain('POST /token');
+      expect(requests).toContain('POST /register');
+      expect(registrationMetadata?.client_name).toBe('Atlas');
+      const redirectUris = registrationMetadata?.redirect_uris as string[];
+      const persistedStore = new McpOAuthStore(
+        join(configDirectory, 'mcp-oauth.json'),
+      );
+      await expect(
+        persistedStore.clientInformation(
+          `oauth-fixture\u0000${origin}/mcp`,
+          redirectUris[0]!,
+          origin,
+        ),
+      ).resolves.toMatchObject({ client_name: 'Atlas' });
+
+      const tool = connection.tools[0];
+      if (!tool) throw new Error('Missing fixture tool');
+      expired = true;
+      const call = connection
+        .invoke(tool, {}, new AbortController().signal)
+        .catch((error) => error);
+      await vi.waitFor(() => expect(tokenExchanges).toBe(2));
       await connection.close();
+      const key = `oauth-fixture\0${origin}/mcp`;
+      await store.invalidate(key, 'all');
+      await store.saveTokens(
+        key,
+        { access_token: 'replacement-token', token_type: 'Bearer' },
+        origin,
+      );
+      releaseRefresh();
+      await call;
+      await vi.waitFor(() => expect(saveTokens).toHaveBeenCalledTimes(2));
+      expect(await store.tokens(key, origin)).toMatchObject({
+        access_token: 'replacement-token',
+      });
+    } finally {
+      releaseRefresh();
+      saveTokens.mockRestore();
+      await coordinator.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it('authorizes, refreshes tokens, and rejects late credentials after disconnect', async () => {
+    let origin = '';
+    const requests: string[] = [];
+    let registrationMetadata: Record<string, unknown> | undefined;
+    let unauthorizedRequests = 0;
+    let authorizedRequests = 0;
+    let tokenExchanges = 0;
+    let expectedAccessToken = 'local-test-token';
+    const grants: string[] = [];
+    const saveTokens = vi.spyOn(McpOAuthProvider.prototype, 'saveTokens');
+    const tool = { name: 'echo', inputSchema: { type: 'object' as const } };
+    const authorizationStatuses: string[] = [];
+    const server = createServer(async (request, response) => {
+      const requestUrl = new URL(request.url ?? '/', origin);
+      requests.push(`${request.method} ${requestUrl.pathname}`);
+      if (requestUrl.pathname === '/.well-known/oauth-protected-resource/mcp') {
+        sendJson(response, 200, {
+          authorization_servers: [origin],
+          resource: `${origin}/mcp`,
+        });
+        return;
+      }
+      if (requestUrl.pathname === '/.well-known/oauth-authorization-server') {
+        sendJson(response, 200, {
+          authorization_endpoint: `${origin}/authorize`,
+          code_challenge_methods_supported: ['S256'],
+          issuer: origin,
+          registration_endpoint: `${origin}/register`,
+          response_types_supported: ['code'],
+          token_endpoint: `${origin}/token`,
+          token_endpoint_auth_methods_supported: ['none'],
+        });
+        return;
+      }
+      if (requestUrl.pathname === '/register') {
+        const metadata = await readJsonRequest(request);
+        registrationMetadata = metadata;
+        sendJson(response, 201, {
+          ...metadata,
+          client_id: 'local-test-client',
+          token_endpoint_auth_method: 'none',
+        });
+        return;
+      }
+      if (requestUrl.pathname === '/token') {
+        tokenExchanges += 1;
+        const form = new URLSearchParams(await readRequestBody(request));
+        grants.push(form.get('grant_type') ?? '');
+        sendJson(response, 200, {
+          access_token: expectedAccessToken,
+          refresh_token: `refresh-${tokenExchanges}`,
+          expires_in: 3600,
+          token_type: 'Bearer',
+        });
+        return;
+      }
+      if (requestUrl.pathname === '/mcp') {
+        if (request.headers.authorization !== `Bearer ${expectedAccessToken}`) {
+          unauthorizedRequests += 1;
+          response.writeHead(401, {
+            'WWW-Authenticate': `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp"`,
+          });
+          response.end();
+          return;
+        }
+        authorizedRequests += 1;
+        if (request.method === 'POST') {
+          const message = await readJsonRequest(request);
+          if (message.method === 'initialize') {
+            sendJson(response, 200, {
+              id: message.id,
+              jsonrpc: '2.0',
+              result: {
+                capabilities: { tools: {} },
+                protocolVersion: '2025-11-25',
+                serverInfo: { name: 'oauth-fixture', version: '1.0.0' },
+              },
+            });
+            return;
+          }
+          if (message.method === 'tools/list') {
+            sendJson(response, 200, {
+              id: message.id,
+              jsonrpc: '2.0',
+              result: { tools: [tool] },
+            });
+            return;
+          }
+          if (message.method === 'tools/call') {
+            sendJson(response, 200, {
+              id: message.id,
+              jsonrpc: '2.0',
+              result: { content: [{ type: 'text', text: 'ok' }] },
+            });
+            return;
+          }
+        }
+        response.writeHead(202);
+        response.end();
+        return;
+      }
+      response.writeHead(404);
+      response.end();
+    });
+    await new Promise<void>((resolve) =>
+      server.listen(0, '127.0.0.1', resolve),
+    );
+    const address = server.address();
+    if (address === null || typeof address === 'string') {
+      throw new Error('Expected an IP server address');
+    }
+    origin = `http://127.0.0.1:${address.port}`;
+
+    const configDirectory = await mkdtemp(join(tmpdir(), 'klex-oauth-e2e-'));
+    temporaryDirectories.push(configDirectory);
+    const store = new McpOAuthStore(join(configDirectory, 'mcp-oauth.json'));
+    const coordinator = new LocalOAuthAuthorizationCoordinator(
+      async (authorizationUrl) => {
+        const redirectUrl = authorizationUrl.searchParams.get('redirect_uri');
+        const state = authorizationUrl.searchParams.get('state');
+        if (redirectUrl === null || state === null) {
+          throw new Error('Authorization URL omitted callback parameters');
+        }
+        const callbackUrl = new URL(redirectUrl);
+        callbackUrl.searchParams.set('code', 'approved-code');
+        callbackUrl.searchParams.set('state', state);
+        await fetch(callbackUrl);
+      },
+    );
+
+    try {
+      const connection = await connectMcpServer({
+        config: {
+          url: `${origin}/mcp`,
+          versionNegotiation: 'legacy',
+        },
+        namespace: 'oauth-fixture',
+        onDisconnect: () => undefined,
+        onPushNotification: () => undefined,
+        onRealtimeMediaNotification: () => undefined,
+        onResourceUpdated: () => undefined,
+        onToolsChanged: () => undefined,
+        onAuthorizationStatus: (status) => authorizationStatuses.push(status),
+        oauth: {
+          clientName: () => 'Atlas',
+          sessionFactory: {
+            start: async () => {
+              const receiver = await LocalOAuthCallbackReceiver.start();
+              return {
+                authorize: (options) =>
+                  coordinator.authorize({ ...options, receiver }),
+                close: () => receiver.close(),
+                redirectUrl: receiver.redirectUrl,
+              };
+            },
+          },
+          store,
+        },
+        signal: new AbortController().signal,
+      });
+
+      expect(authorizationStatuses).toEqual(['authorizing', 'connecting']);
+      expect(unauthorizedRequests).toBeGreaterThan(0);
+      expect(authorizedRequests).toBeGreaterThan(0);
+      expect(tokenExchanges).toBe(1);
+      expect(requests).toContain('POST /token');
+      expect(requests).toContain('POST /register');
+      expect(registrationMetadata?.client_name).toBe('Atlas');
+      const redirectUris = registrationMetadata?.redirect_uris as string[];
+      const persistedStore = new McpOAuthStore(
+        join(configDirectory, 'mcp-oauth.json'),
+      );
+      await expect(
+        persistedStore.clientInformation(
+          `oauth-fixture\u0000${origin}/mcp`,
+          redirectUris[0]!,
+          origin,
+        ),
+      ).resolves.toMatchObject({ client_name: 'Atlas' });
+
+      expectedAccessToken = 'refreshed-test-token';
+      await expect(
+        connection.invoke(tool, {}, new AbortController().signal),
+      ).resolves.toMatchObject({ content: [{ text: 'ok' }] });
+      expect(grants).toEqual(['authorization_code', 'refresh_token']);
+      const storeKey = `oauth-fixture\u0000${origin}/mcp`;
+      await expect(store.tokens(storeKey)).resolves.toMatchObject({
+        access_token: 'refreshed-test-token',
+        refresh_token: 'refresh-2',
+      });
+      const provider = saveTokens.mock.contexts[0];
+      if (!(provider instanceof McpOAuthProvider))
+        throw new Error('Expected the SDK OAuth provider');
+      await connection.close();
+      await store.removeServer('oauth-fixture');
+      await expect(
+        provider.saveTokens({
+          access_token: 'late-refresh',
+          token_type: 'Bearer',
+        }),
+      ).rejects.toThrow();
+      await expect(store.tokens(storeKey)).resolves.toBeUndefined();
     } finally {
       await coordinator.close();
       await new Promise<void>((resolve, reject) => {

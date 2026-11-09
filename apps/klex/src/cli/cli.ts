@@ -23,6 +23,10 @@ export interface CliOptions {
   dataDirectory: string | undefined;
   /** Root containing discoverable agent directories. */
   agentRoot: string;
+  /** Create a fresh agent instead of opening the picker. */
+  createAgent: boolean;
+  /** Local-only name, used only with --create-bot --no-cloud. */
+  agentName: string | undefined;
   cloudEnabled: boolean;
   cloudBaseUrl: string;
   /** OTLP base URL. Undefined means telemetry is off. */
@@ -87,32 +91,36 @@ function portOrUndefined(
   return port;
 }
 
+const CLI_OPTIONS = {
+  'data-dir': { type: 'string', short: 'd' },
+  'create-bot': { type: 'boolean' },
+  'bot-name': { type: 'string' },
+  help: { type: 'boolean', short: 'h' },
+  headless: { type: 'boolean', short: 'H' },
+  'auto-update': { type: 'boolean' },
+  'cloud-base-url': { type: 'string' },
+  'telemetry-endpoint': { type: 'string' },
+  'telemetry-debug': { type: 'boolean' },
+  'telemetry-level': { type: 'string' },
+  'telemetry-allow-insecure': { type: 'boolean' },
+  'disable-telemetry': { type: 'boolean' },
+  analytics: { type: 'boolean' },
+  deployment: { type: 'string' },
+  cloud: { type: 'boolean' },
+  'cloud-enroll-token': { type: 'string' },
+  'dangerous-local-admin-api-port': { type: 'string' },
+  'health-port': { type: 'string' },
+  'allow-dangerous-unsecure-cloud': { type: 'boolean' },
+  verbose: { type: 'boolean', short: 'v' },
+  version: { type: 'boolean' },
+  // Diagnostic flag, intentionally absent from printHelp().
+  'verify-native': { type: 'boolean' },
+} as const;
+
 export function parseCliArgs(argv: string[]): CliOptions {
   const { values } = parseArgs({
     args: argv,
-    options: {
-      'data-dir': { type: 'string', short: 'd' },
-      help: { type: 'boolean', short: 'h' },
-      headless: { type: 'boolean', short: 'H' },
-      'auto-update': { type: 'boolean' },
-      'cloud-base-url': { type: 'string' },
-      'telemetry-endpoint': { type: 'string' },
-      'telemetry-debug': { type: 'boolean' },
-      'telemetry-level': { type: 'string' },
-      'telemetry-allow-insecure': { type: 'boolean' },
-      'disable-telemetry': { type: 'boolean' },
-      analytics: { type: 'boolean' },
-      deployment: { type: 'string' },
-      cloud: { type: 'boolean' },
-      'cloud-enroll-token': { type: 'string' },
-      'dangerous-local-admin-api-port': { type: 'string' },
-      'health-port': { type: 'string' },
-      'allow-dangerous-unsecure-cloud': { type: 'boolean' },
-      verbose: { type: 'boolean', short: 'v' },
-      version: { type: 'boolean' },
-      // Diagnostic flag, intentionally absent from printHelp().
-      'verify-native': { type: 'boolean' },
-    },
+    options: CLI_OPTIONS,
     allowNegative: true,
   });
 
@@ -184,8 +192,35 @@ export function parseCliArgs(argv: string[]): CliOptions {
     values.deployment ?? process.env.KLEX_DEPLOYMENT,
   );
 
-  const cloudEnrollToken =
-    values['cloud-enroll-token'] ?? process.env.KLEX_CLOUD_ENROLLMENT_TOKEN;
+  const cloudEnrollToken = pathOrUndefined(
+    values['cloud-enroll-token'] ?? process.env.KLEX_CLOUD_ENROLLMENT_TOKEN,
+  );
+  const createAgent = values['create-bot'] ?? false;
+  const agentName = pathOrUndefined(values['bot-name']);
+  if (values['bot-name'] !== undefined && !createAgent) {
+    throw new Error('--bot-name requires --create-bot');
+  }
+  if (createAgent) {
+    if (dataDirectory !== undefined) {
+      throw new Error(
+        '--create-bot cannot be combined with --data-dir or KLEX_DATA_DIR',
+      );
+    }
+    if (cloudEnabled) {
+      if (values['bot-name'] !== undefined) {
+        throw new Error(
+          '--bot-name is only supported with --no-cloud; the cloud sets the name',
+        );
+      }
+      if (!cloudEnrollToken) {
+        throw new Error(
+          '--create-bot requires --cloud-enroll-token or KLEX_CLOUD_ENROLLMENT_TOKEN when cloud is enabled',
+        );
+      }
+    } else if (!agentName) {
+      throw new Error('--create-bot --no-cloud requires --bot-name');
+    }
+  }
 
   // CLI wins over env. --no-headless sets values.headless to false.
   const headless = values.headless ?? process.env.KLEX_HEADLESS === '1';
@@ -217,6 +252,8 @@ export function parseCliArgs(argv: string[]): CliOptions {
   return {
     dataDirectory,
     agentRoot,
+    createAgent,
+    agentName,
     cloudEnabled,
     cloudBaseUrl,
     telemetryEndpoint,
@@ -236,6 +273,28 @@ export function parseCliArgs(argv: string[]): CliOptions {
   };
 }
 
+/** Creation is a one-shot action; updates reopen the selected data directory. */
+export function agentRestartArgs(argv: string[]): string[] {
+  const { tokens } = parseArgs({
+    args: argv,
+    options: CLI_OPTIONS,
+    allowNegative: true,
+    tokens: true,
+  });
+  const removed = new Set<number>();
+  for (const token of tokens) {
+    if (
+      token.kind !== 'option' ||
+      !['create-bot', 'no-create-bot', 'bot-name'].includes(token.name)
+    )
+      continue;
+    removed.add(token.index);
+    if (token.value !== undefined && !token.inlineValue)
+      removed.add(token.index + 1);
+  }
+  return argv.filter((_, index) => !removed.has(index));
+}
+
 function printHelp(): void {
   const logger = createLogger({ name: 'klex', verbose: true });
   logger.info(
@@ -245,10 +304,12 @@ Klex Bot v${KLEX_VERSION}
 Usage: klex [options]
 
 Options:
-  -d, --data-dir <path>        Directory for agent data (overrides KLEX_DATA_DIR; interactive mode otherwise discovers agents under KLEX_HOME)
+  -d, --data-dir <path>        Directory for bot data (overrides KLEX_DATA_DIR; interactive mode otherwise discovers bots under KLEX_HOME)
+  --create-bot               Create, enroll (cloud mode), and start a new bot without the picker
+  --bot-name <name>          Required with --create-bot --no-cloud; cloud mode gets its name from the cloud
   -H, --headless               Run without the interactive CLI UI (overrides KLEX_HEADLESS)
   --no-headless                Run with the interactive CLI UI (overrides KLEX_HEADLESS)
-  --auto-update                Install updates automatically and restart once the agent is idle, or after a 10-minute drain timeout (overrides KLEX_AUTO_UPDATE)
+  --auto-update                Install updates automatically and restart once the bot is idle, or after a 10-minute drain timeout (overrides KLEX_AUTO_UPDATE)
   --no-auto-update             Disable automatic updates (overrides KLEX_AUTO_UPDATE)
   -h, --help                   Show this help message
   --version                    Print the version and exit
@@ -263,7 +324,7 @@ Options:
   --deployment <name>          Deployment label for analytics: self_hosted or cloud (overrides KLEX_DEPLOYMENT)
   --no-cloud                   Disable Klex Cloud connectivity (overrides KLEX_NO_CLOUD)
   --cloud                      Enable Klex Cloud connectivity (overrides KLEX_NO_CLOUD)
-  --cloud-enroll-token <code>  Enrollment token for headless enrollment (overrides KLEX_CLOUD_ENROLLMENT_TOKEN)
+  --cloud-enroll-token <code>  Enrollment token for cloud enrollment (overrides KLEX_CLOUD_ENROLLMENT_TOKEN)
   --health-port <port>         Enable GET /livez and /readyz (overrides KLEX_HEALTH_PORT; disabled by default)
   --dangerous-local-admin-api-port <port>  Expose the unauthenticated Admin API on 127.0.0.1 (overrides KLEX_DANGEROUS_LOCAL_ADMIN_API_PORT)
   --allow-dangerous-unsecure-cloud  Allow http cloud base URL and ws tunnel (overrides KLEX_ALLOW_UNSECURE_CLOUD, default: false)

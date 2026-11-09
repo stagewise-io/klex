@@ -102,7 +102,7 @@
   align-items: center;
   height: 28px;
   gap: 18px;
-  margin-left: auto;
+  margin-inline-start: auto;
   padding-inline: 6px;
 }
 
@@ -215,7 +215,7 @@
 .linear-issue-submit {
   display: grid;
   height: 28px;
-  margin-left: 6px;
+  margin-inline-start: 6px;
   padding: 0 10px;
   border: 0.5px solid transparent;
   place-items: center;

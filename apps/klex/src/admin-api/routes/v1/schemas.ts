@@ -4,10 +4,12 @@ import {
   providerTypeSchema as configProviderTypeSchema,
   MODEL_PURPOSES,
 } from '@/config';
+import { GenerationHealthErrorSchema } from '@/session-history/generation-health';
 import {
   MAX_BODY_LENGTH,
   MAX_DESCRIPTION_LENGTH,
-} from '@/session/chat/extensions/learning/learning-config';
+  MAX_NAME_LENGTH,
+} from '@/skills';
 
 // Extend Zod with .openapi() metadata support for spec generation.
 extendZodWithOpenApi(z);
@@ -65,14 +67,86 @@ const mcpServerErrorSchema = z
   })
   .openapi('McpServerError');
 
+// Mirror the public SDK Implementation and ServerCapabilities shapes. Keep these
+// concrete Zod objects so the published RPC types are self-contained and OpenAPI
+// documents each field without importing SDK internals.
+const mcpIconSchema = z
+  .object({
+    src: z.string(),
+    mimeType: z.string().optional(),
+    sizes: z.array(z.string()).optional(),
+    theme: z.enum(['light', 'dark']).optional(),
+  })
+  .openapi('McpIcon');
+
+const mcpImplementationSchema = z
+  .object({
+    name: z.string(),
+    title: z.string().optional(),
+    version: z.string(),
+    description: z.string().optional(),
+    websiteUrl: z.string().optional(),
+    icons: z.array(mcpIconSchema).optional(),
+  })
+  .openapi('McpImplementation');
+
+// Extension values are protocol JSON, deliberately opaque in the public RPC
+// type. A recursive JSONValue type exceeds Hono's JSON serialization depth.
+const mcpCapabilityObjectSchema = z
+  .record(z.string(), z.unknown())
+  .openapi('McpCapabilityObject');
+const mcpListChangedCapabilitySchema = z.object({
+  listChanged: z.boolean().optional(),
+});
+const mcpServerCapabilitiesSchema = z
+  .object({
+    experimental: z.record(z.string(), mcpCapabilityObjectSchema).optional(),
+    logging: mcpCapabilityObjectSchema.optional(),
+    completions: mcpCapabilityObjectSchema.optional(),
+    prompts: mcpListChangedCapabilitySchema.optional(),
+    resources: z
+      .object({
+        subscribe: z.boolean().optional(),
+        listChanged: z.boolean().optional(),
+      })
+      .optional(),
+    tools: mcpListChangedCapabilitySchema.optional(),
+    tasks: z
+      .looseObject({
+        list: mcpCapabilityObjectSchema.optional(),
+        cancel: mcpCapabilityObjectSchema.optional(),
+        requests: z
+          .looseObject({
+            tools: z
+              .looseObject({
+                call: mcpCapabilityObjectSchema.optional(),
+              })
+              .optional(),
+          })
+          .optional(),
+      })
+      .optional(),
+    extensions: z.record(z.string(), mcpCapabilityObjectSchema).optional(),
+  })
+  .openapi('McpServerCapabilities');
+
 const mcpServerInfoSchema = z
   .object({
     name: z.string(),
     status: mcpConnectionStatusSchema,
+    serverInfo: mcpImplementationSchema.optional(),
+    capabilities: mcpServerCapabilitiesSchema.optional(),
+    instructions: z.string().optional(),
+    protocolVersion: z.string().optional(),
+    protocolEra: z.enum(['legacy', 'modern']).optional(),
+    supportedVersions: z.array(z.string()).optional(),
     toolCount: z.number().int().min(0),
+    resourceCount: z.number().int().min(0),
     supportsPushNotifications: z.boolean(),
     supportsRealtimeMedia: z.boolean(),
+    supportsResourceSubscription: z.boolean(),
     transport: z.enum(['stdio', 'http']),
+    url: z.url().optional(),
     headerNames: z.array(z.string()),
     usesInteractiveOAuth: z.boolean(),
     authorization: mcpServerAuthorizationSchema.nullable(),
@@ -183,15 +257,16 @@ const mcpServerAuthorizationStartedSchema = z
   })
   .openapi('McpServerAuthorizationStarted');
 
-// Not `.strict()`: providers add benign extras to the redirect (`scope`, `iss`,
-// `error_uri`), and rejecting the relayed callback with a 400 would leave the
-// parked authorization to time out. Unknown keys are stripped instead.
+// Preserve issuer and error details for SDK callback validation. Other provider
+// extras such as `scope` are stripped rather than rejecting the callback.
 const oauthCallbackBodySchema = z
   .object({
     state: z.string().min(1),
     code: z.string().min(1).optional(),
     error: z.string().min(1).optional(),
     error_description: z.string().optional(),
+    iss: z.string().optional(),
+    error_uri: z.string().optional(),
   })
   .openapi('OAuthCallbackBody');
 
@@ -303,8 +378,6 @@ const instinctModelSelectionEntryOapiSchema = modelSelectionEntryOapiSchema
 
 const voiceModelSelectionSchema = z.object({
   sts: z.array(stsModelSelectionEntryOapiSchema),
-  tts: z.array(modelSelectionEntryOapiSchema),
-  stt: z.array(modelSelectionEntryOapiSchema),
 });
 
 const modelSelectionSchema = z
@@ -365,8 +438,40 @@ const providerMetadataSchema = z.object({
     customModels: z.boolean(),
     generation: z.boolean(),
     evaluation: z.boolean(),
+    interactiveAuthorization: z.boolean(),
   }),
 });
+
+// Status only. The verification URI and user code are never part of it.
+const providerAuthorizationSchema = z
+  .object({
+    method: z.literal('device-code'),
+    status: z.enum([
+      'required',
+      'pending',
+      'authorized',
+      'expired',
+      'failed',
+      'revoked',
+    ]),
+    accountId: z.string().optional(),
+    pending: z
+      .object({ id: z.string(), expiresAt: z.string().datetime() })
+      .optional(),
+    message: z.string().optional(),
+  })
+  .openapi('ProviderAuthorization');
+
+// The one response that carries the verification URI and user code: it goes
+// to the caller that started the sign-in, and nowhere else.
+const providerAuthorizationStartedSchema = z
+  .object({
+    id: z.string(),
+    verificationUri: z.url(),
+    userCode: z.string(),
+    expiresAt: z.string().datetime(),
+  })
+  .openapi('ProviderAuthorizationStarted');
 
 const providerTypeSchema = providerMetadataSchema.extend({
   type: configProviderTypeSchema,
@@ -382,42 +487,6 @@ const providerAvailabilitySchema = z.object({
   code: z.string().optional(),
   message: z.string().optional(),
   remediation: z.string().optional(),
-});
-
-const providerResponseSchema = z.object({
-  id: z.string(),
-  type: configProviderTypeSchema,
-  metadata: providerMetadataSchema,
-  settings: providerSettingsSchema,
-  operations: z.object({
-    update: providerAvailabilitySchema,
-    remove: providerAvailabilitySchema,
-  }),
-});
-
-const providersResponseSchema = z.object({
-  providers: z.array(providerResponseSchema),
-});
-
-const createProviderBodySchema = z.object({
-  id: z.string().min(1),
-  type: configProviderTypeSchema,
-  settings: providerSettingsSchema,
-});
-
-const updateProviderBodySchema = z.object({
-  settings: providerSettingsSchema.optional(),
-});
-
-const canAddProviderBodySchema = z.object({
-  settings: providerSettingsSchema,
-});
-
-const providerOperationSchema = z.object({
-  ok: z.boolean(),
-  code: z.string().optional(),
-  message: z.string().optional(),
-  provider: providerResponseSchema.optional(),
 });
 
 const connectivityResultSchema = z.object({
@@ -502,6 +571,64 @@ const knownModelSchema = z
     capabilities: modelCapabilitiesSchema.optional(),
   })
   .openapi('KnownModel');
+
+const providerKnownModelsSchema = z.record(
+  z.string().min(1),
+  knownModelSchema.omit({ modelId: true }).strict(),
+);
+
+const providerResponseSchema = z.object({
+  id: z.string(),
+  type: configProviderTypeSchema,
+  metadata: providerMetadataSchema,
+  settings: providerSettingsSchema,
+  knownModels: providerKnownModelsSchema.optional().openapi({
+    description:
+      'Exact saved model overrides, included on credential exports without discovery or catalog enrichment.',
+  }),
+  operations: z.object({
+    update: providerAvailabilitySchema,
+    remove: providerAvailabilitySchema,
+  }),
+  authorization: providerAuthorizationSchema.optional(),
+});
+
+const providersQuerySchema = z.object({
+  includeSecrets: z.enum(['true', 'false']).optional().openapi({
+    description:
+      'Explicitly include resolved provider secrets. Cloud must require organization owner/admin authorization before forwarding this flag.',
+  }),
+});
+
+const providersResponseSchema = z.object({
+  providers: z.array(providerResponseSchema),
+  secretsIncluded: z.literal(true).optional().openapi({
+    description:
+      'Present only for includeSecrets=true. Absence means the response must not be used to transfer credentials, including on legacy bots.',
+  }),
+});
+
+const createProviderBodySchema = z.object({
+  id: z.string().min(1),
+  type: configProviderTypeSchema,
+  settings: providerSettingsSchema,
+  knownModels: providerKnownModelsSchema.optional(),
+});
+
+const updateProviderBodySchema = z.object({
+  settings: providerSettingsSchema.optional(),
+});
+
+const canAddProviderBodySchema = z.object({
+  settings: providerSettingsSchema,
+});
+
+const providerOperationSchema = z.object({
+  ok: z.boolean(),
+  code: z.string().optional(),
+  message: z.string().optional(),
+  provider: providerResponseSchema.optional(),
+});
 
 const knownModelsResponseSchema = z
   .object({
@@ -782,77 +909,129 @@ const godMessageResetResponseSchema = z
 
 // --- Skills ---
 
+const turnSchema = z.number().int().min(0);
+
 const skillSummarySchema = z
   .object({
-    userEdited: z.boolean().optional(),
-    name: z.string().describe('Skill name, unique across the agent'),
+    id: z
+      .string()
+      .describe('Qualified skill id `namespace/name`, unique across the agent'),
+    namespace: z
+      .string()
+      .describe('Source of the skill: the namespace of its contributor'),
+    name: z.string().describe('Skill name, unique within its namespace'),
     description: z
       .string()
       .describe('One-line description of when the skill applies'),
+    // LEGACY(skill-registry): Cloud does not read `origin`. Removing it is a
+    // breaking Admin API change; remove it with the bare-name routes.
     origin: z
-      .literal('learned')
-      .describe('Where the skill comes from. Only learned skills exist today'),
+      .string()
+      .openapi({ deprecated: true })
+      .describe(
+        'Deprecated: use `namespace`. `learned` for the learning namespace, otherwise the namespace',
+      ),
     createdAt: z
       .string()
       .datetime()
-      .optional()
       .describe('When the skill was first written'),
     updatedAt: z
       .string()
       .datetime()
-      .optional()
-      .describe('When the skill was last rewritten'),
+      .describe('When the description or body last changed'),
     lastReadAt: z
       .string()
       .datetime()
       .nullable()
-      .optional()
       .describe('When the agent last read the skill; null if never'),
     readCount: z
       .number()
       .int()
       .min(0)
-      .optional()
       .describe('How often the agent has read the skill'),
+    createdTurn: turnSchema.describe('Agent turn the skill was created at'),
+    updatedTurn: turnSchema.describe('Agent turn of the last content change'),
+    lastReadTurn: turnSchema
+      .nullable()
+      .describe('Agent turn of the last read; null if never'),
+    userEdited: z
+      .boolean()
+      .describe(
+        'True after an admin content change, until the namespace rewrites it',
+      ),
+    metadata: z
+      .record(z.string(), z.unknown())
+      .describe('Namespace-owned metadata; read-only through this API'),
   })
   .openapi('SkillSummary');
 
 const skillListResponseSchema = z
   .object({
     skills: z.array(skillSummarySchema),
+    currentTurn: turnSchema.describe('Current agent activity clock'),
   })
   .openapi('SkillListResponse');
 
 const skillDetailSchema = skillSummarySchema
   .extend({
     body: z.string().describe('Markdown body of the SKILL.md'),
+    // LEGACY(skill-registry): duplicates `metadata.sourceEpisodes` of learned
+    // skills, and Cloud does not read it. Removing it is a breaking Admin API
+    // change; remove it with the bare-name routes.
     sourceEpisodes: z
       .array(z.string())
-      .optional()
-      .describe('Memory episode IDs the skill was learned from'),
+      .openapi({ deprecated: true })
+      .describe(
+        'Deprecated: use `metadata`. Memory episode IDs the skill was learned from',
+      ),
+    currentTurn: turnSchema.describe('Current agent activity clock'),
   })
   .openapi('SkillDetail');
 
+// LEGACY(skill-registry): bare-name routes only, as is
+// `ambiguousSkillResponseSchema`.
 const skillNameParamsSchema = z.object({
+  name: z.string().min(1).openapi({
+    description: 'Bare skill name, resolved across namespaces',
+    example: 'ask-before-contract-changes',
+  }),
+});
+
+const skillIdParamsSchema = z.object({
+  namespace: z.string().min(1).openapi({
+    description: 'Skill namespace',
+    example: 'learning',
+  }),
   name: z.string().min(1).openapi({
     description: 'Skill name',
     example: 'ask-before-contract-changes',
   }),
 });
 
+const ambiguousSkillResponseSchema = errorResponseSchema
+  .extend({
+    candidates: z
+      .array(z.string())
+      .describe('Qualified ids of all skills with this name'),
+  })
+  .openapi('AmbiguousSkillResponse');
+
+const skillDescriptionInputSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(MAX_DESCRIPTION_LENGTH)
+  .refine(
+    (value) => !/[\n\r\u0085\u2028\u2029]/u.test(value),
+    'Description must be a single line',
+  );
+
+const skillBodyInputSchema = z.string().trim().min(1).max(MAX_BODY_LENGTH);
+
 export const updateSkillBodySchema = z
   .object({
-    description: z
-      .string()
-      .trim()
-      .min(1)
-      .max(MAX_DESCRIPTION_LENGTH)
-      .refine(
-        (value) => !/[\n\r\u0085\u2028\u2029]/u.test(value),
-        'Description must be a single line',
-      )
-      .optional(),
-    body: z.string().trim().min(1).max(MAX_BODY_LENGTH).optional(),
+    description: skillDescriptionInputSchema.optional(),
+    body: skillBodyInputSchema.optional(),
   })
   .refine(
     (value) => value.description !== undefined || value.body !== undefined,
@@ -860,8 +1039,29 @@ export const updateSkillBodySchema = z
   )
   .openapi('UpdateSkillBody');
 
+export const replaceTemplateSkillsBodySchema = z
+  .object({
+    skills: z
+      .array(
+        z.object({
+          name: z.string().min(1).max(MAX_NAME_LENGTH).openapi({
+            description: 'Skill name, unique within the request',
+            example: 'review-pull-requests',
+          }),
+          description: skillDescriptionInputSchema.describe(
+            'One-line description of when the skill applies',
+          ),
+          body: skillBodyInputSchema.describe('Markdown body of the SKILL.md'),
+        }),
+      )
+      .describe(
+        'Complete set of template skills. Skills missing from it are deleted',
+      ),
+  })
+  .openapi('ReplaceTemplateSkillsBody');
+
 export const deleteSkillResponseSchema = z
-  .object({ deleted: z.literal(true), name: z.string() })
+  .object({ deleted: z.literal(true), id: z.string(), name: z.string() })
   .openapi('DeleteSkillResponse');
 
 // --- Episode summaries ---
@@ -910,6 +1110,7 @@ const sessionKindSchema = z
 
 const sessionHistoryRecordSchema = z
   .object({
+    generationError: GenerationHealthErrorSchema.nullable(),
     instanceId: z.string(),
     sessionId: z.string(),
     kind: sessionKindSchema,
@@ -1222,6 +1423,7 @@ const cloudEnrollResponseSchema = z
 export {
   agentIdentityPatchSchema,
   agentIdentityResponseSchema,
+  ambiguousSkillResponseSchema,
   audioInputCapabilitySchema,
   canAddProviderBodySchema,
   cloudEnrollBodySchema,
@@ -1263,11 +1465,14 @@ export {
   modelSelectionWarningSchema,
   oauthCallbackAcceptedSchema,
   oauthCallbackBodySchema,
+  providerAuthorizationSchema,
+  providerAuthorizationStartedSchema,
   providerIdParamSchema,
   providerModelsQuerySchema,
   providerModelsResponseSchema,
   providerOperationSchema,
   providerResponseSchema,
+  providersQuerySchema,
   providersResponseSchema,
   providerTypeParamSchema,
   providerTypesResponseSchema,
@@ -1284,6 +1489,7 @@ export {
   sessionInstanceIdParamSchema,
   sessionKindSchema,
   skillDetailSchema,
+  skillIdParamsSchema,
   skillListResponseSchema,
   skillNameParamsSchema,
   skillSummarySchema,

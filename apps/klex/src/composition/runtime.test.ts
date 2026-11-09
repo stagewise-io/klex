@@ -42,6 +42,7 @@ function createModules(options: {
   return {
     modelCallLogger: make('model-call-logger'),
     sessionHistory: make('session-history'),
+    skillRegistry: make('skill-registry'),
     adminApi: make('admin-api'),
     cloudConnectivity: make('cloud-connectivity'),
     sessionHost: make('session-host'),
@@ -65,6 +66,7 @@ describe('runtime composition', () => {
     expect(order).toEqual([
       'model-call-logger',
       'session-history',
+      'skill-registry',
       'admin-api',
       'cloud-connectivity',
       'session-host',
@@ -113,10 +115,15 @@ describe('runtime composition', () => {
       'session-host',
       'cloud-connectivity',
       'admin-api',
+      'skill-registry',
       'model-call-logger',
       'session-history',
       'local-data',
     ]);
+    // Sessions and the admin API stop writing skills before the registry flushes.
+    expect(recorded.closes.indexOf('session-host')).toBeLessThan(
+      recorded.closes.indexOf('skill-registry'),
+    );
     // Sessions flush their final transcript before the store closes.
     expect(recorded.closes.indexOf('session-host')).toBeLessThan(
       recorded.closes.indexOf('session-history'),
@@ -130,6 +137,38 @@ describe('runtime composition', () => {
     );
   });
 
+  it('waits past the rollback deadline before closing transcript storage', async () => {
+    vi.useFakeTimers();
+    const sessionClosed = Promise.withResolvers<void>();
+    try {
+      const recorded = emptyRecord();
+      const modules = createModules({ recorded });
+      const closeSession = vi.fn(async () => {
+        await sessionClosed.promise;
+        recorded.closes.push('session-host');
+      });
+      modules.sessionHost.close = closeSession;
+      const runtime = await startRuntime({
+        logging: createLoggingMock(),
+        modules,
+      });
+      const closing = runtime.close();
+      await vi.advanceTimersByTimeAsync(6_000);
+      expect(closeSession).toHaveBeenCalledOnce();
+      expect(recorded.closes).not.toContain('session-history');
+      sessionClosed.resolve();
+      await closing;
+      expect(recorded.closes.indexOf('session-host')).toBeLessThan(
+        recorded.closes.indexOf('session-history'),
+      );
+      expect(recorded.closes.at(-1)).toBe('session-history');
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      sessionClosed.resolve();
+      vi.useRealTimers();
+    }
+  });
+
   it('is idempotent across repeated close calls', async () => {
     const recorded = emptyRecord();
     const runtime = await startRuntime({
@@ -140,7 +179,7 @@ describe('runtime composition', () => {
     await Promise.all([runtime.close(), runtime.close()]);
     await runtime.close();
 
-    expect(recorded.closes).toHaveLength(9);
+    expect(recorded.closes).toHaveLength(10);
   });
 
   it('unwinds started modules and rethrows when one fails to start', async () => {
@@ -158,6 +197,7 @@ describe('runtime composition', () => {
     expect(recorded.starts).toEqual([
       'model-call-logger',
       'session-history',
+      'skill-registry',
       'admin-api',
       'cloud-connectivity',
       'session-host',
@@ -169,11 +209,40 @@ describe('runtime composition', () => {
       'session-host',
       'cloud-connectivity',
       'admin-api',
+      'skill-registry',
       'session-history',
       'model-call-logger',
     ]);
     // Rollback of pre-runtime resources stays with their owner.
     expect(adoptedClose).not.toHaveBeenCalled();
+  });
+
+  it('bounds a hung rollback step and still releases earlier modules', async () => {
+    vi.useFakeTimers();
+    try {
+      const recorded = emptyRecord();
+      const modules = createModules({ recorded, failing: 'mcp' });
+      modules.mcp.close = () => new Promise(() => {});
+      const startup = expect(
+        startRuntime({ logging: createLoggingMock(), modules }),
+      ).rejects.toThrow('mcp failed');
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(recorded.closes).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1);
+      await startup;
+      expect(recorded.closes).toEqual([
+        'realtime',
+        'session-host',
+        'cloud-connectivity',
+        'admin-api',
+        'skill-registry',
+        'session-history',
+        'model-call-logger',
+      ]);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('continues unwinding when a module close fails', async () => {
@@ -201,6 +270,7 @@ describe('runtime composition', () => {
       'session-host',
       'cloud-connectivity',
       'admin-api',
+      'skill-registry',
       'model-call-logger',
       'session-history',
     ]);

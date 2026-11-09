@@ -11,6 +11,10 @@ import {
 
 import type { ModuleLogger } from '@stagewise/logger';
 
+import {
+  type GenerationFailure,
+  summarizeGenerationFailure,
+} from '@/session-history/generation-health';
 import type { TelemetryMetrics } from '@/telemetry-metrics';
 import {
   classifyGenerationError,
@@ -30,6 +34,7 @@ import { startChildSpan } from '../utils/tracing';
 import { ToolDispatcher } from './tool-dispatcher';
 
 export interface GenerationRunnerDependencies {
+  allowEmptyStop?: boolean;
   logger: ModuleLogger;
   sessionId: string;
   telemetryMetrics?: TelemetryMetrics;
@@ -119,6 +124,9 @@ export class GenerationRunner {
 
   async run(): Promise<StepCompleteEvent> {
     const { stepSpan, fallbackManager, messages } = this.deps;
+    const allowEmptyStop =
+      this.deps.allowEmptyStop ?? this.isPostToolContinuation();
+    let emptyStop = false;
 
     const toolDispatcher = new ToolDispatcher({
       logger: this.deps.logger,
@@ -142,6 +150,7 @@ export class GenerationRunner {
     let attempt = 0;
     let forceNextStep = false;
     let fatalError = false;
+    let generationFailure: GenerationFailure | null = null;
     let fatalErrorReason: string | null = null;
     let generationFailed = false;
     let modelFallbackOccurred = false;
@@ -180,6 +189,7 @@ export class GenerationRunner {
 
       try {
         const response = await runStreamedGeneration({
+          allowEmptyStop,
           model,
           modelMessages: this.deps.modelMessages,
           tools: this.deps.tools,
@@ -230,7 +240,11 @@ export class GenerationRunner {
           response.finishReason === 'stop' ||
           response.finishReason === 'tool-calls'
         ) {
-          messages.push(response.message);
+          emptyStop =
+            allowEmptyStop &&
+            response.finishReason === 'stop' &&
+            response.message.parts.length === 0;
+          if (!emptyStop) messages.push(response.message);
           fallbackManager.recordSuccessfulGeneration();
           lastUsage = response.usage;
           lastFinishReason = response.finishReason;
@@ -244,6 +258,12 @@ export class GenerationRunner {
               ? classifyGenerationError(response.error)
               : null;
           lastClassification = classification;
+          if (!isAborted && !classification?.isAbort)
+            generationFailure = summarizeGenerationFailure(
+              response.error,
+              this.deps.modelContext,
+              classification?.reason,
+            );
           const hasContent =
             response.message !== null && response.message.parts.length > 0;
           const coarse = this.decideOutcome(
@@ -268,6 +288,12 @@ export class GenerationRunner {
         const isAborted = generationAbortController.signal.aborted;
         const classification = classifyGenerationError(e);
         lastClassification = classification;
+        if (!isAborted && !classification.isAbort)
+          generationFailure = summarizeGenerationFailure(
+            e,
+            this.deps.modelContext,
+            classification.reason,
+          );
         const hasContent =
           latestMessage !== null && latestMessage.parts.length > 0;
         const coarse = this.decideOutcome(
@@ -327,6 +353,7 @@ export class GenerationRunner {
     // the tool sweep and report the rejection to the turn.
     if (requestRejected) {
       return {
+        generationFailure,
         shouldContinue: true,
         forceNextStep: false,
         fatalError: false,
@@ -350,6 +377,7 @@ export class GenerationRunner {
         'Generation attempts exhausted — stopping step',
       );
       return {
+        generationFailure,
         shouldContinue: false,
         forceNextStep: false,
         fatalError: false,
@@ -392,7 +420,8 @@ export class GenerationRunner {
     }
 
     return {
-      shouldContinue: true,
+      generationFailure,
+      shouldContinue: !emptyStop,
       forceNextStep,
       fatalError,
       fatalErrorReason,
@@ -409,6 +438,25 @@ export class GenerationRunner {
       modelFallbackOccurred,
       requestRejected: salvagedRejection,
     };
+  }
+
+  private isPostToolContinuation(): boolean {
+    const lastMessage = this.deps.messages.at(-1);
+    const toolParts =
+      lastMessage?.role === 'assistant'
+        ? lastMessage.parts.filter(isToolUIPart)
+        : [];
+    return (
+      (toolParts.length > 0 &&
+        toolParts.every(
+          (part) =>
+            part.state === 'output-available' ||
+            part.state === 'output-denied' ||
+            part.state === 'output-error' ||
+            part.state === 'approval-responded',
+        )) ||
+      this.deps.modelMessages.at(-1)?.role === 'tool'
+    );
   }
 
   abort(reason?: string): void {

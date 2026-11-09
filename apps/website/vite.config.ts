@@ -4,6 +4,9 @@ import { fileURLToPath } from 'node:url';
 import tailwindcss from '@tailwindcss/vite';
 import { type Connect, createServer, defineConfig, type Plugin } from 'vite';
 
+import { createLegalPlugin } from './src/legal/node/index.ts';
+import { staticMascots } from './static-mascot-plugin.ts';
+
 function prerenderPages(): Plugin {
   let pages: Promise<Record<string, string>> | undefined;
   return {
@@ -12,11 +15,15 @@ function prerenderPages(): Plugin {
     transformIndexHtml: {
       order: 'pre',
       async handler(html, context) {
+        if (context.path === '/legal/index.html') return html;
         pages ??= (async () => {
           const server = await createServer({
             configFile: false,
             root: fileURLToPath(new URL('.', import.meta.url)),
             appType: 'custom',
+            resolve: {
+              alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
+            },
             server: {
               middlewareMode: true,
               hmr: false,
@@ -24,7 +31,9 @@ function prerenderPages(): Plugin {
               watch: null,
             },
             optimizeDeps: { noDiscovery: true, include: [] },
-            ssr: { noExternal: ['@stagewise/ui'] },
+            ssr: { noExternal: ['@klex/mascot', '@stagewise/ui'] },
+            plugins: [staticMascots()],
+            build: { assetsInlineLimit: 0 },
           });
           try {
             const { prerenderLandingPage } = await server.ssrLoadModule(
@@ -60,11 +69,16 @@ function prerenderPages(): Plugin {
 
 const servePageRoutes: Connect.NextHandleFunction = (
   request,
-  _response,
+  response,
   next,
 ) => {
   const url = new URL(request.url ?? '/', 'http://localhost');
   const route = url.pathname.replace(/\/$/, '');
+  if (['/terms', '/privacy'].includes(route)) {
+    response.writeHead(308, { Location: `/legal${route}` });
+    response.end();
+    return;
+  }
   if (['/brand', '/press'].includes(route)) {
     request.url = `${route}/index.html${url.search}`;
   }
@@ -116,8 +130,19 @@ function klexInstallerAssets(): Plugin {
 
 export default defineConfig({
   appType: 'mpa',
-  server: { allowedHosts: ['.trycloudflare.com'] },
+  resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
+  server: {
+    allowedHosts: ['.trycloudflare.com'],
+    proxy: {
+      '/api/cloud-status': {
+        target: 'https://status.klex.bot',
+        changeOrigin: true,
+        rewrite: () => '/api/v1/summary',
+      },
+    },
+  },
   plugins: [
+    staticMascots(),
     prerenderPages(),
     {
       name: 'klex-page-routes',
@@ -128,12 +153,20 @@ export default defineConfig({
         server.middlewares.use(servePageRoutes);
       },
     },
+    createLegalPlugin({
+      contentRoot: fileURLToPath(new URL('./content/legal', import.meta.url)),
+      templatePath: fileURLToPath(
+        new URL('./legal/index.html', import.meta.url),
+      ),
+    }),
     klexInstallerAssets(),
     tailwindcss(),
   ],
   build: {
+    assetsInlineLimit: 0,
     rolldownOptions: {
       input: {
+        legal: fileURLToPath(new URL('./legal/index.html', import.meta.url)),
         main: fileURLToPath(new URL('./index.html', import.meta.url)),
         brand: fileURLToPath(new URL('./brand/index.html', import.meta.url)),
         press: fileURLToPath(new URL('./press/index.html', import.meta.url)),

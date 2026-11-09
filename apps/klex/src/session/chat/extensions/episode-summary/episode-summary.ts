@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 
-import type { EpisodeFeed } from '@/session/chat/extensions/memory';
+import type { ActivityHistory } from '@/activity-history';
 import { DEFAULT_SESSION_ID } from '@/session/types';
 
 import type {
@@ -15,7 +15,7 @@ import { createSummaryStore, type SummaryStore } from './summary-store';
 export const EPISODE_SUMMARY_EXTENSION_ID = 'io.stagewise/episode-summary';
 
 export interface EpisodeSummaryExtOptions {
-  episodes: EpisodeFeed;
+  activities: ActivityHistory;
   summaryLog: EpisodeSummaryLogHub;
 }
 
@@ -26,6 +26,7 @@ class EpisodeSummaryExtension implements Extension {
   private detachLog: (() => void) | null = null;
   private release: (() => void) | null = null;
   private closed = false;
+  private idleTimer: NodeJS.Timeout | null = null;
 
   constructor(
     private readonly deps: ExtensionDeps,
@@ -59,7 +60,8 @@ class EpisodeSummaryExtension implements Extension {
       return;
     }
     const summarizer = createSummarizer({
-      episodes: this.options.episodes,
+      activities: this.options.activities,
+      getLimits: () => this.deps.config.get().extensions.memory.episodes,
       store,
       generateText: this.deps.generateText,
       getModelIds: () => {
@@ -74,12 +76,24 @@ class EpisodeSummaryExtension implements Extension {
       }),
     });
     this.summarizer = summarizer;
-    this.unsubscribe = this.options.episodes.subscribe(() => summarizer.wake());
+    this.unsubscribe = this.options.activities.subscribe(() =>
+      summarizer.wake(),
+    );
+    this.idleTimer = setInterval(() => summarizer.wake(), 30_000);
+    this.idleTimer.unref();
     summarizer.start();
     summarizer.wake();
     this.detachLog = this.options.summaryLog.attach({
       list: (options) => store.list(options),
     });
+  }
+
+  onStepStart(): void {
+    this.summarizer?.setStepActive(true);
+  }
+
+  onStepComplete(): void {
+    this.summarizer?.setStepActive(false);
   }
 
   async onClose(): Promise<void> {
@@ -96,6 +110,8 @@ class EpisodeSummaryExtension implements Extension {
   }
 
   private async teardown(): Promise<void> {
+    if (this.idleTimer) clearInterval(this.idleTimer);
+    this.idleTimer = null;
     this.detachLog?.();
     this.detachLog = null;
     this.unsubscribe?.();
@@ -135,7 +151,7 @@ class EpisodeSummaryExtensionFactory implements ExtensionFactory {
 }
 
 /**
- * Titles each newly finished memory episode with one cheap model call and
+ * Titles each ready canonical activity batch with one cheap model call and
  * exposes the titles, newest first, through the episode summary log hub.
  */
 export function createEpisodeSummaryExt(

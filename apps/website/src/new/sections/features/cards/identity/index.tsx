@@ -1,13 +1,14 @@
 import './styles.css';
 
+import type { KlexHandle } from '@klex/mascot';
 import { gsap } from 'gsap';
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 
-import { IconGithub } from '@stagewise/ui/icons/nucleo/social-media/IconGithub.tsx';
-import { IconDiscord } from '@stagewise/ui/icons/provider/IconDiscord.tsx';
+import { t } from '@/i18n';
 
 import { klexLook } from '../../../../bot-looks';
-import { Klex, type KlexHandle } from '../../../../klex';
+import { ProgressiveMascot, StaticMascot } from '../../../../static-mascot';
+import { StaticIcon } from '../../../../static-mascot/static-icon';
 import {
   type CardProps,
   FeatureCard,
@@ -18,8 +19,10 @@ export function IdentityCard({ playing }: CardProps) {
   return (
     <FeatureCard
       id="identity"
-      title="Their own accounts in your tools"
-      description="Each Klex Bot has its own account and profile in Slack, Discord, GitHub, and the other tools your team uses."
+      title={t('Their own accounts in your tools')}
+      description={t(
+        'Each Klex Bot has its own account and profile in Slack, Discord, GitHub, and the other tools your team uses.',
+      )}
       Scene={IdentityScene}
       playing={playing}
     />
@@ -71,6 +74,10 @@ function IdentityScene({ active }: SceneProps) {
     }
   }, [active]);
 
+  const ready = useCallback(() => {
+    if (active) bot.current?.resume();
+    else bot.current?.pause();
+  }, [active]);
   return (
     <div className="bento-identity-scene">
       <div className="bento-identity-world">
@@ -79,9 +86,9 @@ function IdentityScene({ active }: SceneProps) {
           {accounts.map(({ provider, handle }, index) => {
             const logo =
               provider === 'discord' ? (
-                <IconDiscord />
+                <StaticIcon name="discord" />
               ) : provider === 'github' ? (
-                <IconGithub />
+                <StaticIcon name="github" />
               ) : (
                 <img src={`/connectors/${provider}.svg`} alt="" />
               );
@@ -95,12 +102,7 @@ function IdentityScene({ active }: SceneProps) {
                   <div className="bento-account-front">
                     <div className="bento-account-banner" />
                     <div className="bento-account-avatar">
-                      <Klex
-                        {...klexLook}
-                        size={44}
-                        layout="avatar"
-                        idle={false}
-                      />
+                      <StaticMascot name="brand" size={44} />
                     </div>
                     <div className="bento-account-profile">
                       <span>Klex</span>
@@ -119,7 +121,14 @@ function IdentityScene({ active }: SceneProps) {
           })}
         </div>
         <div className="bento-identity-bot">
-          <Klex ref={bot} {...klexLook} size={76} layout="avatar" />
+          <ProgressiveMascot
+            snapshot="brand"
+            onReady={ready}
+            ref={bot}
+            {...klexLook}
+            size={76}
+            layout="avatar"
+          />
         </div>
       </div>
     </div>

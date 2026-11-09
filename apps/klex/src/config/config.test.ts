@@ -8,6 +8,11 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { RootLogger } from '@stagewise/logger';
 
 import { createLocalData } from '@/local-data';
+import {
+  migrateConfigV1ToV2,
+  migrateConfigV3ToV4,
+  migrateConfigV4ToV5,
+} from '@/local-data-migrations';
 import { KLEX_VERSION } from '@/release';
 
 import {
@@ -20,17 +25,16 @@ import {
   completeV2Config,
   completeV4StoredConfig,
   completeV5StoredConfig,
+  completeV6StoredConfig,
   emptyModelSelection,
 } from './config.test-fixtures';
-import { CONFIG_STORE_DEFINITION } from './storage-definition';
 import {
-  dropLegacyTelemetryConfig,
   getProviderSettingsJsonSchema,
   klexConfigSchema,
-  migrateLegacyKlexConfig,
-  nestMemoryExtensionConfig,
   parseKlexConfig,
-} from './types';
+  providerSettingKeysForAuthMode,
+} from './schema';
+import { CONFIG_STORE_DEFINITION } from './storage-definition';
 
 const directories: string[] = [];
 const logging = {
@@ -123,7 +127,7 @@ describe('config v2', () => {
       ...completeV2Config,
       modelSelection: {
         ...emptyModelSelection,
-        voice: { sts: [entry], tts: [], stt: [] },
+        voice: { sts: [entry] },
       },
     };
     expect(parseKlexConfig(value).modelSelection.voice.sts[0]?.voiceId).toBe(
@@ -135,7 +139,7 @@ describe('config v2', () => {
           ...value,
           modelSelection: {
             ...emptyModelSelection,
-            voice: { sts: [{ ...entry, voiceId }], tts: [], stt: [] },
+            voice: { sts: [{ ...entry, voiceId }] },
           },
         }),
       ).toThrow();
@@ -184,8 +188,6 @@ describe('config v2', () => {
         ...emptyModelSelection,
         voice: {
           sts: [{ providerId: 'voice', modelId, voiceId }],
-          tts: [],
-          stt: [],
         },
       });
       expect(config.resolveRealtimeProvider()).toMatchObject({
@@ -201,7 +203,7 @@ describe('config v2', () => {
       expect(config.get().modelSelection.voice.sts[0]?.voiceId).toBe(voiceId);
       await config.writeModelSelection({
         ...emptyModelSelection,
-        voice: { sts: [{ providerId: 'voice', modelId }], tts: [], stt: [] },
+        voice: { sts: [{ providerId: 'voice', modelId }] },
       });
       expect(config.resolveRealtimeProvider()?.config).not.toHaveProperty(
         'voiceId',
@@ -212,7 +214,7 @@ describe('config v2', () => {
 
   it('advances compatibility metadata for consult model selection', async () => {
     expect(CONFIG_STORE_DEFINITION.compatibilityVersion).toBe(8);
-    expect(CONFIG_STORE_DEFINITION.minimumKlexVersion).toBe('0.18.0');
+    expect(CONFIG_STORE_DEFINITION.minimumKlexVersion).toBe('0.28.3');
 
     const dataDirectory = await directory();
     await writeFile(
@@ -237,7 +239,7 @@ describe('config v2', () => {
     };
     expect(persisted._klex).toMatchObject({
       compatibilityVersion: 8,
-      minimumKlexVersion: '0.18.0',
+      minimumKlexVersion: '0.28.3',
     });
   });
 
@@ -295,7 +297,7 @@ describe('config v2', () => {
     await prepareConfigStore(dataDirectory);
     const migrated = JSON.parse(await readFile(configPath, 'utf8'));
     expect(migrated._klex).toMatchObject({
-      schemaVersion: 6,
+      schemaVersion: 8,
       compatibilityVersion: 8,
     });
     expect(migrated.modelSelection).toEqual(completeV2Config.modelSelection);
@@ -435,7 +437,7 @@ describe('config v2', () => {
           expect(() => schema.parse(input)).not.toThrow();
         }
       }
-      expect(dropLegacyTelemetryConfig(input)).not.toHaveProperty('telemetry');
+      expect(migrateConfigV3ToV4(input)).not.toHaveProperty('telemetry');
     }
   });
 
@@ -466,7 +468,7 @@ describe('config v2', () => {
     expect(persisted).not.toHaveProperty('telemetry');
     expect(persisted._klex).toMatchObject({
       store: 'config',
-      schemaVersion: 6,
+      schemaVersion: 8,
     });
     expect(persisted.extensions).toEqual({
       memory: {
@@ -505,7 +507,7 @@ describe('config v2', () => {
       string,
       unknown
     >;
-    expect(persisted._klex).toMatchObject({ schemaVersion: 6 });
+    expect(persisted._klex).toMatchObject({ schemaVersion: 8 });
     expect(persisted).not.toHaveProperty('episodeFinishIdleTriggerTimeMs');
     expect(persisted).not.toHaveProperty('memoryWriteIntervalMs');
     expect(persisted).not.toHaveProperty('memoryWriteStepInterval');
@@ -529,7 +531,7 @@ describe('config v2', () => {
       ...withoutMemoryKeys
     } = completeV4StoredConfig;
     expect(
-      nestMemoryExtensionConfig(withoutMemoryKeys).extensions.memory.episodes,
+      migrateConfigV4ToV5(withoutMemoryKeys).extensions.memory.episodes,
     ).toEqual({
       maxCharacters: 50_000,
       maxDurationMs: 3_600_000,
@@ -550,13 +552,34 @@ describe('config v2', () => {
     expect(() => v4?.schema.parse(completeV4StoredConfig)).not.toThrow();
   });
 
-  it('migrates released schema 5 to instinct defaults without changing existing configuration', async () => {
+  it('migrates released schema 5 to instinct defaults and STS-only voice selection', async () => {
     const dataDirectory = await directory();
     const configPath = join(dataDirectory, CONFIG_FILE_NAME);
+    const sts = [
+      {
+        providerId: 'openai-primary',
+        modelId: 'gpt-realtime',
+        voiceId: 'cedar',
+        providerOptions: { openai: { speed: 1.1 } },
+      },
+    ];
+    const audioListening = [
+      { providerId: 'openai-primary', modelId: 'gpt-audio-1.5' },
+    ];
+    const oldSelection = {
+      ...completeV5StoredConfig.modelSelection,
+      audioListening,
+      voice: {
+        sts,
+        tts: [{ providerId: 'openai-primary', modelId: 'tts-1' }],
+        stt: [{ providerId: 'openai-primary', modelId: 'whisper-1' }],
+      },
+    };
     await writeFile(
       configPath,
       JSON.stringify({
         ...completeV5StoredConfig,
+        modelSelection: oldSelection,
         _klex: {
           store: 'config',
           schemaVersion: 5,
@@ -572,24 +595,260 @@ describe('config v2', () => {
     expect(migrated.instinct).toEqual(completeV2Config.instinct);
     expect(migrated.providers).toEqual(completeV5StoredConfig.providers);
     expect(migrated.modelSelection).toEqual({
-      ...completeV5StoredConfig.modelSelection,
+      ...oldSelection,
       instincts: [],
+      voice: { sts },
     });
     expect(migrated.extensions).toEqual(completeV5StoredConfig.extensions);
     expect(migrated._klex).toMatchObject({
-      schemaVersion: 6,
+      schemaVersion: 8,
       compatibilityVersion: 8,
     });
     await prepareConfigStore(dataDirectory);
     expect(await readFile(configPath, 'utf8')).toBe(bytes);
   });
 
-  it('keeps model selection in stored schemas 2–4 frozen', () => {
-    for (const version of [2, 3, 4]) {
+  it.each(['populated', 'empty', 'absent'] as const)(
+    'migrates schema 6 with %s legacy voice lists and protects against downgrade',
+    async (shape) => {
+      const dataDirectory = await directory();
+      const configPath = join(dataDirectory, CONFIG_FILE_NAME);
+      const sts = [
+        {
+          providerId: 'openai-primary',
+          modelId: 'gpt-realtime',
+          voiceId: 'cedar',
+          providerOptions: { openai: { speed: 1.1 } },
+        },
+      ];
+      const audioListening = [
+        { providerId: 'openai-primary', modelId: 'gpt-audio-1.5' },
+      ];
+      const voice =
+        shape === 'absent'
+          ? { sts }
+          : {
+              sts,
+              tts:
+                shape === 'empty'
+                  ? []
+                  : [{ providerId: 'openai-primary', modelId: 'tts-1' }],
+              stt:
+                shape === 'empty'
+                  ? []
+                  : [{ providerId: 'openai-primary', modelId: 'whisper-1' }],
+            };
+      const original = {
+        ...completeV6StoredConfig,
+        modelSelection: {
+          ...completeV6StoredConfig.modelSelection,
+          audioListening,
+          voice,
+        },
+        _klex: {
+          store: 'config',
+          schemaVersion: 6,
+          compatibilityVersion: 8,
+          minimumKlexVersion: '0.18.0',
+          writtenByKlexVersion: shape === 'absent' ? '0.27.0' : '0.26.0',
+        },
+      };
+      await writeFile(configPath, JSON.stringify(original));
+      await prepareConfigStore(dataDirectory);
+      const bytes = await readFile(configPath, 'utf8');
+      expect(JSON.parse(bytes)).toEqual({
+        ...original,
+        modelSelection: { ...original.modelSelection, voice: { sts } },
+        _klex: {
+          ...original._klex,
+          schemaVersion: 8,
+          minimumKlexVersion: '0.28.3',
+          writtenByKlexVersion: KLEX_VERSION,
+        },
+      });
+      await prepareConfigStore(dataDirectory);
+      expect(await readFile(configPath, 'utf8')).toBe(bytes);
+      const config = createConfig({
+        logging,
+        dataDirectory,
+        env: {
+          OPENAI_PRIMARY_KEY: 'test',
+          OPENAI_SECONDARY_KEY: 'test',
+          INTERNAL_OPENAI_KEY: 'test',
+          CUSTOM_API_KEY: 'test',
+        },
+      });
+      await config.start();
+      expect(config.get().modelSelection.voice).toEqual({ sts });
+      await config.close();
+      const before = await readFile(configPath, 'utf8');
+      await expect(
+        createLocalData({
+          logging,
+          dataDirectory,
+          klexVersion: '0.26.0',
+          stores: [
+            {
+              ...CONFIG_STORE_DEFINITION,
+              schemaVersion: 6,
+              minimumKlexVersion: '0.18.0',
+              versions: CONFIG_STORE_DEFINITION.versions.filter(
+                ({ version }) => version <= 6,
+              ),
+              migrations: CONFIG_STORE_DEFINITION.migrations.filter(
+                ({ to }) => to <= 6,
+              ),
+            },
+          ],
+        }).start(),
+      ).rejects.toThrow(/schema/i);
+      expect(await readFile(configPath, 'utf8')).toBe(before);
+    },
+  );
+
+  it('keeps the released 5→6 migration and schema-6 voice selections intact', () => {
+    const step = CONFIG_STORE_DEFINITION.migrations.find(
+      ({ from }) => from === 5,
+    )!;
+    const input = {
+      ...completeV5StoredConfig,
+      modelSelection: {
+        ...completeV5StoredConfig.modelSelection,
+        voice: {
+          sts: [],
+          tts: [{ providerId: 'openai-primary', modelId: 'tts-1' }],
+          stt: [{ providerId: 'openai-primary', modelId: 'whisper-1' }],
+        },
+      },
+    };
+    const migrated = step.up(input);
+    expect(migrated).toEqual({
+      ...input,
+      instinct: completeV2Config.instinct,
+      modelSelection: { ...input.modelSelection, instincts: [] },
+    });
+    const schema = CONFIG_STORE_DEFINITION.versions.find(
+      ({ version }) => version === 6,
+    )!.schema;
+    expect(schema.parse(migrated)).toEqual(migrated);
+  });
+
+  it.each([6, 8])(
+    'leaves invalid or newer schema %s configs untouched',
+    async (schemaVersion) => {
+      const dataDirectory = await directory();
+      const configPath = join(dataDirectory, CONFIG_FILE_NAME);
+      const original = JSON.stringify({
+        ...completeV6StoredConfig,
+        modelSelection: {
+          ...completeV6StoredConfig.modelSelection,
+          voice: {
+            sts: [],
+            tts: schemaVersion === 6 ? 'invalid' : [],
+            stt: [],
+          },
+        },
+        _klex: {
+          store: 'config',
+          schemaVersion,
+          compatibilityVersion: 8,
+          minimumKlexVersion: '0.18.0',
+          writtenByKlexVersion: '0.26.0',
+        },
+      });
+      await writeFile(configPath, original);
+      await expect(prepareConfigStore(dataDirectory)).rejects.toThrow();
+      expect(await readFile(configPath, 'utf8')).toBe(original);
+    },
+  );
+
+  it('restores the schema-6 config after migration failure and retries successfully', async () => {
+    const dataDirectory = await directory();
+    const configPath = join(dataDirectory, CONFIG_FILE_NAME);
+    const original = JSON.stringify({
+      ...completeV6StoredConfig,
+      _klex: {
+        store: 'config',
+        schemaVersion: 6,
+        compatibilityVersion: 8,
+        minimumKlexVersion: '0.18.0',
+        writtenByKlexVersion: '0.26.0',
+      },
+    });
+    await writeFile(configPath, original);
+    await expect(
+      createLocalData({
+        logging,
+        dataDirectory,
+        klexVersion: KLEX_VERSION,
+        stores: [
+          {
+            ...CONFIG_STORE_DEFINITION,
+            migrations: CONFIG_STORE_DEFINITION.migrations.map((step) =>
+              step.from === 6
+                ? {
+                    ...step,
+                    up: () => {
+                      throw new Error('injected voice migration failure');
+                    },
+                  }
+                : step,
+            ),
+          },
+        ],
+      }).start(),
+    ).rejects.toThrow(/original data was restored/);
+    expect(await readFile(configPath, 'utf8')).toBe(original);
+    await prepareConfigStore(dataDirectory);
+    expect(
+      JSON.parse(await readFile(configPath, 'utf8'))._klex.schemaVersion,
+    ).toBe(8);
+  });
+
+  it.each(['tts', 'stt'])(
+    'rejects the removed %s selection in schema 7, including empty lists',
+    (purpose) => {
+      expect(parseKlexConfig({}).modelSelection.voice).toEqual({ sts: [] });
+      for (const entries of [[], [{ providerId: 'voice', modelId: 'model' }]]) {
+        expect(() =>
+          parseKlexConfig({
+            ...completeV2Config,
+            modelSelection: {
+              ...emptyModelSelection,
+              voice: { sts: [], [purpose]: entries },
+            },
+          }),
+        ).toThrow();
+      }
+    },
+  );
+
+  it('keeps model selection in stored schemas 1–4 frozen', () => {
+    for (const version of [1, 2, 3, 4]) {
       const schema = CONFIG_STORE_DEFINITION.versions.find(
         (entry) => entry.version === version,
       )!.schema;
       expect(schema.safeParse(completeV4StoredConfig).success).toBe(true);
+      expect(
+        schema.parse({
+          ...completeV4StoredConfig,
+          modelSelection: {
+            ...completeV4StoredConfig.modelSelection,
+            voice: {
+              sts: [],
+              tts: [{ providerId: 'openai-primary', modelId: 'tts-1' }],
+              stt: [{ providerId: 'openai-primary', modelId: 'whisper-1' }],
+            },
+          },
+        }),
+      ).toMatchObject({
+        modelSelection: {
+          voice: {
+            tts: [{ providerId: 'openai-primary', modelId: 'tts-1' }],
+            stt: [{ providerId: 'openai-primary', modelId: 'whisper-1' }],
+          },
+        },
+      });
       for (const purpose of ['classifier', 'instincts']) {
         expect(
           schema.safeParse({
@@ -603,10 +862,10 @@ describe('config v2', () => {
       }
     }
     expect(
-      dropLegacyTelemetryConfig(completeV4StoredConfig).modelSelection,
+      migrateConfigV3ToV4(completeV4StoredConfig).modelSelection,
     ).not.toHaveProperty('classifier');
     expect(
-      dropLegacyTelemetryConfig(completeV4StoredConfig).modelSelection,
+      migrateConfigV3ToV4(completeV4StoredConfig).modelSelection,
     ).not.toHaveProperty('instincts');
   });
 
@@ -794,7 +1053,7 @@ describe('config v2', () => {
 
   it('records the current config compatibility metadata', async () => {
     expect(CONFIG_STORE_DEFINITION.compatibilityVersion).toBe(8);
-    expect(CONFIG_STORE_DEFINITION.minimumKlexVersion).toBe('0.18.0');
+    expect(CONFIG_STORE_DEFINITION.minimumKlexVersion).toBe('0.28.3');
 
     const dataDirectory = await directory();
     await writeFile(
@@ -819,7 +1078,7 @@ describe('config v2', () => {
     };
     expect(persisted._klex).toMatchObject({
       compatibilityVersion: 8,
-      minimumKlexVersion: '0.18.0',
+      minimumKlexVersion: '0.28.3',
     });
   });
 
@@ -1048,7 +1307,11 @@ describe('config v2', () => {
           memory: [],
           imageVision: [],
           audioListening: [],
-          voice: { sts: [], tts: [], stt: [] },
+          voice: {
+            sts: ['remote:gpt-realtime'],
+            tts: ['remote:tts-1'],
+            stt: ['remote:whisper-1'],
+          },
         },
         mcpServers: {},
       }),
@@ -1070,6 +1333,9 @@ describe('config v2', () => {
       type: 'openai',
       settings: { apiKey: '${env:OPENAI_API_KEY}' },
     });
+    expect(config.get().modelSelection.voice).toEqual({
+      sts: [{ providerId: 'remote', modelId: 'gpt-realtime' }],
+    });
     expect(config.get().providers.local).toMatchObject({
       type: 'chat-completions',
       settings: { baseUrl: 'http://localhost:11434/v1' },
@@ -1090,14 +1356,14 @@ describe('config v2', () => {
     );
     expect(persisted._klex).toMatchObject({
       store: 'config',
-      schemaVersion: 6,
+      schemaVersion: 8,
     });
     expect(parseKlexConfig(persisted).configVersion).toBe(2);
     await config.close();
   });
 
   it('assigns deterministic instance IDs when migrating a multi-endpoint provider', () => {
-    const parsed = migrateLegacyKlexConfig({
+    const parsed = migrateConfigV1ToV2({
       officialName: 'Migration',
       providers: {
         remote: {
@@ -1141,7 +1407,7 @@ describe('config v2', () => {
   });
 
   it('preserves complete legacy provider, model, selection, and environment semantics', () => {
-    const parsed = migrateLegacyKlexConfig({
+    const parsed = migrateConfigV1ToV2({
       officialName: 'Complete migration',
       providers: {
         cloud: {
@@ -1260,7 +1526,7 @@ describe('config v2', () => {
   });
 
   it('migrates legacy OpenAI-compatible voice endpoints without blocking startup', () => {
-    const parsed = migrateLegacyKlexConfig({
+    const parsed = migrateConfigV1ToV2({
       officialName: 'Voice migration',
       providers: {
         voice: {
@@ -1327,7 +1593,7 @@ describe('config v2', () => {
 
   it('fails migration instead of overwriting colliding instance IDs', () => {
     expect(() =>
-      migrateLegacyKlexConfig({
+      migrateConfigV1ToV2({
         officialName: 'Migration',
         providers: {
           remote: {
@@ -1718,12 +1984,44 @@ describe('config v2', () => {
         audioListening: [],
         voice: {
           sts: [{ providerId: 'p', modelId: 'voice:model' }],
-          tts: [],
-          stt: [],
         },
       },
       mcpServers: {},
     });
     expect(parsed.modelSelection.voice.sts[0]?.modelId).toBe('voice:model');
+  });
+});
+
+describe('providerSettingKeysForAuthMode', () => {
+  it('resolves the keys of discriminated and plain auth-mode unions', () => {
+    expect([
+      ...(providerSettingKeysForAuthMode('amazon-bedrock', 'api-key') ?? []),
+    ]).toEqual(['region', 'testModelId', 'authMode', 'apiKey']);
+    expect(
+      [
+        ...(providerSettingKeysForAuthMode(
+          'google-vertex',
+          'service-account',
+        ) ?? []),
+      ].sort(),
+    ).toEqual([
+      'authMode',
+      'googleCredentials',
+      'location',
+      'project',
+      'testModelId',
+    ]);
+    expect(
+      [
+        ...(providerSettingKeysForAuthMode(
+          'chatgpt-codex-subscription',
+          'managed',
+        ) ?? []),
+      ].sort(),
+    ).toEqual(['authMode', 'baseUrl', 'testModelId']);
+    expect(providerSettingKeysForAuthMode('openai', 'api-key')).toBeUndefined();
+    expect(
+      providerSettingKeysForAuthMode('amazon-bedrock', 'unknown'),
+    ).toBeUndefined();
   });
 });

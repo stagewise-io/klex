@@ -1,6 +1,11 @@
 import { open, statfs } from 'node:fs/promises';
 import * as os from 'node:os';
 
+import {
+  detectMachineDeviceType,
+  type MachineDeviceType,
+} from './device-type.js';
+
 export const MACHINE_FACTS_HEADER = 'x-klex-machine-facts';
 export const MAX_MACHINE_FACTS_HEADER_BYTES = 4096;
 const MAX_OS_RELEASE_BYTES = 16_384;
@@ -12,6 +17,7 @@ export interface MachineFacts {
   cpu: { model?: string; logicalCores?: number };
   memory: { totalBytes?: number };
   host?: {
+    deviceType?: MachineDeviceType;
     hostname?: string;
     workspacePath?: string;
     workspaceVolumeTotalBytes?: number;
@@ -34,6 +40,7 @@ export interface MachineFactsProbes {
   hostname(): string;
   readOsRelease(path: string, signal: AbortSignal): Promise<string>;
   volumeBytes(path: string): Promise<bigint>;
+  deviceType(signal: AbortSignal): Promise<MachineDeviceType | undefined>;
 }
 
 async function readOsRelease(
@@ -64,6 +71,7 @@ const defaultProbes: MachineFactsProbes = {
   totalmem: os.totalmem,
   hostname: os.hostname,
   readOsRelease,
+  deviceType: (signal) => detectMachineDeviceType(os.platform(), signal),
   volumeBytes: async (path) => {
     const volume = await statfs(path, { bigint: true });
     return volume.bsize * volume.blocks;
@@ -112,6 +120,7 @@ class MachineFactsCollectorModule implements MachineFactsCollector {
   // across collections until its underlying operation has actually settled.
   private namePending = false;
   private diskPending = false;
+  private devicePending = false;
 
   constructor(
     private readonly options: MachineFactsOptions,
@@ -199,8 +208,20 @@ class MachineFactsCollectorModule implements MachineFactsCollector {
         this.diskPending = false;
       }
     };
+    const device = async () => {
+      if (!facts.host || this.devicePending) return;
+      this.devicePending = true;
+      try {
+        const value = await p.deviceType(signal);
+        if (!signal.aborted && value) facts.host.deviceType = value;
+      } catch {
+        /* Optional system information may be unavailable. */
+      } finally {
+        this.devicePending = false;
+      }
+    };
     try {
-      await Promise.race([Promise.all([name(), disk()]), timeout]);
+      await Promise.race([Promise.all([name(), disk(), device()]), timeout]);
       // No pending probe can mutate the returned document after the budget expires.
       return structuredClone(facts);
     } finally {

@@ -1,4 +1,4 @@
-import { BODY_SHAPES, type BodyShape } from '../new/klex/presets';
+import { BODY_SHAPES, type BodyShape } from '@klex/mascot';
 
 export const FAMILY_SHAPES = {
   classic: BODY_SHAPES[0],

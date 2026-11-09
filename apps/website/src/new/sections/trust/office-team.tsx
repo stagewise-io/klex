@@ -1,3 +1,4 @@
+import { Klex } from '@klex/mascot';
 import {
   type CSSProperties,
   useCallback,
@@ -10,7 +11,8 @@ import { createRoot } from 'react-dom/client';
 
 import { Popover, PopoverTrigger } from '@stagewise/ui';
 
-import { Klex } from '../../klex';
+import { t } from '@/i18n';
+
 import { botProfileApps, ProfileCard } from '../../profile-card';
 import { project } from './office-figures';
 import { type OfficeMember, officeMembers } from './office-members';
@@ -139,7 +141,10 @@ function OfficeTeam({
                       '--member-height': `${((scale * memberHeight) / 650) * 100}%`,
                     } as CSSProperties
                   }
-                  aria-label={`${member.name}, ${member.role}. Show details`}
+                  aria-label={t('{{name}}, {{role}}. Show details', {
+                    name: member.name,
+                    role: member.role,
+                  })}
                   onFocus={(event) => {
                     if (event.currentTarget.matches(':focus-visible')) {
                       clearHoverTimer();

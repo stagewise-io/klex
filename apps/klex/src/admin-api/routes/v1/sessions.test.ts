@@ -18,7 +18,12 @@ import {
   type SessionHistory,
   type SessionHistoryRecorderMetadata,
 } from '@/session-history';
+import { summarizeGenerationFailure } from '@/session-history/generation-health';
 
+import {
+  sessionHistoryListResponseSchema,
+  sessionHistoryRecordSchema,
+} from './schemas';
 import {
   getSessionHistory,
   getSessionHistoryMessages,
@@ -114,6 +119,65 @@ afterEach(async () => {
 });
 
 describe('GET /v1/sessions', () => {
+  it('returns schema-valid ended default and child warnings across cursor pages and resolves replacement recovery', async () => {
+    const { app, history } = await setup();
+    const failure = summarizeGenerationFailure(
+      new Error('rate limit TPM: 30000'),
+    );
+    const old = history.openRecorder(
+      meta({ createdAt: '2026-01-01T00:00:00.000Z' }),
+    );
+    await old.recordGenerationFailure(failure, 'terminated', 5);
+    await old.end('failed');
+    const child = history.openRecorder(
+      meta({
+        sessionId: 'child',
+        kind: 'child',
+        createdAt: '2026-01-02T00:00:00.000Z',
+      }),
+    );
+    await child.recordGenerationFailure(failure, 'turn_failed', 1);
+    const replacement = history.openRecorder(
+      meta({ createdAt: '2026-01-03T00:00:00.000Z' }),
+    );
+    // The local API is intentionally unauthenticated; Cloud authorizes the tunnel.
+    const firstResponse = await app.request('/v1/sessions?limit=1');
+    expect(firstResponse.status).toBe(200);
+    const first = sessionHistoryListResponseSchema.parse(
+      await firstResponse.json(),
+    );
+    expect(first.sessions[0]).toMatchObject({
+      instanceId: child.instanceId,
+      generationError: { kind: 'turn_failed' },
+    });
+    expect(first.hasMore).toBe(true);
+    if (!first.nextCursor) throw new Error('Missing pagination cursor');
+    const second = sessionHistoryListResponseSchema.parse(
+      await (
+        await app.request(
+          `/v1/sessions?limit=1&cursor=${encodeURIComponent(first.nextCursor)}`,
+        )
+      ).json(),
+    );
+    expect(second.sessions[0]).toMatchObject({
+      instanceId: old.instanceId,
+      live: false,
+      generationError: { kind: 'terminated' },
+    });
+    const detail = sessionHistoryRecordSchema.parse(
+      await (await app.request(`/v1/sessions/${old.instanceId}`)).json(),
+    );
+    expect(detail).toEqual(second.sessions[0]);
+    await replacement.clearGenerationFailure();
+    expect(
+      sessionHistoryRecordSchema.parse(
+        await (await app.request(`/v1/sessions/${old.instanceId}`)).json(),
+      ).generationError,
+    ).toBeNull();
+    expect(
+      (await history.getSession(child.instanceId))?.generationError,
+    ).not.toBeNull();
+  });
   it('finds the live main session and pages with filters', async () => {
     const { app, history } = await setup();
     const base = Date.parse('2026-01-01T00:00:00.000Z');

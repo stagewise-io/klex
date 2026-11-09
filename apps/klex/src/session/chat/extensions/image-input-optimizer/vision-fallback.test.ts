@@ -2,7 +2,8 @@ import type { ModelMessage } from 'ai';
 import sharp from 'sharp';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { ExtensionDeps } from '../extension-api';
+import type { ExtensionDeps, GenerateTextResult } from '../extension-api';
+import { extractImageBuffer } from './image-processing';
 import {
   clearImageInputOptimizerCache,
   createImageInputOptimizerExt,
@@ -19,6 +20,7 @@ import {
   makeVisionConfig,
   runTransformer,
 } from './test-helpers';
+import { describeImage } from './vision-helper';
 
 vi.mock('./vision-system-prompt.md', () => ({
   default: 'general image prompt',
@@ -34,6 +36,63 @@ beforeEach(() => {
 });
 
 describe('ImageInputOptimizer — supports: false', () => {
+  it.each([false, true])(
+    'adapts original image to each helper (chat fallback=%s)',
+    async (chatFallback) => {
+      const buffer = await makeImageBuffer(100, 100);
+      const part = makeFilePart(buffer, 'image/png');
+      const before = JSON.stringify(part);
+      const first = { providerId: 'test', modelId: 'small' };
+      const second = { providerId: 'test', modelId: 'large' };
+      const deps = makeDeps();
+      vi.mocked(deps.config.getModelSelection).mockImplementation((purpose) =>
+        purpose === 'chat' && chatFallback ? [second] : [],
+      );
+      vi.mocked(deps.modelResolver.resolveModelInfo).mockImplementation(
+        (entry) =>
+          ({
+            contextSize: 20000,
+            inputCapabilities: {
+              image: {
+                mediaTypes: ['image/png'],
+                maxWidth: entry.modelId === 'small' ? 20 : 80,
+                maxHeight: entry.modelId === 'small' ? 20 : 80,
+              },
+            },
+          }) as never,
+      );
+      vi.mocked(deps.generateText)
+        .mockResolvedValueOnce(genFailure())
+        .mockResolvedValueOnce(
+          genSuccess('A red square.') as GenerateTextResult,
+        );
+      expect(
+        await describeImage(
+          deps,
+          part,
+          chatFallback ? [first] : [first, second],
+          buffer,
+          'fallback-image',
+          undefined,
+          'describe',
+        ),
+      ).toBe('A red square.');
+      const calls = vi.mocked(deps.generateText).mock.calls;
+      expect(calls.map(([args]) => args.modelIds)).toEqual([[first], [second]]);
+      const widths = await Promise.all(
+        calls.map(async ([args]) => {
+          const content = args.messages?.[0]?.content;
+          if (!Array.isArray(content) || content[0]?.type !== 'file')
+            throw new Error('Missing image');
+          const image = extractImageBuffer(content[0]);
+          if (!image) throw new Error('Missing image data');
+          return (await sharp(image).metadata()).width;
+        }),
+      );
+      expect(widths).toEqual([20, 80]);
+      expect(JSON.stringify(part)).toBe(before);
+    },
+  );
   it('replaces image with description + viewImage hint when vision models configured', async () => {
     const img = await makeImageBuffer(100, 100);
     const msg = makeUserMessage([makeFilePart(img, 'image/png')]);

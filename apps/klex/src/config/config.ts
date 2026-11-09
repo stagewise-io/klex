@@ -11,7 +11,6 @@ import {
 } from '@/local-data';
 import { KLEX_VERSION } from '@/release';
 
-import { CONFIG_STORE_DEFINITION } from './storage-definition';
 import {
   type KlexConfig,
   type McpServerConfig,
@@ -23,7 +22,8 @@ import {
   type ModelSelectionEntry,
   type ProviderConfig,
   parseKlexConfig,
-} from './types';
+} from './schema';
+import { CONFIG_STORE_DEFINITION } from './storage-definition';
 
 export const DEFAULT_CONTEXT_SIZE = 200_000;
 export const CONFIG_FILE_NAME = 'config.json';

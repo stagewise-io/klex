@@ -317,7 +317,13 @@ export async function runOptimization(
     !needsFormatChange &&
     !needsSizeReduction
   ) {
-    return buildFilePart(buffer, originalMediaType(part), part);
+    return buildFilePart(
+      buffer,
+      settings.supportedMediaTypes.includes(originalMediaType(part))
+        ? originalMediaType(part)
+        : currentMediaType,
+      part,
+    );
   }
 
   const { buffer: output, format } = await transformImage(

@@ -1,9 +1,11 @@
 import './styles.css';
 
+import { popTransition } from '@klex/mascot';
 import { stagger, useAnimate } from 'motion/react';
 import { useEffect, useRef } from 'react';
 
-import { popTransition } from '../../../../klex/transitions';
+import { t } from '@/i18n';
+
 import {
   type CardProps,
   FeatureCard,
@@ -15,8 +17,10 @@ export function MemoryCard({ playing }: CardProps) {
   return (
     <FeatureCard
       id="memory"
-      title="Learns how you work"
-      description="People, decisions, skills and processes. Your bots’ memory and skills grow and improve with every task."
+      title={t('Learns how you work')}
+      description={t(
+        'People, decisions, skills and processes. Your bots’ memory and skills grow and improve with every task.',
+      )}
       Scene={MemoryScene}
       playing={playing}
     />
@@ -42,7 +46,7 @@ const memories = [
   { text: 'Check mobile', x: 80, y: 125, tilt: 18 },
   { text: 'Small pull requests', x: 16, y: 52, tilt: -3 },
   { text: 'Accessibility matters', x: 59, y: 68, tilt: 13 },
-];
+] as const;
 
 function MemoryScene({ active }: SceneProps) {
   const [wall, animate] = useAnimate<HTMLDivElement>();
@@ -95,7 +99,7 @@ function MemoryScene({ active }: SceneProps) {
               transform: `rotate(${tilt}deg)`,
             }}
           >
-            <div className="bento-memory-paper">{text}</div>
+            <div className="bento-memory-paper">{t(text)}</div>
           </div>
         ))}
       </div>

@@ -1,0 +1,70 @@
+{
+  "_klex": {
+    "store": "learning-extension-state",
+    "schemaVersion": 2,
+    "compatibilityVersion": 2,
+    "minimumKlexVersion": "0.24.0",
+    "writtenByKlexVersion": "0.27.1"
+  },
+  "cursor": "episode-0042",
+  "episodeFailures": { "episode-0040": 1 },
+  "changedRunsSinceConsolidation": 2,
+  "lastConsolidationAt": "2026-10-20T09:00:00.000Z",
+  "futureField": { "preserve": true },
+  "processedEpisodeCount": 42,
+  "pendingChangeWeight": 3,
+  "lastConsolidationEpisode": 30,
+  "lastConsolidationSkillCount": 2,
+  "consolidationFailures": 0,
+  "nextConsolidationEpisode": null,
+  "deferred": [
+    { "id": "episode-0041", "after": "episode-0042", "attempts": 1 }
+  ],
+  "skills": {
+    "fix-build": {
+      "userEdited": true,
+      "createdAt": "2026-09-01T08:00:00.000Z",
+      "updatedAt": "2026-10-02T12:30:00.000Z",
+      "lastReadAt": "2026-10-25T16:45:00.000Z",
+      "readCount": 7,
+      "sourceEpisodes": ["episode-0003", "episode-0017"],
+      "createdEpisode": 3,
+      "updatedEpisode": 17,
+      "lastReadEpisode": 40,
+      "futureSkillField": "keep"
+    },
+    "deploy-notes": {
+      "userEdited": false,
+      "createdAt": "2026-09-10T10:00:00.000Z",
+      "updatedAt": "2026-09-10T10:00:00.000Z",
+      "lastReadAt": null,
+      "readCount": 0,
+      "sourceEpisodes": ["episode-0009"],
+      "createdEpisode": 9,
+      "updatedEpisode": 9,
+      "lastReadEpisode": null
+    },
+    "broken": {
+      "userEdited": false,
+      "createdAt": "2026-09-12T10:00:00.000Z",
+      "updatedAt": "2026-09-12T10:00:00.000Z",
+      "lastReadAt": null,
+      "readCount": 1,
+      "sourceEpisodes": ["episode-0011"],
+      "createdEpisode": 11,
+      "updatedEpisode": 11,
+      "lastReadEpisode": null
+    },
+    "vanished": {
+      "userEdited": false,
+      "createdAt": "2026-09-15T10:00:00.000Z",
+      "updatedAt": "2026-09-15T10:00:00.000Z",
+      "lastReadAt": null,
+      "readCount": 0,
+      "sourceEpisodes": [],
+      "createdEpisode": 12,
+      "updatedEpisode": 12,
+      "lastReadEpisode": null
+    }
+  }
+}

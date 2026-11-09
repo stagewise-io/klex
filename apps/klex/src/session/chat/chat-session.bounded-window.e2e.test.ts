@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -7,6 +7,7 @@ import z from 'zod';
 
 import { createLogger, type RootLogger } from '@stagewise/logger';
 
+import { createActivityHistory } from '@/activity-history';
 import { type Config, klexConfigSchema } from '@/config';
 import type { IntrospectionScope } from '@/introspection';
 import { createLocalData } from '@/local-data';
@@ -26,7 +27,6 @@ import type {
   ExtensionFactory,
 } from './extensions/extension-api';
 import { createMemoryExt } from './extensions/memory';
-import { outputTexts } from './extensions/memory/episodes/test-utils';
 import type { ExtendedUIMessage } from './message-types';
 
 vi.mock('./extensions/memory/system-prompt-part.md', () => ({
@@ -155,7 +155,11 @@ function createSession(
     modelResolver: { resolveModelInfo: () => undefined } as never,
     dataDirectory,
     mcp: null,
-    extensionFactories: [createMemoryExt(), carry, ...extensions],
+    extensionFactories: [
+      createMemoryExt({ activities: createActivityHistory(history) }),
+      carry,
+      ...extensions,
+    ],
     introspectionScope: scope(),
     sessionContext: { kind: 'default', name: 'main', sessionId: 'default' },
     basePrompt: 'You are Klex.',
@@ -221,23 +225,14 @@ function turn(index: number): ExtendedUIMessage[] {
   ];
 }
 
-async function recordedEpisodes(dataDirectory: string): Promise<string[]> {
-  const texts: string[] = [];
-  const entries = await readdir(dataDirectory, {
-    recursive: true,
-    withFileTypes: true,
-  });
-  const files = entries
-    .filter(
-      (entry) =>
-        entry.isFile() && entry.parentPath.split(/[\\/]/).includes('episodic'),
-    )
-    .map((entry) => join(entry.parentPath, entry.name))
-    .sort();
-  for (const file of files) {
-    texts.push(...outputTexts(await readFile(file, 'utf-8')));
-  }
-  return texts;
+async function retainedAnswers(history: SessionHistory): Promise<string[]> {
+  return (await history.readActivity({ limit: 200 })).flatMap((row) =>
+    row.message?.role === 'assistant'
+      ? row.message.parts.flatMap((part) =>
+          part.type === 'text' ? [part.text] : [],
+        )
+      : [],
+  );
 }
 
 function stateParts(message: ExtendedUIMessage | undefined) {
@@ -308,16 +303,21 @@ describe('default session bounded window (end to end)', () => {
     expect(loggedIds.filter((id) => turnIds.includes(id))).toEqual(turnIds);
     expect(loggedIds).toHaveLength(turnIds.length + checkpoints);
 
-    // Every answer was recorded once, before or at its trim.
+    // SQLite alone retains answers across checkpoint trims.
+    expect(await readdir(dataDirectory, { recursive: true })).not.toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/(^|[\\/])episodic([\\/]|$)/u),
+      ]),
+    );
     const answers = Array.from({ length: TURNS }, (_, i) => `answer ${i}`);
-    expect(await recordedEpisodes(dataDirectory)).toEqual(answers);
+    expect(await retainedAnswers(history)).toEqual(answers);
 
     // A new instance on the same store restores the identical window.
     const second = createSession(dataDirectory, history, []);
     await second.start();
     expect(internals(second).messages).toEqual(finalWindow);
 
-    // The restored window is neither re-logged nor re-recorded.
+    // The restored window is not re-logged.
     internals(second).messages.push(...turn(TURNS));
     internals(second).flushPendingImmediate();
     await second.close();
@@ -329,7 +329,7 @@ describe('default session bounded window (end to end)', () => {
       `u${TURNS}`,
       `a${TURNS}`,
     ]);
-    expect(await recordedEpisodes(dataDirectory)).toEqual([
+    expect(await retainedAnswers(history)).toEqual([
       ...answers,
       `answer ${TURNS}`,
     ]);

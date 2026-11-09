@@ -19,7 +19,11 @@ import type {
 } from '@stagewise/mcp-extension-realtime-media';
 
 import type { CloudConnectivity } from '@/cloud-connectivity';
-import type { Config, McpServerConfig } from '@/config';
+import {
+  type Config,
+  ConfigValidationError,
+  type McpServerConfig,
+} from '@/config';
 import {
   createInMemoryPushNotificationInbox,
   type PushNotificationInbox,
@@ -43,10 +47,15 @@ import {
   McpAuthorizationRequiredError,
   type McpConnection,
   type McpConnectionFactory,
+  type McpServerMetadata,
   shouldUseAutomaticOAuth,
 } from './connection';
 import type { OAuthAuthorizationSessionFactory } from './oauth/callback';
-import { createCloudOAuthAuthorizationSessionFactory } from './oauth/cloud-callback';
+import {
+  cloudCallbackUrl,
+  createAgentClientMetadataUrlResolver,
+  createCloudOAuthAuthorizationSessionFactory,
+} from './oauth/cloud-callback';
 import { LocalOAuthAuthorizationCoordinator } from './oauth/coordinator';
 import { LocalOAuthCallbackReceiver } from './oauth/local-callback';
 import {
@@ -54,6 +63,11 @@ import {
   type PendingAuthorization,
 } from './oauth/pending-authorizations';
 import { LocalBrowserOAuthPresenter } from './oauth/presenter';
+import {
+  type RegisteredOAuthClient,
+  saveRegisteredOAuthClient,
+} from './oauth/register-client';
+import { revokeOAuthCredentials } from './oauth/revocation';
 import { McpOAuthStore } from './oauth/store';
 import {
   buildMcpRegistry,
@@ -64,6 +78,14 @@ import {
 
 const RETRY_INITIAL_MS = 1_000;
 const RETRY_MAX_MS = 30_000;
+/**
+ * Post-connect 401 reconnects allowed within the window before the server is
+ * marked `authorization_required`. A successful connect resets the regular
+ * backoff, so a server that accepts `initialize` but rejects every request
+ * would otherwise reconnect every second.
+ */
+const MAX_UNAUTHORIZED_RECONNECTS = 3;
+const UNAUTHORIZED_RECONNECT_WINDOW_MS = 10 * 60_000;
 const EVENT_PAGE_SIZE = 100;
 /**
  * How long `requestAuthorization` waits for a connection attempt to reach the
@@ -127,7 +149,7 @@ export type McpConnectionStatus =
   | 'disconnected';
 
 /** A single MCP server with its config and connection status. */
-export interface McpServerInfo {
+export interface McpServerInfo extends McpServerMetadata {
   /** Unique namespace / server name. */
   name: string;
   /** Current connection status. */
@@ -144,6 +166,8 @@ export interface McpServerInfo {
   supportsResourceSubscription: boolean;
   /** Server type: stdio or http. */
   transport: 'stdio' | 'http';
+  /** Configured server URL when transport is 'http'. */
+  url?: string;
   /** Configured HTTP header names. Values are never exposed. */
   headerNames: string[];
   /**
@@ -203,6 +227,8 @@ export interface McpToolCallRecord {
 
 export interface Mcp extends ToolProvider {
   start(): Promise<void>;
+  /** Removes configuration, cancels authorization, and forgets/revokes OAuth credentials. */
+  removeServer(namespace: string): Promise<void>;
   onPushNotification(listener: McpPushNotificationListener): () => void;
   /**
    * Whether Push Notifications were delivered to listeners but not yet
@@ -263,10 +289,13 @@ export interface Mcp extends ToolProvider {
 
   /**
    * Produces an authorization request for a configured MCP server, re-driving a
-   * connection attempt when no request is pending. Idempotent while a request
-   * for the same server is live.
+   * connection attempt when no request is pending. An explicit client replaces
+   * credentials and restarts authorization; otherwise a live request is reused.
    */
-  requestAuthorization(serverName: string): Promise<RequestAuthorizationResult>;
+  requestAuthorization(
+    serverName: string,
+    client?: RegisteredOAuthClient,
+  ): Promise<RequestAuthorizationResult>;
   /** Delivers OAuth callback parameters for a pending authorization. */
   completeAuthorization(
     state: string,
@@ -369,8 +398,12 @@ interface McpServerRuntime {
   status: Exclude<McpConnectionStatus, 'disconnected'>;
   connection?: McpConnection;
   attempt?: McpConnectionAttempt;
+  /** Aborted with the runtime so a removed server gets no late client writes. */
+  clientSetup?: AbortController;
   retryAttempt: number;
   retryTimer?: ReturnType<typeof setTimeout>;
+  unauthorizedReconnects?: number;
+  lastUnauthorizedAt?: number;
   lastError?: McpServerErrorInfo;
   nextRetryAt?: string;
   /** Cached combined count of resources + resource templates, refreshed after connect. */
@@ -379,6 +412,7 @@ interface McpServerRuntime {
 
 class McpModule implements Mcp {
   private readonly servers = new Map<string, McpServerRuntime>();
+  private readonly removals = new Map<string, Promise<void>>();
   private readonly eventWorkers = new Map<string, PushNotificationWorker>();
   /** Serializes deduplication and delivery across worker replacement. */
   private readonly eventCommitQueues = new Map<string, Promise<void>>();
@@ -401,6 +435,10 @@ class McpModule implements Mcp {
   private readonly realtimeAvailableNamespaces = new Set<string>();
   private registry: McpRegistry = new Map();
   private started = false;
+  private readonly authorizationRequests = new Map<
+    string,
+    Promise<RequestAuthorizationResult>
+  >();
   private unsubscribe: (() => void) | undefined;
   /** Recorded tool call history (newest first). */
   private readonly toolCallHistory: McpToolCallRecord[] = [];
@@ -420,7 +458,14 @@ class McpModule implements Mcp {
       connect: McpConnectionFactory;
       cloudConnectivity: CloudConnectivity | undefined;
       pendingAuthorizations: McpPendingAuthorizationRegistry;
+      removeOAuth: (namespace: string) => Promise<number>;
       closeOAuth: () => Promise<void>;
+      configureOAuthClient: (
+        serverName: string,
+        serverUrl: string,
+        client: RegisteredOAuthClient,
+        signal: AbortSignal,
+      ) => Promise<void>;
     },
   ) {}
 
@@ -438,6 +483,42 @@ class McpModule implements Mcp {
       { configuredServerCount },
       'MCP started; environment reconciliation continues in background',
     );
+  }
+
+  removeServer(namespace: string): Promise<void> {
+    const pending = this.removals.get(namespace);
+    if (pending) return pending;
+    const removal = Promise.resolve()
+      .then(async () => {
+        let notFound: ConfigValidationError | undefined;
+        try {
+          await this.deps.config.removeMcpServer(namespace);
+        } catch (error) {
+          if (
+            !(error instanceof ConfigValidationError) ||
+            error.code !== 'not_found'
+          )
+            throw error;
+          notFound = error;
+        }
+        this.cancelAuthorization(namespace);
+        const runtime = this.servers.get(namespace);
+        if (runtime) {
+          const connection = this.invalidateRuntime(runtime);
+          if (connection) this.closeConnection(connection, namespace);
+        }
+        this.publishRegistry();
+        const removed = await this.deps.removeOAuth(namespace);
+        // A failed credential write can be retried after configuration removal.
+        if (notFound && removed === 0) throw notFound;
+      })
+      .finally(() => {
+        this.removals.delete(namespace);
+        // A replacement with the same name must wait until old credentials are gone.
+        this.scheduleReconcile(this.deps.config.getMcpServers());
+      });
+    this.removals.set(namespace, removal);
+    return removal;
   }
 
   onPushNotification(listener: McpPushNotificationListener): () => void {
@@ -691,6 +772,7 @@ class McpModule implements Mcp {
     this.unsubscribe?.();
     this.unsubscribe = undefined;
     await this.deps.closeOAuth();
+    await Promise.allSettled(this.removals.values());
     const connections = [...this.servers.values()].flatMap((runtime) => {
       const connection = this.invalidateRuntime(runtime);
       return connection ? [connection] : [];
@@ -815,6 +897,7 @@ class McpModule implements Mcp {
     );
 
     for (const runtime of [...this.servers.values()]) {
+      if (this.removals.has(runtime.namespace)) continue;
       const next = servers[runtime.namespace];
       if (next && runtime.signature === signature(next)) continue;
       const reason = next ? 'configuration-changed' : 'configuration-removed';
@@ -828,7 +911,7 @@ class McpModule implements Mcp {
     this.publishRegistry();
 
     for (const [namespace, config] of Object.entries(servers)) {
-      if (this.servers.has(namespace)) continue;
+      if (this.servers.has(namespace) || this.removals.has(namespace)) continue;
       const runtime: McpServerRuntime = {
         namespace,
         config,
@@ -910,9 +993,11 @@ class McpModule implements Mcp {
           runtime.status = status;
           this.publishRegistry();
         },
-        onDisconnect: (disconnected) => {
+        onDisconnect: (disconnected, reason) => {
           if (!this.isCurrentConnection(runtime, disconnected)) return;
           runtime.connection = undefined;
+          if (reason === 'unauthorized' && this.exhaustUnauthorized(runtime))
+            return;
           runtime.status = 'error';
           runtime.lastError = {
             name: 'McpDisconnectedError',
@@ -1006,6 +1091,7 @@ class McpModule implements Mcp {
       this.servers.delete(runtime.namespace);
     runtime.attempt?.controller.abort();
     runtime.attempt = undefined;
+    runtime.clientSetup?.abort();
     this.clearRetry(runtime);
     this.stopEventWorker(runtime.namespace);
     this.stopRealtimeWorker(runtime.namespace);
@@ -1477,6 +1563,39 @@ class McpModule implements Mcp {
     runtime.nextRetryAt = new Date(Date.now() + delay).toISOString();
   }
 
+  /**
+   * Counts a post-connect 401 reconnect. Returns true once the budget is spent
+   * and the server has been moved to `authorization_required`.
+   */
+  private exhaustUnauthorized(runtime: McpServerRuntime): boolean {
+    const now = Date.now();
+    if (
+      now - (runtime.lastUnauthorizedAt ?? 0) >
+      UNAUTHORIZED_RECONNECT_WINDOW_MS
+    )
+      runtime.unauthorizedReconnects = 0;
+    runtime.lastUnauthorizedAt = now;
+    const count = (runtime.unauthorizedReconnects ?? 0) + 1;
+    runtime.unauthorizedReconnects = count;
+    if (count <= MAX_UNAUTHORIZED_RECONNECTS) {
+      // Grow the backoff across connects instead of restarting at 1s.
+      runtime.retryAttempt = count - 1;
+      return false;
+    }
+    runtime.unauthorizedReconnects = 0;
+    runtime.status = 'authorization_required';
+    runtime.lastError = undefined;
+    runtime.nextRetryAt = undefined;
+    this.stopEventWorker(runtime.namespace);
+    this.stopRealtimeWorker(runtime.namespace);
+    this.publishRegistry();
+    this.deps.logger.warn(
+      { namespace: runtime.namespace, unauthorizedReconnects: count - 1 },
+      'MCP server keeps rejecting requests after connect; authorization required',
+    );
+    return true;
+  }
+
   private clearRetry(runtime: McpServerRuntime): void {
     if (runtime.retryTimer) clearTimeout(runtime.retryTimer);
     runtime.retryTimer = undefined;
@@ -1495,6 +1614,7 @@ class McpModule implements Mcp {
 
   getServerStatuses(): McpServerInfo[] {
     const configured = this.deps.config.getMcpServers();
+    const persisted = this.deps.config.get?.()?.mcpServers ?? {};
     const allNames = new Set<string>([
       ...Object.keys(configured),
       ...this.servers.keys(),
@@ -1503,10 +1623,12 @@ class McpModule implements Mcp {
     for (const name of [...allNames].sort()) {
       const runtime = this.servers.get(name);
       const config = configured[name] ?? runtime?.config;
+      const persistedConfig = persisted[name];
       const connection = runtime?.connection;
       const transport = config && 'command' in config ? 'stdio' : 'http';
       const pending = this.deps.pendingAuthorizations.findByServer(name);
       statuses.push({
+        ...connection?.metadata,
         name,
         status: runtime?.status ?? 'disconnected',
         toolCount: connection?.tools.length ?? 0,
@@ -1517,6 +1639,14 @@ class McpModule implements Mcp {
         supportsResourceSubscription:
           connection?.supportsResourceSubscription ?? false,
         transport,
+        ...(transport === 'http' &&
+        persistedConfig &&
+        !('command' in persistedConfig) &&
+        typeof persistedConfig.url === 'string'
+          ? {
+              url: persistedConfig.url,
+            }
+          : {}),
         headerNames:
           transport === 'http' && config && !('command' in config)
             ? Object.keys(config.headers ?? {}).sort()
@@ -1544,20 +1674,40 @@ class McpModule implements Mcp {
     return [...this.toolCallHistory];
   }
 
-  async requestAuthorization(
+  requestAuthorization(
     serverName: string,
+    client?: RegisteredOAuthClient,
   ): Promise<RequestAuthorizationResult> {
+    const pending = this.authorizationRequests.get(serverName);
+    if (pending) {
+      if (!client) return pending;
+      return pending
+        .catch(() => undefined)
+        .then(() => this.requestAuthorization(serverName, client));
+    }
+    const request = this.startAuthorization(serverName, client).finally(() =>
+      this.authorizationRequests.delete(serverName),
+    );
+    this.authorizationRequests.set(serverName, request);
+    return request;
+  }
+
+  private async startAuthorization(
+    serverName: string,
+    client?: RegisteredOAuthClient,
+  ): Promise<RequestAuthorizationResult> {
+    if (this.removals.has(serverName)) return { outcome: 'unavailable' };
     const config = this.deps.config.getMcpServers()[serverName];
     if (!config) return { outcome: 'not_found' };
     if ('command' in config) return { outcome: 'unsupported_transport' };
     if (!shouldUseAutomaticOAuth(config)) {
       return { outcome: 'manual_credentials' };
     }
-    // Repeat clicks in the cloud UI must not restart the flow: an in-flight
-    // request already carries the authorization URL the user needs. Checked
-    // before cloud availability so a tunnel blip cannot hide a live request.
+    // Resume an existing flow unless the caller explicitly replaces its client.
+    // A corrected secret or scope can still have the same client ID.
     const existing = this.deps.pendingAuthorizations.findByServer(serverName);
-    if (existing) return { outcome: 'pending', authorization: existing };
+    if (existing && !client)
+      return { outcome: 'pending', authorization: existing };
 
     if (!isCloudAuthorizationAvailable(this.deps.cloudConnectivity)) {
       return { outcome: 'unavailable' };
@@ -1571,11 +1721,50 @@ class McpModule implements Mcp {
       // here means the module is not running — not a slow connection attempt.
       if (!runtime) return { outcome: 'not_running' };
     }
-    if (runtime.connection) return { outcome: 'already_connected' };
+    // Only drop a parked grant once the replacement can actually start.
+    if (existing) this.deps.pendingAuthorizations.cancel(existing.id);
+    if (runtime.connection && !client) return { outcome: 'already_connected' };
+
+    const connection = runtime.connection;
+    if (connection) {
+      runtime.connection = undefined;
+      runtime.status = 'authorization_required';
+      this.stopEventWorker(serverName);
+      this.stopRealtimeWorker(serverName);
+      this.publishRegistry();
+      await connection.close();
+      if (!this.isCurrentRuntime(runtime)) return { outcome: 'not_found' };
+    }
 
     this.clearRetry(runtime);
+    // New authorization means new credentials; earlier 401s no longer count.
+    runtime.unauthorizedReconnects = 0;
     runtime.attempt?.controller.abort();
     runtime.attempt = undefined;
+    if (client) {
+      runtime.status = 'authorization_required';
+      this.publishRegistry();
+      const setup = new AbortController();
+      runtime.clientSetup?.abort();
+      runtime.clientSetup = setup;
+      try {
+        await this.deps.configureOAuthClient(
+          serverName,
+          config.url,
+          client,
+          setup.signal,
+        );
+      } catch (error) {
+        if (setup.signal.aborted) return { outcome: 'not_found' };
+        // A failed setup must not leave the server down without a retry;
+        // reconnect with whatever credentials are still stored.
+        if (this.isCurrentRuntime(runtime)) this.connectRuntime(runtime);
+        throw error;
+      } finally {
+        if (runtime.clientSetup === setup) runtime.clientSetup = undefined;
+      }
+      if (!this.isCurrentRuntime(runtime)) return { outcome: 'not_found' };
+    }
     this.connectRuntime(runtime);
 
     const authorization = await this.deps.pendingAuthorizations.waitForServer(
@@ -1923,6 +2112,10 @@ export function isCloudAuthorizationAvailable(
 }
 
 export function createMcp(deps: McpDependencies): Mcp {
+  const logger = deps.logging.child({
+    name: 'mcp',
+    bindings: { module: 'mcp' },
+  });
   const localPresenter = new LocalBrowserOAuthPresenter();
   const coordinator = new LocalOAuthAuthorizationCoordinator((url) =>
     localPresenter.present(url),
@@ -1944,6 +2137,7 @@ export function createMcp(deps: McpDependencies): Mcp {
   };
   const pendingAuthorizations =
     deps.pendingAuthorizations ?? new McpPendingAuthorizationRegistry();
+  const cloudConnectivity = deps.cloudConnectivity;
   const cloudSessionFactory = createCloudOAuthAuthorizationSessionFactory({
     registry: pendingAuthorizations,
     getCloudBaseUrl: () => {
@@ -1952,6 +2146,17 @@ export function createMcp(deps: McpDependencies): Mcp {
         throw new Error('Cloud connectivity is not configured');
       return cloudConnectivity.getCloudBaseUrl();
     },
+    resolveAgentClientMetadataUrl: cloudConnectivity
+      ? createAgentClientMetadataUrlResolver({
+          getAccessToken: (resource, scopes) =>
+            cloudConnectivity.getAccessToken(resource, scopes),
+          onError: (error) =>
+            logger.warn(
+              { error: safeDiagnosticError(error) },
+              'Could not resolve the agent OAuth client, using the shared Klex client',
+            ),
+        })
+      : undefined,
   });
   const sessionFactory: OAuthAuthorizationSessionFactory = {
     start: (context) =>
@@ -1964,19 +2169,38 @@ export function createMcp(deps: McpDependencies): Mcp {
     : (options) =>
         connectMcpServer({
           ...options,
-          oauth: { sessionFactory, store },
+          oauth: {
+            clientName: () => deps.config.get?.()?.officialName,
+            logger,
+            sessionFactory,
+            store,
+          },
         });
   return new McpModule({
-    logger: deps.logging.child({
-      name: 'mcp',
-      bindings: { module: 'mcp' },
-    }),
+    logger,
     config: deps.config,
     pushNotificationInbox: createInMemoryPushNotificationInbox(),
     realtimeMediaCapability: deps.realtimeMediaCapability,
     connect,
     cloudConnectivity: deps.cloudConnectivity,
     pendingAuthorizations,
+    removeOAuth: async (namespace) => {
+      const credentials = await store.removeServer(namespace);
+      await revokeOAuthCredentials(credentials, namespace, logger);
+      return credentials.length;
+    },
+    configureOAuthClient: (serverName, serverUrl, client, signal) => {
+      const cloud = deps.cloudConnectivity;
+      if (!cloud) throw new Error('Cloud authorization unavailable');
+      return saveRegisteredOAuthClient(
+        store,
+        serverName,
+        serverUrl,
+        cloudCallbackUrl(cloud.getCloudBaseUrl()),
+        client,
+        { signal },
+      );
+    },
     closeOAuth: async () => {
       pendingAuthorizations.closeAll();
       await coordinator.close();

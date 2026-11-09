@@ -68,7 +68,7 @@ export async function optimizeForVisionHelper(
 
   if (!settings.supports) return part;
 
-  const cacheKey = `${imageHash}:${firstEntry.providerId}:${visionModelId}`;
+  const cacheKey = `${imageHash}:${firstEntry.providerId}:${visionModelId}:${JSON.stringify(settings)}`;
   const cached = cache.get(cacheKey);
   if (cached !== undefined && cached.type !== 'text') return cached;
 
@@ -122,7 +122,10 @@ export async function describeImage(
 
   if (imageHash && !lookFor) {
     inflightDescriptions.set(imageHash, promise);
-    promise.finally(() => inflightDescriptions.delete(imageHash));
+    void promise.then(
+      () => inflightDescriptions.delete(imageHash),
+      () => inflightDescriptions.delete(imageHash),
+    );
   }
 
   return promise;
@@ -137,36 +140,6 @@ async function runDescribeImage(
   lookFor: string | undefined,
   systemPrompt: string,
 ): Promise<string | null> {
-  // Optimize the image for the vision helper model's capabilities
-  // before sending it — same pipeline as regular image processing.
-  const optimizedPart = await optimizeForVisionHelper(
-    deps,
-    imagePart,
-    buffer,
-    visionModelIds,
-    imageHash,
-  );
-
-  const userContent: Array<FilePart | ImagePart | TextPart> = [optimizedPart];
-  if (lookFor) {
-    userContent.push({
-      type: 'text',
-      text: `Specifically look for: ${lookFor}`,
-    });
-  }
-  const messages: ModelMessage[] = [{ role: 'user', content: userContent }];
-
-  const result = await deps.generateText({
-    modelIds: visionModelIds,
-    system: systemPrompt,
-    messages,
-  });
-
-  if (result.success) {
-    if (imageHash && !lookFor) descriptionCache.set(imageHash, result.text);
-    return result.text;
-  }
-
   // Fallback: try chat models with image capability
   const chatEntries = deps.config.getModelSelection('chat');
   const visionChatEntries = chatEntries.filter((entry) => {
@@ -178,21 +151,31 @@ async function runDescribeImage(
     }
   });
 
-  if (visionChatEntries.length > 0) {
-    deps.logger.warn(
-      'All vision models failed — falling back to chat models with image capability',
+  // Every helper, including chat fallback, starts from the original image.
+  for (const entry of [...visionModelIds, ...visionChatEntries]) {
+    const optimizedPart = await optimizeForVisionHelper(
+      deps,
+      imagePart,
+      buffer,
+      [entry],
+      imageHash,
     );
-    const fallbackResult = await deps.generateText({
-      modelIds: visionChatEntries,
+    const userContent: Array<FilePart | ImagePart | TextPart> = [optimizedPart];
+    if (lookFor)
+      userContent.push({
+        type: 'text',
+        text: `Specifically look for: ${lookFor}`,
+      });
+    const result = await deps.generateText({
+      modelIds: [entry],
       system: systemPrompt,
-      messages,
+      messages: [{ role: 'user', content: userContent }],
     });
-
-    if (fallbackResult.success) {
-      if (imageHash && !lookFor)
-        descriptionCache.set(imageHash, fallbackResult.text);
-      return fallbackResult.text;
+    if (result.success) {
+      if (imageHash && !lookFor) descriptionCache.set(imageHash, result.text);
+      return result.text;
     }
+    if (result.failureReason === 'aborted') return null;
   }
 
   return null;

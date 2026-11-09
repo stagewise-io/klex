@@ -1,5 +1,7 @@
 import { useState } from 'react';
 
+import { t } from '@/i18n';
+
 import { usePlay, wait } from '../../workflow/stage';
 import type { WorkSceneProps } from './scenes';
 
@@ -14,26 +16,26 @@ type Mail = {
 const inbox: Mail[] = [
   {
     from: 'Priya Shah',
-    subject: 'Re: Interview on Thursday',
-    snippet: 'Thursday at 10 works great for me, see you then!',
+    subject: t('Re: Interview on Thursday'),
+    snippet: t('Thursday at 10 works great for me, see you then!'),
     time: '9:12',
   },
   {
     from: 'Greenhouse',
-    subject: 'Weekly hiring report',
-    snippet: '12 new applicants across 3 open roles this week.',
+    subject: t('Weekly hiring report'),
+    snippet: t('12 new applicants across 3 open roles this week.'),
     time: '8:40',
   },
   {
-    from: 'Payroll',
-    subject: 'September payslips are ready',
-    snippet: 'All payslips have been sent to the team.',
+    from: t('Payroll'),
+    subject: t('September payslips are ready'),
+    snippet: t('All payslips have been sent to the team.'),
     time: 'Sep 28',
   },
   {
-    from: 'Office',
-    subject: 'Team lunch on Friday',
-    snippet: 'We booked the long table at Nolita for 12:30.',
+    from: t('Office'),
+    subject: t('Team lunch on Friday'),
+    snippet: t('We booked the long table at Nolita for 12:30.'),
     time: 'Sep 27',
   },
 ];
@@ -72,7 +74,7 @@ const applicants = [
     ],
     attachment: 'aisha-khan-resume.pdf',
   },
-];
+] as const;
 
 export const monicaScene = {
   count: applicants.length,
@@ -87,8 +89,8 @@ function MonicaScene({ variant, onDone }: WorkSceneProps) {
   const [phase, setPhase] = useState<Phase>('inbox');
   const mail: Mail = {
     from: applicant.name,
-    subject: `Application: ${applicant.role}`,
-    snippet: applicant.body[1],
+    subject: t('Application: {{role}}', { role: t(applicant.role) }),
+    snippet: t(applicant.body[1]),
     time: '9:41',
     attachment: applicant.attachment,
   };
@@ -122,7 +124,7 @@ function MonicaScene({ variant, onDone }: WorkSceneProps) {
             <circle cx="7" cy="7" r="4.5" />
             <path d="m10.5 10.5 3 3" />
           </svg>
-          Search mail
+          {t('Search mail')}
         </span>
         <span className="new-gmail-me">M</span>
       </header>
@@ -155,10 +157,10 @@ function MonicaScene({ variant, onDone }: WorkSceneProps) {
             <article className="new-gmail-reader new-build-reveal">
               <h4>
                 {mail.subject}
-                <span className="new-gmail-label">Inbox</span>
+                <span className="new-gmail-label">{t('Inbox')}</span>
                 {phase === 'shortlisted' && (
                   <span className="new-gmail-label is-shortlist new-build-reveal">
-                    Shortlist
+                    {t('Shortlist')}
                   </span>
                 )}
               </h4>
@@ -167,7 +169,7 @@ function MonicaScene({ variant, onDone }: WorkSceneProps) {
                 <span>
                   <strong>{applicant.name}</strong>{' '}
                   <small>&lt;{applicant.email}&gt;</small>
-                  <small>to me</small>
+                  <small>{t('to me')}</small>
                 </span>
                 <span
                   className="new-gmail-star"
@@ -178,7 +180,7 @@ function MonicaScene({ variant, onDone }: WorkSceneProps) {
                 </span>
               </p>
               {applicant.body.map((line) => (
-                <p key={line}>{line}</p>
+                <p key={line}>{t(line)}</p>
               ))}
               <p className="new-gmail-attachment">
                 <span>PDF</span>

@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "blume dev",
-    "build": "blume build",
+    "build": "blume build && node ../../scripts/agent-site/build.mjs docs",
     "doctor": "blume doctor"
   },
   "dependencies": {

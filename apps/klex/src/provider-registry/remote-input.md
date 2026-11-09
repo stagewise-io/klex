@@ -98,6 +98,6 @@ request that carried remote media (any 4xx except 401, 403, 408 and 429), the
 with `REMOTE_INPUT_REJECTED`, so the next attempt runs without the file and the
 model can tell the user it could not be read. Transport errors follow normal
 generation classification. Diagnostic reasons omit URLs and provider messages. Raw URLs remain in private tool content, debug
-logs, compressed history/episode JSONL, and configured telemetry content recording
+logs, canonical SQLite history and its bounded activity projection, and configured telemetry content recording
 under the accepted policy. There is no separate inference call, download,
 decoding, cache, attachment store, or media fallback.

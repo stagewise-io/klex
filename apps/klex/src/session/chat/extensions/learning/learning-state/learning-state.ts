@@ -1,65 +1,15 @@
 import { join } from 'node:path';
 
-import { z } from 'zod';
-
 import {
   type JsonStoreDefinition,
   type LocalDataMetadata,
   readCurrentJsonStore,
   writeJsonStoreDocument,
 } from '@/local-data';
+import { LOCAL_DATA_MIGRATIONS } from '@/local-data-migrations';
 import { KLEX_VERSION } from '@/release';
 
 const STATE_FILE = 'state.json';
-
-const isoTimestamp = z
-  .string()
-  .refine((value) => Number.isFinite(Date.parse(value)), {
-    message: 'Timestamp must be a valid ISO 8601 datetime',
-  });
-
-const legacySkillStateSchema = z
-  .object({
-    createdAt: isoTimestamp,
-    updatedAt: isoTimestamp,
-    lastReadAt: isoTimestamp.nullable(),
-    readCount: z.number().int().nonnegative(),
-    sourceEpisodes: z.array(z.string()),
-  })
-  .passthrough();
-
-const learningStatePayloadSchema = z
-  .object({
-    cursor: z.string().nullable(),
-    episodeFailures: z.record(z.string(), z.number().int().nonnegative()),
-    changedRunsSinceConsolidation: z.number().int().nonnegative(),
-    lastConsolidationAt: isoTimestamp.nullable(),
-    skills: z.record(z.string(), legacySkillStateSchema),
-  })
-  .passthrough();
-
-const activity = z.number().int().nonnegative();
-const deferredSchema = z
-  .object({ id: z.string(), after: z.string(), attempts: activity })
-  .passthrough();
-const skillStateSchema = legacySkillStateSchema.extend({
-  userEdited: z.boolean().default(false),
-});
-const activitySkillSchema = skillStateSchema.extend({
-  createdEpisode: activity,
-  updatedEpisode: activity,
-  lastReadEpisode: activity.nullable(),
-});
-const activityStateSchema = learningStatePayloadSchema.extend({
-  processedEpisodeCount: activity,
-  pendingChangeWeight: activity,
-  lastConsolidationEpisode: activity,
-  lastConsolidationSkillCount: activity,
-  consolidationFailures: activity,
-  nextConsolidationEpisode: activity.nullable(),
-  deferred: z.array(deferredSchema).max(20),
-  skills: z.record(z.string(), activitySkillSchema),
-});
 
 function activityDefaults() {
   return {
@@ -79,39 +29,20 @@ export const LEARNING_STATE_STORE_DEFINITION: JsonStoreDefinition = {
   relativePath: 'extensions/io.stagewise/learning/state.json',
   required: false,
   schemaVersion: 2,
-  compatibilityVersion: 2,
-  minimumKlexVersion: '0.24.0',
-  versions: [
-    { version: 1, schema: learningStatePayloadSchema },
-    { version: 2, schema: activityStateSchema },
-  ],
-  migrations: [
-    {
-      from: 1,
-      to: 2,
-      name: 'episode-activity',
-      up: (value) => {
-        const old = learningStatePayloadSchema.parse(value);
-        return {
-          ...old,
-          ...activityDefaults(),
-          skills: Object.fromEntries(
-            Object.entries(old.skills).map(([name, skill]) => [
-              name,
-              {
-                ...skill,
-                createdEpisode: 0,
-                updatedEpisode: 0,
-                lastReadEpisode: null,
-              },
-            ]),
-          ),
-        };
-      },
-    },
-  ],
+  compatibilityVersion: 4,
+  minimumKlexVersion: '0.28.1',
+  versions: LOCAL_DATA_MIGRATIONS['learning-extension-state'].versions,
+  migrations: LOCAL_DATA_MIGRATIONS['learning-extension-state'].migrations,
 };
 
+/**
+ * Pre-registry per-skill usage, read only by the legacy import.
+ *
+ * LEGACY(skill-registry): released in schema v2, so removing it needs a new
+ * schema version and a forward migration that drops `skills`. Do this only
+ * after the legacy import is gone, and keep the historical v1 and v2 schemas
+ * and fixtures unchanged (see the local-data-migrations skill).
+ */
 export interface SkillState {
   userEdited?: boolean;
   createdAt: string;
@@ -126,12 +57,13 @@ export interface SkillState {
 }
 
 export interface LearningStateData {
-  /** Last processed episode id. */
+  /** Last consumed canonical source. Legacy file cursors trigger a one-time cutover. */
   cursor: string | null;
-  /** Episode id → consecutive failures. */
+  /** Source id → consecutive failures (released field name retained). */
   episodeFailures: Record<string, number>;
   changedRunsSinceConsolidation: number;
   lastConsolidationAt: string | null;
+  /** LEGACY(skill-registry): see `SkillState`. Empty once imported. */
   skills: Record<string, SkillState>;
   processedEpisodeCount: number;
   pendingChangeWeight: number;
@@ -143,6 +75,8 @@ export interface LearningStateData {
     id: string;
     after: string;
     attempts: number;
+    /** Optional canonical range start; old single-source references remain valid. */
+    firstSourceId?: string;
     [key: string]: unknown;
   }[];
 }
@@ -197,6 +131,7 @@ class LearningStateModule implements LearningState {
     const operation = this.updateWork.then(async () => {
       const next = this.get();
       mutate(next);
+      // LEGACY(skill-registry): defaults for entries awaiting import.
       for (const entry of Object.values(next.skills)) {
         entry.userEdited ??= false;
         entry.createdEpisode ??= next.processedEpisodeCount;

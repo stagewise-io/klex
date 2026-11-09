@@ -1,11 +1,14 @@
 import {
   type CallToolResult,
   Client,
+  type Implementation,
   type Tool as McpToolDefinition,
   type OAuthClientProvider,
+  type ProtocolEra,
   type ReadResourceResult,
   type Resource,
   type ResourceTemplateType,
+  type ServerCapabilities,
   StreamableHTTPClientTransport,
   type Transport,
   UnauthorizedError,
@@ -13,6 +16,7 @@ import {
 } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 
+import type { ModuleLogger } from '@stagewise/logger';
 import type { PushNotificationNotification } from '@stagewise/mcp-extension-push-notifications';
 import {
   type RegisteredPushNotificationsClient,
@@ -40,6 +44,10 @@ import {
 } from './oauth/protected-resource';
 import { McpOAuthProvider } from './oauth/provider';
 import type { McpOAuthStore } from './oauth/store';
+import {
+  createOAuthTokenEndpointFetch,
+  type OAuthTokenEndpointFetchOptions,
+} from './oauth/token-endpoint';
 
 export class McpAuthorizationRequiredError extends Error {
   public constructor(cause: unknown) {
@@ -48,7 +56,25 @@ export class McpAuthorizationRequiredError extends Error {
   }
 }
 
+/** Protocol-provided metadata, without connection configuration or external enrichment. */
+export interface McpServerMetadata {
+  /** Server-advertised identity, distinct from the configured namespace. */
+  serverInfo?: Implementation;
+  /** Advertised capabilities, not a promise that Klex implements every feature. */
+  capabilities?: ServerCapabilities;
+  /** Server-provided usage guidance, not a display description or trusted directive. */
+  instructions?: string;
+  /** Protocol version selected by the SDK for this connection. */
+  protocolVersion?: string;
+  /** SDK protocol era for the selected version. */
+  protocolEra?: ProtocolEra;
+  /** Versions advertised by modern discovery; absent for legacy initialization. */
+  supportedVersions?: string[];
+}
+
 export interface McpConnection {
+  /** A detached snapshot of metadata learned by the SDK during connection. */
+  readonly metadata: McpServerMetadata;
   readonly namespace: string;
   readonly tools: readonly McpToolDefinition[];
   readonly pushNotifications: RegisteredPushNotificationsClient;
@@ -102,11 +128,14 @@ export interface ConnectMcpServerOptions {
     connection: McpConnection,
     uri: string,
   ): void | Promise<void>;
-  onDisconnect(connection: McpConnection): void;
+  /** `unauthorized` when closed after a post-connect 401 the SDK could not fix. */
+  onDisconnect(connection: McpConnection, reason?: 'unauthorized'): void;
   onAuthorizationStatus?(
     status: 'authorization_required' | 'authorizing' | 'connecting',
   ): void;
   oauth?: {
+    clientName?: string | (() => string | undefined);
+    logger?: ModuleLogger;
     sessionFactory?: OAuthAuthorizationSessionFactory;
     store: McpOAuthStore;
   };
@@ -122,13 +151,19 @@ class McpServerConnection implements McpConnection {
   constructor(
     readonly namespace: string,
     private readonly client: Client,
+    private readonly onUnauthorized: (error: UnauthorizedError) => void,
     readonly pushNotifications: RegisteredPushNotificationsClient,
     readonly supportsPushNotifications: boolean,
     readonly realtimeMedia: RegisteredRealtimeMediaClient | undefined,
     readonly supportsRealtimeMedia: boolean,
     readonly supportsResourceSubscription: boolean,
     private currentTools: readonly McpToolDefinition[],
+    private readonly serverMetadata: McpServerMetadata,
   ) {}
+
+  get metadata(): McpServerMetadata {
+    return structuredClone(this.serverMetadata);
+  }
 
   get tools(): readonly McpToolDefinition[] {
     return this.currentTools;
@@ -138,16 +173,28 @@ class McpServerConnection implements McpConnection {
     this.currentTools = tools;
   }
 
+  /** Post-connect auth failures cannot recover in place; surface them for reconnect. */
+  private async request<T>(operation: () => Promise<T>): Promise<T> {
+    if (this.closed)
+      throw new Error(`MCP server is unavailable: ${this.namespace}`);
+    try {
+      return await operation();
+    } catch (error) {
+      if (error instanceof UnauthorizedError) this.onUnauthorized(error);
+      throw error;
+    }
+  }
+
   async invoke(
     tool: McpToolDefinition,
     input: JsonObject,
     signal: AbortSignal,
   ): Promise<CallToolResult> {
-    if (this.closed)
-      throw new Error(`MCP server is unavailable: ${this.namespace}`);
-    return this.client.callTool(
-      { name: tool.name, arguments: input },
-      { signal, toolDefinition: tool },
+    return this.request(() =>
+      this.client.callTool(
+        { name: tool.name, arguments: input },
+        { signal, toolDefinition: tool },
+      ),
     );
   }
 
@@ -155,11 +202,8 @@ class McpServerConnection implements McpConnection {
     signal: AbortSignal,
     cursor?: string,
   ): Promise<{ resources: Resource[]; nextCursor?: string }> {
-    if (this.closed)
-      throw new Error(`MCP server is unavailable: ${this.namespace}`);
-    const result = await this.client.listResources(
-      cursor ? { cursor } : undefined,
-      { signal },
+    const result = await this.request(() =>
+      this.client.listResources(cursor ? { cursor } : undefined, { signal }),
     );
     return {
       resources: result.resources,
@@ -174,11 +218,10 @@ class McpServerConnection implements McpConnection {
     resourceTemplates: ResourceTemplateType[];
     nextCursor?: string;
   }> {
-    if (this.closed)
-      throw new Error(`MCP server is unavailable: ${this.namespace}`);
-    const result = await this.client.listResourceTemplates(
-      cursor ? { cursor } : undefined,
-      { signal },
+    const result = await this.request(() =>
+      this.client.listResourceTemplates(cursor ? { cursor } : undefined, {
+        signal,
+      }),
     );
     return {
       resourceTemplates: result.resourceTemplates,
@@ -190,21 +233,19 @@ class McpServerConnection implements McpConnection {
     uri: string,
     signal: AbortSignal,
   ): Promise<ReadResourceResult> {
-    if (this.closed)
-      throw new Error(`MCP server is unavailable: ${this.namespace}`);
-    return this.client.readResource({ uri }, { signal });
+    return this.request(() => this.client.readResource({ uri }, { signal }));
   }
 
   async subscribeResource(uri: string, signal: AbortSignal): Promise<void> {
-    if (this.closed)
-      throw new Error(`MCP server is unavailable: ${this.namespace}`);
-    await this.client.subscribeResource({ uri }, { signal });
+    await this.request(() =>
+      this.client.subscribeResource({ uri }, { signal }),
+    );
   }
 
   async unsubscribeResource(uri: string, signal: AbortSignal): Promise<void> {
-    if (this.closed)
-      throw new Error(`MCP server is unavailable: ${this.namespace}`);
-    await this.client.unsubscribeResource({ uri }, { signal });
+    await this.request(() =>
+      this.client.unsubscribeResource({ uri }, { signal }),
+    );
   }
 
   async close(): Promise<void> {
@@ -266,14 +307,45 @@ export async function connectMcpServer(
         await options.onResourceUpdated(connection, notification.params.uri);
     },
   );
-  const oauth = await createOAuthTransportOptions(options);
+  const logger = options.oauth?.logger;
+  const oauthLifetime = new AbortController();
+  const oauth = await createOAuthTransportOptions(
+    {
+      ...options,
+      signal: AbortSignal.any([options.signal, oauthLifetime.signal]),
+    },
+    () => connection !== undefined,
+  );
   let transport = createTransport(
     options.config,
     oauth?.provider,
     options.cloudAuth,
+    oauth?.tokenEndpoint,
   );
   client.onclose = () => {
-    if (connection && !expectedClose) options.onDisconnect(connection);
+    if (connection) {
+      oauthLifetime.abort();
+      if (!expectedClose)
+        options.onDisconnect(
+          connection,
+          reconnectingAfterUnauthorized ? 'unauthorized' : undefined,
+        );
+    }
+  };
+  let reconnectingAfterUnauthorized = false;
+  const handleUnauthorized = (error: UnauthorizedError) => {
+    if (!connection || expectedClose || reconnectingAfterUnauthorized) return;
+    reconnectingAfterUnauthorized = true;
+    logger?.warn(
+      { error, namespace: options.namespace },
+      'MCP request unauthorized after connect; reconnecting',
+    );
+    // An unexpected close reaches `onDisconnect`, which schedules a reconnect
+    // that refreshes tokens or requests authorization with a live callback.
+    void client.close().catch(() => undefined);
+  };
+  client.onerror = (error) => {
+    if (error instanceof UnauthorizedError) handleUnauthorized(error);
   };
 
   const onAbort = () => void client.close();
@@ -303,6 +375,7 @@ export async function connectMcpServer(
         options.config,
         oauth.provider,
         options.cloudAuth,
+        oauth.tokenEndpoint,
       );
       options.onAuthorizationStatus?.('connecting');
       await client.connect(transport, { signal: options.signal });
@@ -325,27 +398,35 @@ export async function connectMcpServer(
     connection = new McpServerConnection(
       options.namespace,
       client,
+      handleUnauthorized,
       pushNotifications,
       supportsPushNotifications,
       realtimeMedia,
       supportsRealtimeMedia,
       supportsResourceSubscription,
       result.tools,
+      readServerMetadata(client),
     );
     const originalClose = connection.close.bind(connection);
     connection.close = async () => {
       expectedClose = true;
+      oauthLifetime.abort();
       await originalClose();
     };
     return connection;
   } catch (error) {
     expectedClose = true;
+    oauthLifetime.abort();
     await client.close().catch(() => undefined);
     const connectionError =
       error instanceof UnauthorizedError
         ? new McpAuthorizationRequiredError(error)
         : error;
     if (connectionError instanceof McpAuthorizationRequiredError) {
+      logger?.warn(
+        { error: connectionError, namespace: options.namespace },
+        'MCP OAuth connection attempt ended without authorization',
+      );
       options.onAuthorizationStatus?.('authorization_required');
     }
     throw connectionError;
@@ -353,6 +434,23 @@ export async function connectMcpServer(
     await oauth?.session.close().catch(() => undefined);
     options.signal.removeEventListener('abort', onAbort);
   }
+}
+
+function readServerMetadata(client: Client): McpServerMetadata {
+  const serverInfo = client.getServerVersion();
+  const capabilities = client.getServerCapabilities();
+  const instructions = client.getInstructions();
+  const protocolVersion = client.getNegotiatedProtocolVersion();
+  const protocolEra = client.getProtocolEra();
+  const supportedVersions = client.getDiscoverResult()?.supportedVersions;
+  return structuredClone({
+    ...(serverInfo !== undefined ? { serverInfo } : {}),
+    ...(capabilities !== undefined ? { capabilities } : {}),
+    ...(instructions !== undefined ? { instructions } : {}),
+    ...(protocolVersion !== undefined ? { protocolVersion } : {}),
+    ...(protocolEra !== undefined ? { protocolEra } : {}),
+    ...(supportedVersions !== undefined ? { supportedVersions } : {}),
+  });
 }
 
 export function resolveVersionNegotiation(
@@ -363,11 +461,13 @@ export function resolveVersionNegotiation(
 
 async function createOAuthTransportOptions(
   options: ConnectMcpServerOptions,
+  isConnected: () => boolean,
 ): Promise<
   | {
       callback?: Promise<URLSearchParams>;
       provider: OAuthClientProvider;
       session: OAuthAuthorizationSession;
+      tokenEndpoint: OAuthTokenEndpointFetchOptions;
     }
   | undefined
 > {
@@ -384,20 +484,43 @@ async function createOAuthTransportOptions(
     serverUrl: options.config.url,
   });
   let callback: Promise<URLSearchParams> | undefined;
+  const logger = options.oauth.logger;
+  const serverName = `${options.namespace}\u0000${options.config.url}`;
   const provider = new McpOAuthProvider({
+    clientName: options.oauth.clientName,
     onAuthorizationRedirect: (authorizationUrl) => {
+      // The callback session closes once connect settles, so a redirect from
+      // an established connection could never complete. Fail the request and
+      // let the reconnect path authorize with a live session instead.
+      if (isConnected()) {
+        throw new UnauthorizedError(
+          'MCP OAuth authorization is required after connect',
+        );
+      }
       const state = authorizationUrl.searchParams.get('state');
       if (!state)
         throw new Error('OAuth authorization URL did not include state');
-      callback = session.authorize({
+      const pending = session.authorize({
         authorizationUrl,
         signal: options.signal,
         state,
       });
+      // Connect may fail before awaiting the callback; an unobserved timeout
+      // rejection must not terminate the process.
+      pending.catch((error: unknown) => {
+        logger?.info(
+          { error, namespace: options.namespace },
+          'MCP OAuth authorization callback did not complete',
+        );
+      });
+      callback = pending;
     },
     redirectUrl: session.redirectUrl,
-    serverName: `${options.namespace}\u0000${options.config.url}`,
+    clientMetadataUrl: session.clientMetadataUrl,
+    serverName,
     store: options.oauth.store,
+    signal: options.signal,
+    ...(logger ? { logger } : {}),
   });
   return {
     get callback() {
@@ -405,6 +528,13 @@ async function createOAuthTransportOptions(
     },
     provider,
     session,
+    tokenEndpoint: {
+      ...(logger ? { logger } : {}),
+      namespace: options.namespace,
+      serverName,
+      serverUrl: options.config.url,
+      store: options.oauth.store,
+    },
   };
 }
 
@@ -421,6 +551,7 @@ export function createTransport(
   config: McpServerConfig,
   authProvider?: OAuthClientProvider,
   cloudAuth?: CloudAuthProvider,
+  tokenEndpoint?: OAuthTokenEndpointFetchOptions,
 ): Transport {
   if ('command' in config) {
     return new StdioClientTransport({
@@ -429,14 +560,22 @@ export function createTransport(
       ...(config.env ? { env: config.env } : {}),
     });
   }
+  const cloudFetch =
+    cloudAuth && shouldUseAutomaticOAuth(config)
+      ? createDiscoveryAuthenticatedFetch(cloudAuth, config.url)
+      : undefined;
+  const transportFetch = tokenEndpoint
+    ? createOAuthTokenEndpointFetch(
+        cloudFetch ?? ((input, init) => fetch(input, init)),
+        tokenEndpoint,
+      )
+    : cloudFetch;
   return new StreamableHTTPClientTransport(new URL(config.url), {
     ...(authProvider ? { authProvider } : {}),
     ...(config.headers
       ? { requestInit: { headers: new Headers(config.headers) } }
       : {}),
-    ...(cloudAuth && shouldUseAutomaticOAuth(config)
-      ? { fetch: createDiscoveryAuthenticatedFetch(cloudAuth, config.url) }
-      : {}),
+    ...(transportFetch ? { fetch: transportFetch } : {}),
     reconnectionOptions: {
       initialReconnectionDelay: 1_000,
       maxReconnectionDelay: 30_000,

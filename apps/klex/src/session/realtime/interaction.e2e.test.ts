@@ -293,8 +293,13 @@ describe('realtime and default chat interaction', () => {
       },
     } as PushNotificationNotification;
     await connectOptions?.onPushNotification(connection, push);
-    await vi.waitFor(() => expect(processor.receivedUpdates).toHaveLength(1));
+    await vi.waitFor(() => expect(processor.receivedUpdates).toHaveLength(2));
     expect(processor.receivedUpdates[0]).toMatchObject({
+      sequence: 0,
+      eventId: 'realtime:voice:call-1:started',
+      requestResponse: true,
+    });
+    expect(processor.receivedUpdates[1]).toMatchObject({
       eventId: 'voice:notification-1',
       requestResponse: true,
     });

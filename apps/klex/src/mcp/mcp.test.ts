@@ -22,9 +22,11 @@ import {
   McpAuthorizationRequiredError,
   type McpConnection,
   type McpConnectionFactory,
+  type McpServerMetadata,
 } from './connection';
 import { createMcp, type Mcp, shouldUseCloudAuthorization } from './mcp';
 import { McpPendingAuthorizationRegistry } from './oauth/pending-authorizations';
+import * as registeredClient from './oauth/register-client';
 
 const logging = {
   child: () => ({
@@ -79,6 +81,7 @@ function createConfigHarness(initial: Record<string, McpServerConfig>): {
 function connection(namespace: string): McpConnection {
   return {
     namespace,
+    metadata: {},
     tools: [
       {
         name: 'echo',
@@ -824,6 +827,239 @@ describe('MCP tool discovery', () => {
   });
 });
 
+describe('MCP server statuses', () => {
+  it('forwards only current connection metadata and replaces it after reconnect', async () => {
+    vi.useFakeTimers();
+    let activeOptions: ConnectMcpServerOptions | undefined;
+    let activeConnection: McpConnection | undefined;
+    let attempt = 0;
+    const metadata = (version: string): McpServerMetadata => ({
+      serverInfo: {
+        name: 'advertised-name',
+        title: 'Example',
+        version,
+        description: 'Server description',
+        icons: [{ src: 'https://example.com/icon.svg' }],
+      },
+      capabilities: {
+        resources: { subscribe: true },
+        extensions: {
+          'example.com/custom': { nested: ['a', { enabled: true }] },
+        },
+      },
+      instructions: 'Usage instructions',
+      protocolVersion: '2026-07-28',
+      protocolEra: 'modern',
+      supportedVersions: ['2026-07-28'],
+    });
+    const { mcp } = setup(
+      { remote: { url: 'https://example.com/mcp' } },
+      async (options) => {
+        activeOptions = options;
+        activeConnection = {
+          ...connection(options.namespace),
+          metadata: metadata(String(++attempt)),
+        };
+        return activeConnection;
+      },
+    );
+    const assertNoMetadata = () => {
+      for (const key of Object.keys(metadata('1'))) {
+        expect(serverRow(mcp, 'remote')).not.toHaveProperty(key);
+      }
+    };
+    try {
+      assertNoMetadata();
+      await mcp.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(serverRow(mcp, 'remote')).toMatchObject({
+        name: 'remote',
+        ...metadata('1'),
+      });
+      if (!activeOptions || !activeConnection)
+        throw new Error('Expected an active connection');
+      activeOptions.onDisconnect(activeConnection);
+      assertNoMetadata();
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(serverRow(mcp, 'remote')).toMatchObject({
+        name: 'remote',
+        ...metadata('2'),
+      });
+    } finally {
+      await mcp.close();
+    }
+  });
+
+  it('stops reconnecting after repeated post-connect 401s and requires authorization', async () => {
+    vi.useFakeTimers();
+    let activeOptions: ConnectMcpServerOptions | undefined;
+    let activeConnection: McpConnection | undefined;
+    let attempts = 0;
+    const { mcp } = setup(
+      { remote: { url: 'https://example.com/mcp' } },
+      async (options) => {
+        attempts += 1;
+        activeOptions = options;
+        activeConnection = connection(options.namespace);
+        return activeConnection;
+      },
+    );
+    const disconnectUnauthorized = () => {
+      if (!activeOptions || !activeConnection)
+        throw new Error('Expected an active connection');
+      activeOptions.onDisconnect(activeConnection, 'unauthorized');
+    };
+    try {
+      await mcp.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(attempts).toBe(1);
+      // Backoff grows across successful connects: 1s, 2s, 4s.
+      for (const delay of [1_000, 2_000, 4_000]) {
+        disconnectUnauthorized();
+        await vi.advanceTimersByTimeAsync(delay - 1);
+        const before = attempts;
+        await vi.advanceTimersByTimeAsync(1);
+        expect(attempts).toBe(before + 1);
+      }
+      disconnectUnauthorized();
+      expect(serverRow(mcp, 'remote')).toMatchObject({
+        status: 'authorization_required',
+      });
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(attempts).toBe(4);
+    } finally {
+      await mcp.close();
+    }
+  });
+
+  it('resets the post-connect 401 budget when authorization is requested', async () => {
+    let activeOptions: ConnectMcpServerOptions | undefined;
+    let activeConnection: McpConnection | undefined;
+    let attempts = 0;
+    const { mcp } = setupAuthorization(
+      { protected: { url: 'https://protected.example/mcp' } },
+      async (options) => {
+        attempts += 1;
+        activeOptions = options;
+        activeConnection = connection(options.namespace);
+        return activeConnection;
+      },
+    );
+    const disconnectUnauthorized = () => {
+      if (!activeOptions || !activeConnection)
+        throw new Error('Expected an active connection');
+      activeOptions.onDisconnect(activeConnection, 'unauthorized');
+    };
+    try {
+      await mcp.start();
+      await waitForNamespace(mcp, 'protected');
+      vi.useFakeTimers();
+      for (const delay of [1_000, 2_000]) {
+        disconnectUnauthorized();
+        await vi.advanceTimersByTimeAsync(delay);
+      }
+      // The third 401 uses the last reconnect of the budget; re-authorize
+      // during its backoff.
+      disconnectUnauthorized();
+      const before = attempts;
+      // Resolves only after the wait for a pending login times out.
+      const request = mcp.requestAuthorization('protected');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(attempts).toBe(before + 1);
+      // A fresh budget: the next 401 retries after 1s instead of parking.
+      disconnectUnauthorized();
+      expect(serverRow(mcp, 'protected')?.status).not.toBe(
+        'authorization_required',
+      );
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(attempts).toBe(before + 2);
+      await vi.advanceTimersByTimeAsync(60_000);
+      await request;
+    } finally {
+      await mcp.close();
+    }
+  });
+
+  it('preserves the persisted URL template instead of exposing the resolved runtime URL', async () => {
+    const { mcp, config } = setup(
+      { remote: { url: 'https://mcp.example.com/secret-path' } },
+      async ({ namespace }) => connection(namespace),
+    );
+    config.config.get = () =>
+      ({
+        mcpServers: {
+          remote: { url: 'https://mcp.example.com/${env:MCP_PATH}' },
+        },
+      }) as unknown as KlexConfig;
+
+    try {
+      expect(serverRow(mcp, 'remote')).toMatchObject({
+        transport: 'http',
+        url: 'https://mcp.example.com/${env:MCP_PATH}',
+      });
+    } finally {
+      await mcp.close();
+    }
+  });
+
+  it('omits the resolved runtime URL when persisted config is unavailable', async () => {
+    const { mcp } = setup(
+      { remote: { url: 'https://mcp.example.com/secret-path' } },
+      async ({ namespace }) => connection(namespace),
+    );
+
+    try {
+      const assertStatus = () => {
+        expect(serverRow(mcp, 'remote')).toMatchObject({ transport: 'http' });
+        expect(serverRow(mcp, 'remote')).not.toHaveProperty('url');
+      };
+
+      assertStatus();
+      await mcp.start();
+      await waitForNamespace(mcp, 'remote');
+      assertStatus();
+    } finally {
+      await mcp.close();
+    }
+  });
+
+  it('includes the persisted URL for HTTP servers and omits it for stdio servers', async () => {
+    const { mcp, config } = setup(
+      {
+        remote: { url: 'https://remote.example/mcp' },
+        local: { command: 'node', args: ['server.js'] },
+      },
+      async ({ namespace }) => connection(namespace),
+    );
+    config.config.get = () =>
+      ({
+        mcpServers: {
+          remote: { url: 'https://remote.example/mcp' },
+          local: { command: 'node', args: ['server.js'] },
+        },
+      }) as unknown as KlexConfig;
+
+    try {
+      const assertStatuses = () => {
+        expect(serverRow(mcp, 'remote')).toMatchObject({
+          transport: 'http',
+          url: 'https://remote.example/mcp',
+        });
+        expect(serverRow(mcp, 'local')).toMatchObject({ transport: 'stdio' });
+        expect(serverRow(mcp, 'local')).not.toHaveProperty('url');
+      };
+
+      assertStatuses();
+      await mcp.start();
+      await waitForNamespace(mcp, 'remote');
+      await waitForNamespace(mcp, 'local');
+      assertStatuses();
+    } finally {
+      await mcp.close();
+    }
+  });
+});
+
 describe('MCP namespace isolation', () => {
   it('starts immediately and publishes a healthy namespace independently', async () => {
     const pending = deferred<McpConnection>();
@@ -1419,6 +1655,190 @@ function authorizationOf(mcp: Mcp, name: string) {
 }
 
 describe('MCP cloud authorization requests', () => {
+  it('can restart authorization after registered-client discovery fails', async () => {
+    const configure = vi
+      .spyOn(registeredClient, 'saveRegisteredOAuthClient')
+      .mockRejectedValue(new Error('Discovery unavailable'));
+    let attempt = 0;
+    const { mcp, pendingAuthorizations } = setupAuthorization(
+      { protected: { url: 'https://protected.example/mcp' } },
+      async ({ namespace, signal, onAuthorizationStatus }) => {
+        onAuthorizationStatus?.('authorizing');
+        const state = `retry-${++attempt}`;
+        await pendingAuthorizations.register(
+          {
+            serverName: namespace,
+            serverUrl: 'https://protected.example/mcp',
+            authorizationUrl: `https://auth.example/authorize?state=${state}`,
+            state,
+          },
+          { signal, timeoutMs: 60_000 },
+        );
+        return connection(namespace);
+      },
+    );
+    try {
+      await mcp.start();
+      await vi.waitFor(() =>
+        expect(authorizationOf(mcp, 'protected')).not.toBeNull(),
+      );
+      await expect(
+        mcp.requestAuthorization('protected', { clientId: 'customer-app' }),
+      ).rejects.toThrow('Discovery unavailable');
+      // The server is retried with its stored credentials, not left down.
+      await vi.waitFor(() => expect(attempt).toBe(2));
+      expect(serverRow(mcp, 'protected')?.status).toBe('authorizing');
+      expect(await mcp.requestAuthorization('protected')).toMatchObject({
+        outcome: 'pending',
+        authorization: { state: 'retry-2' },
+      });
+    } finally {
+      await mcp.close();
+      configure.mockRestore();
+    }
+  });
+
+  it('keeps a pending authorization when a client replacement cannot start', async () => {
+    const configure = vi.spyOn(registeredClient, 'saveRegisteredOAuthClient');
+    let tunnel: 'connected' | 'disconnected' = 'connected';
+    const { mcp, pendingAuthorizations } = setupAuthorization(
+      { protected: { url: 'https://protected.example/mcp' } },
+      async ({ namespace, signal, onAuthorizationStatus }) => {
+        onAuthorizationStatus?.('authorizing');
+        await pendingAuthorizations.register(
+          {
+            serverName: namespace,
+            serverUrl: 'https://protected.example/mcp',
+            authorizationUrl: 'https://auth.example/authorize?state=parked',
+            state: 'parked',
+          },
+          { signal, timeoutMs: 60_000 },
+        );
+        return connection(namespace);
+      },
+      { ...cloudReady, getTunnelState: () => tunnel },
+    );
+    try {
+      await mcp.start();
+      await vi.waitFor(() =>
+        expect(authorizationOf(mcp, 'protected')).not.toBeNull(),
+      );
+      tunnel = 'disconnected';
+      expect(
+        await mcp.requestAuthorization('protected', {
+          clientId: 'customer-app',
+        }),
+      ).toEqual({ outcome: 'unavailable' });
+      expect(configure).not.toHaveBeenCalled();
+      expect(pendingAuthorizations.findByServer('protected')).toMatchObject({
+        state: 'parked',
+      });
+    } finally {
+      await mcp.close();
+      configure.mockRestore();
+    }
+  });
+
+  it('replaces the OAuth client on a connected server and retires its old connection', async () => {
+    const active = connection('protected');
+    const configure = vi
+      .spyOn(registeredClient, 'saveRegisteredOAuthClient')
+      .mockImplementation(async () => {
+        expect(active.close).toHaveBeenCalledTimes(1);
+      });
+    let attempts = 0;
+    const { mcp, pendingAuthorizations } = setupAuthorization(
+      { protected: { url: 'https://protected.example/mcp' } },
+      async ({ namespace, signal }) => {
+        if (++attempts === 1) return active;
+        await pendingAuthorizations.register(
+          {
+            serverName: namespace,
+            serverUrl: 'https://protected.example/mcp',
+            authorizationUrl:
+              'https://auth.example/authorize?state=replacement',
+            state: 'replacement',
+          },
+          { signal, timeoutMs: 60_000 },
+        );
+        return connection(namespace);
+      },
+    );
+    try {
+      await mcp.start();
+      await waitForNamespace(mcp, 'protected');
+      expect(await mcp.requestAuthorization('protected')).toEqual({
+        outcome: 'already_connected',
+      });
+      const client = {
+        clientId: 'replacement',
+        clientSecret: 'replacement-secret',
+      };
+      expect(await mcp.requestAuthorization('protected', client)).toMatchObject(
+        {
+          outcome: 'pending',
+          authorization: { state: 'replacement' },
+        },
+      );
+      expect(configure.mock.calls[0]?.[4]).toEqual(client);
+      expect(serverRow(mcp, 'protected')?.toolCount).toBe(0);
+    } finally {
+      await mcp.close();
+      configure.mockRestore();
+    }
+  });
+
+  it('applies corrected secrets and scopes for the same client, including concurrent replacements', async () => {
+    const gate = deferred<void>();
+    const configure = vi
+      .spyOn(registeredClient, 'saveRegisteredOAuthClient')
+      .mockImplementationOnce(() => gate.promise)
+      .mockResolvedValue(undefined);
+    let attempt = 0;
+    const { mcp, pendingAuthorizations } = setupAuthorization(
+      { protected: { url: 'https://protected.example/mcp' } },
+      async ({ namespace, signal }) => {
+        const state = `attempt-${++attempt}`;
+        await pendingAuthorizations.register(
+          {
+            serverName: namespace,
+            serverUrl: 'https://protected.example/mcp',
+            authorizationUrl: `https://auth.example/authorize?client_id=same-client&state=${state}`,
+            state,
+          },
+          { signal, timeoutMs: 60_000 },
+        );
+        return connection(namespace);
+      },
+    );
+    try {
+      await mcp.start();
+      await vi.waitFor(() =>
+        expect(authorizationOf(mcp, 'protected')).not.toBeNull(),
+      );
+      const original = authorizationOf(mcp, 'protected');
+      const corrected = { clientId: 'same-client', clientSecret: 'corrected' };
+      const first = mcp.requestAuthorization('protected', corrected);
+      await vi.waitFor(() => expect(configure).toHaveBeenCalledTimes(1));
+      const expanded = { ...corrected, scope: 'crm.read crm.write' };
+      const second = mcp.requestAuthorization('protected', expanded);
+      gate.resolve();
+      const [firstResult, secondResult] = await Promise.all([first, second]);
+      expect(firstResult.outcome).toBe('pending');
+      expect(secondResult.outcome).toBe('pending');
+      expect(configure).toHaveBeenCalledTimes(2);
+      expect(configure.mock.calls.map((call) => call[4])).toEqual([
+        corrected,
+        expanded,
+      ]);
+      expect(authorizationOf(mcp, 'protected')?.id).not.toBe(original?.id);
+      expect(await mcp.requestAuthorization('protected')).toEqual(secondResult);
+    } finally {
+      await mcp.close();
+      configure.mockRestore();
+    }
+  });
+
   it('reports unknown servers and servers that do not use interactive OAuth', async () => {
     const { mcp } = setupAuthorization(
       {

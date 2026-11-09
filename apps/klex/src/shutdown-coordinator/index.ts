@@ -1,3 +1,4 @@
+export { closeWithTimeout } from './cleanup';
 export {
   createShutdownCoordinator,
   DEFAULT_SHUTDOWN_TIMEOUT_MS,

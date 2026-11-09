@@ -1,6 +1,6 @@
+import { getKlexEyeColor } from '@klex/mascot/svg';
 import { expect, test } from 'vitest';
 
-import { getKlexEyeColor } from '../new/klex/geometry';
 import { mascotMarkup } from './index';
 import { FAMILY_SHAPES } from './presets';
 

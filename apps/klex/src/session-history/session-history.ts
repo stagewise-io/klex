@@ -15,10 +15,18 @@ import type { ExtendedUIMessage } from '@/session/chat/message-types';
 import type { SessionKind } from '@/session/types';
 
 import {
+  type GenerationFailure,
+  type GenerationHealthError,
+  GenerationHealthErrorSchema,
+} from './generation-health';
+import {
   SESSION_HISTORY_RELATIVE_PATH,
   SESSION_HISTORY_STORE_DEFINITION,
 } from './schema';
 import type {
+  ActivityMessage,
+  ActivityQuery,
+  ActivitySource,
   SessionHistoryListPage,
   SessionHistoryListQuery,
   SessionHistoryMessage,
@@ -42,6 +50,10 @@ export interface SessionHistoryDependencies {
 
 export interface SessionHistory {
   start(): Promise<void>;
+  activityAvailable(): boolean;
+  subscribeActivity(listener: () => void): () => void;
+  activityManifest(): Promise<ActivitySource[]>;
+  readActivity(query: ActivityQuery): Promise<ActivityMessage[]>;
   /** Drain pending writes, then close the database. */
   close(): Promise<void>;
   openRecorder(meta: SessionHistoryRecorderMetadata): SessionHistoryRecorder;
@@ -149,6 +161,26 @@ class RecorderState implements SessionHistoryRecorder {
     return this.meta.instanceId;
   }
 
+  recordGenerationFailure(
+    failure: GenerationFailure,
+    kind: GenerationHealthError['kind'],
+    consecutiveFailures: number,
+  ): Promise<void> {
+    if (this.ended) return Promise.resolve();
+    return this.store.enqueue(() =>
+      this.store.runGenerationHealth(this, {
+        ...failure,
+        kind,
+        consecutiveFailures,
+      }),
+    );
+  }
+
+  clearGenerationFailure(): Promise<void> {
+    if (this.ended) return Promise.resolve();
+    return this.store.enqueue(() => this.store.runGenerationHealth(this, null));
+  }
+
   scheduleSync(getMessages: () => readonly ExtendedUIMessage[]): void {
     if (this.ended) return;
     this.pending = getMessages;
@@ -214,6 +246,96 @@ class SessionHistoryModule implements SessionHistory {
    * the data-directory lock and every write goes through the queue.
    */
   private readonly nextOrds = new Map<string, number>();
+  private readonly activityListeners = new Set<() => void>();
+
+  activityAvailable(): boolean {
+    return this.started && !this.closed;
+  }
+
+  subscribeActivity(listener: () => void): () => void {
+    this.activityListeners.add(listener);
+    return () => this.activityListeners.delete(listener);
+  }
+
+  private notifyActivity(): void {
+    for (const listener of this.activityListeners) {
+      try {
+        listener();
+      } catch {
+        /* Hints cannot interrupt persistence. */
+      }
+    }
+  }
+
+  activityManifest(): Promise<ActivitySource[]> {
+    return this.enqueueResult(async () => {
+      const rows = await this.requireClient().execute({
+        sql: `SELECT ord, instance_id, message_id, byte_size, persisted_at, content_revision FROM messages
+              WHERE session_id = 'default' AND is_checkpoint = 0 ORDER BY ord`,
+        args: [],
+      });
+      return rows.rows.map((row) => this.activitySource(row));
+    });
+  }
+
+  private activitySource(row: Row): ActivitySource {
+    const ordinal = toNumber(row.ord);
+    return {
+      id: `history:${Buffer.from(JSON.stringify([ordinal, toText(row.instance_id), toText(row.message_id)])).toString('base64url')}`,
+      ordinal,
+      persistedAt: toText(row.persisted_at),
+      bytes: toNumber(row.byte_size),
+      revision:
+        (toText(row.content_revision) || null) ??
+        `${toText(row.persisted_at)}:${toNumber(row.byte_size)}`,
+    };
+  }
+
+  readActivity(query: ActivityQuery): Promise<ActivityMessage[]> {
+    return this.enqueueResult(async () => {
+      const client = this.requireClient();
+      const rows = await client.execute({
+        sql: `SELECT ord, instance_id, message_id, byte_size, persisted_at, content_revision FROM messages
+              WHERE session_id = 'default' AND is_checkpoint = 0 AND ord > ? AND ord <= ?
+              ORDER BY ord ${query.descending ? 'DESC' : 'ASC'} LIMIT ?`,
+        args: [
+          query.after ?? -1,
+          query.through ?? Number.MAX_SAFE_INTEGER,
+          Math.max(1, Math.min(200, Math.floor(query.limit ?? 200))),
+        ],
+      });
+      let remaining = Math.max(
+        0,
+        Math.min(2_000_000, query.maxBytes ?? 2_000_000),
+      );
+      const result: ActivityMessage[] = [];
+      for (const row of rows.rows) {
+        const source = this.activitySource(row);
+        // Stop at a page seam rather than marking affordable content as omitted.
+        // An individually oversized source still advances with an explicit null body.
+        if (
+          (query.maxBytes ?? 2_000_000) > 0 &&
+          source.bytes > remaining &&
+          source.bytes <= Math.min(2_000_000, query.maxBytes ?? 2_000_000) &&
+          result.length > 0
+        )
+          break;
+        let message: ExtendedUIMessage | null = null;
+        if (source.bytes <= remaining) {
+          const content = await client.execute({
+            sql: `SELECT content FROM messages WHERE session_id = 'default' AND ord = ?`,
+            args: [source.ordinal],
+          });
+          message = JSON.parse(
+            toText(content.rows[0]?.content),
+          ) as ExtendedUIMessage;
+          remaining -= source.bytes;
+        }
+        result.push({ ...source, message });
+      }
+      return query.descending ? result.reverse() : result;
+    });
+  }
 
   constructor(
     private readonly deps: {
@@ -449,6 +571,95 @@ class SessionHistoryModule implements SessionHistory {
     if (committed) this.maybeScheduleEnforcement();
   }
 
+  async runGenerationHealth(
+    recorder: RecorderState,
+    failure:
+      | (GenerationFailure &
+          Pick<GenerationHealthError, 'kind' | 'consecutiveFailures'>)
+      | null,
+  ): Promise<void> {
+    const client = this.client;
+    if (!client) return;
+    try {
+      const { meta } = recorder;
+      const now = this.nowIso();
+      const previous = await client.execute({
+        sql: 'SELECT generation_error FROM sessions WHERE instance_id = ?',
+        args: [meta.instanceId],
+      });
+      const raw = previous.rows[0]?.generation_error;
+      const old = parseGenerationError(raw);
+      // Termination is an escalation of the same failure, not a new incident.
+      const identical =
+        old &&
+        failure &&
+        [
+          'category',
+          'reason',
+          'message',
+          'providerId',
+          'providerType',
+          'modelId',
+          'statusCode',
+        ].every(
+          (key) =>
+            old[key as keyof GenerationFailure] ===
+            failure[key as keyof GenerationFailure],
+        );
+      const health: GenerationHealthError | null = failure
+        ? {
+            ...failure,
+            occurrenceCount: identical ? old.occurrenceCount + 1 : 1,
+            firstSeenAt: identical ? old.firstSeenAt : now,
+            lastSeenAt: now,
+          }
+        : null;
+      const statements: InStatement[] = [];
+      if (health)
+        statements.push({
+          sql: `INSERT INTO sessions (instance_id, session_id, kind, name, parent_instance_id,
+        extension_identifier, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (instance_id) DO NOTHING`,
+          args: [
+            meta.instanceId,
+            meta.sessionId,
+            meta.kind,
+            meta.name,
+            meta.parentInstanceId ?? null,
+            meta.extensionIdentifier ?? null,
+            meta.createdAt,
+            now,
+          ],
+        });
+      // A newer occurrence supersedes every unresolved warning for this logical
+      // session. Recovery resolves only this instance and its predecessors.
+      statements.push({
+        sql: `UPDATE sessions SET generation_error = NULL WHERE session_id = ?
+        AND (? = 1 OR created_at < ? OR (created_at = ? AND rowid <= COALESCE(
+          (SELECT rowid FROM sessions WHERE instance_id = ?), 9223372036854775807)))`,
+        args: [
+          meta.sessionId,
+          health ? 1 : 0,
+          meta.createdAt,
+          meta.createdAt,
+          meta.instanceId,
+        ],
+      });
+      if (health)
+        statements.push({
+          sql: 'UPDATE sessions SET generation_error = ?, updated_at = ? WHERE instance_id = ?',
+          args: [JSON.stringify(health), now, meta.instanceId],
+        });
+      await client.batch(statements, 'write');
+      if (health) recorder.inserted = true;
+    } catch (error) {
+      this.deps.logger.error(
+        { error, instanceId: recorder.instanceId },
+        'Failed to update session generation health',
+      );
+    }
+  }
+
   async runEnd(recorder: RecorderState, reason: string): Promise<void> {
     // Always run a final sync to capture changes after the last schedule.
     const getMessages = recorder.lastGetter;
@@ -556,13 +767,14 @@ class SessionHistoryModule implements SessionHistory {
         changed = true;
         touched.add(previous.instanceId);
         statements.push({
-          sql: `UPDATE messages SET role = ?, content = ?, byte_size = ?, persisted_at = ?
+          sql: `UPDATE messages SET role = ?, content = ?, byte_size = ?, persisted_at = ?, content_revision = ?
                 WHERE session_id = ? AND ord = ?`,
           args: [
             message.role,
             content,
             bytes,
             now,
+            hash,
             meta.sessionId,
             previous.ord,
           ],
@@ -576,13 +788,14 @@ class SessionHistoryModule implements SessionHistory {
         changed = true;
         touched.add(previous.instanceId);
         statements.push({
-          sql: `UPDATE messages SET role = ?, content = ?, byte_size = ?, persisted_at = ?
+          sql: `UPDATE messages SET role = ?, content = ?, byte_size = ?, persisted_at = ?, content_revision = ?
                 WHERE session_id = ? AND ord = ?`,
           args: [
             message.role,
             content,
             bytes,
             now,
+            hash,
             meta.sessionId,
             previous.ord,
           ],
@@ -596,7 +809,7 @@ class SessionHistoryModule implements SessionHistory {
         touched.add(previous.instanceId);
         nextEntries.set(message.id, { ...previous, ord, hash });
         statements.push({
-          sql: `UPDATE messages SET ord = ?, role = ?, content = ?, byte_size = ?, persisted_at = ?
+          sql: `UPDATE messages SET ord = ?, role = ?, content = ?, byte_size = ?, persisted_at = ?, content_revision = ?
                 WHERE session_id = ? AND ord = ?`,
           args: [
             ord,
@@ -604,6 +817,7 @@ class SessionHistoryModule implements SessionHistory {
             content,
             bytes,
             now,
+            hash,
             meta.sessionId,
             previous.ord,
           ],
@@ -621,8 +835,8 @@ class SessionHistoryModule implements SessionHistory {
       statements.push({
         sql: `INSERT INTO messages (
                 session_id, ord, instance_id, message_id, role, content,
-                byte_size, persisted_at
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                byte_size, persisted_at, content_revision
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         args: [
           meta.sessionId,
           ord,
@@ -632,6 +846,7 @@ class SessionHistoryModule implements SessionHistory {
           content,
           bytes,
           now,
+          hash,
         ],
       });
     }
@@ -686,6 +901,9 @@ class SessionHistoryModule implements SessionHistory {
     for (const id of trimmed) recorder.pendingTrimmed.delete(id);
     this.prunePendingTrimmed(recorder);
     recorder.inserted = true;
+    if (meta.sessionId === 'default') {
+      this.notifyActivity();
+    }
     return true;
   }
 
@@ -791,8 +1009,12 @@ class SessionHistoryModule implements SessionHistory {
                 args: [instanceId],
               },
               {
-                sql: 'DELETE FROM sessions WHERE instance_id = ?',
+                sql: 'DELETE FROM sessions WHERE instance_id = ? AND generation_error IS NULL',
                 args: [instanceId],
+              },
+              {
+                sql: 'UPDATE sessions SET byte_size = 0, trimmed_message_count = trimmed_message_count + ? WHERE instance_id = ?',
+                args: [removable, instanceId],
               },
             ],
             'write',
@@ -871,6 +1093,7 @@ class SessionHistoryModule implements SessionHistory {
     // `execute` steps the pragma once and frees a single page;
     // `executeMultiple` runs it to completion.
     await client.executeMultiple('PRAGMA incremental_vacuum;');
+    this.notifyActivity();
     this.deps.logger.info(
       {
         maxBytes,
@@ -1166,6 +1389,7 @@ function decodeListCursor(cursor: string): [string, string] {
 function toSessionRecord(row: Row): SessionHistoryRecord {
   const endedAt = toNullableText(row.ended_at);
   return {
+    generationError: parseGenerationError(row.generation_error),
     instanceId: toText(row.instance_id),
     sessionId: toText(row.session_id),
     kind: toSessionKind(toText(row.kind)),
@@ -1191,6 +1415,16 @@ function toSessionKind(value: string): SessionKind {
 
 /** Row cells; `undefined` under `noUncheckedIndexedAccess`. */
 type Cell = Row[string] | undefined;
+
+function parseGenerationError(value: Cell): GenerationHealthError | null {
+  if (typeof value !== 'string') return null;
+  try {
+    const result = GenerationHealthErrorSchema.safeParse(JSON.parse(value));
+    return result.success ? result.data : null;
+  } catch {
+    return null;
+  }
+}
 
 function toText(value: Cell): string {
   return value === null || value === undefined ? '' : String(value);

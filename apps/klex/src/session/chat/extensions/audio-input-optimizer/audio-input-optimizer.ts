@@ -1,16 +1,9 @@
 import { createHash } from 'node:crypto';
 
-import {
-  type FilePart,
-  type ModelMessage,
-  type TextPart,
-  type ToolSet,
-  tool,
-} from 'ai';
+import { type FilePart, type ModelMessage, type ToolSet, tool } from 'ai';
 import z from 'zod';
 
-import type { ModelSelectionEntry } from '@/config';
-
+import { adaptAudioContent } from '../content-adaptation/content-adaptation';
 import type {
   ContextProcessingResult,
   Extension,
@@ -28,14 +21,10 @@ import {
 import {
   cache,
   descriptionCache,
-  type EffectiveAudio,
   extractAudioBuffer,
   isFfmpegAvailable,
-  type ProcessedPart,
   resolveEffectiveAudio,
-  runOptimization,
 } from './audio-processing';
-import audioSystemPrompt from './audio-system-prompt.md';
 import audioToolPrompt from './audio-tool-system-prompt.md';
 
 export {
@@ -131,96 +120,24 @@ class AudioInputOptimizerExt implements Extension {
     // (e.g. after a model fallback to an audio-capable model).
     const shouldStripListenAudioTool = !hasAudioModels;
 
-    const transformed = await Promise.all(
-      history.map(async (message, messageIndex) => {
-        if (!Array.isArray(message.content)) return message;
-
-        // User messages: process FilePart with audio media types
-        if (message.role === 'user') {
-          const content = await Promise.all(
-            message.content.map(async (part, partIndex) => {
-              if (part.type === 'file' && part.mediaType.startsWith('audio')) {
-                return this.processAudioPart(
-                  part,
-                  model.modelId,
-                  settings,
-                  `${messageIndex}-${partIndex}`,
-                  hasAudioModels,
-                  audioModelIds,
-                );
-              }
-              return part;
-            }),
-          );
-          return { ...message, content };
-        }
-
-        // Assistant messages: process FilePart with audio media types
-        if (message.role === 'assistant') {
-          const content = await Promise.all(
-            message.content.map(async (part, partIndex) => {
-              if (part.type === 'file' && part.mediaType.startsWith('audio')) {
-                return this.processAudioPart(
-                  part,
-                  model.modelId,
-                  settings,
-                  `${messageIndex}-${partIndex}`,
-                  hasAudioModels,
-                  audioModelIds,
-                ) as unknown as typeof part;
-              }
-              return part;
-            }),
-          );
-          return { ...message, content };
-        }
-
-        // Tool messages: process audio file items inside tool-result outputs
-        if (message.role === 'tool') {
-          const content = await Promise.all(
-            message.content.map(async (part, partIndex) => {
-              if (part.type !== 'tool-result') return part;
-              const output = part.output;
-              if (
-                !output ||
-                typeof output !== 'object' ||
-                output.type !== 'content' ||
-                !Array.isArray(output.value)
-              ) {
-                return part;
-              }
-              const newValue = await Promise.all(
-                output.value.map(async (item, valueIndex) => {
-                  if (
-                    item &&
-                    typeof item === 'object' &&
-                    item.type === 'file' &&
-                    typeof item.mediaType === 'string' &&
-                    item.mediaType.startsWith('audio')
-                  ) {
-                    return this.processAudioPart(
-                      item as FilePart,
-                      model.modelId,
-                      settings,
-                      `${messageIndex}-${partIndex}-${valueIndex}`,
-                      hasAudioModels,
-                      audioModelIds,
-                    ) as unknown as typeof item;
-                  }
-                  return item;
-                }),
-              );
-              return {
-                ...part,
-                output: { ...output, value: newValue } as typeof output,
-              };
-            }),
-          );
-          return { ...message, content };
-        }
-
-        return message;
-      }),
+    const transformed = await adaptAudioContent(
+      history,
+      this.deps,
+      model,
+      (part, adapted, id) => {
+        if (!hasAudioModels) return adapted;
+        this.audioRegistry.set(id, part);
+        if (adapted.type !== 'text') return adapted;
+        const hint = `Can't directly hear audio. Use tool '${LISTEN_AUDIO_TOOL_NAME}' with ID ${id} to get information on audio content.`;
+        return {
+          ...adapted,
+          text:
+            adapted.text === UNSUPPORTED_AUDIO_TEXT
+              ? hint
+              : `${adapted.text}\n\nFor more specific details about this audio, use the '${LISTEN_AUDIO_TOOL_NAME}' tool with ID ${id}.`,
+        };
+      },
+      false,
     );
 
     if (!shouldStripListenAudioTool) return transformed;
@@ -235,90 +152,7 @@ class AudioInputOptimizerExt implements Extension {
       registeredAudio: this.audioRegistry.size,
     };
   }
-
-  private async processAudioPart(
-    part: FilePart,
-    modelId: string,
-    settings: EffectiveAudio,
-    audioId: string,
-    hasAudioModels: boolean,
-    audioModelIds: readonly ModelSelectionEntry[],
-  ): Promise<ProcessedPart> {
-    const buffer = extractAudioBuffer(part);
-
-    // supports === false: replace with description or fallback text
-    if (!settings.supports) {
-      if (hasAudioModels) {
-        const id = audioId;
-        this.audioRegistry.set(id, part);
-
-        if (buffer === null) {
-          // URL/reference audio — can't extract inline data to
-          // generate a general description. Still register it so the
-          // listenAudio tool can attempt to analyze it on-demand.
-          return {
-            type: 'text',
-            text: `Can't directly hear audio. Use tool '${LISTEN_AUDIO_TOOL_NAME}' with ID ${id} to get information on audio content.`,
-          };
-        }
-
-        // Generate a general description of the audio. This is cached
-        // by audio hash (no lookFor) and shared across all non-audio
-        // models, so it is only generated once per unique audio.
-        const audioHash = createHash('sha1')
-          .update(buffer)
-          .digest('hex')
-          .slice(0, 16);
-        const description = await describeAudio(
-          this.deps,
-          part,
-          audioModelIds,
-          buffer,
-          audioHash,
-          undefined,
-          audioSystemPrompt,
-        );
-        if (description !== null) {
-          return {
-            type: 'text',
-            text: `${description}\n\nFor more specific details about this audio, use the '${LISTEN_AUDIO_TOOL_NAME}' tool with ID ${id}.`,
-          };
-        }
-        // Audio model call failed — still offer the tool so the model
-        // can retry on-demand.
-        return {
-          type: 'text',
-          text: `Can't directly hear audio. Use tool '${LISTEN_AUDIO_TOOL_NAME}' with ID ${id} to get information on audio content.`,
-        };
-      }
-      return { type: 'text', text: UNSUPPORTED_AUDIO_TEXT };
-    }
-
-    // supports === true: pass through URL/reference audio uncached
-    if (buffer === null) return part;
-
-    // supports === true: process audio (format conversion, etc.) with caching
-    const cacheKey = `${createHash('sha1').update(buffer).digest('hex').slice(0, 16)}:${modelId}`;
-    const cached = cache.get(cacheKey);
-    if (cached !== undefined) return cached;
-
-    try {
-      const filePart = await runOptimization(buffer, part, settings);
-      cache.set(cacheKey, filePart);
-      return filePart;
-    } catch (error) {
-      // Graceful degradation: log and replace with text notification
-      this.deps.logger.error({ error }, 'Failed to process audio');
-      const textPart: TextPart = {
-        type: 'text',
-        text: UNSUPPORTED_AUDIO_TEXT,
-      };
-      cache.set(cacheKey, textPart);
-      return textPart;
-    }
-  }
 }
-
 /** Converts audio input into model-compatible content or a text fallback. */
 export const createAudioInputOptimizerExt: ExtensionFactory = {
   identifier: AUDIO_INPUT_OPTIMIZER_IDENTIFIER,

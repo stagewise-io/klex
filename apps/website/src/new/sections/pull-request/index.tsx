@@ -1,5 +1,6 @@
 import './pull-request.css';
 
+import { Klex } from '@klex/mascot';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 
 import {
@@ -20,8 +21,9 @@ import {
 import { IconCircleCheckOutline18 } from '@stagewise/ui/icons/nucleo/ui-outline-18/IconCircleCheckOutline18.tsx';
 import { IconOctagonWarningOutline18 } from '@stagewise/ui/icons/nucleo/ui-outline-18/IconOctagonWarningOutline18.tsx';
 
+import { RichMessage, t } from '@/i18n';
+
 import { heroLooks } from '../../bot-looks';
-import { Klex } from '../../klex';
 import { SafariWindow, useCareersZoom } from '../build/safari';
 import { SceneProgress } from '../workflow/controls';
 import {
@@ -74,10 +76,10 @@ export function PrComment({
       <article className="new-pr-comment">
         <div className="new-pr-comment-header">
           <span>
-            <strong>{author}</strong> commented <u>just now</u>
+            <strong>{author}</strong> {t('commented')} <u>{t('just now')}</u>
           </span>
           {author === 'jonathan-bot' && (
-            <span className="new-pr-author">Author</span>
+            <span className="new-pr-author">{t('Author')}</span>
           )}
           <PrIcon name="kebab-horizontal" />
         </div>
@@ -110,7 +112,7 @@ export function PrApproved() {
         </svg>
       }
     >
-      <strong>jeff-bot</strong> approved these changes
+      <strong>jeff-bot</strong> {t('approved these changes')}
     </PrEvent>
   );
 }
@@ -161,65 +163,84 @@ function PullRequest({
           <div className="new-pr-meta">
             <span className="new-pr-open" data-merged={merged}>
               <PrIcon name="git-pull-request" />
-              {merged ? 'Merged' : 'Open'}
+              {merged ? t('Merged') : t('Open')}
             </span>
             <span className="new-pr-merge">
-              <strong>jonathan-bot</strong>{' '}
-              {merged ? 'merged' : 'wants to merge'} {fixed ? 2 : 1}{' '}
-              {fixed ? 'commits' : 'commit'} into <code>main</code> from{' '}
-              <span className="new-pr-head-branch">
-                <code>feat/careers-page</code>
-                <svg className="new-pr-copy new-pr-icon" aria-hidden="true">
-                  <use href="/github-pr-icons.svg#copy" />
-                </svg>
-              </span>
+              <RichMessage
+                message={
+                  merged
+                    ? '{{author}} merged 2 commits into {{base}} from {{branch}}'
+                    : fixed
+                      ? '{{author}} wants to merge 2 commits into {{base}} from {{branch}}'
+                      : '{{author}} wants to merge 1 commit into {{base}} from {{branch}}'
+                }
+                values={{
+                  author: <strong>jonathan-bot</strong>,
+                  base: <code>main</code>,
+                  branch: (
+                    <span className="new-pr-head-branch">
+                      <code>feat/careers-page</code>
+                      <svg
+                        className="new-pr-copy new-pr-icon"
+                        aria-hidden="true"
+                      >
+                        <use href="/github-pr-icons.svg#copy" />
+                      </svg>
+                    </span>
+                  ),
+                }}
+              />
             </span>
           </div>
         </div>
         <div className="new-pr-tabs" aria-hidden="true">
           <span className="new-pr-tab-active">
             <PrIcon name="comment-discussion" />
-            Conversation <b>{review ? (fixed ? 2 : 1) : 0}</b>
+            {t('Conversation')} <b>{review ? (fixed ? 2 : 1) : 0}</b>
           </span>
           <span>
             <PrIcon name="git-commit" />
-            Commits <b>{fixed ? 2 : 1}</b>
+            {t('Commits')} <b>{fixed ? 2 : 1}</b>
           </span>
           <span>
             <PrIcon name="checklist" />
-            Checks <b>2</b>
+            {t('Checks')} <b>2</b>
           </span>
           <span>
             <PrIcon name="file-diff" />
-            Files changed <b>4</b>
+            {t('Files changed')} <b>4</b>
           </span>
         </div>
         <div className="new-pr-timeline">
           <PrComment author="jonathan-bot" bot="jonathan">
-            <h4>Summary</h4>
+            <h4>{t('Summary')}</h4>
             <ul>
               <li>
-                Add the Product Designer role and Monica's job description to
-                the new careers page.
+                {t(
+                  'Add the Product Designer role and Monica’s job description to the new careers page.',
+                )}
               </li>
               <li>
-                Build an application form with contact details, portfolio link,
-                and résumé upload.
+                {t(
+                  'Build an application form with contact details, portfolio link, and résumé upload.',
+                )}
               </li>
-              <li>Send applications to Monica for review.</li>
+              <li>{t('Send applications to Monica for review.')}</li>
             </ul>
-            <h4>QA handoff</h4>
+            <h4>{t('QA handoff')}</h4>
             <p>
-              Jeff, please submit a test application and check with Monica that
-              it arrives with the résumé attached.
+              {t(
+                'Jeff, please submit a test application and check with Monica that it arrives with the résumé attached.',
+              )}
             </p>
           </PrComment>
           {review && (
             <div className="new-build-reveal">
               <PrComment author="jeff-bot" bot="jeff">
                 <p>
-                  Submitting a 2.4 MB PDF résumé fails with “Upload failed”. The
-                  upload limit is 1 MB, so an ordinary résumé can’t get through.
+                  {t(
+                    'Submitting a 2.4 MB PDF résumé fails with “Upload failed”. The upload limit is 1 MB, so an ordinary résumé can’t get through.',
+                  )}
                 </p>
               </PrComment>
             </div>
@@ -227,13 +248,15 @@ function PullRequest({
           {fixed && (
             <div className="new-build-reveal">
               <PrEvent icon={<PrIcon name="git-commit" />}>
-                <strong>jonathan-bot</strong> pushed 1 commit{' '}
+                <strong>jonathan-bot</strong> {t('pushed 1 commit')}{' '}
                 <code>fix(careers): accept résumés up to 10 MB</code>
               </PrEvent>
               <PrComment author="jonathan-bot" bot="jonathan">
                 <p>
-                  Fixed in <code>3f9c2a1</code>. Résumés up to 10 MB go through
-                  now, and a test covers the limit.
+                  <code>3f9c2a1</code> —{' '}
+                  {t(
+                    'Résumés up to 10 MB go through now, and a test covers the limit.',
+                  )}
                 </p>
               </PrComment>
             </div>
@@ -246,11 +269,12 @@ function PullRequest({
           {merged && (
             <div className="new-build-reveal">
               <PrEvent icon={<PrIcon name="git-pull-request" />}>
-                <strong>jonathan-bot</strong> merged PR #42 into{' '}
+                <strong>jonathan-bot</strong> {t('merged PR #42 into')}{' '}
                 <code>main</code>
               </PrEvent>
               <PrEvent icon={<PrIcon name="checklist" />}>
-                Careers page deployed to <strong>acme.design/careers</strong>
+                {t('Careers page deployed to')}{' '}
+                <strong>acme.design/careers</strong>
               </PrEvent>
             </div>
           )}
@@ -307,33 +331,35 @@ function ApplicationPage({
       <div className="new-careers-page">
         <nav
           className="new-careers-nav"
-          aria-label="Careers preview navigation"
+          aria-label={t('Careers preview navigation')}
         >
           <span className="new-careers-brand">
             acme<span>.</span>
           </span>
-          <span>Our team</span>
-          <span>Open roles</span>
+          <span>{t('Our team')}</span>
+          <span>{t('Open roles')}</span>
         </nav>
         <form
           className="new-careers-form"
           onSubmit={(event) => event.preventDefault()}
         >
-          <h4>Apply for Product Designer</h4>
-          <p>Tell us a little about yourself.</p>
+          <h4>{t('Apply for Product Designer')}</h4>
+          <p>{t('Tell us a little about yourself.')}</p>
           <FieldGroup>
             <div className="new-careers-form-row">
               <Field>
-                <FieldLabel htmlFor="test-name">Full name</FieldLabel>
+                <FieldLabel htmlFor="test-name">{t('Full name')}</FieldLabel>
                 <Input
                   id="test-name"
                   value={values.name}
-                  placeholder="Your name"
+                  placeholder={t('Your name')}
                   readOnly
                 />
               </Field>
               <Field>
-                <FieldLabel htmlFor="test-email">Email address</FieldLabel>
+                <FieldLabel htmlFor="test-email">
+                  {t('Email address')}
+                </FieldLabel>
                 <Input
                   id="test-email"
                   value={values.email}
@@ -343,7 +369,9 @@ function ApplicationPage({
               </Field>
             </div>
             <Field>
-              <FieldLabel htmlFor="test-portfolio">Portfolio URL</FieldLabel>
+              <FieldLabel htmlFor="test-portfolio">
+                {t('Portfolio URL')}
+              </FieldLabel>
               <Input
                 id="test-portfolio"
                 value={values.portfolio}
@@ -352,11 +380,11 @@ function ApplicationPage({
               />
             </Field>
             <Field>
-              <FieldLabel htmlFor="test-resume">Résumé</FieldLabel>
+              <FieldLabel htmlFor="test-resume">{t('Résumé')}</FieldLabel>
               <Input
                 id="test-resume"
                 value={resume ? 'jeff-resume.pdf · 2.4 MB' : ''}
-                placeholder="Choose a PDF"
+                placeholder={t('Choose a PDF')}
                 readOnly
               />
             </Field>
@@ -365,7 +393,7 @@ function ApplicationPage({
               type="submit"
               data-pressed={submitting}
             >
-              Send application <span aria-hidden="true">↗</span>
+              {t('Send application')} <span aria-hidden="true">↗</span>
             </Button>
           </FieldGroup>
         </form>
@@ -398,7 +426,7 @@ function TestScene({ playing, finished, skipArrival, onComplete }: StoryProps) {
       ]);
       await wait(900, signal);
       jeff.current?.setActivity('working');
-      jeff.current?.say('Testing…');
+      jeff.current?.say(t('Testing…'));
       jonathan.current?.emote('innocent');
       for (const field of ['name', 'email', 'portfolio'] as const) {
         await typeText(
@@ -423,8 +451,8 @@ function TestScene({ playing, finished, skipArrival, onComplete }: StoryProps) {
       setSubmitting(true);
       await wait(500, signal);
       toasts.add({
-        title: 'Couldn’t send application',
-        description: 'Upload failed. Résumés must be smaller than 1 MB.',
+        title: t('Couldn’t send application'),
+        description: t('Upload failed. Résumés must be smaller than 1 MB.'),
         type: 'error',
         timeout: 0,
       });
@@ -436,7 +464,7 @@ function TestScene({ playing, finished, skipArrival, onComplete }: StoryProps) {
 
       setProgress(0.5);
       jeff.current?.setActivity('working');
-      jeff.current?.say('Writing…');
+      jeff.current?.say(t('Writing…'));
       await wait(1200, signal);
       setReview('reported');
       jeff.current?.setActivity('idle');
@@ -445,7 +473,7 @@ function TestScene({ playing, finished, skipArrival, onComplete }: StoryProps) {
       setProgress(0.7);
       setReview('fixing');
       jonathan.current?.setActivity('working');
-      jonathan.current?.say('Fixing…');
+      jonathan.current?.say(t('Fixing…'));
       await wait(2200, signal);
       jonathan.current?.setActivity('idle');
       jonathan.current?.say(null);
@@ -456,15 +484,16 @@ function TestScene({ playing, finished, skipArrival, onComplete }: StoryProps) {
       setProgress(0.86);
       setReview('retesting');
       jeff.current?.setActivity('working');
-      jeff.current?.say('Testing…');
+      jeff.current?.say(t('Testing…'));
       await wait(900, signal);
       setSubmitting(true);
       await wait(700, signal);
       setSubmitting(false);
       toasts.add({
-        title: 'Application sent',
-        description:
+        title: t('Application sent'),
+        description: t(
           'Monica received the application with the 2.4 MB résumé attached.',
+        ),
         type: 'success',
         timeout: 0,
       });
@@ -491,7 +520,9 @@ function TestScene({ playing, finished, skipArrival, onComplete }: StoryProps) {
             <SafariWindow
               app="GitHub"
               address="github.com / acme / careers / pull / 42"
-              label="The pull request, with Jeff's bug report and Jonathan's fix"
+              label={t(
+                'The pull request, with Jeff’s bug report and Jonathan’s fix',
+              )}
             >
               <PullRequest review={review} finished={finished} />
             </SafariWindow>
@@ -499,7 +530,9 @@ function TestScene({ playing, finished, skipArrival, onComplete }: StoryProps) {
             <SafariWindow
               enter={finished ? undefined : playing}
               address="pr-42.preview.acme.design / careers"
-              label="Jeff submits a test application on the preview deployment"
+              label={t(
+                'Jeff submits a test application on the preview deployment',
+              )}
             >
               <ApplicationPage
                 values={values}

@@ -68,8 +68,16 @@ function post(path: string, body: unknown): Request {
   });
 }
 
-function put(path: string): Request {
-  return new Request(`http://localhost${path}`, { method: 'PUT' });
+function put(path: string, body?: unknown): Request {
+  return new Request(`http://localhost${path}`, {
+    method: 'PUT',
+    ...(body === undefined
+      ? {}
+      : {
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        }),
+  });
 }
 
 describe('PUT /v1/mcp-servers/{name}/authorization', () => {
@@ -93,7 +101,43 @@ describe('PUT /v1/mcp-servers/{name}/authorization', () => {
       state: 'secret-state',
       expiresAt: pending.expiresAt,
     });
-    expect(requestAuthorization).toHaveBeenCalledWith('qonto');
+    expect(requestAuthorization).toHaveBeenCalledWith('qonto', undefined);
+  });
+
+  it('passes a registered OAuth client to the authorization', async () => {
+    const requestAuthorization = vi.fn(
+      async (): Promise<RequestAuthorizationResult> => ({
+        outcome: 'pending',
+        authorization: pending,
+      }),
+    );
+    const client = {
+      clientId: 'client-1',
+      clientSecret: 'secret',
+      scope: 'mcp',
+    };
+    const response = await app(makeDeps({ requestAuthorization })).request(
+      put('/v1/mcp-servers/qonto/authorization', { client }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(requestAuthorization).toHaveBeenCalledWith('qonto', client);
+  });
+
+  it.each([
+    { client: { clientId: ' ' } },
+    { client: { clientId: 'client-1', extra: true } },
+    { other: true },
+  ])('rejects an invalid OAuth client body: %j', async (body) => {
+    const requestAuthorization = vi.fn();
+    const response = await app(makeDeps({ requestAuthorization })).request(
+      put('/v1/mcp-servers/qonto/authorization', body),
+    );
+
+    expect(startAuthorizationRoute.responses[400]).toBeDefined();
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ code: 'validation_failed' });
+    expect(requestAuthorization).not.toHaveBeenCalled();
   });
 
   it('serializes the same pending authorization consistently', async () => {
@@ -174,6 +218,8 @@ describe('POST /v1/mcp-oauth/callback', () => {
       post('/v1/mcp-oauth/callback', {
         state: 'secret-state',
         code: 'auth-code',
+        iss: 'https://auth.qonto.example/',
+        scope: 'read',
       }),
     );
 
@@ -183,6 +229,8 @@ describe('POST /v1/mcp-oauth/callback', () => {
       .calls[0] as unknown as [string, URLSearchParams];
     expect(state).toBe('secret-state');
     expect(params.get('code')).toBe('auth-code');
+    expect(params.get('iss')).toBe('https://auth.qonto.example/');
+    expect(params.has('scope')).toBe(false);
   });
 
   it('forwards provider errors', async () => {
@@ -194,6 +242,8 @@ describe('POST /v1/mcp-oauth/callback', () => {
         state: 'secret-state',
         error: 'access_denied',
         error_description: 'user said no',
+        iss: 'https://auth.qonto.example/',
+        error_uri: 'https://auth.qonto.example/errors/access-denied',
       }),
     );
 
@@ -204,7 +254,29 @@ describe('POST /v1/mcp-oauth/callback', () => {
     ];
     expect(params.get('error')).toBe('access_denied');
     expect(params.get('error_description')).toBe('user said no');
+    expect(params.get('iss')).toBe('https://auth.qonto.example/');
+    expect(params.get('error_uri')).toBe(
+      'https://auth.qonto.example/errors/access-denied',
+    );
   });
+
+  it.each(['iss', 'error_uri'])(
+    'rejects a non-string %s before delivering the callback',
+    async (field) => {
+      const completeAuthorizationSpy = vi.fn(() => 'accepted' as const);
+      const response = await app(
+        makeDeps({ completeAuthorization: completeAuthorizationSpy }),
+      ).request(
+        post('/v1/mcp-oauth/callback', {
+          state: 'secret-state',
+          code: 'auth-code',
+          [field]: 42,
+        }),
+      );
+      expect(response.status).toBe(400);
+      expect(completeAuthorizationSpy).not.toHaveBeenCalled();
+    },
+  );
 
   it('answers an unknown, expired or replayed state with 404', async () => {
     const response = await app(

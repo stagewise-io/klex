@@ -2,7 +2,12 @@ import { APICallError } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { ModelValidation, type ModelValidationInput } from './model-validation';
+import { ProviderCredentialError } from './authorization/credential-manager';
+import {
+  ModelValidation,
+  type ModelValidationInput,
+  modelValidationInputSchema,
+} from './model-validation';
 
 const input: ModelValidationInput = {
   provider: { id: 'openai' },
@@ -26,6 +31,53 @@ function respondingModel() {
 afterEach(() => vi.useRealTimers());
 
 describe('model validation probe', () => {
+  it.each([
+    [
+      'anthropic',
+      { anthropic: { cacheControl: { type: 'ephemeral', ttl: '1h' } } },
+    ],
+    ['anthropic', { anthropic: { cacheControl: null } }],
+    [
+      'anthropic-messages',
+      { anthropic: { cacheControl: { type: 'ephemeral' } } },
+    ],
+    ['anthropic-messages', { anthropic: { cacheControl: null } }],
+    ['vercel-ai-gateway', { gateway: { caching: 'auto' } }],
+    ['vercel-ai-gateway', { gateway: { caching: null } }],
+    ['openrouter', { openrouter: { cache_control: { type: 'ephemeral' } } }],
+    ['openrouter', { openrouter: { cache_control: null } }],
+  ])(
+    'accepts and forwards %s caching options: %j',
+    async (type, providerOptions) => {
+      const parsed = modelValidationInputSchema.parse({
+        ...input,
+        provider: { type, settings: {} },
+        providerOptions,
+      });
+      const model = respondingModel();
+      expect(
+        await new ModelValidation().run(
+          () => model,
+          parsed,
+          undefined,
+          () => true,
+        ),
+      ).toMatchObject({ status: 'valid' });
+      expect(model.doStreamCalls[0]?.providerOptions).toEqual(providerOptions);
+    },
+  );
+
+  it.each([
+    ['voice.tts', false],
+    ['voice.stt', false],
+    ['voice.sts', true],
+    ['audioListening', true],
+  ])('validates selection purpose %s as %s', (purpose, accepted) => {
+    expect(
+      modelValidationInputSchema.safeParse({ ...input, purpose }).success,
+    ).toBe(accepted);
+  });
+
   it('generates with exact options and ignores stale successes', async () => {
     const model = respondingModel();
     const validation = new ModelValidation();
@@ -142,6 +194,67 @@ describe('model validation probe', () => {
       expect(model.doStreamCalls).toHaveLength(1);
     },
   );
+
+  it.each([
+    ['unwrapped', (error: Error) => error],
+    [
+      'wrapped in a status-less APICallError',
+      (error: Error) =>
+        new APICallError({
+          message: 'Cannot connect to API',
+          url: 'https://secret-endpoint',
+          requestBodyValues: {},
+          cause: error,
+        }),
+    ],
+  ])(
+    'reports a missing provider sign-in %s as authentication_required',
+    async (_label, wrap) => {
+      const model = new MockLanguageModelV4({
+        doStream: async () => {
+          throw wrap(
+            new ProviderCredentialError({
+              ok: false,
+              code: 'authentication_required',
+              message: 'ChatGPT sign-in is required for this provider',
+            }),
+          );
+        },
+      });
+      const result = await new ModelValidation().run(
+        () => model,
+        input,
+        undefined,
+        () => true,
+      );
+      expect(result).toMatchObject({
+        status: 'invalid',
+        code: 'authentication_required',
+      });
+      expect(JSON.stringify(result)).not.toContain('secret');
+    },
+  );
+
+  it('keeps status-less network failures as connectivity_failed', async () => {
+    const model = new MockLanguageModelV4({
+      doStream: async () => {
+        throw new APICallError({
+          message: 'Cannot connect to API',
+          url: 'https://secret-endpoint',
+          requestBodyValues: {},
+          cause: Object.assign(new Error('connect'), { code: 'ECONNREFUSED' }),
+        });
+      },
+    });
+    expect(
+      await new ModelValidation().run(
+        () => model,
+        input,
+        undefined,
+        () => true,
+      ),
+    ).toMatchObject({ status: 'unverified', code: 'connectivity_failed' });
+  });
 
   it('bounds concurrency and returns on timeout or cancellation even if a provider hangs', async () => {
     vi.useFakeTimers();

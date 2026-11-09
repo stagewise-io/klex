@@ -1,5 +1,5 @@
-import { Box, render, Text, useInput } from 'ink';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { render, useInput } from 'ink';
+import { useCallback, useMemo, useRef, useState } from 'react';
 
 import { AdminApiClient } from './api-client';
 import { AppFrame } from './components/app-frame';
@@ -17,7 +17,6 @@ import {
   useTextInputActive,
 } from './hooks/use-text-input-active';
 import { type Toast, ToastContext } from './hooks/use-toast';
-import { MenuKeys, useMenuInput } from './menu-keys';
 import { AgentIdentityScreen } from './screens/agent-identity';
 import { CloudScreen } from './screens/cloud';
 import { DebugInformationScreen } from './screens/debug-information';
@@ -28,6 +27,7 @@ import { McpScreen } from './screens/mcp';
 import { ModelSelectionScreen } from './screens/model-selection';
 import { ProvidersScreen } from './screens/providers';
 import { SettingsScreen } from './screens/settings';
+import { SoulScreen } from './screens/soul';
 import { UsageScreen } from './screens/usage';
 import type { CliUiDependencies } from './types';
 
@@ -49,6 +49,7 @@ class CliUiModule implements CliUi {
   private readonly telemetryWarning: CliUiDependencies['telemetryWarning'];
   private readonly updateManager: CliUiDependencies['updateManager'];
   private readonly trackEnrollment: CliUiDependencies['trackEnrollment'];
+  private readonly cloudEnrollmentCompleted: boolean;
   private inkInstance: ReturnType<typeof render> | undefined;
   private terminalCleared = false;
 
@@ -61,6 +62,7 @@ class CliUiModule implements CliUi {
     this.telemetryWarning = deps.telemetryWarning;
     this.updateManager = deps.updateManager;
     this.trackEnrollment = deps.trackEnrollment;
+    this.cloudEnrollmentCompleted = deps.cloudEnrollmentCompleted ?? false;
   }
 
   start(): void {
@@ -82,6 +84,7 @@ class CliUiModule implements CliUi {
         onQuit={() => this.requestQuit()}
         updateManager={this.updateManager}
         trackEnrollment={this.trackEnrollment}
+        cloudEnrollmentCompleted={this.cloudEnrollmentCompleted}
       />,
       {
         exitOnCtrlC: false,
@@ -143,6 +146,7 @@ function AppRoot({
   onQuit,
   updateManager,
   trackEnrollment,
+  cloudEnrollmentCompleted,
 }: {
   apiClient: AdminApiClient;
   dataDirectory: string;
@@ -152,6 +156,7 @@ function AppRoot({
   onQuit: () => void;
   updateManager: CliUiDependencies['updateManager'];
   trackEnrollment: CliUiDependencies['trackEnrollment'];
+  cloudEnrollmentCompleted: boolean;
 }) {
   const navigation = useNavigationState();
   const globalStatus = useGlobalStatus(apiClient);
@@ -209,6 +214,7 @@ function AppRoot({
               onRefreshGlobal={globalStatus.refresh}
               updateManager={updateManager}
               trackEnrollment={trackEnrollment}
+              cloudEnrollmentCompleted={cloudEnrollmentCompleted}
             />
           </TextInputActiveProvider>
         </ScreenMetaProvider>
@@ -246,6 +252,7 @@ function FrameLayout({
   onRefreshGlobal,
   updateManager,
   trackEnrollment,
+  cloudEnrollmentCompleted,
 }: {
   apiClient: AdminApiClient;
   dataDirectory: string;
@@ -261,6 +268,7 @@ function FrameLayout({
   onRefreshGlobal: () => void;
   updateManager: CliUiDependencies['updateManager'];
   trackEnrollment: CliUiDependencies['trackEnrollment'];
+  cloudEnrollmentCompleted: boolean;
 }) {
   const { meta } = useScreenMeta();
 
@@ -308,6 +316,7 @@ function FrameLayout({
         dangerousLocalAdminApiPort={dangerousLocalAdminApiPort}
         onRefreshGlobal={onRefreshGlobal}
         trackEnrollment={trackEnrollment}
+        cloudEnrollmentCompleted={cloudEnrollmentCompleted}
       />
     </AppFrame>
   );
@@ -323,6 +332,7 @@ function ScreenRouter({
   dangerousLocalAdminApiPort,
   onRefreshGlobal,
   trackEnrollment,
+  cloudEnrollmentCompleted,
 }: {
   apiClient: AdminApiClient;
   dataDirectory: string;
@@ -333,7 +343,11 @@ function ScreenRouter({
   dangerousLocalAdminApiPort: number | undefined;
   onRefreshGlobal: () => void;
   trackEnrollment: CliUiDependencies['trackEnrollment'];
+  cloudEnrollmentCompleted: boolean;
 }) {
+  const [enrolledHere, setEnrolledHere] = useState(false);
+  const showEnrollmentBanner = cloudEnrollmentCompleted || enrolledHere;
+
   switch (navigation.current) {
     case 'home':
       return (
@@ -341,6 +355,7 @@ function ScreenRouter({
           apiClient={apiClient}
           sessions={sessions}
           cloud={cloud}
+          cloudEnrollmentCompleted={showEnrollmentBanner}
           dangerousLocalAdminApiPort={dangerousLocalAdminApiPort}
           onRefreshGlobal={onRefreshGlobal}
           onOpenSettings={() => navigation.navigate('settings')}
@@ -352,6 +367,7 @@ function ScreenRouter({
         <SettingsScreen
           dataDirectory={dataDirectory}
           onOpenAgentIdentity={() => navigation.navigate('agent-identity')}
+          onOpenSoul={() => navigation.navigate('soul')}
           onOpenProviders={() => navigation.navigate('providers')}
           onOpenCloud={() => navigation.navigate('cloud')}
           onOpenMcp={() => navigation.navigate('mcp-servers')}
@@ -363,6 +379,10 @@ function ScreenRouter({
           onOpenGodMessages={() => navigation.navigate('god-messages')}
           onBack={() => navigation.goBack()}
         />
+      );
+    case 'soul':
+      return (
+        <SoulScreen apiClient={apiClient} onBack={() => navigation.goBack()} />
       );
     case 'providers':
       return (
@@ -381,6 +401,11 @@ function ScreenRouter({
           apiClient={apiClient}
           onBack={() => navigation.goBack()}
           trackEnrollment={trackEnrollment}
+          onEnrolled={() => {
+            setEnrolledHere(true);
+            onRefreshGlobal();
+            navigation.navigate('home');
+          }}
         />
       );
     case 'model-selection':
@@ -430,6 +455,7 @@ function ScreenRouter({
           apiClient={apiClient}
           sessions={sessions}
           cloud={cloud}
+          cloudEnrollmentCompleted={showEnrollmentBanner}
           dangerousLocalAdminApiPort={dangerousLocalAdminApiPort}
           onRefreshGlobal={onRefreshGlobal}
           onOpenSettings={() => navigation.navigate('settings')}

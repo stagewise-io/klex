@@ -22,6 +22,7 @@ import {
   type ProviderDefinition,
 } from './provider-registry';
 import { azureOpenAiProviderDefinition } from './providers/azure-openai';
+import { openRouterProviderDefinition } from './providers/openrouter';
 import { vercelAiGatewayProviderDefinition } from './providers/vercel-ai-gateway';
 import { voicePreviewInstructions } from './providers/voice-preview-context';
 
@@ -64,6 +65,83 @@ async function createDataDirectory(): Promise<string> {
 }
 
 describe('provider registry module integration', () => {
+  it('only exports resolved credentials on explicit opt-in without mutating stored config', async () => {
+    const config = createConfig({
+      logging,
+      dataDirectory: await createDataDirectory(),
+      env: {
+        COPY_KEY: 'resolved-copy-secret',
+        COPY_METADATA_SECRET: 'unrelated-environment-secret',
+      },
+    });
+    await config.start();
+    const registry = createProviderRegistry({
+      logging,
+      config,
+      definitions: [azureOpenAiProviderDefinition],
+    });
+    await registry.start();
+    try {
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: Config resolves this literal environment reference.
+      const environmentReference = '${env:COPY_KEY}';
+      const settings = {
+        apiKey: environmentReference,
+        resourceName: 'example',
+      };
+      const knownModels = {
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: Model metadata must preserve literal environment references.
+        custom: { displayName: '${env:COPY_METADATA_SECRET}' },
+      };
+      expect(
+        await registry.addInstance({
+          id: 'azure',
+          type: 'azure-openai',
+          settings,
+          knownModels,
+        }),
+      ).toMatchObject({
+        ok: true,
+        value: { settings: { apiKey: { configured: true } } },
+      });
+      expect(
+        await registry.updateInstance('azure', { settings }),
+      ).toMatchObject({
+        ok: true,
+        value: { settings: { apiKey: { configured: true } } },
+      });
+      expect(registry.listInstances()[0]?.settings.apiKey).toEqual({
+        configured: true,
+      });
+      expect(
+        registry.listInstances({ includeSecrets: false })[0]?.settings.apiKey,
+      ).toEqual({ configured: true });
+      const exported = registry.listInstances({ includeSecrets: true });
+      expect(exported[0]?.settings.apiKey).toBe('resolved-copy-secret');
+      expect(exported[0]?.knownModels).toEqual(knownModels);
+      expect(JSON.stringify(exported)).not.toContain(
+        'unrelated-environment-secret',
+      );
+      if (exported[0]) exported[0].settings.apiKey = 'modified';
+      const exportedModel = exported[0]?.knownModels?.custom;
+      if (exportedModel) exportedModel.displayName = 'Modified';
+      expect(
+        registry.listInstances({ includeSecrets: true })[0]?.knownModels,
+      ).toEqual(knownModels);
+      expect(registry.listInstances()[0]?.knownModels).toBeUndefined();
+      expect(
+        registry.listInstances({ includeSecrets: true })[0]?.settings.apiKey,
+      ).toBe('resolved-copy-secret');
+      expect(config.get().providers.azure?.settings.apiKey).toBe(
+        environmentReference,
+      );
+      expect(registry.listInstances()[0]?.settings.apiKey).toEqual({
+        configured: true,
+      });
+    } finally {
+      await registry.close();
+      await config.close();
+    }
+  });
   it('keeps catalog model kinds when manual metadata only overrides the display name', async () => {
     const config = createConfig({
       logging,
@@ -197,7 +275,7 @@ describe('provider registry module integration', () => {
         await registry.validateModel({
           provider: { id: 'azure' },
           modelId: 'another-deployment',
-          purpose: 'voice.tts',
+          purpose: 'voice.sts',
         }),
       ).toMatchObject({ status: 'unsupported' });
       expect(
@@ -233,57 +311,327 @@ describe('provider registry module integration', () => {
       await config.close();
     }
   });
-  it('resolves persisted Gateway Jev for evaluation but rejects generation and chat', async () => {
-    const config = createConfig({
-      logging,
-      dataDirectory: await createDataDirectory(),
-    });
+  it.each([
+    {
+      definition: vercelAiGatewayProviderDefinition,
+      modelId: 'typesafe-ai/jev',
+      provider: 'gateway',
+    },
+    {
+      definition: openRouterProviderDefinition,
+      modelId: 'perplexity/pplx-decider-v1.2',
+      provider: 'openrouter',
+    },
+    {
+      definition: openRouterProviderDefinition,
+      modelId: 'morph/reflex',
+      provider: 'openrouter',
+    },
+  ])(
+    'resolves persisted $modelId for evaluation but rejects generation and chat',
+    async ({ definition, modelId, provider }) => {
+      const config = createConfig({
+        logging,
+        dataDirectory: await createDataDirectory(),
+      });
+      await config.start();
+      const registry = createProviderRegistry({
+        logging,
+        config,
+        definitions: [definition],
+      });
+      await registry.start();
+      try {
+        expect(
+          (
+            await registry.addInstance({
+              id: 'gateway',
+              type: definition.type,
+              settings: { apiKey: 'synthetic' },
+            })
+          ).ok,
+        ).toBe(true);
+        const entry = {
+          providerId: 'gateway',
+          modelId,
+          api: 'evaluation' as const,
+        };
+        expect(
+          (await registry.updateModelSelection({ instincts: [entry] })).ok,
+        ).toBe(true);
+        expect(
+          registry.resolveInstinctCandidates(
+            config.get().modelSelection.instincts,
+          )[0],
+        ).toMatchObject({
+          status: 'ready',
+          api: 'evaluation',
+          model: { modelId, provider },
+        });
+        expect(
+          registry.resolveInstinctCandidates([
+            { ...entry, api: 'generation' },
+          ])[0]?.status,
+        ).toBe('unavailable');
+        expect(
+          (
+            await registry.updateModelSelection({
+              chat: [{ providerId: 'gateway', modelId }],
+            })
+          ).ok,
+        ).toBe(false);
+        expect(() => registry.getLanguageModel(entry)).toThrow();
+      } finally {
+        await registry.close();
+        await config.close();
+      }
+    },
+  );
+
+  it.each(['discovered', 'manual'] as const)(
+    'rejects %s Decision models at the language-model boundary',
+    async (source) => {
+      const config = createConfig({
+        logging,
+        dataDirectory: await createDataDirectory(),
+      });
+      await config.start();
+      const createLanguageModel = vi.fn(
+        openRouterProviderDefinition.createLanguageModel,
+      );
+      const registry = createProviderRegistry({
+        logging,
+        config,
+        definitions: [{ ...openRouterProviderDefinition, createLanguageModel }],
+      });
+      await registry.start();
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (url: URL) =>
+          Response.json({
+            data: url.searchParams.has('output_modalities')
+              ? [
+                  {
+                    id: 'future/decision',
+                    architecture: { output_modalities: ['decisions'] },
+                  },
+                ]
+              : [],
+          }),
+        ),
+      );
+      try {
+        expect(
+          (
+            await registry.addInstance({
+              id: 'router',
+              type: 'openrouter',
+              settings: { apiKey: 'synthetic' },
+              ...(source === 'manual' && {
+                knownModels: {
+                  'future/decision': { kind: 'evaluation' as const },
+                },
+              }),
+            })
+          ).ok,
+        ).toBe(true);
+        if (source === 'discovered')
+          expect((await registry.listModels('router', true)).ok).toBe(true);
+        const entry = { providerId: 'router', modelId: 'future/decision' };
+        expect(registry.resolveModel(entry).kind).toBe('evaluation');
+        expect(
+          registry.resolveInstinctCandidates([
+            { ...entry, api: 'evaluation' },
+          ])[0]?.status,
+        ).toBe('ready');
+        expect(
+          registry.resolveInstinctCandidates([
+            { ...entry, api: 'generation' },
+          ])[0]?.status,
+        ).toBe('unavailable');
+        expect(() => registry.getLanguageModel(entry)).toThrow(
+          'Evaluation-only',
+        );
+        expect(createLanguageModel).not.toHaveBeenCalled();
+      } finally {
+        vi.unstubAllGlobals();
+        await registry.close();
+        await config.close();
+      }
+    },
+  );
+
+  it.each(['standard', 'decisions'] as const)(
+    'retains cached models during partial %s catalog failures and replaces them after recovery',
+    async (failedCatalog) => {
+      const config = createConfig({
+        logging,
+        dataDirectory: await createDataDirectory(),
+      });
+      await config.start();
+      const registry = createProviderRegistry({
+        logging,
+        config,
+        definitions: [openRouterProviderDefinition],
+      });
+      await registry.start();
+      let phase: 'full' | 'partial' | 'empty' | 'malformed' | 'recovered' =
+        'full';
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (url: URL) => {
+          const decisions = url.searchParams.has('output_modalities');
+          const failing = decisions === (failedCatalog === 'decisions');
+          if (phase !== 'full' && phase !== 'recovered' && failing)
+            return new Response('unavailable', { status: 503 });
+          if (phase === 'malformed') return Response.json({ data: null });
+          const id = decisions
+            ? 'future/decision'
+            : phase === 'full'
+              ? 'vendor/old'
+              : 'vendor/new';
+          return Response.json({
+            data:
+              phase === 'empty'
+                ? []
+                : [
+                    {
+                      id,
+                      architecture: {
+                        output_modalities: [decisions ? 'decisions' : 'text'],
+                      },
+                    },
+                  ],
+          });
+        }),
+      );
+      try {
+        expect(
+          (
+            await registry.addInstance({
+              id: 'router',
+              type: 'openrouter',
+              settings: { apiKey: 'synthetic' },
+            })
+          ).ok,
+        ).toBe(true);
+        const ids = async (refresh = true) => {
+          const result = await registry.listModels('router', refresh);
+          expect(result.ok).toBe(true);
+          return result.ok ? result.value.map((model) => model.modelId) : [];
+        };
+        expect(await ids()).toEqual(['future/decision', 'vendor/old']);
+        phase = 'partial';
+        const partial = await ids();
+        expect(partial).toContain('vendor/old');
+        expect(partial).toContain('future/decision');
+        if (failedCatalog === 'decisions')
+          expect(partial).toContain('vendor/new');
+        phase = 'empty';
+        expect(await ids()).toEqual(partial);
+        expect(await ids(false)).toEqual(partial);
+        phase = 'malformed';
+        expect(await ids()).toEqual(partial);
+        phase = 'recovered';
+        expect(await ids()).toEqual(['future/decision', 'vendor/new']);
+        expect(await ids(false)).toEqual(['future/decision', 'vendor/new']);
+      } finally {
+        vi.unstubAllGlobals();
+        await registry.close();
+        await config.close();
+      }
+    },
+  );
+
+  it('round-trips OpenRouter decision configuration through disk and local-data restart', async () => {
+    const dataDirectory = await createDataDirectory();
+    const configPath = join(dataDirectory, CONFIG_FILE_NAME);
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: Config must preserve the environment reference on disk.
+    const apiKey = '${env:OPENROUTER_TEST_KEY}';
+    const env = { OPENROUTER_TEST_KEY: 'synthetic-resolved-key' };
+    const entries = [
+      'perplexity/pplx-decider-v1.2',
+      'morph/reflex',
+      'future/decision',
+    ].map((modelId) => ({
+      providerId: 'router',
+      modelId,
+      api: 'evaluation' as const,
+      attemptTimeoutMs: 1500,
+      providerOptions: {
+        openrouter: { provider: { order: ['Synthetic'] }, session_id: 'test' },
+      },
+    }));
+    let config = createConfig({ logging, dataDirectory, env });
     await config.start();
-    const registry = createProviderRegistry({
+    let registry = createProviderRegistry({
       logging,
       config,
-      definitions: [vercelAiGatewayProviderDefinition],
+      definitions: [openRouterProviderDefinition],
     });
     await registry.start();
     try {
       expect(
         (
           await registry.addInstance({
-            id: 'gateway',
-            type: 'vercel-ai-gateway',
-            settings: { apiKey: 'synthetic' },
+            id: 'router',
+            type: 'openrouter',
+            settings: { apiKey },
+            knownModels: { 'future/decision': { kind: 'evaluation' } },
           })
         ).ok,
       ).toBe(true);
-      const entry = {
-        providerId: 'gateway',
-        modelId: 'typesafe-ai/jev',
-        api: 'evaluation' as const,
-      };
       expect(
-        (await registry.updateModelSelection({ instincts: [entry] })).ok,
+        (await registry.updateModelSelection({ instincts: entries })).ok,
       ).toBe(true);
-      expect(
-        registry.resolveInstinctCandidates(
-          config.get().modelSelection.instincts,
-        )[0],
-      ).toMatchObject({
-        status: 'ready',
-        api: 'evaluation',
-        model: { modelId: 'typesafe-ai/jev', provider: 'gateway' },
-      });
-      expect(
-        registry.resolveInstinctCandidates([{ ...entry, api: 'generation' }])[0]
-          ?.status,
-      ).toBe('unavailable');
-      expect(
-        (
-          await registry.updateModelSelection({
-            chat: [{ providerId: 'gateway', modelId: 'typesafe-ai/jev' }],
-          })
-        ).ok,
-      ).toBe(false);
-      expect(() => registry.getLanguageModel(entry)).toThrow();
+      await registry.close();
+      await config.close();
+      const before = await readFile(configPath, 'utf8');
+      expect(before).toContain(apiKey);
+      expect(before).not.toContain(env.OPENROUTER_TEST_KEY);
+      for (let restart = 0; restart < 2; restart++) {
+        await createLocalData({
+          logging,
+          dataDirectory,
+          klexVersion: KLEX_VERSION,
+          stores: [CONFIG_STORE_DEFINITION],
+        }).start();
+        config = createConfig({ logging, dataDirectory, env });
+        await config.start();
+        registry = createProviderRegistry({
+          logging,
+          config,
+          definitions: [openRouterProviderDefinition],
+        });
+        await registry.start();
+        expect(config.get().modelSelection.instincts).toEqual(entries);
+        expect(config.getRuntime().providers.router?.settings.apiKey).toBe(
+          env.OPENROUTER_TEST_KEY,
+        );
+        expect(config.get().providers.router?.knownModels).toEqual({
+          'future/decision': { kind: 'evaluation' },
+        });
+        expect(
+          registry.resolveInstinctCandidates(
+            config.get().modelSelection.instincts,
+          ),
+        ).toMatchObject(
+          entries.map((entry) => ({
+            status: 'ready',
+            api: 'evaluation',
+            entry,
+            model: { provider: 'openrouter', modelId: entry.modelId },
+          })),
+        );
+        expect(
+          registry.resolveInstinctCandidates(
+            entries.map((entry) => ({ ...entry, api: 'generation' })),
+          ),
+        ).toMatchObject(entries.map(() => ({ status: 'unavailable' })));
+        expect(await readFile(configPath, 'utf8')).toBe(before);
+        await registry.close();
+        await config.close();
+      }
     } finally {
       await registry.close();
       await config.close();
@@ -611,8 +959,6 @@ describe('provider registry module integration', () => {
     const reference = { providerId: 'voice', modelId: 'gpt-realtime' };
     const voice = {
       sts: [{ ...reference, voiceId: 'cedar' }],
-      tts: [],
-      stt: [],
     };
     expect(await registry.updateModelSelection({ voice })).toMatchObject({
       ok: true,
@@ -993,7 +1339,7 @@ describe('provider registry module integration', () => {
     ]);
     await expect(
       registry.updateModelSelection({
-        voice: { sts: [selection], tts: [], stt: [] },
+        voice: { sts: [selection] },
       }),
     ).resolves.toMatchObject({
       ok: false,
@@ -1015,6 +1361,7 @@ describe('provider registry module integration', () => {
     expect(createLanguageModel).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'provider-primary' }),
       'vendor:model:v2',
+      undefined,
     );
 
     await expect(registry.testConnection('provider-primary')).resolves.toEqual({
@@ -1101,7 +1448,7 @@ describe('provider registry module integration', () => {
     const selection = { providerId: 'openai-voice', modelId: 'gpt-realtime' };
     await expect(
       registry.updateModelSelection({
-        voice: { sts: [selection], tts: [], stt: [] },
+        voice: { sts: [selection] },
       }),
     ).resolves.toMatchObject({ ok: true, value: { warnings: [] } });
 

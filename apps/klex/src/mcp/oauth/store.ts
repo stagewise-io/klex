@@ -16,6 +16,9 @@ import {
 import { KLEX_VERSION } from '@/release';
 
 const DEFAULT_ISSUER = '__default__';
+export type McpOAuthClientInformation = StoredOAuthClientInformation & {
+  klex_registered?: boolean;
+};
 
 const storedOAuthTokensSchema: z.ZodType<StoredOAuthTokens> = z
   .object({
@@ -29,7 +32,7 @@ const storedOAuthTokensSchema: z.ZodType<StoredOAuthTokens> = z
   })
   .passthrough();
 
-const storedOAuthClientInformationSchema: z.ZodType<StoredOAuthClientInformation> =
+const storedOAuthClientInformationSchema: z.ZodType<McpOAuthClientInformation> =
   z
     .object({
       application_type: z.string().optional(),
@@ -77,7 +80,7 @@ const serverOAuthStateSchema = z
   })
   .passthrough();
 
-type ServerOAuthState = z.infer<typeof serverOAuthStateSchema>;
+export type ServerOAuthState = z.infer<typeof serverOAuthStateSchema>;
 
 const oauthStoreSchema = z
   .object({
@@ -107,6 +110,41 @@ export type OAuthCredentialScope =
   | 'verifier'
   | 'discovery';
 
+export interface InvalidateOptions {
+  /**
+   * Evaluated inside the mutation queue. Returning false keeps stored tokens,
+   * e.g. when a concurrent refresh already replaced the rejected token set.
+   */
+  shouldClearTokens?: (tokens: StoredOAuthTokens | undefined) => boolean;
+  signal?: AbortSignal;
+}
+
+export interface InvalidateResult {
+  /** False when token removal was requested but skipped by `shouldClearTokens`. */
+  tokensCleared: boolean;
+}
+
+/** `superseded`: the refreshed token set is no longer stored, so nothing was written. */
+export type RefreshedTokenPersistence = 'saved' | 'superseded';
+
+/** Secret-free summary of stored OAuth state for diagnostics. */
+export interface OAuthStoreSummary {
+  hasServerEntry: boolean;
+  hasTokens: boolean;
+  hasRefreshToken: boolean;
+  hasClientInformation: boolean;
+  hasCodeVerifier: boolean;
+  hasDiscoveryState: boolean;
+  tokenIssuerCount: number;
+}
+
+export function parseTokenResponse(
+  value: unknown,
+): StoredOAuthTokens | undefined {
+  const result = storedOAuthTokensSchema.safeParse(value);
+  return result.success ? result.data : undefined;
+}
+
 export class McpOAuthStore {
   private mutationQueue: Promise<void> = Promise.resolve();
   private metadata: LocalDataMetadata | undefined;
@@ -120,7 +158,7 @@ export class McpOAuthStore {
     serverName: string,
     redirectUrl: string,
     issuer?: string,
-  ): Promise<StoredOAuthClientInformation | undefined> {
+  ): Promise<McpOAuthClientInformation | undefined> {
     const server = await this.readServer(serverName);
     const issuerKey = issuer ?? DEFAULT_ISSUER;
     if (server?.clientRedirectUrlsByIssuer[issuerKey] !== redirectUrl)
@@ -141,7 +179,13 @@ export class McpOAuthStore {
   public async invalidate(
     serverName: string,
     scope: OAuthCredentialScope,
-  ): Promise<void> {
+    options: InvalidateOptions | AbortSignal = {},
+  ): Promise<InvalidateResult> {
+    const { shouldClearTokens, signal } =
+      options instanceof AbortSignal ? { signal: options } : options;
+    const result: InvalidateResult = {
+      tokensCleared: scope === 'all' || scope === 'tokens',
+    };
     await this.mutate((data) => {
       const server = data.servers[serverName];
       if (!server) return;
@@ -151,58 +195,142 @@ export class McpOAuthStore {
         server.clientRedirectUrlsByIssuer = {};
       }
       if (scope === 'all' || scope === 'tokens') {
-        server.tokensByIssuer = {};
-        delete server.lastTokenIssuer;
+        const current = server.lastTokenIssuer
+          ? server.tokensByIssuer[server.lastTokenIssuer]
+          : undefined;
+        if (shouldClearTokens && !shouldClearTokens(current)) {
+          result.tokensCleared = false;
+        } else {
+          server.tokensByIssuer = {};
+          delete server.lastTokenIssuer;
+        }
       }
       if (scope === 'all' || scope === 'verifier') delete server.codeVerifier;
       if (scope === 'all' || scope === 'discovery')
         delete server.discoveryState;
+    }, signal);
+    return result;
+  }
+
+  /**
+   * Persists a refresh response only while the refresh token it replaced is
+   * still stored and, when given, the access token observed before the request
+   * is unchanged. Intentionally ignores connection signals: a rotated refresh
+   * token that is not written is lost, while a removed or replaced token set
+   * is never restored.
+   */
+  public async replaceRefreshedTokens(
+    serverName: string,
+    previousRefreshToken: string,
+    tokens: StoredOAuthTokens,
+    expectedAccessToken?: string,
+  ): Promise<RefreshedTokenPersistence> {
+    let persistence: RefreshedTokenPersistence = 'superseded';
+    await this.mutate((data) => {
+      const server = data.servers[serverName];
+      if (!server) return false;
+      for (const [issuerKey, current] of Object.entries(
+        server.tokensByIssuer,
+      )) {
+        if (current.refresh_token !== previousRefreshToken) continue;
+        if (
+          expectedAccessToken !== undefined &&
+          current.access_token !== expectedAccessToken
+        )
+          continue;
+        server.tokensByIssuer[issuerKey] = {
+          ...tokens,
+          refresh_token: tokens.refresh_token ?? previousRefreshToken,
+          ...(current.issuer ? { issuer: current.issuer } : {}),
+        };
+        server.lastTokenIssuer = issuerKey;
+        persistence = 'saved';
+        return undefined;
+      }
+      return false;
     });
+    return persistence;
+  }
+
+  public async summarize(serverName: string): Promise<OAuthStoreSummary> {
+    const server = await this.readServer(serverName);
+    const current = server?.lastTokenIssuer
+      ? server.tokensByIssuer[server.lastTokenIssuer]
+      : undefined;
+    return {
+      hasServerEntry: server !== undefined,
+      hasTokens: current !== undefined,
+      hasRefreshToken: Boolean(current?.refresh_token),
+      hasClientInformation:
+        Object.keys(server?.clientInformationByIssuer ?? {}).length > 0,
+      hasCodeVerifier: Boolean(server?.codeVerifier),
+      hasDiscoveryState: server?.discoveryState !== undefined,
+      tokenIssuerCount: Object.keys(server?.tokensByIssuer ?? {}).length,
+    };
+  }
+
+  /** Removes every URL used by this namespace, including legacy unscoped entries. */
+  public async removeServer(namespace: string): Promise<ServerOAuthState[]> {
+    const removed: ServerOAuthState[] = [];
+    await this.mutate((data) => {
+      for (const [key, server] of Object.entries(data.servers)) {
+        if (key !== namespace && !key.startsWith(`${namespace}\u0000`))
+          continue;
+        removed.push(server);
+        delete data.servers[key];
+      }
+      if (removed.length === 0) return false;
+    });
+    return removed;
   }
 
   public async saveClientInformation(
     serverName: string,
     redirectUrl: string,
-    clientInformation: StoredOAuthClientInformation,
+    clientInformation: McpOAuthClientInformation,
     issuer?: string,
+    signal?: AbortSignal,
   ): Promise<void> {
     await this.mutate((data) => {
       const server = this.getOrCreateServer(data, serverName);
       const issuerKey = issuer ?? clientInformation.issuer ?? DEFAULT_ISSUER;
       server.clientInformationByIssuer[issuerKey] = clientInformation;
       server.clientRedirectUrlsByIssuer[issuerKey] = redirectUrl;
-    });
+    }, signal);
   }
 
   public async saveCodeVerifier(
     serverName: string,
     codeVerifier: string,
+    signal?: AbortSignal,
   ): Promise<void> {
     await this.mutate((data) => {
       this.getOrCreateServer(data, serverName).codeVerifier = codeVerifier;
-    });
+    }, signal);
   }
 
   public async saveDiscoveryState(
     serverName: string,
     discoveryState: OAuthDiscoveryState,
+    signal?: AbortSignal,
   ): Promise<void> {
     await this.mutate((data) => {
       this.getOrCreateServer(data, serverName).discoveryState = discoveryState;
-    });
+    }, signal);
   }
 
   public async saveTokens(
     serverName: string,
     tokens: StoredOAuthTokens,
     issuer?: string,
+    signal?: AbortSignal,
   ): Promise<void> {
     await this.mutate((data) => {
       const server = this.getOrCreateServer(data, serverName);
       const issuerKey = issuer ?? tokens.issuer ?? DEFAULT_ISSUER;
       server.tokensByIssuer[issuerKey] = tokens;
       server.lastTokenIssuer = issuerKey;
-    });
+    }, signal);
   }
 
   public async tokens(
@@ -232,10 +360,15 @@ export class McpOAuthStore {
     return created;
   }
 
-  private async mutate(update: (data: OAuthStoreData) => void): Promise<void> {
+  private async mutate(
+    update: (data: OAuthStoreData) => undefined | false,
+    signal?: AbortSignal,
+  ): Promise<void> {
     const mutation = this.mutationQueue.then(async () => {
       const data = await this.read();
-      update(data);
+      // Check inside the queue so a closed connection cannot restore deleted credentials.
+      signal?.throwIfAborted();
+      if (update(data) === false) return;
       await this.write(data);
     });
     this.mutationQueue = mutation.catch(() => undefined);

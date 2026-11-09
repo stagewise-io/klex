@@ -1,6 +1,7 @@
 import type {
   FilePart,
   FinishReason,
+  FlexibleSchema,
   LanguageModelUsage,
   ModelMessage,
   TextPart,
@@ -22,6 +23,8 @@ import type {
   ChildSessionOptions,
   SessionContext,
 } from '@/session/types';
+import type { GenerationFailure } from '@/session-history/generation-health';
+import type { SkillNamespaceHandle } from '@/skills';
 
 import type { ChatSessionInbox } from '../inbox';
 import type { ExtendedUIMessage } from '../message-types';
@@ -233,7 +236,7 @@ export interface ResolvedModel {
  * Both are passed through to the AI SDK's `generateText`.
  */
 export interface GenerateTextArgs {
-  /** Ordered list of model selection entries to try. First success wins. */
+  /** Ordered models to try. Fallback stops once any tool execution begins. */
   modelIds: readonly ModelSelectionEntry[];
   /** System prompt. */
   system?: string;
@@ -243,6 +246,11 @@ export interface GenerateTextArgs {
   messages?: ModelMessage[];
   /** Tools available to the model during generation. */
   tools?: ToolSet;
+  /**
+   * Requests schema-constrained output. With tools, allows one tool step and
+   * a final tool-free output step; without a schema, generation is single-step.
+   */
+  outputSchema?: FlexibleSchema<unknown>;
   /** Sampling temperature (provider-specific range, typically 0–2). */
   temperature?: number;
   /** Maximum number of tokens to generate. */
@@ -259,6 +267,8 @@ export interface GenerateTextArgs {
 export interface GenerateTextSuccess {
   /** The generated text. */
   text: string;
+  /** Validated structured output when an `outputSchema` was requested. */
+  output?: unknown;
   /** The model ID that produced the output. */
   modelId: string;
   /** Token usage from the successful generation, including cache details. */
@@ -361,6 +371,7 @@ export interface StepCompleteEvent {
    * without producing any usable output.
    */
   generationFailed: boolean;
+  generationFailure?: GenerationFailure | null;
   /**
    * Generation metadata — null when no generation happened (skipped step,
    * fatal error, or all attempts exhausted).
@@ -612,6 +623,14 @@ export function readInstinctClassification<
 }
 
 export interface Extension {
+  /**
+   * Checked before step-start hooks, history repair, or inference. Returning
+   * false skips the step without retrying or automatically removing history.
+   * A hook may explicitly remove canonical messages (e.g. missing-soul cleanup).
+   * All hooks run in factory order, even after another hook returns false.
+   */
+  shouldRunStep?: (history: ExtendedUIMessage[]) => boolean;
+
   /**
    * Called once when the session starts, before the first step.
    * Extensions use this to initialize owned resources (e.g. starting
@@ -933,14 +952,22 @@ export interface ExtensionDeps {
    *   `{agentDataDir}/extensions/{extensionIdentifier}`.
    */
   getDataDir: (global?: boolean) => string;
+
+  /**
+   * Agent-wide skills of the namespace declared by
+   * {@link ExtensionFactory.skillNamespace}. Reads and writes only that
+   * namespace; the core owns files, validation and usage bookkeeping.
+   * `null` when the factory declares no namespace.
+   */
+  skills: SkillNamespaceHandle | null;
 }
 
 /**
  * The base dependencies the session provides to every extension.
- * The handler augments these with a per-extension `getDataDir` before
- * passing them to each factory.
+ * The handler augments these with a per-extension `getDataDir` and
+ * `skills` handle before passing them to each factory.
  */
-export type BaseExtensionDeps = Omit<ExtensionDeps, 'getDataDir'>;
+export type BaseExtensionDeps = Omit<ExtensionDeps, 'getDataDir' | 'skills'>;
 
 /**
  * The descriptor passed to the extension handler when registering an
@@ -959,6 +986,13 @@ export interface ExtensionFactory {
    * Optional human-readable name shown in UIs and logs.
    */
   readonly displayName?: string;
+
+  /**
+   * Skill namespace this extension contributes to, e.g. `"learning"`. A
+   * lowercase slug; `user` is reserved. One extension identifier owns a
+   * namespace. Its skills are identified as `namespace/name`.
+   */
+  readonly skillNamespace?: string;
 
   /**
    * Creates the extension instance with the provided dependencies. Construction

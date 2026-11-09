@@ -1,7 +1,8 @@
 import './mascot.css';
 
-import { getKlexEyeColor, roundedPath } from '../new/klex/geometry';
-import type { BodyShape } from '../new/klex/presets';
+import type { BodyShape } from '@klex/mascot';
+import { getKlexEyeColor, roundedPath } from '@klex/mascot/svg';
+
 import { FAMILY_SHAPES, type MascotForm } from './presets';
 
 export function mascotMarkup(

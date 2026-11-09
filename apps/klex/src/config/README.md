@@ -94,9 +94,7 @@ type.
     ],
     "audioListening": [],
     "voice": {
-      "sts": [],
-      "tts": [],
-      "stt": []
+      "sts": []
     }
   },
   "mcpServers": {},
@@ -120,18 +118,21 @@ next write.
 `extensions` holds behavior settings owned by session extensions, keyed by
 extension; new extension settings belong under `extensions.<extension>`, not at
 the root. Model routing stays in `modelSelection` (`modelSelection.memory` is
-used only by memory retrieval).
+used by memory retrieval, learning and activity-title generation).
 The whole object and every nested field are optional; omitted fields use their
 defaults. Unknown keys are rejected.
 
-`extensions.memory.episodes` controls when the episodic-memory recorder starts a
-new episode file. A new episode starts when any limit is reached:
+`extensions.memory.episodes` retains its configuration shape and now controls
+runtime activity batching independently in learning and activity-title generation.
+No episode files or durable groups are created. A batch becomes ready at a size,
+duration, idle or UTC-date boundary, or after 200 source rows (including
+filtered-only rows), whichever comes first:
 
-- `maxCharacters`: the next entry would push the episode file past this many
-  characters of serialized JSON Lines. Default `50000`. The crossing entry goes whole into the new
-  episode; an entry larger than the limit gets an episode of its own.
-- `maxDurationMs`: the episode has spanned this many milliseconds since its
-  first entry. Default `3600000` (one hour).
+- `maxCharacters`: rendered history-view characters, including time prefixes and
+  record separators, rather than serialized JSON Lines. Default `50000`.
+  A crossing message starts the next batch; oversized bodies are bounded.
+- `maxDurationMs`: retained activity has spanned this many milliseconds since its
+  first source persistence timestamp. Default `3600000` (one hour).
 - `idleTimeoutMs`: no main-session activity for this many milliseconds. Default
   `600000` (ten minutes).
 
@@ -139,6 +140,36 @@ Config schema 5 moved these settings under `extensions`. Migration from schema
 4 keeps the stored `episodeFinishIdleTriggerTimeMs` value as `idleTimeoutMs`
 (`300000` when absent) and drops `memoryWriteIntervalMs` and
 `memoryWriteStepInterval`.
+
+Config schema 7, introduced in `0.27.1`, keeps only `sts` in
+`modelSelection.voice`. The 6→7 migration removes the TTS/STT selection lists
+while preserving speech-to-speech entries and `audioListening` selections.
+Released config schemas 1–6 retain their original voice shape. The public
+`configVersion` remains `2`. Configs written by `0.27.0` without TTS/STT keys
+also migrate from schema 6 to 7. Older binaries reject schema 7 before writing.
+
+Config schema 8, introduced in `0.28.3`, adds an optional `authMode` to
+`chatgpt-codex-subscription` settings. The 7→8 migration changes only store
+metadata: existing Codex entries without `authMode` remain `local-cli` entries
+that read the Codex CLI's `auth.json`. Older binaries reject schema 8 before
+writing.
+
+```json
+{
+  "providers": {
+    "codex": {
+      "type": "chatgpt-codex-subscription",
+      "settings": { "authMode": "managed" }
+    }
+  }
+}
+```
+
+`managed` accepts only `baseUrl` and `testModelId`. Klex signs in through the
+Codex device-code flow (`PUT /v1/providers/{id}/authorization`) and needs no
+Codex executable or `auth.json`. Tokens are stored with owner-only permissions
+in `credentials/providers.json` under the data directory, refreshed by Klex, and
+never written to `config.json` or returned by the Admin API.
 
 `openai-primary` and `openai-secondary` demonstrate independent instances of
 one provider type. `openai-internal` keeps native OpenAI behavior while routing
@@ -174,8 +205,9 @@ layers (`shared-catalog`, `provider-family`, `provider-exact`, `discovered`, or
 `image-generation`, `embedding`, `reranking`, `moderation`,
 `speech-to-speech`, `text-to-speech`, `speech-to-text`, or `unknown`. Models
 with no authoritative classification remain unclassified; do not infer broad
-capabilities from an opaque deployment name. Realtime, TTS, and STT selection
-also requires the corresponding `capabilities.voice` flag.
+capabilities from an opaque deployment name. Speech-to-speech selection also
+requires `capabilities.voice.sts`. The `tts` and `stt` voice capability flags
+remain available to classify discovered models; they are not selection purposes.
 
 Catalog maintenance policy:
 
@@ -242,18 +274,16 @@ Only `modelSelection.voice.sts` entries accept optional `voiceId`. Obtain compat
 ```json
 {
   "voice": {
-    "sts": [{ "providerId": "openai-primary", "modelId": "gpt-realtime", "voiceId": "cedar" }],
-    "tts": [],
-    "stt": []
+    "sts": [{ "providerId": "openai-primary", "modelId": "gpt-realtime", "voiceId": "cedar" }]
   }
 }
 ```
 
-This is the body for `PATCH /v1/settings/model-selection`; the `voice` object replaces all three voice lists. Preserve existing TTS/STT lists when editing STS. To reset, replace the STS reference with the same provider/model and omit `voiceId`. Empty or whitespace-padded IDs are invalid. Other selection purposes reject the field.
+This is the body for `PATCH /v1/settings/model-selection`; the `voice` object contains only `sts` and is replaced by the patch. To reset, replace the STS reference with the same provider/model and omit `voiceId`. Empty or whitespace-padded IDs are invalid. Other selection purposes reject the field.
 
 New voices are validated atomically against the compatible catalog; unchanged persisted triples can be retained offline. Config loading and new-call resolution do not discover voices over the network. Upstream rejection is an explicit error rather than a silent substitution. Existing selections without a voice keep their defaults: OpenAI Realtime and GPT-Live use `marin`; Gemini leaves its default to the provider. GPT-Live's explicit factory override takes precedence over persistence.
 
-Changes apply to new calls; active calls and reconnects retain their startup voice. The field raises the config compatibility floor to 7 while preserving schema 5 and frozen historical schemas. Local-data upgrades metadata without transforming the document; older writers reject the new floor before mutation. The minimum-version diagnostic is `0.16.0`, the first stable release supporting this compatibility floor.
+Changes apply to new calls; active calls and reconnects retain their startup voice. The field was introduced in schema 5 with compatibility floor 7 and a minimum-version diagnostic of `0.16.0`. Current schema 7 retains `voiceId`, removes TTS/STT selections, and uses compatibility floor 8; older writers reject it before mutation.
 
 ## Realtime media
 

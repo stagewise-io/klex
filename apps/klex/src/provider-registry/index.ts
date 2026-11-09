@@ -1,4 +1,11 @@
 export {
+  PROVIDER_CREDENTIALS_STORE_DEFINITION,
+  ProviderCredentialStore,
+  type StoredProviderAuthorization,
+  type StoredProviderCredential,
+  type StoredProviderFailure,
+} from './authorization/credential-store';
+export {
   type ModelValidationInput,
   type ModelValidationResult,
   modelValidationInputSchema,

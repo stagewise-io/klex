@@ -15,6 +15,7 @@ import {
   MachinePathResolver,
   SearchService,
 } from './filesystem/index.js';
+import { detectedMachineIcons, machineIcons } from './icons.js';
 import { type MachineLogger, silentMachineLogger } from './logger.js';
 import {
   createNotificationStore,
@@ -33,6 +34,8 @@ export interface MachineMcpOptions {
   principalId?: string;
   notifications?: NotificationStore;
   logger?: MachineLogger;
+  /** Skip device detection and advertise the generic machine icon. */
+  omitHostDetails?: boolean;
 }
 
 export interface MachineMcp {
@@ -104,11 +107,17 @@ class MachineMcpModule implements MachineMcp {
         logger.error({ error }, 'Watcher notification failed'),
     });
     this.#handler = createMcpHandler(
-      () => {
+      async () => {
         const pushNotifications =
           requestCapabilities.getStore()?.pushNotifications === true;
         const server = new McpServer(
-          { name: 'klex-machine', version: '0.1.0' },
+          {
+            name: 'klex-machine',
+            version: '0.1.0',
+            icons: options.omitHostDetails
+              ? machineIcons()
+              : await detectedMachineIcons(),
+          },
           {
             capabilities: {},
             instructions: `UNRESTRICTED MACHINE ACCESS. Filesystem and shell operations run with the permissions of the server OS user. Relative paths resolve from ${defaultCwd}. Operating system: ${process.platform}.${pushNotifications ? ' Watcher outcomes and requested shell-exit notifications arrive as push notifications.' : ''}`,

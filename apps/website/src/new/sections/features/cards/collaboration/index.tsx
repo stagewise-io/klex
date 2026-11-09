@@ -1,13 +1,13 @@
 import './styles.css';
 
+import artwork from 'virtual:klex-static-mascots';
 import { gsap } from 'gsap';
 import { useEffect, useRef } from 'react';
 
-import { IconDiscord } from '@stagewise/ui/icons/provider/IconDiscord.tsx';
-import { IconSlack } from '@stagewise/ui/icons/provider/IconSlack.tsx';
+import { RichMessage, t } from '@/i18n';
 
-import { mascotMarkup } from '../../../../../mascot';
 import { heroLooks } from '../../../../bot-looks';
+import { StaticIcon } from '../../../../static-mascot/static-icon';
 import {
   type CardProps,
   FeatureCard,
@@ -18,8 +18,10 @@ export function CollaborationCard({ playing }: CardProps) {
   return (
     <FeatureCard
       id="collaboration"
-      title="Teamwork comes naturally"
-      description="Your Klex Bots work together in apps like Slack, Teams or Discord (or anywhere else!). They share updates, discuss decisions, and hand tasks to each other."
+      title={t('Teamwork comes naturally')}
+      description={t(
+        'Your Klex Bots work together in apps like Slack, Teams or Discord (or anywhere else!). They share updates, discuss decisions, and hand tasks to each other.',
+      )}
       Scene={CollaborationScene}
       playing={playing}
     />
@@ -39,10 +41,12 @@ const teamworkMessages = [
     bot: 'kristine',
     time: '9:41 AM',
     body: (
-      <>
-        <span className="bento-chat-mention">@Jonathan</span>, the signup flow
-        is ready to build.
-      </>
+      <RichMessage
+        message="{{mention}}, the signup flow is ready to build."
+        values={{
+          mention: <span className="bento-chat-mention">@Jonathan</span>,
+        }}
+      />
     ),
   },
   {
@@ -50,14 +54,14 @@ const teamworkMessages = [
     name: 'Jonathan',
     bot: 'jonathan',
     time: '9:42 AM',
-    body: "On it. I'll share the PR here.",
+    body: t("On it. I'll share the PR here."),
   },
   {
     id: 'review',
     name: 'Kristine',
     bot: 'kristine',
     time: '9:42 AM',
-    body: "I'll handle the review. 🙌",
+    body: t("I'll handle the review. 🙌"),
   },
 ] as const;
 
@@ -66,10 +70,7 @@ const teamworkConversations = teamworkApps.map((app) => ({
   ...app,
   messages: teamworkMessages.map((message) => ({
     ...message,
-    avatar: mascotMarkup(
-      heroLooks[message.bot].color,
-      heroLooks[message.bot].shape,
-    ),
+    avatar: artwork[`slack-${message.bot}`].src,
   })),
 }));
 const conversationDuration = 8.4;
@@ -141,9 +142,9 @@ function CollaborationScene({ active }: SceneProps) {
           <div className="bento-chat-panel" data-app={app.id} key={app.id}>
             <div className="bento-chat-channel">
               {app.id === 'slack' ? (
-                <IconSlack />
+                <StaticIcon name="slack" />
               ) : app.id === 'discord' ? (
-                <IconDiscord />
+                <StaticIcon name="discord" />
               ) : (
                 <img src="/connectors/teams.svg" alt="" />
               )}
@@ -158,11 +159,9 @@ function CollaborationScene({ active }: SceneProps) {
                     style={{
                       backgroundColor: `color-mix(in srgb, ${heroLooks[message.bot].color} 18%, var(--chat-surface))`,
                     }}
-                    // biome-ignore lint/security/noDangerouslySetInnerHtml: Static mascot SVG generated from authored bot looks, never user input.
-                    dangerouslySetInnerHTML={{
-                      __html: message.avatar,
-                    }}
-                  />
+                  >
+                    <img src={message.avatar} alt="" width="28" height="28" />
+                  </span>
                   <div className="bento-chat-content">
                     <div className="bento-chat-meta">
                       <strong>{message.name}</strong>

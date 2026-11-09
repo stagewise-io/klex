@@ -1,6 +1,8 @@
 import { Code } from '@sugar-high/react';
 import { useState } from 'react';
 
+import { t } from '@/i18n';
+
 import { codeTheme, GitHubPullRequest } from '../../build';
 import { typeText, usePlay, wait } from '../../workflow/stage';
 import type { WorkSceneProps } from './scenes';
@@ -62,7 +64,7 @@ const changes = [
     title: 'perf(search): debounce search requests',
     body: 'Search sent a request for every key press. It now waits until typing pauses.',
   },
-];
+] as const;
 
 export const jonathanScene = {
   count: changes.length,
@@ -122,7 +124,7 @@ function JonathanScene({ variant, setApp, onDone }: WorkSceneProps) {
       repo={change.repo}
       branch={change.branch}
       number={change.number}
-      body={change.body}
+      body={t(change.body)}
     />
   );
 }

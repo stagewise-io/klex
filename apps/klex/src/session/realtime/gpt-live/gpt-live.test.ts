@@ -8,6 +8,7 @@ import {
   type PreparedInferenceContext,
 } from '@/session/interaction';
 
+import { assembleRealtimeInstructions } from '../instructions';
 import { createGPTLiveProtocolState } from './gpt-live';
 import {
   buildGPTLiveSessionConfig,
@@ -416,7 +417,7 @@ describe('GPT-Live startup configuration', () => {
 
     expect(prepared.session).toMatchObject({
       model: 'gpt-live-1',
-      instructions: 'frontend voice policy\n\nbackend business policy',
+      instructions: `frontend voice policy\n\n${assembleRealtimeInstructions(context.instructions)}`,
       audio: {
         format: { type: 'audio/pcm', rate: 24_000 },
         output: { voice: 'alloy' },
@@ -425,7 +426,7 @@ describe('GPT-Live startup configuration', () => {
         type: 'responses',
         responses: {
           model: 'gpt-5.2',
-          instructions: 'backend business policy',
+          instructions: assembleRealtimeInstructions(context.instructions),
           tools: [
             {
               type: 'function',
@@ -437,6 +438,7 @@ describe('GPT-Live startup configuration', () => {
         },
       },
     });
+    expect(context.instructions).toBe('backend business policy');
   });
 
   it('preserves an explicit Live snapshot without changing the Responses model', () => {
@@ -862,7 +864,7 @@ describe('GPT-Live startup configuration', () => {
         content: [{ type: 'input_text', text: messages.at(-1)?.content }],
       });
       expect(prepared.session.delegation.responses.instructions).toBe(
-        context.instructions,
+        assembleRealtimeInstructions(context.instructions),
       );
     },
     15_000,
@@ -918,6 +920,19 @@ describe('GPT-Live startup configuration', () => {
         },
       ),
     ).toThrow('backend instructions');
+  });
+
+  it.each([
+    ['maxFrontendInstructionTokens', 'frontend instructions'],
+    ['maxBackendInstructionTokens', 'backend instructions'],
+  ] as const)('counts the voice policy toward %s', (budget, error) => {
+    expect(() =>
+      buildGPTLiveSessionConfig(context, {
+        responsesModel: 'gpt-5.2',
+        frontendInstructions: 'voice',
+        [budget]: 20,
+      }),
+    ).toThrow(error);
   });
 
   it('collects text while dropping unsupported history content', () => {

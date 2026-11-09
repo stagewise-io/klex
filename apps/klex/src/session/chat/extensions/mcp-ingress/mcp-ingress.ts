@@ -7,6 +7,7 @@ import z from 'zod';
 
 import type { ModuleLogger } from '@stagewise/logger';
 
+import type { Config } from '@/config';
 import type { Mcp, McpPushNotification } from '@/mcp';
 import type { ChatSessionInbox } from '@/session/chat/inbox';
 import { SessionInboxUrgency } from '@/session/chat/inbox';
@@ -25,7 +26,7 @@ import type {
   ResolvedModel,
 } from '../extension-api';
 import { createDataPart, dataPartTransformer } from '../extension-api';
-import { boundInboxEvent } from './inbox-helpers';
+import { boundInboxEvent, truncateUtf8 } from './inbox-helpers';
 import {
   diffOpenResources,
   latestOpenResourcesPart,
@@ -90,9 +91,38 @@ function isResourceStatePart(part: unknown): part is ResourceStatePart {
   );
 }
 
+/** Matches a truncated update without relying on its clipped display identity. */
+function matchesTruncatedResource(
+  previous: ResourceStateData,
+  update: ResourceStateData,
+): boolean {
+  if (typeof update.handle === 'string') {
+    // Navigation/reopen increments the generation even for the same URI.
+    // A missing snapshot invalidates every older baseline for this handle.
+    return previous.handle === update.handle;
+  }
+
+  // Older bounded events omitted the window identity. Compare using the
+  // released clipping limits; collisions invalidate all possible matches,
+  // preferring recovery over silently retaining stale resource content.
+  return (
+    truncateUtf8(previous.namespace, 1_000) ===
+      truncateUtf8(update.namespace, 1_000) &&
+    truncateUtf8(previous.uri, 2_000) === truncateUtf8(update.uri, 2_000)
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Extension
 // ---------------------------------------------------------------------------
+
+export interface McpIngressExtensionDeps {
+  config: Pick<Config, 'addMcpServer' | 'getMcpServers'>;
+  mcp: Mcp;
+  logger: ModuleLogger;
+  inbox: ChatSessionInbox;
+  getHistory: () => ExtendedUIMessage[];
+}
 
 class McpIngressExtension implements Extension {
   private readonly resourceWindowManager: ResourceWindowManager;
@@ -117,12 +147,7 @@ class McpIngressExtension implements Extension {
   private readonly maxConcurrentWindows: number;
 
   constructor(
-    private readonly deps: {
-      mcp: Mcp;
-      logger: ModuleLogger;
-      inbox: ChatSessionInbox;
-      getHistory: () => ExtendedUIMessage[];
-    },
+    private readonly deps: McpIngressExtensionDeps,
     config: McpIngressConfig,
   ) {
     this.maxConcurrentWindows = config.maxConcurrentWindows;
@@ -188,6 +213,69 @@ class McpIngressExtension implements Extension {
 
   getTools(_model: ResolvedModel): ToolSet {
     return {
+      addMcpServer: {
+        description:
+          'Add a new remote HTTP/HTTPS MCP server to config.json. Cannot edit or remove existing servers. Returns header names only, never secret header values.',
+        inputSchema: z.object({
+          name: z.string(),
+          url: z.string(),
+          headers: z.record(z.string(), z.string()).optional(),
+        }),
+        execute: async ({ name: rawName, url, headers }) => {
+          const name = rawName.trim();
+          if (!name) return { error: 'MCP server name must not be blank.' };
+          if (Object.hasOwn(Object.prototype, name) || name === 'prototype') {
+            return { error: 'MCP server name is reserved.' };
+          }
+          if (/\p{Cc}/u.test(name)) {
+            return {
+              error: 'MCP server name must not contain control characters.',
+            };
+          }
+          try {
+            const parsed = new URL(url);
+            if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+              return { error: 'MCP server URL must use HTTP or HTTPS.' };
+            }
+          } catch {
+            return {
+              error: 'MCP server URL must be a valid HTTP or HTTPS URL.',
+            };
+          }
+
+          if (Object.hasOwn(this.deps.config.getMcpServers(), name)) {
+            return { error: 'An MCP server with this name already exists.' };
+          }
+          try {
+            // Config serializes mutations and checks duplicates again atomically.
+            // Its subscribers reconcile the runtime connections after persistence.
+            await this.deps.config.addMcpServer(name, {
+              type: 'http',
+              url,
+              ...(headers && Object.keys(headers).length > 0
+                ? { headers }
+                : {}),
+            });
+          } catch {
+            // Config/transport errors may contain credentials. Never echo them.
+            return {
+              error:
+                'Failed to add MCP server. No existing server was changed.',
+            };
+          }
+          return {
+            name,
+            type: 'http',
+            url,
+            headerNames: Object.keys(headers ?? {}).sort(),
+            status:
+              this.deps.mcp
+                .getServerStatuses()
+                .find((server) => server.name === name)?.status ??
+              'disconnected',
+          };
+        },
+      },
       listResources: {
         description: 'List resources and resource templates of MCP server.',
         inputSchema: z.object({
@@ -404,10 +492,9 @@ class McpIngressExtension implements Extension {
   // -- getCheckpointCarry -------------------------------------------------
 
   /**
-   * Carries the latest server list and open-resource list out of the
-   * dropped prefix as initial (full) parts. Resource state parts are not
-   * carried: provisional context re-emits full state for windows whose
-   * state is missing from the window.
+   * Carries full baselines at the cutoff, never snapshots from the live
+   * window manager (which may already include updates in the retained tail).
+   * Only resources in the last dropped open-resource list are carried.
    */
   getCheckpointCarry(
     dropped: readonly ExtendedUIMessage[],
@@ -434,6 +521,70 @@ class McpIngressExtension implements Extension {
       );
     }
 
+    if (lastOpenResources) {
+      const states = new Map<string, ResourceStateData>();
+      for (const message of dropped) {
+        for (const part of message.parts) {
+          let state = this.resourceState(part);
+          if (!state) continue;
+
+          // Watcher events already persist the full snapshot alongside a diff.
+          // It is not rendered during ordinary steps, but makes the cutoff
+          // baseline independent of both earlier patches and live state.
+          if (
+            part.type === 'data-context' &&
+            part.data.sourceEnv === WATCHER_SOURCE_ENV &&
+            Array.isArray(part.data.metadata.currentContent)
+          ) {
+            state = {
+              ...state,
+              diff: {
+                kind: 'full',
+                reason: 'initial',
+                content: part.data.metadata
+                  .currentContent as ContextDataContent[],
+              },
+            };
+          }
+
+          if (state.truncated === true) {
+            // Invalidate by stable identity, with recovery for legacy events.
+            for (const [handle, previous] of states) {
+              if (matchesTruncatedResource(previous, state)) {
+                states.delete(handle);
+              }
+            }
+            continue;
+          }
+          if (state.diff.kind !== 'full' || state.diff.reason === 'deleted') {
+            // Do not carry a stale baseline when the latest state cannot be
+            // materialized. Missing-state recovery can supply a current one.
+            states.delete(state.handle);
+            continue;
+          }
+          states.set(state.handle, state);
+        }
+      }
+
+      for (const resource of lastOpenResources.resources) {
+        const state = states.get(resource.handle);
+        if (
+          !state ||
+          state.namespace !== resource.server ||
+          state.uri !== resource.uri
+        ) {
+          continue;
+        }
+        carry.push(
+          createDataPart('mcp-resource-state', {
+            ...state,
+            isInitial: true,
+            diff: { ...state.diff, reason: 'initial' },
+          }) as unknown as ExtendedUIMessage['parts'][number],
+        );
+      }
+    }
+
     return carry;
   }
 
@@ -457,22 +608,26 @@ class McpIngressExtension implements Extension {
     history: readonly ExtendedUIMessage[],
     _model: ResolvedModel,
   ): ProvisionalStepContext {
-    // A historical state is current only for the same handle generation and URI.
-    const knownKeys = new Set<string>();
+    // Diffs are meaningful only after a full baseline for the same generation.
+    const knownStates = new Map<string, ResourceStateData>();
     for (const msg of history) {
       for (const part of msg.parts) {
-        const unknownPart: unknown = part;
-        if (
-          isResourceStatePart(unknownPart) &&
-          unknownPart.data.truncated !== true
-        ) {
-          knownKeys.add(
-            resourceStateKey(
-              unknownPart.data.handle,
-              unknownPart.data.generation,
-              unknownPart.data.uri,
-            ),
+        const state = this.resourceState(part);
+        if (!state) continue;
+        if (state.truncated === true) {
+          for (const [key, previous] of knownStates) {
+            if (matchesTruncatedResource(previous, state)) {
+              knownStates.delete(key);
+            }
+          }
+        } else if (state.diff.kind === 'full') {
+          const key = resourceStateKey(
+            state.handle,
+            state.generation,
+            state.uri,
           );
+          if (state.diff.reason === 'deleted') knownStates.delete(key);
+          else knownStates.set(key, state);
         }
       }
     }
@@ -487,7 +642,7 @@ class McpIngressExtension implements Extension {
         window.generation,
         window.uri,
       );
-      if (knownKeys.has(key)) continue;
+      if (knownStates.has(key)) continue;
 
       const snapshot = this.resourceWindowManager.getSnapshot(window.handle);
       if (!snapshot) continue;
@@ -939,6 +1094,22 @@ class McpIngressExtension implements Extension {
 
   // -- Internal: rendering helpers ----------------------------------------
 
+  /** Reads both canonical watcher events and rendered resource-state parts. */
+  private resourceState(
+    part: ExtendedUIMessage['parts'][number],
+  ): ResourceStateData | undefined {
+    const unknownPart: unknown = part;
+    if (isResourceStatePart(unknownPart)) return unknownPart.data;
+    if (
+      part.type === 'data-context' &&
+      part.data.sourceEnv === WATCHER_SOURCE_ENV &&
+      typeof part.data.metadata.diffKind === 'string'
+    ) {
+      return this.contextToStateData(part.data);
+    }
+    return undefined;
+  }
+
   /**
    * Converts a `data-context` part from the resource watcher into
    * `ResourceStateData` for a `data-mcp-resource-state` part.
@@ -1077,6 +1248,7 @@ export function createMcpIngressExt(
       }
       return new McpIngressExtension(
         {
+          config: deps.config,
           mcp: deps.mcp,
           logger: deps.logger,
           inbox: deps.inbox,

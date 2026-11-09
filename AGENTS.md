@@ -100,6 +100,8 @@ Before adding or changing such a dependency, read
 
 Every structured store under an agent data directory participates in the forward-only migration registry. Before changing a config schema, persisted JSON, SQLite schema, metadata, or migration code, read `.stagewise/skills/local-data-migrations/SKILL.md`. New stores must be registered before any service can write them. Never add down migrations or transform `identity/private-key.pem`.
 
+Released storage contracts are immutable. Never change a released version's accepted shape, defaults, or migration output in place, including through a shared nested schema or helper. Removing even an optional field or an empty list requires a new schema version and a new forward migration. Verify release history before calling a migration unreleased. A deleted or withdrawn release still counts as released. If release status cannot be established, treat the contract as released. Keep historical fixtures unchanged and prove migration through the registered local-data startup path, not only the current parser. Include the release baseline, version decision, and validation results in the change summary. See the migration skill for the required checks.
+
 ## Technical docs
 
 - `apps/klex/container/README.md`

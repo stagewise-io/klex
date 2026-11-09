@@ -9,43 +9,65 @@ on:
 permissions:
   contents: read
 
-env:
-  PNPM_VERSION: 11.22.0
+# Dependency setup lives in .github/actions/setup-workspace. Only pushes to main
+# write caches; pull requests read main's entries and never write their own.
 
 jobs:
   test:
     name: Unit Tests
     runs-on: ubuntu-latest
+    env:
+      TURBO_CACHE_DIR: .turbo/cache
+      TURBO_RUN_SUMMARY: 'true'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: ./.github/actions/setup-workspace
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        env:
+          # Same fail-fast bound as the pnpm store restore in setup-workspace.
+          SEGMENT_DOWNLOAD_TIMEOUT_MINS: '2'
         with:
-          version: ${{ env.PNPM_VERSION }}
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
+          path: .turbo/cache
+          key: turbo-v1-${{ github.job }}-${{ github.sha }}
+          restore-keys: turbo-v1-${{ github.job }}-
       - run: pnpm test
+      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: node scripts/prune-turbo-cache.mjs
+      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .turbo/cache
+          key: turbo-v1-${{ github.job }}-${{ github.sha }}
 
   build:
     name: Build
     runs-on: ubuntu-latest
+    env:
+      TURBO_CACHE_DIR: .turbo/cache
+      TURBO_RUN_SUMMARY: 'true'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: ./.github/actions/setup-workspace
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        env:
+          # Same fail-fast bound as the pnpm store restore in setup-workspace.
+          SEGMENT_DOWNLOAD_TIMEOUT_MINS: '2'
         with:
-          version: ${{ env.PNPM_VERSION }}
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
+          path: .turbo/cache
+          key: turbo-v1-${{ github.job }}-${{ github.sha }}
+          restore-keys: turbo-v1-${{ github.job }}-
       - run: pnpm format:check
       - run: pnpm build
       - run: pnpm typecheck
       - name: Verify packed MCP extensions
         run: node scripts/verify-mcp-extension-packages.mjs
+      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: node scripts/prune-turbo-cache.mjs
+      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .turbo/cache
+          key: turbo-v1-${{ github.job }}-${{ github.sha }}
 
   klex-machine:
     name: klex-machine (${{ matrix.os }})
@@ -59,14 +81,11 @@ jobs:
           - windows-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      # Installs only the root and @klex/machine's dependency closure.
+      - uses: ./.github/actions/setup-workspace
         with:
-          version: ${{ env.PNPM_VERSION }}
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
+          install-scope: machine
+          install-filter: --filter klex --filter @klex/machine...
       - run: pnpm --filter @klex/machine... build
       - run: pnpm --filter @klex/machine typecheck
       - run: pnpm --filter @klex/machine test
@@ -80,20 +99,35 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
-        with:
-          version: ${{ env.PNPM_VERSION }}
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/setup-workspace
       - name: Test package release scope checker
         run: node --test scripts/check-package-release-scopes.test.mjs
       - name: Verify package release scopes
         run: node scripts/check-package-release-scopes.mjs "$BASE_SHA"
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+
+  local-data-migrations:
+    name: Local Data Migrations
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-workspace
+        with:
+          install-scope: klex
+          install-filter: --filter klex --filter @stagewise/klex...
+      - name: Test migration history checker
+        run: node --test scripts/check-local-data-migrations.test.mjs
+      - name: Verify append-only migration history
+        run: node scripts/check-local-data-migrations.mjs "$BASE_SHA"
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+      - name: Build workspace dependencies
+        run: pnpm --filter '@stagewise/klex^...' build
+      - name: Verify runtime registration and frozen startup upgrades
+        run: pnpm -F @stagewise/klex test src/local-data-registry src/local-data/local-data-upgrades.test.ts src/config/config-upgrades.test.ts
 
   installers:
     name: Installer Scripts
@@ -157,14 +191,10 @@ jobs:
           - macos-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: ./.github/actions/setup-workspace
         with:
-          version: ${{ env.PNPM_VERSION }}
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
+          install-scope: klex
+          install-filter: --filter klex --filter @stagewise/klex...
       # Builds an unsigned SEA executable and smoke-tests it, including the
       # --verify-native native addon load probe. No secrets required, so this
       # also runs for pull requests from forks.
@@ -182,14 +212,10 @@ jobs:
           - ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: ./.github/actions/setup-workspace
         with:
-          version: ${{ env.PNPM_VERSION }}
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
+          install-scope: klex
+          install-filter: --filter klex --filter @stagewise/klex...
       # On ubuntu-24.04-arm this is the only PR gate for arm64 Linux native
       # dependencies; the executable job covers x64 and macOS.
       - run: pnpm -F @stagewise/klex test:exe

@@ -52,7 +52,7 @@ describe('learning submission schema', () => {
 });
 
 describe('validateOperations', () => {
-  it('protects edits, deletions and merge sources only during consolidation', () => {
+  it('accepts edits, deletions and merges of any existing skill', () => {
     const operations = learningSubmissionSchema.parse({
       operations: [
         { ...create, op: 'update' },
@@ -65,20 +65,11 @@ describe('validateOperations', () => {
         },
       ],
     }).operations;
-    const result = validateOperations(
-      operations,
-      [create.name, 'survivor'],
-      [create.name],
-    );
-    expect(result.accepted).toEqual([]);
-    expect(result.rejected).toHaveLength(3);
-    expect(
-      result.rejected.every(({ reason }) => reason.includes('user-edited')),
-    ).toBe(true);
-    expect(
-      validateOperations(operations, [create.name, 'survivor']).rejected,
-    ).toEqual([]);
+    const result = validateOperations(operations, [create.name, 'survivor']);
+    expect(result.rejected).toEqual([]);
+    expect(result.accepted).toHaveLength(3);
   });
+
   it('applies the rejection rules', () => {
     const { accepted, rejected } = validateOperations(
       [

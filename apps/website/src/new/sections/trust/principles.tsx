@@ -1,10 +1,12 @@
 import './principles.css';
 
+import { Klex, type KlexHandle } from '@klex/mascot';
 import { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 
+import { t } from '@/i18n';
+
 import { heroLooks, klexLook } from '../../bot-looks';
-import { Klex, type KlexHandle } from '../../klex';
 import { usePlayback } from '../../playback';
 import { mountOffice } from './office-team';
 
@@ -130,13 +132,13 @@ function HostingScene() {
         </g>
         <g className="trust-hosting-labels">
           <text x="62" y="221">
-            Self hosted
+            {t('Self hosted')}
           </text>
           <text x="181" y="221">
-            On-Premise
+            {t('On-Premise')}
           </text>
           <text x="300" y="221">
-            Managed Cloud
+            {t('Managed Cloud')}
           </text>
         </g>
       </svg>
@@ -250,7 +252,7 @@ function MemoryScene() {
       data-age={age}
     >
       <div className="trust-memory-record">
-        <span className="trust-memory-record-label">Memory</span>
+        <span className="trust-memory-record-label">{t('Memory')}</span>
         {[68, 88, 58, 82, 72, 45].map((width, index) => (
           <span
             key={width}
@@ -331,16 +333,18 @@ function MemoryScene() {
         </Klex>
       </div>
       <div className="trust-memory-timeline">
-        {['First day', 'Update 01', 'Update 02'].map((label, index) => (
-          <span
-            key={label}
-            data-reached={index <= age}
-            data-current={index === age}
-          >
-            <i />
-            {label}
-          </span>
-        ))}
+        {[t('First day'), t('Update 01'), t('Update 02')].map(
+          (label, index) => (
+            <span
+              key={label}
+              data-reached={index <= age}
+              data-current={index === age}
+            >
+              <i />
+              {label}
+            </span>
+          ),
+        )}
       </div>
     </div>
   );

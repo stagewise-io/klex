@@ -19,17 +19,20 @@ import {
 import { IconGithub } from '@stagewise/ui/icons/nucleo/social-media/IconGithub.tsx';
 import { IconXmarkOutline18 } from '@stagewise/ui/icons/nucleo/ui-outline-18/IconXmarkOutline18.tsx';
 
+import { docsUrl, html, t } from '@/i18n';
+
 import { IconMenuOutline18 } from './icon-menu-outline-18';
+import { LanguageSelector } from './sections/footer/language';
 
 /** Prerendered page header; `mountNavigation` fills its `nav`. */
 export const headerMarkup = `
-  <a class="new-skip-link" href="#main">Skip to content</a>
+  <a class="new-skip-link" href="#main">${html('Skip to content')}</a>
   <header class="new-header">
-    <a class="new-brand" href="/" aria-label="Klex home">
+    <a class="new-brand" href="/" aria-label="${html('Klex home')}">
       <img class="new-logo-light" src="/klex-logo-light.svg" alt="Klex" width="88" height="33" />
       <img class="new-logo-dark" src="/klex-logo-dark.svg" alt="Klex" width="88" height="33" />
     </a>
-    <nav id="new-nav" aria-label="Primary navigation"></nav>
+    <nav id="new-nav" aria-label="${html('Primary navigation')}"></nav>
   </header>
 `;
 
@@ -43,7 +46,7 @@ function MobileNavigation() {
         className="rounded-full!"
         variant="ghost"
         size="icon-lg"
-        aria-label="Open navigation"
+        aria-label={t('Open navigation')}
         aria-expanded={openMobile}
         aria-haspopup="dialog"
         onClick={() => setOpenMobile(true)}
@@ -55,7 +58,7 @@ function MobileNavigation() {
           <Button
             variant="ghost"
             size="icon-lg"
-            aria-label="Close navigation"
+            aria-label={t('Close navigation')}
             onClick={() => setOpenMobile(false)}
           >
             <IconXmarkOutline18 />
@@ -67,10 +70,10 @@ function MobileNavigation() {
               <SidebarMenuItem>
                 <SidebarMenuButton
                   size="lg"
-                  render={<a href="https://docs.klex.bot" />}
+                  render={<a href={docsUrl()} />}
                   onClick={() => setOpenMobile(false)}
                 >
-                  Docs
+                  {t('Docs')}
                 </SidebarMenuButton>
               </SidebarMenuItem>
               <SidebarMenuItem>
@@ -82,6 +85,12 @@ function MobileNavigation() {
                   <IconGithub aria-hidden="true" />
                   <span>GitHub</span>
                 </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <div className="flex items-center gap-3 p-4">
+                  <LanguageSelector placement="menu" />
+                  <span>{t('Language')}</span>
+                </div>
               </SidebarMenuItem>
             </SidebarMenu>
           </SidebarGroup>
@@ -100,8 +109,8 @@ function NewNav() {
       <NavigationMenu className="new-desktop-nav flex-none">
         <NavigationMenuList className="gap-2">
           <NavigationMenuItem>
-            <NavigationMenuLink href="https://docs.klex.bot">
-              Docs
+            <NavigationMenuLink href={docsUrl()}>
+              {t('Docs')}
             </NavigationMenuLink>
           </NavigationMenuItem>
           <NavigationMenuItem>
@@ -116,15 +125,20 @@ function NewNav() {
           </NavigationMenuItem>
         </NavigationMenuList>
       </NavigationMenu>
-      <Button
-        className="rounded-full px-4"
-        size="lg"
-        nativeButton={false}
-        role="link"
-        render={<a href="https://cloud.klex.bot" />}
-      >
-        Create a Klex Bot
-      </Button>
+      <div className="new-header-actions">
+        <div className="new-desktop-language">
+          <LanguageSelector placement="header" />
+        </div>
+        <Button
+          className="rounded-full px-4"
+          size="lg"
+          nativeButton={false}
+          role="link"
+          render={<a href="https://cloud.klex.bot" />}
+        >
+          {t('Create a Klex Bot')}
+        </Button>
+      </div>
       <MobileNavigation />
     </SidebarProvider>
   );

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createLogger } from '@stagewise/logger';
 
+import { createActivityFixture } from '@/activity-history/test-support';
 import {
   initializeSqliteStore,
   type SqliteStoreDefinition,
@@ -37,10 +38,7 @@ vi.mock('../../context-compaction/compaction-prompt.md', () => ({
 vi.mock('../../soul/system-prompt-part/no-soul-god.md', () => ({
   default: '',
 }));
-vi.mock('../../soul/system-prompt-part/no-soul-regular.md', () => ({
-  default: '',
-}));
-vi.mock('../../soul/update-soul-tool-description.md', () => ({ default: '' }));
+vi.mock('../../soul/generation-prompt.md', () => ({ default: '' }));
 vi.mock('../../audio-input-optimizer/audio-system-prompt.md', () => ({
   default: '',
 }));
@@ -63,6 +61,7 @@ vi.mock('./retrieval-tools', () => ({
 
 const logging = createLogger({ name: 'retrieval-test', type: 'hidden' });
 const directories: string[] = [];
+const historyFixtures: Awaited<ReturnType<typeof createActivityFixture>>[] = [];
 const config = {
   recallAnswerWindowMs: 100,
 } satisfies Partial<MemoryRetrievalConfig>;
@@ -117,6 +116,8 @@ async function createHarness(options?: {
     children.push(child);
     return child;
   });
+  const fixture = await createActivityFixture();
+  historyFixtures.push(fixture);
   const coordinator = createMemoryRetrievalCoordinator(
     {
       logger: logging,
@@ -134,6 +135,7 @@ async function createHarness(options?: {
       createChildSession: options?.createChildSession ?? createChildSessionMock,
       inbox: { sendMessage: delivered } as never,
     },
+    fixture.activities,
     { ...config, ...options?.config },
   );
   if (options?.start !== false) await coordinator.start();
@@ -158,6 +160,9 @@ beforeEach(() => {
 
 afterEach(async () => {
   vi.useRealTimers();
+  await Promise.all(
+    historyFixtures.splice(0).map((fixture) => fixture.close()),
+  );
   await Promise.all(
     directories
       .splice(0)

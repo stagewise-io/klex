@@ -5,6 +5,7 @@ import type { ModelMessage, ToolSet } from 'ai';
 
 import type { IntrospectionScope } from '@/introspection';
 import type { Usage } from '@/session/types';
+import type { SkillRegistry } from '@/skills';
 
 import { CHECKPOINT_DATA_PART_TRANSFORMERS } from '../checkpoint';
 import type {
@@ -74,6 +75,9 @@ export interface InstinctReactionSettlement {
 export interface ExtensionHandler {
   /** All instantiated extensions. */
   readonly extensions: readonly Extension[];
+
+  /** Let extensions update canonical history and skip the step. */
+  shouldRunStep(history: ExtendedUIMessage[]): boolean;
 
   /**
    * True when at least one extension defines `getInstinctClassificationRequest` or
@@ -247,6 +251,11 @@ export interface ExtensionHandlerDependencies {
   extensionDeps: BaseExtensionDeps;
   /** Root data directory of the agent. */
   dataDirectory: string;
+  /**
+   * Agent-wide skill registry. Required when a factory declares a
+   * `skillNamespace`.
+   */
+  skillRegistry?: SkillRegistry;
   /** ID of the session that owns these extensions. */
   sessionId: string;
   /** Introspection scope for registering extension state. */
@@ -276,6 +285,7 @@ class ExtensionHandlerModule implements ExtensionHandler {
     factories: ExtensionFactory[];
     extensionDeps: BaseExtensionDeps;
     dataDirectory: string;
+    skillRegistry?: SkillRegistry;
     sessionId: string;
     introspectionScope: IntrospectionScope;
     onExtensionUsage?: (identifier: string, usage: Usage) => void;
@@ -291,6 +301,17 @@ class ExtensionHandlerModule implements ExtensionHandler {
         );
       }
       seen.add(factory.identifier);
+      if (factory.skillNamespace !== undefined) {
+        if (!deps.skillRegistry) {
+          throw new Error(
+            `Extension "${factory.identifier}" declares skill namespace "${factory.skillNamespace}" but no skill registry is available.`,
+          );
+        }
+        deps.skillRegistry.claimNamespace(
+          factory.identifier,
+          factory.skillNamespace,
+        );
+      }
     }
 
     const baseGenerateText = deps.extensionDeps.generateText;
@@ -318,6 +339,10 @@ class ExtensionHandlerModule implements ExtensionHandler {
                 'extensions',
                 factory.identifier,
               ),
+        skills:
+          factory.skillNamespace !== undefined && deps.skillRegistry
+            ? deps.skillRegistry.forNamespace(factory.skillNamespace)
+            : null,
         // Wrap generateText to set the extension identifier in the OTel
         // context (used for trace attribution as gen_ai.agent.name =
         // "extension:{identifier}") and to track per-extension token usage
@@ -355,6 +380,16 @@ class ExtensionHandlerModule implements ExtensionHandler {
 
       return ext;
     });
+  }
+
+  shouldRunStep(history: ExtendedUIMessage[]): boolean {
+    let shouldRun = true;
+    for (const ext of this.extensions) {
+      // Do not short-circuit: later hooks may need to clean up history even
+      // when an earlier extension already requested a skip.
+      if (ext.shouldRunStep?.(history) === false) shouldRun = false;
+    }
+    return shouldRun;
   }
 
   hasInstinctParticipants(): boolean {
@@ -794,6 +829,7 @@ export function createExtensionHandler(
     factories: deps.factories,
     extensionDeps: deps.extensionDeps,
     dataDirectory: deps.dataDirectory,
+    skillRegistry: deps.skillRegistry,
     sessionId: deps.sessionId,
     introspectionScope: deps.introspectionScope,
     onExtensionUsage: deps.onExtensionUsage,

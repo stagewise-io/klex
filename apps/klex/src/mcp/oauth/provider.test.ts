@@ -4,22 +4,30 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { McpOAuthProvider } from './provider';
+import { McpOAuthProvider, type McpOAuthProviderOptions } from './provider';
 import { McpOAuthStore } from './store';
 
 const temporaryDirectories: string[] = [];
 
-async function createProvider() {
+async function createProvider(
+  options: {
+    clientName?: McpOAuthProviderOptions['clientName'];
+    signal?: AbortSignal;
+  } = {},
+) {
   const directory = await mkdtemp(join(tmpdir(), 'klex-oauth-provider-'));
   temporaryDirectories.push(directory);
   const onAuthorizationRedirect = vi.fn();
+  const store = new McpOAuthStore(join(directory, 'oauth.json'));
   const provider = new McpOAuthProvider({
+    clientName: options.clientName,
     onAuthorizationRedirect,
     redirectUrl: new URL('http://127.0.0.1:12345/oauth/callback'),
     serverName: 'qonto',
-    store: new McpOAuthStore(join(directory, 'oauth.json')),
+    store,
+    signal: options.signal,
   });
-  return { onAuthorizationRedirect, provider };
+  return { onAuthorizationRedirect, provider, store };
 }
 
 afterEach(async () => {
@@ -31,6 +39,43 @@ afterEach(async () => {
 });
 
 describe('McpOAuthProvider', () => {
+  it('cannot restore or invalidate credentials after its connection closes', async () => {
+    const controller = new AbortController();
+    const { provider, store, onAuthorizationRedirect } = await createProvider({
+      signal: controller.signal,
+    });
+    await provider.saveTokens({ access_token: 'old', token_type: 'Bearer' });
+    controller.abort();
+    await store.removeServer('qonto');
+    await expect(
+      provider.saveTokens({
+        access_token: 'late-refresh',
+        token_type: 'Bearer',
+      }),
+    ).rejects.toThrow();
+    await expect(
+      provider.saveClientInformation({ client_id: 'late-client' }),
+    ).rejects.toThrow();
+    await expect(provider.saveCodeVerifier('late-verifier')).rejects.toThrow();
+    await expect(
+      provider.saveDiscoveryState({
+        authorizationServerUrl: 'https://auth.example.com',
+      }),
+    ).rejects.toThrow();
+    await expect(
+      provider.redirectToAuthorization(new URL('https://auth.example.com')),
+    ).rejects.toThrow();
+    expect(onAuthorizationRedirect).not.toHaveBeenCalled();
+    await store.saveTokens('qonto', {
+      access_token: 'new-connection',
+      token_type: 'Bearer',
+    });
+    await expect(provider.invalidateCredentials('all')).rejects.toThrow();
+    await expect(store.tokens('qonto')).resolves.toMatchObject({
+      access_token: 'new-connection',
+    });
+  });
+
   it('builds dynamic registration metadata', async () => {
     const { provider } = await createProvider();
     expect(provider.clientMetadata).toEqual({
@@ -40,6 +85,34 @@ describe('McpOAuthProvider', () => {
       response_types: ['code'],
       token_endpoint_auth_method: 'none',
     });
+  });
+
+  it.each(['Atlas', '  Atlas  '])(
+    'uses the trimmed client name %j',
+    async (clientName) => {
+      const { provider } = await createProvider({ clientName });
+      expect(provider.clientMetadata.client_name).toBe('Atlas');
+    },
+  );
+
+  it.each(['', '   ', () => undefined, () => '   '])(
+    'falls back for an empty client name %j',
+    async (clientName) => {
+      const { provider } = await createProvider({ clientName });
+      expect(provider.clientMetadata.client_name).toBe('Klex Bot');
+    },
+  );
+
+  it('resolves the current client name each time metadata is read', async () => {
+    let clientName: string | undefined = '  Atlas  ';
+    const { provider } = await createProvider({ clientName: () => clientName });
+    expect(provider.clientMetadata.client_name).toBe('Atlas');
+
+    clientName = 'Nova';
+    expect(provider.clientMetadata.client_name).toBe('Nova');
+
+    clientName = undefined;
+    expect(provider.clientMetadata.client_name).toBe('Klex Bot');
   });
 
   it('persists SDK credentials and verifier', async () => {
@@ -61,6 +134,14 @@ describe('McpOAuthProvider', () => {
       access_token: 'access',
     });
     await expect(provider.codeVerifier()).resolves.toBe('verifier');
+
+    await provider.saveDiscoveryState({
+      authorizationServerUrl: 'https://auth.example.com',
+    });
+    await provider.invalidateCredentials('client');
+    await expect(
+      provider.clientInformation({ issuer: 'https://auth.example.com' }),
+    ).resolves.toBeUndefined();
   });
 
   it('generates unpredictable state and delegates authorization redirects', async () => {

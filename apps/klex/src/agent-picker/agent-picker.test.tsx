@@ -14,7 +14,7 @@ const agent: DiscoveredAgent = {
   officialName: 'Available bot',
   inUse: false,
 };
-const longError = `Could not open agent\n  Invalid configuration\r\n\t${'detail '.repeat(50)}HIDDEN_END`;
+const longError = `Could not open bot\n  Invalid configuration\r\n\t${'detail '.repeat(50)}HIDDEN_END`;
 
 function fixture(
   overrides: Partial<ComponentProps<typeof PickerSurface>> = {},
@@ -42,8 +42,8 @@ async function press(view: ReturnType<typeof render>, input: string) {
 
 function expectSingleLineError(frame: string | undefined, width: number) {
   const lines = frame?.split('\n') ?? [];
-  const errorLine = lines.find((line) => line.includes('Could not open agent'));
-  expect(errorLine).toContain('Could not open agent Invalid configuration');
+  const errorLine = lines.find((line) => line.includes('Could not open bot'));
+  expect(errorLine).toContain('Could not open bot Invalid configuration');
   expect(errorLine?.length).toBeLessThanOrEqual(width);
   expect(lines.filter((line) => line.includes('detail'))).toHaveLength(1);
   expect(frame).not.toContain('HIDDEN_END');
@@ -76,7 +76,7 @@ describe('startup agent picker', () => {
     expect(agentDirectory.create).not.toHaveBeenCalled();
     expect(props.onComplete).not.toHaveBeenCalled();
     await press(view, 'A');
-    await vi.waitFor(() => expect(view.lastFrame()).toContain('Agent name:'));
+    await vi.waitFor(() => expect(view.lastFrame()).toContain('Bot name:'));
     expect(view.lastFrame()).toContain('Create a new Klex Bot');
     expect(view.lastFrame()).toContain('[Enter] Create');
     expect(view.lastFrame()).toContain('[Esc] Back');
@@ -95,7 +95,7 @@ describe('startup agent picker', () => {
     await press(view, '\r');
     expect(isDirectoryInUse).not.toHaveBeenCalled();
     await press(view, 'a');
-    await vi.waitFor(() => expect(view.lastFrame()).toContain('Agent name:'));
+    await vi.waitFor(() => expect(view.lastFrame()).toContain('Bot name:'));
     await press(view, '\u001B');
     await vi.waitFor(() => expect(view.lastFrame()).toContain('[q] Quit'));
     await press(view, 'Q');
@@ -203,7 +203,7 @@ describe('startup agent picker', () => {
         .findIndex((line) => line.includes('╭'));
       await press(view, '\r');
       await vi.waitFor(() =>
-        expect(view.lastFrame()).toContain('Could not open agent'),
+        expect(view.lastFrame()).toContain('Could not open bot'),
       );
       expectSingleLineError(view.lastFrame(), view.stdout.columns);
       expect(
@@ -219,17 +219,124 @@ describe('startup agent picker', () => {
     const { view, agentDirectory } = fixture({ agents: [] });
     vi.mocked(agentDirectory.create).mockRejectedValue(new Error(longError));
     await press(view, 'a');
-    await vi.waitFor(() => expect(view.lastFrame()).toContain('Agent name:'));
+    await vi.waitFor(() => expect(view.lastFrame()).toContain('Bot name:'));
     await press(view, '\r');
     await vi.waitFor(() =>
-      expect(view.lastFrame()).toContain('Could not open agent'),
+      expect(view.lastFrame()).toContain('Could not open bot'),
     );
     expectSingleLineError(view.lastFrame(), view.stdout.columns);
     await press(view, '\u001B');
     await vi.waitFor(() => {
       expect(view.lastFrame()).toContain('[q] Quit');
-      expect(view.lastFrame()).not.toContain('Could not open agent');
+      expect(view.lastFrame()).not.toContain('Could not open bot');
     });
+  });
+
+  it('skips the name prompt for cloud creation and keeps the agent selectable after cancellation', async () => {
+    let locked = false;
+    let finishCancellation: (() => void) | undefined;
+    vi.mocked(isDirectoryInUse).mockImplementation(async () => locked);
+    const onEnrollmentCancelled = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishCancellation = () => {
+            locked = false;
+            resolve();
+          };
+        }),
+    );
+    const { view, props, agentDirectory } = fixture({
+      agents: [],
+      cloudEnabled: true,
+      prepareAgent: vi.fn(async () => {
+        locked = true;
+        return true;
+      }),
+      enrollCloud: vi.fn().mockResolvedValue(undefined),
+      onEnrollmentCancelled,
+    });
+    await press(view, 'a');
+    await vi.waitFor(() => expect(view.lastFrame()).toContain('Token:'));
+    expect(agentDirectory.create).toHaveBeenCalledExactlyOnceWith(undefined);
+    expect(view.lastFrame()).not.toContain('Bot name:');
+    await press(view, '\u001B');
+    await vi.waitFor(() =>
+      expect(onEnrollmentCancelled).toHaveBeenCalledWith(agent.directory),
+    );
+    expect(view.lastFrame()).not.toContain('Select a Klex Bot');
+    await press(view, '\r');
+    expect(props.onComplete).not.toHaveBeenCalled();
+    finishCancellation?.();
+    await vi.waitFor(() => expect(view.lastFrame()).toContain('Available bot'));
+    await press(view, '\r');
+    await vi.waitFor(() => expect(view.lastFrame()).toContain('Token:'));
+    await press(view, 'token');
+    await press(view, '\r');
+    await vi.waitFor(() =>
+      expect(props.onComplete).toHaveBeenCalledWith(agent.directory),
+    );
+    expect(agentDirectory.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns to the picker with an error when cancellation cleanup fails', async () => {
+    const onEnrollmentCancelled = vi
+      .fn()
+      .mockRejectedValue(new Error('Cleanup failed'));
+    const prepareAgent = vi.fn().mockResolvedValue(true);
+    const { view } = fixture({
+      prepareAgent,
+      enrollCloud: vi.fn(),
+      onEnrollmentCancelled,
+    });
+    await press(view, '\r');
+    await vi.waitFor(() => expect(view.lastFrame()).toContain('Token:'));
+    await press(view, '\u001B');
+    await vi.waitFor(() => {
+      expect(view.lastFrame()).toContain('Select a Klex Bot');
+      expect(view.lastFrame()).toContain('Cleanup failed');
+      expect(view.lastFrame()).not.toContain('Token:');
+    });
+    await press(view, '\r');
+    await vi.waitFor(() => expect(view.lastFrame()).toContain('Token:'));
+    expect(prepareAgent).toHaveBeenCalledTimes(2);
+  });
+
+  it('opens a new cloud agent directly when preparation enrolls it with a supplied token', async () => {
+    const { view, props } = fixture({
+      agents: [],
+      cloudEnabled: true,
+      prepareAgent: vi.fn().mockResolvedValue(false),
+    });
+    await press(view, 'a');
+    await vi.waitFor(() =>
+      expect(props.onComplete).toHaveBeenCalledWith(agent.directory),
+    );
+    expect(view.frames.some((frame) => frame.includes('Bot name:'))).toBe(
+      false,
+    );
+  });
+
+  it('blocks duplicate creation and cancellation while opening', async () => {
+    let finish: ((value: DiscoveredAgent) => void) | undefined;
+    const { view, props, agentDirectory } = fixture({
+      agents: [],
+      cloudEnabled: true,
+    });
+    vi.mocked(agentDirectory.create).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    await press(view, 'a');
+    await press(view, 'a');
+    await press(view, '\u001B');
+    expect(agentDirectory.create).toHaveBeenCalledTimes(1);
+    expect(props.onComplete).not.toHaveBeenCalled();
+    finish?.(agent);
+    await vi.waitFor(() =>
+      expect(props.onComplete).toHaveBeenCalledWith(agent.directory),
+    );
   });
 
   it('keeps cloud enrollment errors single-line', async () => {
@@ -245,7 +352,7 @@ describe('startup agent picker', () => {
     await press(view, 'test-token');
     await press(view, '\r');
     await vi.waitFor(() =>
-      expect(view.lastFrame()).toContain('Could not open agent'),
+      expect(view.lastFrame()).toContain('Could not open bot'),
     );
     expectSingleLineError(view.lastFrame(), view.stdout.columns);
     expect(props.onComplete).not.toHaveBeenCalled();

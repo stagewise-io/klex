@@ -1,14 +1,22 @@
 import './base.css';
 import './navigation.css';
 
+import { currentLocale, mountLanguage } from '@/i18n';
+
+import { mountCloudStatus } from './cloud-status';
 import { mountLogoMenus } from './logo-menu';
 import { mountNearViewport } from './mount-near-viewport';
 import { mountNavigation } from './navigation';
+import { mountLanguageSelector } from './sections/footer/language';
 import { mountHero } from './sections/hero';
+import { createTelemetry } from './telemetry';
+
+const telemetry = createTelemetry();
+void telemetry.initialize();
 
 const app = document.getElementById('app');
 if (!app) throw new Error('The website root is missing.');
-if (!app.hasChildNodes())
+if (!app.hasChildNodes() || currentLocale() !== 'en')
   app.innerHTML = (await import('./page-markup')).pageMarkup;
 
 // Prerendered sections need their styles before the islands load.
@@ -23,6 +31,9 @@ theme.addEventListener(
 );
 
 const disposers = [
+  mountLanguage(),
+  mountLanguageSelector(),
+  mountCloudStatus(),
   mountLogoMenus(app),
   mountNavigation(),
   mountHero(),

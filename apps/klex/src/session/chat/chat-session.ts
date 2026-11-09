@@ -9,7 +9,7 @@ import {
   type SpanContext,
   trace,
 } from '@opentelemetry/api';
-import { generateText, type ToolSet } from 'ai';
+import { generateText, isStepCount, Output, type ToolSet } from 'ai';
 
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
@@ -51,6 +51,8 @@ import type {
   UsagePair,
 } from '@/session/types';
 import type { SessionHistory, SessionHistoryRecorder } from '@/session-history';
+import { summarizeGenerationFailure } from '@/session-history/generation-health';
+import type { SkillRegistry } from '@/skills';
 import type { TelemetryMetrics } from '@/telemetry-metrics';
 
 import { type CheckpointManager, createCheckpointManager } from './checkpoint';
@@ -112,6 +114,8 @@ export interface ChatSessionDependencies {
   extensionFactories: ExtensionFactory[];
   /** Root data directory of the agent. Used for extension data dirs. */
   dataDirectory: string;
+  /** Agent-wide skill registry; required by extensions declaring a skill namespace. */
+  skillRegistry?: SkillRegistry;
   /** Parent introspection scope (the "sessions" group). The session creates its own child. */
   introspectionScope: IntrospectionScope;
   hooks?: SessionHooks;
@@ -321,6 +325,7 @@ class ChatSessionModule implements AgentSession {
       modelResolver: ProviderModelResolver;
       config: Config;
       dataDirectory: string;
+      skillRegistry?: SkillRegistry;
       mcp: Mcp | null;
       extensionFactories: ExtensionFactory[];
       introspectionScope: IntrospectionScope;
@@ -542,6 +547,7 @@ class ChatSessionModule implements AgentSession {
         factories: deps.extensionFactories,
         extensionDeps,
         dataDirectory: this.deps.dataDirectory,
+        skillRegistry: this.deps.skillRegistry,
         sessionId: this.sessionId,
         introspectionScope: extensionsScope,
         onExtensionUsage: (identifier, usage) =>
@@ -781,6 +787,7 @@ class ChatSessionModule implements AgentSession {
           for (const entry of modelIds) {
             if (args.abortSignal?.aborted) return aborted();
             const modelId = entry.modelId;
+            let toolExecutionStarted = false;
             try {
               const model =
                 await this.deps.modelResolver.getLanguageModel(entry);
@@ -795,6 +802,17 @@ class ChatSessionModule implements AgentSession {
                   ? { messages: args.messages }
                   : { prompt: args.prompt ?? '' }),
                 tools: args.tools,
+                // Structured callers may execute tools once, then produce their
+                // final object in a tool-free step. Other callers stay single-step.
+                stopWhen: isStepCount(args.outputSchema && args.tools ? 2 : 1),
+                prepareStep: ({ stepNumber }) =>
+                  stepNumber > 0 ? { toolChoice: 'none' } : {},
+                onToolExecutionStart: () => {
+                  toolExecutionStarted = true;
+                },
+                ...(args.outputSchema
+                  ? { output: Output.object({ schema: args.outputSchema }) }
+                  : {}),
                 temperature: args.temperature,
                 maxOutputTokens: args.maxOutputTokens,
                 maxRetries: args.maxRetries ?? 0,
@@ -846,6 +864,7 @@ class ChatSessionModule implements AgentSession {
                   'gen.modelId': modelId,
                   'gen.finishReason': result.finishReason,
                 });
+                if (toolExecutionStarted) break;
                 continue;
               }
 
@@ -854,20 +873,24 @@ class ChatSessionModule implements AgentSession {
                   'Extension generation ended with a model error',
                 );
 
+              // Accessing output validates the schema and can throw. Fallback
+              // is safe only before tool execution; effects cannot be rolled back.
+              const output = args.outputSchema ? result.output : undefined;
+
               span.setAttribute('gen.outcome', 'success');
               span.setAttribute('gen.modelId', modelId);
               span.setAttribute('gen.finishReason', result.finishReason);
               span.setAttribute(
                 'gen.usage.inputTokens',
-                result.usage.inputTokens ?? 0,
+                result.totalUsage.inputTokens ?? 0,
               );
               span.setAttribute(
                 'gen.usage.outputTokens',
-                result.usage.outputTokens ?? 0,
+                result.totalUsage.outputTokens ?? 0,
               );
               span.setAttribute(
                 'gen.usage.totalTokens',
-                result.usage.totalTokens ?? 0,
+                result.totalUsage.totalTokens ?? 0,
               );
               span.setAttribute('gen.outputLength', result.text.length);
               span.addEvent('gen.success', {
@@ -878,8 +901,9 @@ class ChatSessionModule implements AgentSession {
               return {
                 success: true as const,
                 text: result.text,
+                ...(args.outputSchema ? { output } : {}),
                 modelId,
-                usage: result.usage,
+                usage: result.totalUsage,
                 finishReason: result.finishReason,
               };
             } catch (error) {
@@ -895,6 +919,9 @@ class ChatSessionModule implements AgentSession {
                 'gen.modelId': modelId,
                 'gen.error': msg,
               });
+              // A tool may have committed effects even when it threw or the
+              // subsequent model/output validation failed. Never replay it.
+              if (toolExecutionStarted) break;
             }
           }
 
@@ -1005,8 +1032,9 @@ class ChatSessionModule implements AgentSession {
     this.transcriptRecorder?.scheduleSync(() => this.messages);
   }
 
-  /** Step boundary inside a turn: apply a pending checkpoint. */
+  /** Apply a pending checkpoint at the step boundary inside a turn. */
   private readonly atStepBoundary = async (): Promise<void> => {
+    if (this._status === 'terminated' || this.laneSuspended) return;
     if (!this.checkpointManager.hasPending) return;
     await this.checkpointManager.applyPending();
     // Input that arrived while applying belongs after the committed step.
@@ -1119,6 +1147,14 @@ class ChatSessionModule implements AgentSession {
   private async prepareLeaseContext(
     request: InteractionLeaseRequest,
   ): Promise<PreparedInferenceContextHandle> {
+    // Realtime bootstrap bypasses Step, so apply the same extension decision
+    // before exposing history, instructions, or tools to the provider.
+    if (!this.extensionHandler.shouldRunStep(this.messages)) {
+      this.scheduleTranscriptSync();
+      throw new Error(
+        'Session extensions blocked interaction context preparation',
+      );
+    }
     const model = {
       modelId: request.model.modelId,
       ...(request.model.displayName !== undefined && {
@@ -1344,6 +1380,8 @@ class ChatSessionModule implements AgentSession {
           return;
         }
 
+        this.setRuntimeState('working');
+
         // Reset the input flags before each turn so we only detect
         // input that arrives during this specific turn.
         this.newInputDuringTurn = false;
@@ -1376,7 +1414,8 @@ class ChatSessionModule implements AgentSession {
           forceCheck: needsCheckRetry,
           flushPendingImmediate: this.flushPendingImmediate,
           atStepBoundary: this.atStepBoundary,
-          shouldYieldGenerationLane: () => this.laneSuspended,
+          shouldYieldGenerationLane: () =>
+            this.laneSuspended || this._status === 'terminated',
           basePrompt: this.deps.basePrompt,
           instinctRunner: this.instinctRunner,
         });
@@ -1393,6 +1432,7 @@ class ChatSessionModule implements AgentSession {
         }
         // Turn end is a boundary too (commits during the last step).
         await this.atStepBoundary();
+        if (this.runtimeState === 'terminated') return;
 
         // Update observability counters.
         this.turnCount++;
@@ -1414,6 +1454,30 @@ class ChatSessionModule implements AgentSession {
           };
         } else {
           this.latestChatUsage = null;
+        }
+
+        // Persist only the final turn outcome, never a recovered model attempt.
+        if (turnResult.fatalError || turnResult.completeFailure) {
+          const countsTowardBackoff =
+            !turnResult.fatalError &&
+            !turnResult.requestRejected &&
+            turnResult.stopReason !== 'step_cap_reached';
+          const failures =
+            turnResult.fatalError || countsTowardBackoff
+              ? this.backoffManager.getConsecutiveFailures() + 1
+              : 1;
+          await this.transcriptRecorder?.recordGenerationFailure(
+            turnResult.generationFailure ?? summarizeGenerationFailure(null),
+            turnResult.fatalError ||
+              (countsTowardBackoff && failures >= MAX_CONSECUTIVE_FAILURES)
+              ? 'terminated'
+              : turnResult.requestRejected
+                ? 'request_rejected'
+                : 'turn_failed',
+            failures,
+          );
+        } else if (turnResult.stopReason === 'completed') {
+          await this.transcriptRecorder?.clearGenerationFailure();
         }
 
         // Fatal error — terminate the session.
@@ -1601,6 +1665,11 @@ class ChatSessionModule implements AgentSession {
       });
       this.sessionSpan.setAttribute('klex.session.terminated', true);
       try {
+        await this.transcriptRecorder?.recordGenerationFailure(
+          summarizeGenerationFailure(error),
+          'terminated',
+          this.backoffManager.getConsecutiveFailures() + 1,
+        );
         await this.terminate('unhandled_loop_error');
       } catch (terminateError) {
         this.deps.logger.error(
@@ -1826,8 +1895,7 @@ class ChatSessionModule implements AgentSession {
               'Session transcript end failed',
             );
           });
-        // Cleanup must finish even when an extension (for example, the
-        // episodic writer) rejects during shutdown. Otherwise the terminated
+        // Cleanup must finish even when an extension rejects during shutdown. Otherwise the terminated
         // session remains registered and blocks its replacement.
         try {
           this.sessionSpan.addEvent('session.closed', {
@@ -2066,6 +2134,7 @@ export function createChatSession(
     modelResolver: deps.modelResolver,
     config: deps.config,
     dataDirectory: deps.dataDirectory,
+    skillRegistry: deps.skillRegistry,
     mcp: deps.mcp,
     extensionFactories: deps.extensionFactories,
     introspectionScope: deps.introspectionScope,

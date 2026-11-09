@@ -8,6 +8,7 @@ import type { ModuleLogger } from '@stagewise/logger';
 import type { Config } from '@/config';
 import type { ProviderModelResolver } from '@/provider-registry';
 import type { Usage } from '@/session/types';
+import type { GenerationFailure } from '@/session-history';
 import type { TelemetryMetrics } from '@/telemetry-metrics';
 
 import type { ExtensionHandler } from '../extension-handler';
@@ -84,6 +85,8 @@ export interface TurnDependencies {
 }
 
 export interface TurnResult {
+  /** Safe summary of the last step's failed attempt, if any. */
+  generationFailure?: GenerationFailure | null;
   /**
    * True if the turn ended because every step failed with a fatal
    * (non-recoverable) error. The session should be terminated.
@@ -155,6 +158,7 @@ class TurnModule implements Turn {
     this.deps.logger.info({ turnId: this.id }, 'Turn started');
 
     let fatalError = false;
+    let generationFailure: GenerationFailure | null = null;
     let fatalErrorReason: string | null = null;
     let hadAnySuccess = false;
     let hadAnyFailure = false;
@@ -298,6 +302,7 @@ class TurnModule implements Turn {
 
           try {
             stepResult = await step.run();
+            generationFailure = stepResult.generationFailure ?? null;
           } finally {
             this.currentStep = null;
           }
@@ -334,7 +339,7 @@ class TurnModule implements Turn {
 
           // Track whether any step succeeded or failed.
           if (
-            stepResult.shouldContinue &&
+            (stepResult.shouldContinue || stepResult.generation !== null) &&
             !stepResult.instinctAborted &&
             !stepResult.forceNextStep &&
             !stepResult.modelFallbackOccurred &&
@@ -422,6 +427,7 @@ class TurnModule implements Turn {
     }
 
     return {
+      generationFailure,
       fatalError,
       fatalErrorReason,
       completeFailure: hadAnyFailure && (!hadAnySuccess || lastStepFailed),

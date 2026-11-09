@@ -27,6 +27,58 @@ afterEach(async () => {
 });
 
 describe('McpOAuthStore', () => {
+  it('removes legacy and URL-scoped credentials without touching other namespaces', async () => {
+    const { filePath, store } = await createStore();
+    for (const name of [
+      'clay',
+      'clay\u0000https://old.example/mcp',
+      'clay\u0000https://new.example/mcp',
+      'clay-other\u0000https://new.example/mcp',
+    ]) {
+      await store.saveTokens(name, {
+        access_token: name,
+        token_type: 'Bearer',
+      });
+      await store.saveCodeVerifier(name, 'verifier');
+    }
+    const document = JSON.parse(await readFile(filePath, 'utf8'));
+    document.futureField = { retained: true };
+    await writeFile(filePath, JSON.stringify(document));
+    const removed = await store.removeServer('clay');
+    expect(removed).toHaveLength(3);
+    const saved = JSON.parse(await readFile(filePath, 'utf8'));
+    expect(Object.keys(saved.servers)).toEqual([
+      'clay-other\u0000https://new.example/mcp',
+    ]);
+    expect(saved.futureField).toEqual({ retained: true });
+    expect(saved._klex).toEqual(document._klex);
+    expect((await stat(filePath)).mode & 0o777).toBe(0o600);
+    await expect(
+      new McpOAuthStore(filePath).tokens('clay'),
+    ).resolves.toBeUndefined();
+    await expect(store.removeServer('clay')).resolves.toEqual([]);
+  });
+
+  it('rejects queued writes from an aborted connection before deleting credentials', async () => {
+    const { store } = await createStore();
+    await store.saveTokens('clay', {
+      access_token: 'old',
+      token_type: 'Bearer',
+    });
+    const controller = new AbortController();
+    const saving = store.saveTokens(
+      'clay',
+      { access_token: 'late', token_type: 'Bearer' },
+      undefined,
+      controller.signal,
+    );
+    controller.abort();
+    const rejected = expect(saving).rejects.toThrow();
+    await store.removeServer('clay');
+    await rejected;
+    await expect(store.tokens('clay')).resolves.toBeUndefined();
+  });
+
   it('persists tokens per issuer and returns the most recently saved tokens without context', async () => {
     const { store } = await createStore();
     await store.saveTokens('qonto', {
@@ -94,6 +146,27 @@ describe('McpOAuthStore', () => {
     await expect(
       store.clientInformation('qonto', 'http://127.0.0.1:54321/oauth/callback'),
     ).resolves.toBeUndefined();
+  });
+
+  it('preserves supplied-client and unknown metadata through ordinary token writes', async () => {
+    const { filePath, store } = await createStore();
+    const client = {
+      client_id: 'customer-app',
+      klex_registered: true,
+      future_metadata: 'preserved',
+    };
+    const redirect = 'https://cloud.test/callback';
+    const issuer = 'https://login.salesforce.com';
+    await store.saveClientInformation('salesforce', redirect, client, issuer);
+    const restored = new McpOAuthStore(filePath);
+    await restored.saveTokens(
+      'salesforce',
+      { access_token: 'token', token_type: 'Bearer' },
+      issuer,
+    );
+    expect(
+      await restored.clientInformation('salesforce', redirect, issuer),
+    ).toEqual(client);
   });
 
   it('does not reuse legacy client information without redirect metadata', async () => {

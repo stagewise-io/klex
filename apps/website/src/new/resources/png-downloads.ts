@@ -1,3 +1,5 @@
+import { t } from '@/i18n';
+
 export const pngWidths = [256, 512, 1024, 2048] as const;
 
 export async function createLogoPng(source: string, width: number) {
@@ -52,7 +54,7 @@ export function mountPngDownloads(root: HTMLElement) {
         if (button.disabled) return;
         button.disabled = true;
         button.setAttribute('aria-busy', 'true');
-        status.textContent = 'Generating PNG…';
+        status.textContent = t('Generating PNG…');
         try {
           const { blob, filename } = await createLogoPng(
             button.dataset.pngSource ?? '',
@@ -66,15 +68,16 @@ export function mountPngDownloads(root: HTMLElement) {
           root.append(link);
           try {
             link.click();
-            status.textContent = 'PNG download started.';
+            status.textContent = t('PNG download started.');
           } finally {
             link.remove();
             setTimeout(() => URL.revokeObjectURL(url), 1000);
           }
         } catch {
           if (!events.signal.aborted)
-            status.textContent =
-              'PNG export failed. Try again or download the SVG.';
+            status.textContent = t(
+              'PNG export failed. Try again or download the SVG.',
+            );
         } finally {
           if (!events.signal.aborted) {
             button.disabled = false;

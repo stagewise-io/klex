@@ -1,7 +1,9 @@
 node_modules/
 .pnpm-store/
 dist/
+.vercel/
 coverage/
+apps/website/test-results/
 .turbo/
 *.tsbuildinfo
 .env

@@ -12,16 +12,42 @@ import type { McpPendingAuthorizationRegistry } from './pending-authorizations';
 export const CLOUD_OAUTH_CALLBACK_PATH = '/v1/mcp-oauth/callback';
 
 /**
+ * Klex Cloud's Client ID Metadata Document. Providers that support CIMD (such
+ * as Vercel's MCP, which limits dynamic registration to reviewed clients)
+ * accept this URL as the client ID. It must stay in sync with the cloud route.
+ */
+export const CLOUD_OAUTH_CLIENT_METADATA_PATH = '/v1/mcp-oauth/client.json';
+
+/**
+ * Returns the calling agent's own metadata document URL, which carries the
+ * agent's name and logo. Older Cloud versions answer 404.
+ */
+export const CLOUD_AGENT_OAUTH_CLIENT_PATH = '/v1/agent/mcp-oauth/client';
+
+/** Resolves the agent's metadata document URL, or undefined to use Klex's. */
+export type AgentClientMetadataUrlResolver = (
+  cloudBaseUrl: string,
+) => Promise<URL | undefined>;
+
+/**
  * Cloud authorizations are user-driven and asynchronous — the user may add a
  * server and consent minutes later — so the window is far wider than the local
  * browser flow's five minutes.
  */
 export const CLOUD_AUTHORIZATION_TIMEOUT_MS = 15 * 60_000;
 
+/**
+ * Budget for the whole agent metadata lookup, token included. It runs before
+ * the SDK registers the pending authorization, which callers only wait 15s
+ * for, so a slow Cloud must fall back quickly rather than eat that window.
+ */
+export const AGENT_CLIENT_METADATA_LOOKUP_TIMEOUT_MS = 3_000;
+
 export interface CloudOAuthAuthorizationSessionFactoryOptions {
   registry: McpPendingAuthorizationRegistry;
   /** Cloud API base URL, as configured for cloud connectivity. */
   getCloudBaseUrl: () => string;
+  resolveAgentClientMetadataUrl?: AgentClientMetadataUrlResolver;
   timeoutMs?: number;
 }
 
@@ -38,9 +64,17 @@ export function createCloudOAuthAuthorizationSessionFactory(
   const timeoutMs = options.timeoutMs ?? CLOUD_AUTHORIZATION_TIMEOUT_MS;
   return {
     start: async (context): Promise<OAuthAuthorizationSession> => {
-      const redirectUrl = cloudCallbackUrl(options.getCloudBaseUrl());
+      const cloudBaseUrl = options.getCloudBaseUrl();
+      const redirectUrl = cloudCallbackUrl(cloudBaseUrl);
+      // CIMD requires HTTPS; a local HTTP Cloud keeps dynamic registration.
+      const clientMetadataUrl =
+        redirectUrl.protocol === 'https:'
+          ? ((await options.resolveAgentClientMetadataUrl?.(cloudBaseUrl)) ??
+            cloudUrl(cloudBaseUrl, CLOUD_OAUTH_CLIENT_METADATA_PATH))
+          : undefined;
       return {
         redirectUrl,
+        ...(clientMetadataUrl && { clientMetadataUrl }),
         authorize: ({ authorizationUrl, signal, state }) =>
           options.registry.register(
             {
@@ -62,8 +96,81 @@ export function createCloudOAuthAuthorizationSessionFactory(
   };
 }
 
+/**
+ * Asks Cloud for the agent's metadata document URL. A found URL is cached for
+ * the process, since an agent keeps its Cloud identity. A 404 (older Cloud or
+ * unknown agent) and any failure fall back to Klex's shared document, so a
+ * Cloud hiccup never blocks a connection. Misses are retried next time.
+ */
+export function createAgentClientMetadataUrlResolver(options: {
+  getAccessToken: (resource: string, scopes: string[]) => Promise<string>;
+  onError?: (error: unknown) => void;
+  fetch?: typeof fetch;
+  timeoutMs?: number;
+}): AgentClientMetadataUrlResolver {
+  const fetchImpl = options.fetch ?? fetch;
+  const timeoutMs =
+    options.timeoutMs ?? AGENT_CLIENT_METADATA_LOOKUP_TIMEOUT_MS;
+  const cache = new Map<string, URL>();
+  return async (cloudBaseUrl) => {
+    const cached = cache.get(cloudBaseUrl);
+    if (cached) return cached;
+    const signal = AbortSignal.timeout(timeoutMs);
+    try {
+      const token = await abortable(
+        options.getAccessToken(cloudUrl(cloudBaseUrl, '/v1').toString(), [
+          'agent:access',
+        ]),
+        signal,
+      );
+      const response = await fetchImpl(
+        cloudUrl(cloudBaseUrl, CLOUD_AGENT_OAUTH_CLIENT_PATH),
+        {
+          headers: {
+            accept: 'application/json',
+            authorization: `Bearer ${token}`,
+          },
+          redirect: 'error',
+          signal,
+        },
+      );
+      if (response.status === 404) return undefined;
+      if (!response.ok) throw new Error(`Cloud answered ${response.status}`);
+      const body: unknown = await response.json();
+      const value =
+        typeof body === 'object' && body !== null && 'clientMetadataUrl' in body
+          ? body.clientMetadataUrl
+          : undefined;
+      if (typeof value !== 'string')
+        throw new Error('Cloud response has no clientMetadataUrl');
+      const url = new URL(value);
+      if (url.protocol !== 'https:')
+        throw new Error('Agent client metadata URL is not HTTPS');
+      cache.set(cloudBaseUrl, url);
+      return url;
+    } catch (error) {
+      options.onError?.(error);
+      return undefined;
+    }
+  };
+}
+
+/** Rejects with the signal's reason once it aborts; `promise` keeps running. */
+function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(resolve, reject).finally(() => {
+      signal.removeEventListener('abort', onAbort);
+    });
+  });
+}
+
 export function cloudCallbackUrl(cloudBaseUrl: string): URL {
-  return new URL(
-    `${cloudBaseUrl.replace(/\/$/, '')}${CLOUD_OAUTH_CALLBACK_PATH}`,
-  );
+  return cloudUrl(cloudBaseUrl, CLOUD_OAUTH_CALLBACK_PATH);
+}
+
+function cloudUrl(cloudBaseUrl: string, path: string): URL {
+  return new URL(`${cloudBaseUrl.replace(/\/$/, '')}${path}`);
 }

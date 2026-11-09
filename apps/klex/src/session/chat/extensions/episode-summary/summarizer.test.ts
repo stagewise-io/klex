@@ -2,10 +2,12 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { ModuleLogger } from '@stagewise/logger';
 
-import type {
-  CompletedEpisode,
-  EpisodeFeed,
-} from '@/session/chat/extensions/memory';
+import {
+  type ActivityBatch,
+  type ActivityHistory,
+  activityOrdinal,
+} from '@/activity-history';
+import { TEST_ACTIVITY_LIMITS } from '@/activity-history/test-support';
 
 import type { GenerateTextArgs, GenerateTextResult } from '../extension-api';
 import {
@@ -13,8 +15,8 @@ import {
   createSummarizer,
   MAX_INPUT_CHARACTERS,
   MAX_OUTPUT_TOKENS,
-  parseTitle,
   type Summarizer,
+  summaryOutputSchema,
 } from './summarizer';
 import type {
   StoredSummaryPage,
@@ -25,11 +27,20 @@ import type {
 
 vi.mock('./summary-prompt.md', () => ({ default: 'Title the episode.' }));
 
-function episode(id: string, recordCount = 3): CompletedEpisode {
+function canonical(id: string): string {
+  return `history:${Buffer.from(JSON.stringify([Number(id.replace(/\D/gu, '')), 'test', id])).toString('base64url')}`;
+}
+function original(id: string): string {
+  return JSON.parse(Buffer.from(id.slice(8), 'base64url').toString())[2];
+}
+
+function episode(id: string, recordCount = 3): ActivityBatch {
   return {
-    id,
-    date: '2026-10-01',
-    index: Number(id.replace(/\D/gu, '')) || 0,
+    id: canonical(id),
+    offset: 0,
+    nextOffset: null,
+    scannedBytes: 10,
+    truncated: false,
     startedAt: `2026-10-01T10:0${id.at(-1)}:00.000Z`,
     endedAt: `2026-10-01T10:0${id.at(-1)}:30.000Z`,
     recordCount,
@@ -37,11 +48,18 @@ function episode(id: string, recordCount = 3): CompletedEpisode {
   };
 }
 
-function createFeed(initial: CompletedEpisode[]) {
+function createFeed(initial: ActivityBatch[]) {
   const episodes = [...initial];
   const missing = new Set<string>();
   const state = { available: true };
-  const feed: EpisodeFeed = {
+  const ref = (item: ActivityBatch) => ({
+    id: item.id,
+    ordinal: activityOrdinal(item.id)!,
+    persistedAt: item.endedAt,
+    bytes: 10,
+    revision: 'test',
+  });
+  const feed: ActivityHistory = {
     isAvailable: () => state.available,
     subscribe: () => () => undefined,
     listNeighbors: async () => [],
@@ -52,15 +70,15 @@ function createFeed(initial: CompletedEpisode[]) {
       scannedBytes: 0,
       truncated: false,
     }),
-    listCompleted: async (after, limit) =>
-      episodes
-        .filter((item) => after === null || item.id > after)
-        .slice(0, limit),
-    listLatestCompleted: async (count) => episodes.slice(-count).reverse(),
-    read: async (id) =>
-      missing.has(id)
-        ? null
-        : (episodes.find((item) => item.id === id) ?? null),
+    manifest: async () => episodes.map(ref),
+    latest: async (count) => episodes.slice(-count).reverse().map(ref),
+    readPending: async (after) =>
+      episodes.find(
+        (item) =>
+          !missing.has(original(item.id)) &&
+          (after === null ||
+            activityOrdinal(item.id)! > activityOrdinal(after)!),
+      ) ?? null,
     compareIds: (left, right) => left.localeCompare(right),
   };
   return { feed, episodes, missing, state };
@@ -76,7 +94,8 @@ function createStore(initialized = true, episodeId: string | null = null) {
       cursor = { initialized: true, episodeId: id };
     },
     commit: async (row) => {
-      if (!rows.has(row.episodeId)) rows.set(row.episodeId, row);
+      if (!rows.has(original(row.episodeId)))
+        rows.set(original(row.episodeId), row);
       cursor = { initialized: true, episodeId: row.episodeId };
     },
     list: async (): Promise<StoredSummaryPage> => ({
@@ -86,7 +105,14 @@ function createStore(initialized = true, episodeId: string | null = null) {
     }),
     close: async () => undefined,
   };
-  return { store, rows, cursor: () => cursor };
+  return {
+    store,
+    rows,
+    cursor: () => ({
+      ...cursor,
+      episodeId: cursor.episodeId ? original(cursor.episodeId) : null,
+    }),
+  };
 }
 
 type Success = Extract<GenerateTextResult, { success: true }>;
@@ -97,7 +123,8 @@ function success(
 ): GenerateTextResult {
   return {
     success: true,
-    text,
+    text: JSON.stringify({ title: text }),
+    output: { title: text },
     modelId: 'test:model',
     usage: {} as Success['usage'],
     finishReason,
@@ -114,7 +141,7 @@ const logger = {
 } as unknown as ModuleLogger;
 
 function setup(options: {
-  episodes: CompletedEpisode[];
+  episodes: ActivityBatch[];
   initialized?: boolean;
   cursor?: string | null;
   generateText?: (args: GenerateTextArgs) => Promise<GenerateTextResult>;
@@ -129,7 +156,8 @@ function setup(options: {
       (async (args: GenerateTextArgs) => success(`Handled ${args.prompt}`)),
   );
   const summarizer = createSummarizer({
-    episodes: feed.feed,
+    activities: feed.feed,
+    getLimits: () => TEST_ACTIVITY_LIMITS,
     store: store.store,
     generateText,
     getModelIds: () => [MODEL],
@@ -146,25 +174,29 @@ async function settle(summarizer: Summarizer): Promise<void> {
   });
 }
 
-describe('parseTitle', () => {
-  it('normalizes quotes, bullets, prefixes and trailing periods', () => {
-    expect(parseTitle('\n- "Fixed the deploy script."\nextra')).toBe(
+describe('summaryOutputSchema', () => {
+  it('accepts only a nonempty title field', () => {
+    expect(
+      summaryOutputSchema.parse({ title: ' Fixed the deploy script ' }),
+    ).toEqual({ title: 'Fixed the deploy script' });
+    for (const output of [
+      undefined,
       'Fixed the deploy script',
-    );
-    expect(parseTitle('Title: Planned the offsite')).toBe(
-      'Planned the offsite',
-    );
-  });
-
-  it('returns null for SKIP and empty output', () => {
-    expect(parseTitle(' skip ')).toBeNull();
-    expect(parseTitle('\n\n')).toBeNull();
-  });
-
-  it('caps words and characters', () => {
-    const long = Array.from({ length: 20 }, (_, i) => `word${i}`).join(' ');
-    expect(parseTitle(long)?.split(' ')).toHaveLength(12);
-    expect(parseTitle('x'.repeat(300))?.length).toBe(100);
+      {},
+      { title: null },
+      { title: '  ' },
+      { title: 123 },
+      { title: 'x'.repeat(101) },
+      { title: 'Fixed deployment\nWith an explanation' },
+      { title: 'Fixed deployment\rWith an explanation' },
+      { title: 'Fixed deployment\u0085With an explanation' },
+      { title: 'Fixed deployment\u2028With an explanation' },
+      { title: 'Fixed deployment\u2029With an explanation' },
+      { title: 'one two three four five six seven eight nine ten eleven' },
+      { title: 'Fixed deployment', explanation: 'extra' },
+    ]) {
+      expect(summaryOutputSchema.safeParse(output).success).toBe(false);
+    }
   });
 });
 
@@ -212,11 +244,10 @@ describe('summarizer', () => {
     expect(store.cursor()).toEqual({ initialized: true, episodeId: 'e1' });
   });
 
-  it('titles new episodes in order and skips trivial ones without a call', async () => {
+  it('titles new episodes with structured output and skips trivial ones without a call', async () => {
     const { feed, store, generateText, summarizer } = setup({
       episodes: [episode('e1'), episode('e2', 1), episode('e3'), episode('e4')],
-      generateText: async (args) =>
-        success(args.prompt?.includes('e3') ? 'SKIP' : `Did ${args.prompt}`),
+      generateText: async (args) => success(`Did ${args.prompt}`),
     });
     feed.missing.add('e4');
 
@@ -228,18 +259,16 @@ describe('summarizer', () => {
       modelIds: [MODEL],
       prompt: 'text of e1',
       maxOutputTokens: MAX_OUTPUT_TOKENS,
+      outputSchema: summaryOutputSchema,
     });
     expect(generateText.mock.calls[0]?.[0]).not.toHaveProperty('temperature');
     expect(Object.fromEntries(store.rows)).toMatchObject({
       e1: { status: 'titled', title: 'Did text of e1', modelId: 'test:model' },
       e2: { status: 'skipped', title: null, modelId: null },
-      e3: { status: 'skipped', title: null, modelId: 'test:model' },
-      e4: {
-        status: 'skipped',
-        startedAt: '2026-10-02T00:00:00.000Z',
-      },
+      e3: { status: 'titled', title: 'Did text of e3', modelId: 'test:model' },
     });
-    expect(store.cursor().episodeId).toBe('e4');
+    expect(store.rows.has('e4')).toBe(false);
+    expect(store.cursor().episodeId).toBe('e3');
 
     // A second wake with nothing new is a no-op.
     summarizer.wake();
@@ -272,7 +301,22 @@ describe('summarizer', () => {
 
   it.each([
     ['truncated', success('Confirmed PR', 'length')],
-    ['empty', success('  \n')],
+    ['empty title', success('  \n')],
+    ['multiline title', success('Fixed deployment\nExplained the steps')],
+    [
+      'too many words',
+      success('one two three four five six seven eight nine ten eleven'),
+    ],
+    ['missing output', { ...success('Valid title'), output: undefined }],
+    ['missing title', { ...success('Valid title'), output: {} }],
+    [
+      'extra field',
+      {
+        ...success('Valid title'),
+        output: { title: 'Valid title', explanation: 'not allowed' },
+      },
+    ],
+    ['invalid title', { ...success('Valid title'), output: { title: null } }],
   ])(
     'keeps the cursor on %s output and retries on the next wake',
     async (_, first) => {
@@ -297,6 +341,16 @@ describe('summarizer', () => {
       });
     },
   );
+
+  it('uses the structured title rather than parsing the response text', async () => {
+    const { store, summarizer } = setup({
+      episodes: [episode('e1')],
+      generateText: async () => ({ ...success('Fixed deployment'), text: '' }),
+    });
+    summarizer.wake();
+    await settle(summarizer);
+    expect(store.rows.get('e1')?.title).toBe('Fixed deployment');
+  });
 
   it('reruns once when woken during a pass', async () => {
     let release: () => void = () => undefined;

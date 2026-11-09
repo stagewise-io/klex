@@ -8,6 +8,7 @@ import type {
   ProviderOperationResult,
 } from '../provider-registry';
 import { exactModel, resolveCatalogMetadata } from './model-catalog-helpers';
+import { withPromptCaching } from './prompt-caching';
 import {
   available,
   fetchJson,
@@ -87,7 +88,10 @@ function createLanguageModel(
   instance: ProviderInstance,
   modelId: string,
 ): LanguageModelV4 {
-  return createProvider(instance).languageModel(modelId);
+  return withPromptCaching(
+    createProvider(instance).languageModel(modelId),
+    'anthropic',
+  );
 }
 
 function createProvider(instance: ProviderInstance) {

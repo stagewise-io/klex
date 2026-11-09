@@ -157,7 +157,7 @@ describe('AudioInputOptimizer — supports: false with audio models', () => {
     );
     expect(content[0]?.type).toBe('text');
     expect(content[0]?.text).toBe(
-      "A 440 Hz sine wave tone.\n\nFor more specific details about this audio, use the 'listenAudio' tool with ID 0-0.",
+      '<derived-content source="audio" kind="transcription-description">\nA 440 Hz sine wave tone.\n</derived-content>\n\nFor more specific details about this audio, use the \'listenAudio\' tool with ID 0-0.',
     );
   });
 

@@ -1,5 +1,6 @@
 import { APICallError } from '@ai-sdk/provider';
 import {
+  EmptyResponseBodyError,
   InvalidToolInputError,
   type LanguageModel,
   NoOutputGeneratedError,
@@ -392,6 +393,54 @@ describe('runStreamedGeneration — success', () => {
 describe('runStreamedGeneration — empty response', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it.each([
+    { allowEmptyStop: undefined, finishReason: 'stop' },
+    { allowEmptyStop: false, finishReason: 'stop' },
+    { allowEmptyStop: true, finishReason: 'other' },
+    { allowEmptyStop: true, finishReason: 'length' },
+    { allowEmptyStop: true, finishReason: 'error' },
+  ])('rejects empty responses with %j', async (options) => {
+    setupSuccessResult({ finishReason: options.finishReason });
+    await expect(
+      runStreamedGeneration({
+        model,
+        modelMessages: [],
+        tools,
+        onUpdate: vi.fn(),
+        abortSignal,
+        logger,
+        modelContext,
+        sessionId: '',
+        compacted: false,
+        basePrompt: 'mock system prompt',
+        allowEmptyStop: options.allowEmptyStop,
+      }),
+    ).rejects.toBeInstanceOf(EmptyResponseBodyError);
+  });
+
+  it('returns an empty stop and usage when allowed', async () => {
+    const usage = { inputTokens: 15, outputTokens: 0 };
+    setupSuccessResult({ usage });
+    const result = await runStreamedGeneration({
+      model,
+      modelMessages: [],
+      tools,
+      onUpdate: vi.fn(),
+      abortSignal,
+      logger,
+      modelContext,
+      sessionId: '',
+      compacted: false,
+      basePrompt: 'mock system prompt',
+      allowEmptyStop: true,
+    });
+    expect(result).toMatchObject({
+      message: { role: 'assistant', parts: [] },
+      finishReason: 'stop',
+      usage,
+    });
   });
 
   it('throws EmptyResponseBodyError when message has no parts', async () => {

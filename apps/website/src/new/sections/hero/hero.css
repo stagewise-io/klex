@@ -99,6 +99,9 @@
 }
 
 .new-hero h1 {
+  max-width: min(100%, 18ch, 56rem);
+  text-wrap: balance;
+  overflow-wrap: break-word;
   margin: 0;
   font-family: "Fraunces", Georgia, serif;
   font-size: clamp(2.75rem, 6.8vw, 5.75rem);
@@ -219,10 +222,8 @@
 .new-team {
   position: absolute;
   inset: 0;
-  /* Keep the entire foreground in one composited layer. Without this,
-     WebKit can paint animated app previews over the bots and name tags. */
-  z-index: 3;
-  transform: translateZ(0);
+  /* Share the stage's stacking context so previews can sit between bots.
+     Each bot retains its own composited layer for WebKit. */
   margin: 0;
   padding: 0;
   list-style: none;
@@ -231,7 +232,7 @@
 
 .new-bot {
   position: absolute;
-  z-index: var(--bot-depth);
+  z-index: calc(2 + clamp(0, var(--bot-depth), var(--hero-depth)));
   right: calc(var(--bot-size) * -1);
   bottom: 0;
   left: calc(var(--bot-size) * -1);
@@ -243,6 +244,11 @@
 
 .new-bot.is-visible {
   visibility: visible;
+}
+
+/* Keep the owner above its preview, including the window's exit animation. */
+.new-bot[data-work-active] {
+  z-index: calc(var(--hero-depth) + 4);
 }
 
 .new-bot [data-klex-figure] {

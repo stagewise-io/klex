@@ -46,7 +46,10 @@ async function main(): Promise<void> {
   }
   if (result.action === 'serve' && result.mode === 'local') {
     const { startMachineServer } = await import('./server.js');
-    await startMachineServer(result.config, { dataDir: result.dataDir });
+    await startMachineServer(result.config, {
+      dataDir: result.dataDir,
+      omitHostDetails: result.omitHostDetails,
+    });
     return;
   }
 
@@ -56,12 +59,14 @@ async function main(): Promise<void> {
     { loadProtectedResourceConfiguration },
     { startCloudMachineRuntime },
     { loadMachineEnrollment },
+    { createMachineMcp },
   ] = await Promise.all([
     import('./cloud/auth.js'),
     import('./cloud/principal-router.js'),
     import('./cloud/protected-resource.js'),
     import('./cloud/runtime.js'),
     import('./cloud/state.js'),
+    import('./mcp.js'),
   ]);
   const enrollment = await loadMachineEnrollment(result.dataDir);
   const protectedResource = await loadProtectedResourceConfiguration(
@@ -83,6 +88,12 @@ async function main(): Promise<void> {
     }),
     result.config.cwd,
     store,
+    (cwd, principalId, notifications) =>
+      createMachineMcp(cwd, {
+        principalId,
+        notifications,
+        omitHostDetails: result.omitHostDetails,
+      }),
   );
   const runtime = await startCloudMachineRuntime(result.dataDir, router, {
     cwd: result.config.cwd,

@@ -1,0 +1,54 @@
+{
+  "_klex": {
+    "store": "config",
+    "schemaVersion": 3,
+    "compatibilityVersion": 1,
+    "minimumKlexVersion": "0.18.0",
+    "writtenByKlexVersion": "0.18.0"
+  },
+  "configVersion": 2,
+  "officialName": "Frozen Upgrade Agent",
+  "timezone": "UTC",
+  "providers": {
+    "primary": {
+      "type": "openai",
+      "settings": { "apiKey": "${env:PRIMARY_API_KEY}" },
+      "knownModels": { "tts-1": { "kind": "text-to-speech" } }
+    }
+  },
+  "modelSelection": {
+    "chat": [
+      {
+        "providerId": "primary",
+        "modelId": "gpt-4.1",
+        "providerOptions": { "openai": { "reasoningEffort": "high" } }
+      }
+    ],
+    "compaction": [],
+    "memory": [],
+    "imageVision": [],
+    "audioListening": [{ "providerId": "primary", "modelId": "whisper-1" }],
+    "consult": [],
+    "voice": {
+      "sts": [{ "providerId": "primary", "modelId": "gpt-realtime" }],
+      "tts": [
+        {
+          "providerId": "primary",
+          "modelId": "tts-1",
+          "providerOptions": { "openai": { "voice": "alloy" } }
+        }
+      ],
+      "stt": [{ "providerId": "primary", "modelId": "whisper-1" }]
+    }
+  },
+  "mcpServers": {
+    "workspace": {
+      "command": "workspace-mcp",
+      "args": ["--root", "/workspace"]
+    }
+  },
+  "episodeFinishIdleTriggerTimeMs": 450000,
+  "memoryWriteIntervalMs": 60000,
+  "memoryWriteStepInterval": 3,
+  "telemetry": { "level": "disabled" }
+}

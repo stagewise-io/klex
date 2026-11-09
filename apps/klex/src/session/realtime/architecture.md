@@ -65,6 +65,8 @@ Realtime availability is derived from `modelSelection.voice.sts`. Each candidate
 
 Maintained `gpt-live-1` metadata selects the separate `openai-live` adapter; `gpt-realtime-*` models continue to select `openai-realtime`. GPT-Live receives full-duplex audio and natural voice instructions, while its configured Responses backend receives bounded canonical startup context, Klex instructions, and tool descriptors.
 
+All realtime adapters append a shared live-call visibility policy without changing the prepared context or text-turn instructions. The caller hears spoken answers directly; chat/MCP messages are only for explicitly requested posts or messaging actions, not duplicate answers or acknowledgements. GPT-Live applies this policy to both its speaking frontend and Responses delegation backend, including it in both instruction token budgets.
+
 Responses delegation stays provider-driven. The adapter correlates the outer delegation ID, nested response ID, and stable function `call_id`. Only completed function-call items become provider-neutral tool events. The coordinator remains the sole authority for validation and execution.
 
 GPT-Live transcript deltas have timeline intervals but no authoritative turn boundary. Exact fragments are grouped deterministically and committed as approximate context with speaker and interval metadata, never as finalized turns. Full-duplex overlap is retained.

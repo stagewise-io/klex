@@ -1,10 +1,14 @@
+import { z } from 'zod';
+
 import type { ModuleLogger } from '@stagewise/logger';
 
+import {
+  type ActivityBatch,
+  type ActivityHistory,
+  type ActivityLimits,
+  activityOrdinal,
+} from '@/activity-history';
 import type { ModelSelectionEntry } from '@/config';
-import type {
-  CompletedEpisode,
-  EpisodeFeed,
-} from '@/session/chat/extensions/memory';
 import { LINES_FORMAT_PROMPT } from '@/session/chat/utils/history-view';
 
 import type { GenerateTextArgs, GenerateTextResult } from '../extension-api';
@@ -19,14 +23,23 @@ const OMITTED_MARKER = '\n\n[… middle omitted …]\n\n';
 export const MIN_RECORDS = 2;
 /**
  * Reasoning models spend most of the budget thinking before the title, so
- * 256 truncated them in E2E runs. Title length is enforced by `parseTitle`.
+ * 256 truncated them in E2E runs. Title length is enforced by the schema.
  * No temperature: reasoning models the provider does not recognize reject it.
  */
 export const MAX_OUTPUT_TOKENS = 1024;
-const PASS_BATCH = 20;
-const MAX_TITLE_WORDS = 12;
-const MAX_TITLE_CHARACTERS = 100;
-const SKIP_TOKEN = 'SKIP';
+export const summaryOutputSchema = z.strictObject({
+  title: z
+    .string()
+    .trim()
+    .min(1)
+    .max(100)
+    .regex(/^[^\r\n\u0085\u2028\u2029]+$/u, 'Title must be a single line')
+    .refine(
+      (title) => title.split(/\s+/u).length <= 10,
+      'Title must contain at most 10 words',
+    )
+    .describe('Short English past-tense activity title, at most 10 words'),
+});
 
 /** Keeps the start and the (more outcome-relevant) end of long episodes. */
 export function buildEpisodeInput(text: string): string {
@@ -36,34 +49,11 @@ export function buildEpisodeInput(text: string): string {
   return `${text.slice(0, HEAD_CHARACTERS)}${OMITTED_MARKER}${text.slice(-tailCharacters)}`;
 }
 
-/** Normalizes model output to one short title, or null for "skip". */
-export function parseTitle(raw: string): string | null {
-  const line = raw
-    .split(/\r?\n/u)
-    .map((candidate) => candidate.trim())
-    .find((candidate) => candidate.length > 0);
-  if (!line) return null;
-  let title = line
-    .replace(/^(?:[-*•]|\d+[.)])\s+/u, '')
-    .replace(/^(?:title:\s*)/iu, '')
-    .replace(/^["'`“”‘’]+|["'`“”‘’]+$/gu, '')
-    .replace(/\s+/gu, ' ')
-    .trim()
-    .replace(/[.。]+$/u, '')
-    .trim();
-  if (!title || title.toUpperCase() === SKIP_TOKEN) return null;
-  const words = title.split(' ');
-  if (words.length > MAX_TITLE_WORDS)
-    title = words.slice(0, MAX_TITLE_WORDS).join(' ');
-  if (title.length > MAX_TITLE_CHARACTERS)
-    title = title.slice(0, MAX_TITLE_CHARACTERS).trimEnd();
-  return title;
-}
-
 export const SUMMARY_SYSTEM_PROMPT = `${summaryPrompt.trim()}\n\n${LINES_FORMAT_PROMPT}`;
 
 export interface SummarizerDependencies {
-  episodes: EpisodeFeed;
+  activities: ActivityHistory;
+  getLimits: () => ActivityLimits;
   store: SummaryStore;
   generateText: (args: GenerateTextArgs) => Promise<GenerateTextResult>;
   getModelIds: () => readonly ModelSelectionEntry[];
@@ -74,6 +64,7 @@ export interface SummarizerDependencies {
 /** Drains newly finished episodes into titled summary rows, one pass at a time. */
 export interface Summarizer {
   start(): void;
+  setStepActive(active: boolean): void;
   /** Hints that episodes may have finished; never blocks. */
   wake(): void;
   close(): Promise<void>;
@@ -88,6 +79,14 @@ class SummarizerModule implements Summarizer {
   private running: Promise<void> | null = null;
   private lastError: string | null = null;
   private processed = 0;
+  private stepActive = false;
+  private lastActivityAt = 0;
+
+  setStepActive(active: boolean): void {
+    this.stepActive = active;
+    this.lastActivityAt = (this.deps.now?.() ?? new Date()).getTime();
+    if (!active) this.wake();
+  }
 
   constructor(private readonly deps: SummarizerDependencies) {}
 
@@ -139,41 +138,41 @@ class SummarizerModule implements Summarizer {
   }
 
   private async pass(): Promise<void> {
-    const { episodes, store } = this.deps;
-    if (this.closed || !episodes.isAvailable()) return;
+    const { activities, store } = this.deps;
+    if (this.closed || !activities.isAvailable()) return;
     const cursor = await store.getCursor();
-    if (!cursor.initialized) {
+    if (
+      !cursor.initialized ||
+      (cursor.episodeId !== null && activityOrdinal(cursor.episodeId) === null)
+    ) {
       // Only episodes finishing after the first start get summaries.
-      const [latest] = await episodes.listLatestCompleted(1);
+      const [latest] = await activities.latest(1);
       await store.initializeCursor(latest?.id ?? null);
       return;
     }
     let after = cursor.episodeId;
     while (!this.closed) {
-      const refs = await episodes.listCompleted(after, PASS_BATCH);
-      if (refs.length === 0) return;
-      for (const ref of refs) {
-        if (this.closed) return;
-        const episode = await episodes.read(ref.id);
-        if (!episode) {
-          if (!episodes.isAvailable()) return;
-          await this.commit(ref.id, null, 'skipped', null);
-        } else if (episode.recordCount < MIN_RECORDS) {
-          await this.commit(ref.id, episode, 'skipped', null);
-        } else if (!(await this.summarize(episode))) {
-          return;
-        }
-        after = ref.id;
-      }
+      const activity = await activities.readPending(after, {
+        ...this.deps.getLimits(),
+        active: this.stepActive,
+        lastActivityAt: this.lastActivityAt,
+        now: (this.deps.now?.() ?? new Date()).getTime(),
+      });
+      if (!activity || this.closed) return;
+      if (activity.recordCount < MIN_RECORDS) {
+        await this.commit(activity.id, activity, 'skipped', null);
+      } else if (!(await this.summarize(activity))) return;
+      after = activity.id;
     }
   }
 
   /** Returns false when the pass must stop with the cursor unchanged. */
-  private async summarize(episode: CompletedEpisode): Promise<boolean> {
+  private async summarize(episode: ActivityBatch): Promise<boolean> {
     const result = await this.deps.generateText({
       modelIds: this.deps.getModelIds(),
       system: SUMMARY_SYSTEM_PROMPT,
       prompt: buildEpisodeInput(episode.text),
+      outputSchema: summaryOutputSchema,
       maxOutputTokens: MAX_OUTPUT_TOKENS,
       abortSignal: this.abort.signal,
     });
@@ -192,9 +191,9 @@ class SummarizerModule implements Summarizer {
       return false;
     }
     if (this.closed) return false;
-    // Truncated or empty output is not a model decision to skip; storing it
-    // would permanently lose the title, so retry like a failed call.
-    if (result.finishReason === 'length' || result.text.trim() === '') {
+    // Never advance progress for truncated or invalid structured output.
+    const parsed = summaryOutputSchema.safeParse(result.output);
+    if (result.finishReason === 'length' || !parsed.success) {
       this.lastError = `incomplete output (${result.finishReason})`;
       this.deps.logger.warn(
         { episodeId: episode.id, finishReason: result.finishReason },
@@ -202,20 +201,14 @@ class SummarizerModule implements Summarizer {
       );
       return false;
     }
-    const title = parseTitle(result.text);
-    await this.commit(
-      episode.id,
-      episode,
-      title ? 'titled' : 'skipped',
-      title,
-      result.modelId,
-    );
+    const { title } = parsed.data;
+    await this.commit(episode.id, episode, 'titled', title, result.modelId);
     return true;
   }
 
   private async commit(
     episodeId: string,
-    episode: CompletedEpisode | null,
+    episode: ActivityBatch | null,
     status: SummaryRow['status'],
     title: string | null,
     modelId: string | null = null,

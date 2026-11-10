@@ -13,6 +13,14 @@ In the [Klex Cloud dashboard](https://cloud.klex.bot), you can see what your Bot
 
 Administrators can also access a Bot's chats and memory through its Admin API. The Cloud dashboard provides a frontend to each Bot's Admin API. For where that data is stored, see [the data directory](/bot/concepts/data-directory).
 
+## Check self-hosted diagnostics
+
+In the interactive Klex 0.30.1 app, open **Settings → Logs** to review recent runtime logs. Use the arrow keys to scroll, `l` to change the minimum displayed level, and `v` to change the display style. Changing the displayed level does not necessarily enable collection of additional logs.
+
+The viewer keeps up to 500 captured entries in memory for the current process, so older entries may no longer be available. Runtime logs are not a complete record of Bot conversations or task results. In headless mode, Klex writes logs to the console instead of using the interactive viewer.
+
+For version and connection details, open **Settings → Debug Information**. It shows the Klex version, data directory, and Cloud enrollment and tunnel status when available. Review logs and diagnostics for sensitive information before sharing them.
+
 ## Review activity with the Admin API
 
 In Klex 0.30.1, administrators using the Admin API can:

@@ -30,6 +30,22 @@ Administrators using the Admin API can:
 
 Use `GET /v1/openapi.json` for the API's available routes and query parameters. Session messages and tool outputs can contain sensitive information; limit who can access and retain them.
 
-The self-hosted app does not expose a local Admin API port by default. Its optional local port is unauthenticated and bound to `127.0.0.1`; other local processes can access it. Do not expose or forward it to an untrusted network.
+### Access the local Admin API
+
+The self-hosted app does not expose a local Admin API port by default. Its optional listener is bound to `127.0.0.1` and has **no authentication**. Anyone who can reach it, including other local users and processes, can access sensitive Bot data and use management routes. Enable it only where those users and processes are trusted; do not expose or forward it to an untrusted network.
+
+For example, to start an existing headless Bot with the local listener enabled:
+
+```sh
+klex --headless --data-dir /path/to/bot --dangerous-local-admin-api-port 2706
+```
+
+Replace the path and port with your own. From the same computer, you can inspect the available routes:
+
+```sh
+curl http://127.0.0.1:2706/v1/openapi.json
+```
+
+You can set the port with `KLEX_DANGEROUS_LOCAL_ADMIN_API_PORT` instead; the command-line option takes precedence. When finished, stop the Bot and restart it without the option or environment variable to disable the listener.
 
 To stop a Bot or change its connected access, see [Control your Klex Bot](/bot/guides/control-and-limits).

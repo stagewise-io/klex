@@ -51,26 +51,31 @@
 
 /* Use the diagram composition suited to the article width, not viewport width. */
 .bot-overview-diagram,
-.bot-concept-diagram {
+.bot-concept-diagram,
+.bot-collaboration-diagram {
   container-type: inline-size;
 }
 .bot-overview-diagram img,
-.bot-concept-diagram img {
+.bot-concept-diagram img,
+.bot-collaboration-diagram img {
   display: block;
   width: 100%;
   height: auto;
 }
 .bot-overview-diagram .bot-overview-wide,
-.bot-concept-diagram .bot-concept-wide {
+.bot-concept-diagram .bot-concept-wide,
+.bot-collaboration-diagram .bot-collaboration-wide {
   display: none;
 }
 @container (min-width: 640px) {
   .bot-overview-diagram .bot-overview-wide,
-  .bot-concept-diagram .bot-concept-wide {
+  .bot-concept-diagram .bot-concept-wide,
+  .bot-collaboration-diagram .bot-collaboration-wide {
     display: block;
   }
   .bot-overview-diagram .bot-overview-compact,
-  .bot-concept-diagram .bot-concept-compact {
+  .bot-concept-diagram .bot-concept-compact,
+  .bot-collaboration-diagram .bot-collaboration-compact {
     display: none;
   }
 }

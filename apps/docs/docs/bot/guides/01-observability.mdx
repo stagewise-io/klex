@@ -21,6 +21,17 @@ The viewer keeps up to 500 captured entries in memory for the current process, s
 
 For version and connection details, open **Settings → Debug Information**. It shows the Klex version, data directory, and Cloud enrollment and tunnel status when available. Review logs and diagnostics for sensitive information before sharing them.
 
+## If a Bot does not respond
+
+Check each part of the path, starting with the Bot and ending with the message source:
+
+1. **Check the Bot is running.** For a self-hosted Bot, check its process or service. If you enabled the optional health listener, check readiness as described in [Availability](/bot/reliability/availability#monitor-a-self-hosted-bot). A successful probe does not prove that the model or connections are working.
+2. **Check model access.** Confirm that a provider is configured and that a chat model is selected. Check the provider’s account and service if requests are failing. See [Models](/bot/concepts/models).
+3. **Check the connection and account.** For a message from a connected app, check the MCP server’s status, required authorization, and the Bot account’s access to the conversation. Event delivery also depends on the server’s capabilities. See [MCP and Klex Bots](/bot/concepts/mcp#if-a-connection-needs-attention).
+4. **Review available activity and logs.** Look for errors around the time of the request. Use the Cloud dashboard where available, or the self-hosted diagnostics above. Logs and activity may be incomplete; a missing entry alone does not establish where delivery failed.
+
+Review any diagnostics for sensitive information before sharing them. Do not include credentials in a support request.
+
 ## Review activity with the Admin API
 
 Administrators using the Admin API can:

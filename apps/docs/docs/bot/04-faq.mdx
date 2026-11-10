@@ -19,34 +19,34 @@ Find answers about getting started, hosting, connections, and operating Klex Bot
 
 ## How Klex Bots work
 
-- [How is the memory of a Klex Bot structured, and how does it work?](/bot/concepts/memory)
+- **What does a Bot’s memory contain?** Skills and learnings. Chats and memory are stored in the Bot’s data directory. See [Klex Bot Memory](/bot/concepts/memory).
 - **How does a Bot identify the person speaking to it?** The exact identification behavior is not documented here. Configure access in connected services and do not rely on the Bot’s recognition alone.
 - [Why do you split Klex Bot hosting from the computers it uses?](/bot/concepts/brain-and-computers)
 - [Which model providers can I use?](/bot/concepts/models) Availability depends on the provider and your configured account.
-- [Can I use MCP with Klex Bots? Can they connect to MCPs themselves?](/bot/concepts/mcp)
-- [Can I use Agent Skills with Klex Bots?](/bot/concepts/agent-skills)
+- **Can a Bot use MCP servers and add them itself?** Yes. A Bot can add a new remote HTTP or HTTPS server, but cannot edit or remove existing server configurations through that capability. See [MCP and Klex Bots](/bot/concepts/mcp).
+- **Can a Bot use Agent Skills?** Yes. Skills provide reusable instructions, but do not guarantee an outcome. See [Agent Skills](/bot/concepts/agent-skills).
 - [How do Klex Bots communicate with people and other Bots?](/bot/concepts/communication)
 
 ## Operating Klex Bots
 
 - [How can I review a Klex Bot’s activity?](/bot/guides/observability)
-- [Can I chat with the Klex Bot on multiple channels at once?](/bot/guides/multi-channel-chat)
-- [Can a single Klex Bot do many things at once? How do I make Klex Bots achieve more?](/bot/guides/parallelize)
-- [How do Klex Bots handle recurring tasks — do they get better at them, like a human?](/bot/guides/recurring-tasks)
-- [How can I stop a Klex Bot and manage what it can access?](/bot/guides/control-and-limits)
+- **Can I chat with a Bot on multiple channels?** Yes, with suitable messaging connections and account access to each conversation. See [Chat on multiple channels](/bot/guides/multi-channel-chat).
+- **Can a Bot handle multiple requests?** A Bot may receive multiple requests, but simultaneous processing is not guaranteed. Test the workload or divide independent work among Bots. See [Parallelize work](/bot/guides/parallelize).
+- **How do I set up recurring tasks?** Use a connected scheduling service that can deliver events to the Bot. Internal to-do reminders are one-time. Review results; learning does not guarantee improvement. See [Automate recurring tasks](/bot/guides/recurring-tasks).
+- **How do I stop a Bot and manage its access?** Stop a Cloud-hosted Bot from the dashboard, or close the self-hosted app. Manage connected accounts’ permissions in their services. See [Control and limits](/bot/guides/control-and-limits) for headless shutdown and other controls.
 - **What are the Bot and connection limits?** Contact [Klex support](mailto:support@klex.bot) for current limits.
 - [Can Klex Bots work with other kinds of Agents or Bots?](/bot/guides/interoperability)
 
 ## Reliability
 
-- [Do Klex Bots have to "sleep" or can they work 24/7?](/bot/reliability/availability)
+- **Can a Bot work around the clock?** It can be available while its hosting environment is running, but task success depends on its model access and connections. See [Availability](/bot/reliability/availability).
 - [Will Klex Bots typically break on updates? Do I have to re-create them?](/bot/reliability/updates)
 
 ## Cloud and hosting
 
-- [Can I use Klex Bots without the cloud — and if yes, how?](/cloud/hosted-vs-local)
+- **Can I run a Bot without Klex Cloud?** Yes. Cloud enrollment is not required for a self-hosted Bot, though the standalone experience is less complete. See [Hosted vs. self-hosted](/cloud/hosted-vs-local).
 - [Will the memory of my hosted Klex Bot be shared with any third party, or is it accessible to stagewise? What about local Klex Bots?](/cloud/data-privacy)
-- [Can I self-host the Cloud as well?](/cloud/self-hosting)
+- **Can I self-host Klex Cloud?** Self-hosted Klex Cloud is available to Enterprise customers. This is separate from self-hosting an individual Bot. See [Self-hosting the Cloud](/cloud/self-hosting).
 
 ## Klex Bots in your company
 

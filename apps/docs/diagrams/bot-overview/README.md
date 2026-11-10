@@ -4,8 +4,8 @@ The editable SVGs used by the docs are `../../public/images/bot-overview-wide.sv
 
 ## Visual reference
 
-For future docs illustrations, use the V4 artwork as a style reference: its palette, typography, subtle continuous grid and smooth connectors. Prefer editable SVGs where appropriate. Adapt the composition to the subject; the compact vertical layout is not a prescribed pattern.
+For future docs illustrations, use the Overview artwork as a style reference: its palette, typography, subtle continuous grid and smooth connectors. Prefer editable SVGs where appropriate. Adapt the composition to the subject; the compact vertical layout is not a prescribed pattern.
 
 ## Regeneration
 
-To regenerate, use Node 24 or later in this directory: `npm install`, `npx playwright install chromium`, then `npm run render`. Review the results at desktop and mobile sizes in both docs themes. Copy the selected `overview-wide.svg` and `overview-mobile.svg` exports to the public image paths above; the generator does not update them automatically.
+To regenerate, use Node 24 or later in this directory: `npm install`, `npx playwright install chromium`, then `npm run render`. If Chromium needs additional shared libraries, set `LD_LIBRARY_PATH` or `KLEX_SYSROOT` to their directory. Review the results at desktop and mobile sizes in both docs themes. Copy the selected `bot-overview-wide.svg` and `bot-overview-compact.svg` exports to the public image paths above; the generator does not update them automatically.

@@ -11,21 +11,21 @@ Find answers about getting started, hosting, connections, and operating Klex Bot
 
 ## Getting started
 
-- [How do Klex Bots work?](/bot/concepts/how-bots-work)
-- [What are typical use-cases for Klex Bots?](/bot/use-cases)
-- [How do I move a workflow from another agent?](/bot/migrate-from-another-agent)
-- [Is Klex Bot good for business use-cases?](/bot)
+- **How do Klex Bots work?** A Bot runs in its own environment and works in computers and apps connected through MCP. See [How Klex Bots work](/bot/concepts/how-bots-work).
+- **What can I use a Bot for?** Examples include summarizing project information, drafting support responses, and preparing recurring updates. Each depends on the available connections and account permissions. See [Use cases](/bot/use-cases).
+- **How do I move a workflow from another agent?** Recreate its role, connections, and tasks, then test before switching over. Do not assume its memory or history transfers automatically. See [Migrate from another agent](/bot/migrate-from-another-agent).
+- **Can I use a Bot for business work?** Bots can help with tasks in connected apps, such as summarizing project information or drafting support responses. Review results and use independent safeguards for sensitive work. See [Use cases](/bot/use-cases) and [Critical operations](/guides/trust-critical-operations).
 - **Can I speak with an existing customer?** Contact [Klex support](mailto:support@klex.bot) to ask about customer references.
 
 ## How Klex Bots work
 
 - **What does a Bot’s memory contain?** Skills and learnings. Chats and memory are stored in the Bot’s data directory. See [Klex Bot Memory](/bot/concepts/memory).
 - **How does a Bot identify the person speaking to it?** The exact identification behavior is not documented here. Configure access in connected services and do not rely on the Bot’s recognition alone.
-- [Why do you split Klex Bot hosting from the computers it uses?](/bot/concepts/brain-and-computers)
-- [Which model providers can I use?](/bot/concepts/models) Availability depends on the provider and your configured account.
+- **How is a Bot’s environment different from a connected computer?** Its own environment keeps it running and manages memory; connected computers and apps are where it works. See [Connections](/bot/concepts/brain-and-computers).
+- **Which model providers can I use?** Klex supports a range, including OpenAI, Anthropic, Google Gemini, local Ollama, and compatible custom endpoints. Available models depend on the provider and your account. See [Models](/bot/concepts/models).
 - **Can a Bot use MCP servers and add them itself?** Yes. A Bot can add a new remote HTTP or HTTPS server, but cannot edit or remove existing server configurations through that capability. See [MCP and Klex Bots](/bot/concepts/mcp).
 - **Can a Bot use Agent Skills?** Yes. Skills provide reusable instructions, but do not guarantee an outcome. See [Agent Skills](/bot/concepts/agent-skills).
-- [How do Klex Bots communicate with people and other Bots?](/bot/concepts/communication)
+- **How do Bots communicate with people and other Bots?** People can chat with a Bot in the Cloud dashboard. Bots can also communicate with people and other Bots through connected apps with the necessary messaging capabilities and account access. See [Communication](/bot/concepts/communication).
 
 ## Operating Klex Bots
 
@@ -40,7 +40,7 @@ Find answers about getting started, hosting, connections, and operating Klex Bot
 ## Reliability
 
 - **Can a Bot work around the clock?** It can be available while its hosting environment is running, but task success depends on its model access and connections. See [Availability](/bot/reliability/availability).
-- [Will Klex Bots typically break on updates? Do I have to re-create them?](/bot/reliability/updates)
+- **Do I have to re-create a Bot after an update?** Generally, no. Compatibility varies, so read the release notes and check connections and important workflows afterward. See [Updates](/bot/reliability/updates).
 
 ## Cloud and hosting
 

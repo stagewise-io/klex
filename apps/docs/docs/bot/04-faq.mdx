@@ -29,13 +29,13 @@ Find answers about getting started, hosting, connections, and operating Klex Bot
 
 ## Operating Klex Bots
 
-- [How can I review a Klex Bot’s activity?](/bot/guides/observability)
+- **How can I review a Bot’s activity?** For a Cloud-hosted or enrolled Bot, use the Cloud dashboard to see activity and chat. A self-hosted Bot also has local diagnostics. See [Review activity](/bot/guides/observability).
 - **Can I chat with a Bot on multiple channels?** Yes, with suitable messaging connections and account access to each conversation. See [Chat on multiple channels](/bot/guides/multi-channel-chat).
 - **Can a Bot handle multiple requests?** A Bot may receive multiple requests, but simultaneous processing is not guaranteed. Test the workload or divide independent work among Bots. See [Parallelize work](/bot/guides/parallelize).
 - **How do I set up recurring tasks?** Use a connected scheduling service that can deliver events to the Bot. Internal to-do reminders are one-time. Review results; learning does not guarantee improvement. See [Automate recurring tasks](/bot/guides/recurring-tasks).
 - **How do I stop a Bot and manage its access?** Stop a Cloud-hosted Bot from the dashboard, or close the self-hosted app. Manage connected accounts’ permissions in their services. See [Control and limits](/bot/guides/control-and-limits) for headless shutdown and other controls.
 - **What are the Bot and connection limits?** Contact [Klex support](mailto:support@klex.bot) for current limits.
-- [Can Klex Bots work with other kinds of Agents or Bots?](/bot/guides/interoperability)
+- **Can Klex Bots work with other agents?** They can coordinate through a shared service when both have the necessary access and capabilities. See [Work with other agents](/bot/guides/interoperability).
 
 ## Reliability
 
@@ -45,14 +45,14 @@ Find answers about getting started, hosting, connections, and operating Klex Bot
 ## Cloud and hosting
 
 - **Can I run a Bot without Klex Cloud?** Yes. Cloud enrollment is not required for a self-hosted Bot, though the standalone experience is less complete. See [Hosted vs. self-hosted](/cloud/hosted-vs-local).
-- [Will the memory of my hosted Klex Bot be shared with any third party, or is it accessible to stagewise? What about local Klex Bots?](/cloud/data-privacy)
+- **Who can access a Bot’s memory?** Administrators can access it through the Bot’s Admin API. Cloud-hosted data is encrypted in transit and at rest. Staff access and third-party processing are not established in these docs; contact Klex for current details. See [Data privacy](/cloud/data-privacy).
 - **Can I self-host Klex Cloud?** Self-hosted Klex Cloud is available to Enterprise customers. This is separate from self-hosting an individual Bot. See [Self-hosting the Cloud](/cloud/self-hosting).
 
 ## Klex Bots in your company
 
-- [How do I manage permissions for my Klex Bots in individual apps?](/bot/concepts/brain-and-computers)
-- [How do I prevent strangers or malicious people from accessing Klex Bots? How likely is it that Klex Bots share sensitive information — is there a hard lock?](/guides/prevent-information-theft)
-- [How do I prevent customer support bots from leaking secrets?](/guides/support-bot-secrets)
-- [How do I prevent externally reachable Klex Bots from hijacking my whole company?](/guides/limit-blast-radius)
-- [Is there a guarantee that my Klex Bot won't misbehave? Can I use it for critical or sensitive operations?](/guides/trust-critical-operations)
-- [How can Klex Bots work together?](/guides/bot-collaboration)
+- **How do I manage a Bot’s permissions in an app?** Configure its account’s access in that app, granting only what it needs. See [Connections to computers and apps](/bot/concepts/brain-and-computers).
+- **How do I reduce unauthorized access and information disclosure?** Restrict who can reach the Bot and what its accounts can access in connected services. Instructions alone are not a hard lock, and these controls cannot guarantee against disclosure. See [Prevent information theft](/guides/prevent-information-theft).
+- **How do I reduce the risk of a support Bot leaking secrets?** Avoid granting access to unnecessary credentials or sensitive data, scope its accounts, and test with non-sensitive data. See [Protect secrets in support Bots](/guides/support-bot-secrets).
+- **How do I limit the impact of a compromised Bot?** Restrict its account permissions and connected environments, and use independent approval for high-impact changes. These measures reduce risk, not eliminate it. See [Limit blast radius](/guides/limit-blast-radius).
+- **Can I rely on a Bot for critical work without mistakes?** No. For high-impact work, limit access and use an independent review or approval process. Klex does not currently enforce action-level approvals. See [Critical operations](/guides/trust-critical-operations).
+- **How can Klex Bots work together?** Bots can coordinate in a shared conversation when each has a messaging connection and an account with access. Give each a clear role and review the outcome. See [Make Klex Bots work together](/guides/bot-collaboration).

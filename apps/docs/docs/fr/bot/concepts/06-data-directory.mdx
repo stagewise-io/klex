@@ -13,7 +13,7 @@ Les administrateurs peuvent accéder aux conversations et à la mémoire par l'A
 
 ## Trouver un bot auto-hébergé
 
-Dans l'application Klex auto-hébergée 0.30.1, le démarrage interactif cherche par défaut les bots dans `~/.klex/agents`. Si `KLEX_HOME` est défini, il utilise le dossier `agents` sous ce chemin. Avec `--data-dir`, vous pouvez sélectionner directement un répertoire ; cette option est prioritaire sur `KLEX_DATA_DIR`.
+Dans l'application Klex auto-hébergée, le démarrage interactif cherche par défaut les bots dans `~/.klex/agents`. Si `KLEX_HOME` est défini, il utilise le dossier `agents` sous ce chemin. Avec `--data-dir`, vous pouvez sélectionner directement un répertoire ; cette option est prioritaire sur `KLEX_DATA_DIR`.
 
 Par exemple, pour ouvrir un bot dont vous connaissez déjà le répertoire de données :
 
@@ -25,6 +25,6 @@ Remplacez le chemin d'exemple par le répertoire réel du bot. Consultez le [dé
 
 ## Protéger les données
 
-Le répertoire peut contenir des informations sensibles, notamment la configuration et les identifiants. Limitez l'accès à l'aide des permissions de votre système d'exploitation et protégez les copies que vous créez. Sur les systèmes utilisant les modes de fichiers Unix, Klex 0.30.1 demande des permissions réservées au propriétaire lors de la création du répertoire ; il ne modifie pas les permissions des répertoires existants. Windows utilise des listes de contrôle d'accès.
+Le répertoire peut contenir des informations sensibles, notamment la configuration et les identifiants. Limitez l'accès à l'aide des permissions de votre système d'exploitation et protégez les copies que vous créez. Sur les systèmes utilisant les modes de fichiers Unix, Klex demande des permissions réservées au propriétaire lors de la création du répertoire ; il ne modifie pas les permissions des répertoires existants. Windows utilise des listes de contrôle d'accès.
 
 Vérifiez vos procédures de sauvegarde et de restauration avant de supprimer ou de déplacer des données. Cette page ne décrit ni procédure de migration ou de restauration prise en charge, ni règles de conservation ou traitement des données par des tiers.

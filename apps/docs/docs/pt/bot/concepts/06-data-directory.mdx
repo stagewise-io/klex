@@ -13,7 +13,7 @@ Os administradores podem aceder às conversas e à memória através da Admin AP
 
 ## Encontrar um bot auto-hospedado
 
-Na aplicação Klex auto-hospedada 0.30.1, o arranque interativo procura bots por defeito em `~/.klex/agents`. Se `KLEX_HOME` estiver definido, usa a pasta `agents` sob esse caminho. Com `--data-dir`, pode selecionar diretamente um diretório; esta opção tem prioridade sobre `KLEX_DATA_DIR`.
+Na aplicação Klex auto-hospedada, o arranque interativo procura bots por defeito em `~/.klex/agents`. Se `KLEX_HOME` estiver definido, usa a pasta `agents` sob esse caminho. Com `--data-dir`, pode selecionar diretamente um diretório; esta opção tem prioridade sobre `KLEX_DATA_DIR`.
 
 Por exemplo, para abrir um bot cujo diretório de dados já conhece:
 
@@ -25,6 +25,6 @@ Substitua o caminho de exemplo pelo diretório real do bot. Consulte o [início 
 
 ## Proteger os dados
 
-O diretório pode conter informações sensíveis, incluindo configuração e credenciais. Limite o acesso através das permissões do sistema operativo e proteja as cópias que criar. Em sistemas que usam modos de ficheiros Unix, o Klex 0.30.1 solicita permissões reservadas ao proprietário ao criar o diretório; não altera as permissões de diretórios existentes. O Windows usa listas de controlo de acesso.
+O diretório pode conter informações sensíveis, incluindo configuração e credenciais. Limite o acesso através das permissões do sistema operativo e proteja as cópias que criar. Em sistemas que usam modos de ficheiros Unix, o Klex solicita permissões reservadas ao proprietário ao criar o diretório; não altera as permissões de diretórios existentes. O Windows usa listas de controlo de acesso.
 
 Verifique os seus procedimentos de cópia de segurança e restauro antes de apagar ou mover dados. Esta página não descreve um procedimento de migração ou restauro suportado, nem regras de retenção ou processamento de dados por terceiros.

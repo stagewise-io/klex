@@ -79,3 +79,16 @@
     display: none;
   }
 }
+
+/* When scripts are unavailable, show both setup paths instead of hiding one. */
+@media (scripting: none) {
+  .hosting-quickstart
+    blume-tabs:not(:defined)
+    [data-blume-tab-content]
+    > *:nth-child(n + 2) {
+    display: block;
+  }
+  .hosting-quickstart blume-tabs:not(:defined) [data-blume-tablist] {
+    display: none;
+  }
+}

@@ -7,14 +7,14 @@ import { chromium } from 'playwright';
 import sharp from 'sharp';
 
 const kit = path.dirname(fileURLToPath(import.meta.url));
-process.env.LD_LIBRARY_PATH = [
-  process.env.KLEX_SYSROOT ||
-    '/workspace/marketing-studio/.local/sysroot/lib/x86_64-linux-gnu',
-  '/workspace/marketing-studio/.local/sysroot/usr/lib/x86_64-linux-gnu',
-  process.env.LD_LIBRARY_PATH,
-]
-  .filter(Boolean)
-  .join(':');
+if (process.env.KLEX_SYSROOT) {
+  process.env.LD_LIBRARY_PATH = [
+    process.env.KLEX_SYSROOT,
+    process.env.LD_LIBRARY_PATH,
+  ]
+    .filter(Boolean)
+    .join(':');
+}
 const palette = await fs.readFile(kit + '/palette.css', 'utf8'),
   font = await fs.readFile(kit + '/geist-variable.woff2'),
   logo = await fs.readFile(kit + '/klex-unframed.svg');
@@ -113,7 +113,7 @@ try {
     C.muted +
     ';font-weight:400}.route{fill:none;stroke:' +
     C.accent +
-    ';stroke-width:3.5;stroke-linecap:round;stroke-linejoin:round;mask:url(#mcp-label-gaps)}.internal{fill:none;stroke:' +
+    ';stroke-width:3.5;stroke-linecap:round;stroke-linejoin:round}.internal{fill:none;stroke:' +
     C.internal +
     ';stroke-width:3;stroke-linecap:round}.card{fill:' +
     C.canvas +
@@ -177,7 +177,7 @@ try {
       '</g>'
     );
   };
-  const badge = (x, y) => text(x + 41, y + 9, 26, 'MCP', 'mcp', 'middle');
+  const badge = (x, y) => text(x + 41, y + 10, 30, 'MCP', 'mcp', 'middle');
   const alt =
     'A Klex Bot and its memory are inside the Bot environment, which runs the Bot and manages memory. Memory currently holds skills and learnings. Separate MCP connections link the Bot to a connected computer and a connected app outside the Bot environment, where its work happens. Lines show connections, not the direction of data flow.';
   const grid = (w, h) => {
@@ -185,12 +185,12 @@ try {
       labels =
         w === 640
           ? [
-              [309, 650],
-              [507, 690],
+              [309, 550],
+              [507, 590],
             ]
           : [
-              [695, 280],
-              [695, 480],
+              [695, 172],
+              [695, 364],
             ],
       gaps = labels
         .map(
@@ -252,104 +252,74 @@ try {
     '"/>' +
     grid(w, h);
   let wide =
-    start(1200, 640) +
-    box('environment', 40, 80, 510, 520, true) +
-    text(76, 134, 30, 'Bot environment', 'label', 'start', 'environment') +
-    text(
-      76,
-      174,
-      24,
-      'Runs the Bot · manages memory',
-      'helper',
-      'start',
-      'environment',
-    );
+    start(1200, 480) +
+    box('environment', 40, 40, 510, 400, true) +
+    text(76, 94, 32, 'Bot environment', 'label', 'start', 'environment');
   wide +=
-    '<path class="internal" d="M286 391V442"/><path class="route" d="M480 302C600 302 610 280 690 280H810"/><path class="route" d="M480 346C620 346 600 480 690 480H810"/>';
+    '<path class="internal" d="M286 272V314"/><path class="route" d="M480 192C600 192 610 172 690 172H690M782 172H810"/><path class="route" d="M480 232C620 232 600 364 690 364H690M782 364H810"/>';
   wide +=
-    box('bot', 94, 255, 386, 136) +
+    box('bot', 94, 152, 386, 120) +
     '<image href="' +
     logoURI +
-    '" x="118" y="290" width="64" height="64"/>' +
-    text(206, 313, 30, 'Klex Bot', 'label', 'start', 'bot') +
-    text(206, 349, 24, 'Own identity', 'helper', 'start', 'bot');
+    '" x="118" y="180" width="64" height="64"/>' +
+    text(206, 222, 32, 'Bot', 'label', 'start', 'bot');
   wide +=
-    box('memory', 94, 442, 386, 115) +
-    icon('memory', 120, 477) +
-    text(184, 486, 28, 'Memory', 'label', 'start', 'memory') +
-    text(184, 523, 24, 'Skills &amp; learnings', 'helper', 'start', 'memory');
+    box('memory', 94, 314, 386, 86) +
+    icon('memory', 120, 337) +
+    text(184, 367, 32, 'Memory', 'label', 'start', 'memory');
   wide +=
-    text(810, 134, 28, 'Work happens here') +
-    text(810, 174, 24, 'Outside the Bot environment', 'helper');
+    box('computer', 810, 112, 350, 120) +
+    icon('computer', 838, 150) +
+    text(907, 182, 32, 'Computer', 'label', 'start', 'computer');
   wide +=
-    box('computer', 810, 220, 350, 120) +
-    icon('computer', 838, 258) +
-    text(907, 269, 28, 'Connected', 'label', 'start', 'computer') +
-    text(907, 304, 28, 'computer', 'label', 'start', 'computer');
-  wide +=
-    box('app', 810, 420, 350, 120) +
-    icon('app', 838, 458) +
-    text(907, 469, 28, 'Connected', 'label', 'start', 'app') +
-    text(907, 504, 28, 'app', 'label', 'start', 'app') +
-    badge(695, 280) +
-    badge(695, 480) +
+    box('app', 810, 304, 350, 120) +
+    icon('app', 838, 342) +
+    text(907, 374, 32, 'App', 'label', 'start', 'app') +
+    badge(695, 172) +
+    badge(695, 364) +
     '</svg>';
   let mobile =
-    start(640, 970) +
-    box('environment', 28, 40, 544, 500, true) +
-    text(68, 102, 32, 'Bot environment', 'label', 'start', 'environment') +
-    text(
-      68,
-      148,
-      26,
-      'Runs the Bot · manages memory',
-      'helper',
-      'start',
-      'environment',
-    );
+    start(640, 810) +
+    box('environment', 28, 40, 544, 400, true) +
+    text(68, 102, 32, 'Bot environment', 'label', 'start', 'environment');
   mobile +=
-    '<path class="internal" d="M300 326V386"/><path class="route" d="M520 292H576C592 292 604 304 604 320V618C604 638 592 650 572 650H202C184 650 170 664 170 682V750"/><path class="route" d="M520 250H596C612 250 624 262 624 278V658C624 678 612 690 592 690H502C484 690 470 704 470 722V750"/>';
+    '<path class="internal" d="M300 262V320"/><path class="route" d="M520 222H576C592 222 604 234 604 250V518C604 538 592 550 572 550H396M304 550H202C184 550 170 564 170 582V650"/><path class="route" d="M520 190H596C612 190 624 202 624 218V558C624 578 612 590 600 590H594M502 590H502C484 590 470 604 470 622V650"/>';
   mobile +=
-    box('bot', 80, 190, 440, 136) +
+    box('bot', 80, 150, 440, 112) +
     '<image href="' +
     logoURI +
-    '" x="108" y="226" width="64" height="64"/>' +
-    text(202, 246, 32, 'Klex Bot', 'label', 'start', 'bot') +
-    text(202, 286, 28, 'Own identity', 'helper', 'start', 'bot');
+    '" x="108" y="174" width="64" height="64"/>' +
+    text(202, 216, 32, 'Bot', 'label', 'start', 'bot');
   mobile +=
-    box('memory', 80, 386, 440, 116) +
-    icon('memory', 112, 423) +
-    text(184, 434, 30, 'Memory', 'label', 'start', 'memory') +
-    text(184, 475, 28, 'Skills &amp; learnings', 'helper', 'start', 'memory');
+    box('memory', 80, 320, 440, 88) +
+    icon('memory', 112, 344) +
+    text(184, 375, 32, 'Memory', 'label', 'start', 'memory');
   mobile +=
-    text(320, 600, 30, 'Work happens here', 'label', 'middle') +
-    box('computer', 40, 750, 260, 180) +
-    icon('computer', 148, 774) +
-    text(170, 855, 28, 'Connected', 'label', 'middle', 'computer') +
-    text(170, 894, 28, 'computer', 'label', 'middle', 'computer') +
-    box('app', 340, 750, 260, 180) +
-    icon('app', 448, 774) +
-    text(470, 855, 28, 'Connected', 'label', 'middle', 'app') +
-    text(470, 894, 28, 'app', 'label', 'middle', 'app') +
-    badge(309, 650) +
-    badge(507, 690) +
+    box('computer', 40, 650, 260, 128) +
+    icon('computer', 148, 670) +
+    text(170, 756, 32, 'Computer', 'label', 'middle', 'computer') +
+    box('app', 340, 650, 260, 128) +
+    icon('app', 448, 670) +
+    text(470, 756, 32, 'App', 'label', 'middle', 'app') +
+    badge(309, 550) +
+    badge(507, 590) +
     '</svg>';
   const plain = (s) => s.replace(/<rect data-background-grid[^>]*\/>/, '');
   const layouts = [
-      { name: 'overview-wide', svg: wide, w: 1200, h: 640, embed: 720 },
-      { name: 'overview-mobile', svg: mobile, w: 640, h: 970, embed: 320 },
+      { name: 'bot-overview-wide', svg: wide, w: 1200, h: 480, embed: 720 },
+      { name: 'bot-overview-compact', svg: mobile, w: 640, h: 810, embed: 320 },
       {
-        name: 'overview-wide-no-grid',
+        name: 'bot-overview-wide-no-grid',
         svg: plain(wide),
         w: 1200,
-        h: 640,
+        h: 480,
         embed: 720,
       },
       {
-        name: 'overview-mobile-no-grid',
+        name: 'bot-overview-compact-no-grid',
         svg: plain(mobile),
         w: 640,
-        h: 970,
+        h: 810,
         embed: 320,
       },
     ],
@@ -444,6 +414,10 @@ try {
       throw Error('PNG check');
     files.push({
       name: l.name,
+      viewBox: [l.w, l.h],
+      subject: 'overview',
+      embedWidth: l.embed,
+      preview: l.name + '-embed-preview.png',
       svg: l.name + '.svg',
       png: l.name + '@2x.png',
       width: meta.width,
@@ -471,10 +445,9 @@ try {
         contrastQA,
         typography: {
           family: 'Geist',
-          wideLabel: 28,
-          wideHelper: 24,
-          mobileLabel: 28,
-          mobileHelper: 26,
+          wideLabel: 32,
+          mobileLabel: 32,
+          mcpLabel: 30,
         },
         meaning: {
           scope: 'Bot runtime and memory, not a workspace or security boundary',
@@ -499,13 +472,13 @@ try {
       {
         createdAt: new Date().toISOString(),
         source:
-          'https://github.com/stagewise-io/klex/blob/8f320838ecc26c66a50119fa1640535308d21bec/apps/docs/docs/bot/concepts/01-how-bots-work.mdx',
+          'https://github.com/stagewise-io/klex/blob/b6546653601dffa5e6f6c78ced8c627e2ac274fd/apps/docs/docs/bot/concepts/01-how-bots-work.mdx',
         alt,
         files,
         contrastQA,
         visualReview: { status: 'pending' },
         approval:
-          'Proposal for Knuth and Glenn; not approved or added to docs.',
+          'Knuth owns integration and validation; individual approval gate waived per Nov10 brief.',
       },
       null,
       2,

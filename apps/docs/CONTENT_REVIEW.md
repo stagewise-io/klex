@@ -24,6 +24,10 @@
 - **Terminology:** Use “computer” rather than “machine” in reader-facing docs.
 - **Memory scope:** Describe implemented capabilities only; do not include planned features in the Memory page.
 
+## Editorial direction from Glenn (10 Nov 2026)
+
+- Avoid specific Klex Bot version numbers in reader-facing docs unless they are essential, such as in a changelog. Keep versioned source evidence in this internal register.
+
 ## Confirmed from the repository; check release scope
 
 - **Headless stop in Klex 0.30.1:** `update-bootstrap/update-bootstrap.ts` routes SIGTERM to the running application, or requests shutdown before it is running. `application/application.ts` starts headless termination drain unless disabled, validates `KLEX_DRAIN_TIMEOUT_MS` (0–3600000 ms), and marks health not ready. `drain/drain.ts` uses a five-minute default and stops new work while waiting for quiescence; `shutdown-coordinator/shutdown-coordinator.ts` skips the pending wait on a second termination or an exit request. `drain/architecture.md` explains the separate shutdown timeout and the Kubernetes grace-period example. The drain is bounded and completion is not guaranteed. Checked against `v0.30.1` (`baff8a40ce9b896fdd17146dfe9906cefe7c2697`).

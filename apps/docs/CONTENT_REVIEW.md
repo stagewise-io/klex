@@ -26,6 +26,8 @@
 
 ## Confirmed from the repository; check release scope
 
+- **Self-hosted MCP setup in Klex 0.30.1:** `cli-ui/screens/mcp.tsx` and `mcp-headers.ts` define the interactive streamable HTTP add flow, custom headers, status and detail screens, editing, and confirmed deletion. `admin-api/routes/v1/mcp.ts` describes local OAuth credential deletion and attempted provider token revocation on removal; `mcp.authorization.ts` states that Cloud-relayed OAuth requires enrollment and a connected Cloud tunnel. Verify remote server and account permissions separately. Checked against `v0.30.1` (`baff8a40ce9b896fdd17146dfe9906cefe7c2697`).
+
 - **Self-hosted diagnostics in Klex 0.30.1:** `main.ts` captures up to 500 entries in the interactive in-memory log store and enables console logging in headless mode. `cli-ui/screens/settings.tsx`, `log-viewer.tsx`, and `debug-information.tsx` define the menus, viewer controls, and displayed runtime and Cloud status. The display-level filter does not change logger capture settings. Verified against upstream `v0.30.1` at `baff8a40ce9b896fdd17146dfe9906cefe7c2697`.
 
 - **Self-hosted health listener in Klex 0.30.1:** `cli/cli.ts` and `cli/cli.test.ts` define the optional port, CLI precedence, and default `0.0.0.0` host. `health-server/health-server.ts` serves unauthenticated exact GET `/livez` and `/readyz`; tests cover 200/503 lifecycle responses. `update-bootstrap/update-bootstrap.ts` starts it before loading the app; `application/application.ts` marks readiness after runtime startup and revokes it during drain or shutdown. This is not a model, connection, or task health check and does not expose the Admin API. The upstream `v0.30.1` tag was verified at `baff8a40ce9b896fdd17146dfe9906cefe7c2697`.

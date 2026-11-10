@@ -23,6 +23,19 @@ You can manage a Bot’s MCP connections in the Cloud dashboard. In Klex 0.30.1,
 
 Only connect servers you trust. A connection makes the server’s capabilities available to the Bot; access within an app also depends on the account and permissions configured there. Review the Bot’s connections and grant its accounts only the access they need. See [Connections to computers and apps](/bot/concepts/brain-and-computers) for more on managing access.
 
+### Add a remote server in the self-hosted app
+
+In the interactive Klex 0.30.1 app, you can add a streamable HTTP server:
+
+1. Open **Settings → MCP Servers** and press `a`.
+2. Enter a unique server name and an absolute HTTP or HTTPS URL. Use HTTPS for remote services that carry credentials.
+3. If the server requires custom headers, press `a` to add each name and value. Treat credential values as secrets.
+4. Press `s` to add the server, then check its status in the server list. A saved configuration does not by itself mean the server is connected.
+
+To inspect a server, select it and press Enter. Its detail screen shows its status, transport, tool count, and push-notification support. From there, `e` edits its configuration and `d` removes it after confirmation. On removal, Klex deletes local OAuth credentials and attempts token revocation when the provider supports it. Revocation can fail, so check the account’s permissions separately in the connected app.
+
+For OAuth authorization through the Cloud interface, the Bot must be enrolled and have a connected Cloud tunnel. A standalone Bot without Cloud enrollment cannot use that Cloud-relayed authorization flow.
+
 ## If a connection needs attention
 
 A server may need authorization or fail to connect. Check its connection status and complete any required authorization. If it still cannot connect, check the server address, credentials, and whether the server is available. The Bot can only use capabilities a connected server exposes.

@@ -51,7 +51,12 @@ export const workflowMarkup = (panels: string[]) => `
         <div class="new-workflow-navigation" role="group" aria-label="${html('Workflow steps')}">
           <h2 class="new-workflow-intro" id="new-workflow-intro">${html('How Klex Bots work together')}</h2>
           <div class="new-workflow-mobile-steps" data-markdown="exclude" aria-label="${html('Choose a story step')}">
-            ${steps.map(({ phase }, index) => `<button type="button" data-step="${index}" aria-label="${html('Step {{number}}: {{phase}}', { number: index + 1, phase: t(phase) })}" aria-controls="new-workflow-panel-${index}" aria-current="${index === 0 ? 'step' : 'false'}">${String(index + 1).padStart(2, '0')}</button>`).join('')}
+            ${steps
+              .map(({ phase }, index) => {
+                const number = String(index + 1).padStart(2, '0');
+                return `<button type="button" data-step="${index}" aria-label="${html('Step {{number}}: {{phase}}', { number, phase: t(phase) })}" aria-controls="new-workflow-panel-${index}" aria-current="${index === 0 ? 'step' : 'false'}">${number}</button>`;
+              })
+              .join('')}
           </div>
           <div class="new-workflow-step-viewport">
           <ol class="new-workflow-steps" data-markdown-layout="sections">

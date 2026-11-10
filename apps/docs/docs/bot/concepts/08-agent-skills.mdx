@@ -14,10 +14,10 @@ Klex makes available skills discoverable to the Bot and instructs it to load a m
 
 A Bot can learn skills from its activity. Skills can also come from other sources, such as templates. Each Bot stores its skills in its own [data directory](/bot/concepts/data-directory); skills are identified by a namespace and name, such as `learning/project-status`.
 
-In Klex 0.30.1, each skill is stored as a `SKILL.md` file under `skills/{namespace}/{name}/`. The file contains a name, a description, and a Markdown body.
+Each skill is stored as a `SKILL.md` file under `skills/{namespace}/{name}/`. The file contains a name, a description, and a Markdown body.
 
 ## Review and manage skills
 
-The Bot’s Admin API can list skills, retrieve their contents, and edit or delete them. In Klex 0.30.1, use `GET /v1/skills` to list skills and `GET /v1/skills/{namespace}/{name}` to read one. The same qualified path supports `PATCH` and `DELETE`.
+The Bot’s Admin API can list skills, retrieve their contents, and edit or delete them. Use `GET /v1/skills` to list skills and `GET /v1/skills/{namespace}/{name}` to read one. The same qualified path supports `PATCH` and `DELETE`.
 
 Review learned skills for accuracy. Learning can update or remove them over time, including skills an administrator has edited; an edit does not lock a learned skill against later changes.

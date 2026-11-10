@@ -15,7 +15,7 @@ Administrators can also access a Bot's chats and memory through its Admin API. T
 
 ## Check self-hosted diagnostics
 
-In the interactive Klex 0.30.1 app, open **Settings → Logs** to review recent runtime logs. Use the arrow keys to scroll, `l` to change the minimum displayed level, and `v` to change the display style. Changing the displayed level does not necessarily enable collection of additional logs.
+In the interactive Klex app, open **Settings → Logs** to review recent runtime logs. Use the arrow keys to scroll, `l` to change the minimum displayed level, and `v` to change the display style. Changing the displayed level does not necessarily enable collection of additional logs.
 
 The viewer keeps up to 500 captured entries in memory for the current process, so older entries may no longer be available. Runtime logs are not a complete record of Bot conversations or task results. In headless mode, Klex writes logs to the console instead of using the interactive viewer.
 
@@ -23,7 +23,7 @@ For version and connection details, open **Settings → Debug Information**. It 
 
 ## Review activity with the Admin API
 
-In Klex 0.30.1, administrators using the Admin API can:
+Administrators using the Admin API can:
 
 - List persisted session instances with `GET /v1/sessions`, then retrieve a session's messages with `GET /v1/sessions/{instanceId}/messages`. Follow `nextCursor` to retrieve older pages. Some older messages may have been trimmed; check `trimmedMessageCount`.
 - Query recorded model-call usage with `GET /v1/usage`. Results can be grouped by model or provider and aggregated over time. Token totals may be incomplete when a provider does not report usage; check `tokenUsageUnreportedCount`.

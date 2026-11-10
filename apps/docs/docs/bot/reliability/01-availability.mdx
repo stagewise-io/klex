@@ -14,3 +14,25 @@ Availability is not a guarantee that every task will run or succeed. The Bot als
 For scheduled work, keep the Bot and its connections available when the task is due, and check important results. Use a suitable connected scheduling service for recurring work; internal reminders are one-time. See [Automate recurring tasks](/bot/guides/recurring-tasks).
 
 A self-hosted Bot stops when you close its app. You can stop a Cloud-hosted Bot using the dashboard’s Stop control.
+
+## Monitor a self-hosted Bot
+
+Klex 0.30.1 can expose a separate HTTP health listener for monitoring. It is disabled by default. For example, in a POSIX shell, start an existing Bot with the listener bound to the local computer:
+
+```sh
+KLEX_HEALTH_HOST=127.0.0.1 klex --headless --data-dir /path/to/bot --health-port 8080
+```
+
+Replace the path with your Bot’s directory. If you change the port, use the same port in the checks below. From the same computer, check the endpoints:
+
+```sh
+curl -i http://127.0.0.1:8080/livez
+curl -i http://127.0.0.1:8080/readyz
+```
+
+- `GET /livez` returns HTTP 200 while the listener is running.
+- `GET /readyz` returns HTTP 200 once Klex has started its runtime modules. It returns 503 while startup is incomplete and during shutdown. A stopped listener cannot respond.
+
+These probes do not confirm that a model provider, connected service, or individual task is working. Monitor those separately.
+
+The listener is unauthenticated and defaults to `0.0.0.0` when enabled; restrict network access or set `KLEX_HEALTH_HOST` to an appropriate bind address. It does not expose the Admin API. You can also set the port with `KLEX_HEALTH_PORT`; `--health-port` takes precedence.

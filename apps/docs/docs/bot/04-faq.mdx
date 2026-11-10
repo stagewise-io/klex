@@ -39,6 +39,7 @@ Find answers about getting started, hosting, connections, and operating Klex Bot
 
 ## Reliability
 
+- **Can I monitor a self-hosted Bot’s health?** Yes. Klex has an optional health listener, disabled by default. Its probes do not verify model providers, connections, or individual tasks. The listener is unauthenticated, so restrict access. See [Monitor a self-hosted Bot](/bot/reliability/availability#monitor-a-self-hosted-bot).
 - **Can a Bot work around the clock?** It can be available while its hosting environment is running, but task success depends on its model access and connections. See [Availability](/bot/reliability/availability).
 - **Do I have to re-create a Bot after an update?** Generally, no. Compatibility varies, so read the release notes and check connections and important workflows afterward. See [Updates](/bot/reliability/updates).
 
@@ -46,6 +47,7 @@ Find answers about getting started, hosting, connections, and operating Klex Bot
 
 - **Can I run a Bot without Klex Cloud?** Yes. Cloud enrollment is not required for a self-hosted Bot, though the standalone experience is less complete. See [Hosted vs. self-hosted](/cloud/hosted-vs-local).
 - **Who can access a Bot’s memory?** Administrators can access it through the Bot’s Admin API. Cloud-hosted data is encrypted in transit and at rest. Staff access and third-party processing are not established in these docs; contact Klex for current details. See [Data privacy](/cloud/data-privacy).
+- **Can I turn off analytics for a self-hosted Bot?** Yes. Use `--no-analytics`, `KLEX_NO_ANALYTICS=1`, or `DO_NOT_TRACK=1`. The explicit `--analytics` flag overrides the environment opt-outs. Operational telemetry is separate and has its own controls. These settings do not disable connections to providers, MCP servers, or Cloud. See [Analytics and telemetry](/cloud/data-privacy#analytics-and-telemetry-for-a-self-hosted-bot).
 - **Can I self-host Klex Cloud?** Self-hosted Klex Cloud is available to Enterprise customers. This is separate from self-hosting an individual Bot. See [Self-hosting the Cloud](/cloud/self-hosting).
 
 ## Klex Bots in your company

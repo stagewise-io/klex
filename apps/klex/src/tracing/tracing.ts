@@ -37,6 +37,8 @@ export interface TracingDependencies {
   agentName?: string;
   /** Stable agent id (enrolled cloud client id), as `gen_ai.agent.id`. */
   getAgentId?: () => string | null | undefined;
+  /** Agent id fallback while not enrolled (the telemetry `service.instance.id`). */
+  fallbackAgentId?: string;
 }
 
 export interface Tracing {
@@ -65,6 +67,7 @@ class TracingModule implements Tracing {
       policy?: Readonly<Pick<TelemetryPolicy, 'getSnapshot'>>;
       agentName?: string;
       getAgentId?: () => string | null | undefined;
+      fallbackAgentId?: string;
     },
   ) {
     const resource = createTelemetryResourceFromAttributes({
@@ -89,7 +92,10 @@ class TracingModule implements Tracing {
       spanProcessors: [
         // Runs first so Klex-owned GenAI spans carry their identity before
         // the policy processor sees them.
-        new GenAiIdentitySpanProcessor({ getAgentId: deps.getAgentId }),
+        new GenAiIdentitySpanProcessor({
+          getAgentId: deps.getAgentId,
+          fallbackAgentId: deps.fallbackAgentId,
+        }),
         deps.spanProcessor,
       ],
     });
@@ -106,6 +112,7 @@ class TracingModule implements Tracing {
           deps.policy?.getSnapshot().contentAllowed ?? false,
         agentName: deps.agentName,
         getAgentId: deps.getAgentId,
+        fallbackAgentId: deps.fallbackAgentId,
       }),
       this.usageTelemetry,
     );
@@ -182,5 +189,6 @@ export function createTracing(deps: TracingDependencies): Tracing {
     policy: deps.policy,
     agentName: deps.agentName,
     getAgentId: deps.getAgentId,
+    fallbackAgentId: deps.fallbackAgentId,
   });
 }

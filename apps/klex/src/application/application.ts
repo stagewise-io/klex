@@ -518,6 +518,7 @@ class ApplicationModule implements Application {
       // identity never reaches basic telemetry.
       agentName: config.get().officialName,
       getAgentId: getCloudClientId,
+      fallbackAgentId: telemetryInstanceId,
       enabled: telemetryPolicy.getSnapshot().tracesEnabled,
     });
     const closeTracing = this.own(tracing);

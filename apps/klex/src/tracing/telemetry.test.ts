@@ -237,14 +237,62 @@ describe('KlexOpenTelemetry — agent identity', () => {
     expect(second?.attributes['klex.extension.id']).toBe('vision');
     await provider.shutdown();
   });
+
+  it('scopes the default conversation id by agent', async () => {
+    let agentId: string | null = null;
+    const { exporter, provider, telemetry } = createSpanHarness('advanced', {
+      getAgentId: () => agentId,
+      fallbackAgentId: 'instance-1',
+    });
+    const run = (callId: string, conversationId: string) => {
+      telemetry.onStart(
+        makeOtelStartEvent({
+          callId,
+          operationId: 'ai.generateText',
+          provider: 'openai',
+          modelId: 'gpt-test',
+          runtimeContext: { 'conversation.id': conversationId },
+        }),
+      );
+      telemetry.onEnd(
+        makeOtelEndEvent({
+          callId,
+          finishReason: 'stop',
+          usage: { inputTokens: 1, outputTokens: 1 },
+        }),
+      );
+    };
+
+    run('unenrolled', 'default');
+    agentId = 'client-1';
+    run('enrolled', 'default');
+    run('child', 'child-uuid');
+    await provider.forceFlush();
+
+    const ids = exporter
+      .getFinishedSpans()
+      .map((span) => span.attributes['gen_ai.conversation.id']);
+    expect(ids).toEqual([
+      'default:instance-1',
+      'default:client-1',
+      'child-uuid',
+    ]);
+    await provider.shutdown();
+  });
 });
 
 describe('GenAiIdentitySpanProcessor', () => {
-  function createIdentityHarness(agentId: string | null) {
+  function createIdentityHarness(
+    agentId: string | null,
+    fallbackAgentId?: string,
+  ) {
     const exporter = new InMemorySpanExporter();
     const provider = new BasicTracerProvider({
       spanProcessors: [
-        new GenAiIdentitySpanProcessor({ getAgentId: () => agentId }),
+        new GenAiIdentitySpanProcessor({
+          getAgentId: () => agentId,
+          fallbackAgentId,
+        }),
         new SimpleSpanProcessor(exporter),
       ],
     });
@@ -270,6 +318,33 @@ describe('GenAiIdentitySpanProcessor', () => {
     expect(attributes['gen_ai.conversation.id']).toBe('session-1');
     await provider.shutdown();
   });
+
+  it.each([
+    { agentId: 'client-1', expected: 'default:client-1' },
+    { agentId: null, expected: 'default:instance-1' },
+  ])(
+    'scopes default tool spans by agent ($expected)',
+    async ({ agentId, expected }) => {
+      const { exporter, provider, tracer } = createIdentityHarness(
+        agentId,
+        'instance-1',
+      );
+      tracer
+        .startSpan('execute_tool read_file', {
+          attributes: {
+            'gen_ai.operation.name': 'execute_tool',
+            'klex.session.id': 'default',
+          },
+        })
+        .end();
+      await provider.forceFlush();
+
+      const attributes = exporter.getFinishedSpans()[0]?.attributes ?? {};
+      expect(attributes['gen_ai.conversation.id']).toBe(expected);
+      expect(attributes['klex.session.id']).toBe('default');
+      await provider.shutdown();
+    },
+  );
 
   it('omits the agent id before enrollment', async () => {
     const { exporter, provider, tracer } = createIdentityHarness(null);

@@ -53,7 +53,7 @@ export function createFooterMarkup({
         <a href="/legal/terms">${html('Terms of Service')}</a>
         <a href="/legal">${html('Legal Center')}</a>
         <a href="mailto:support@klex.bot">${html('Support')}</a>
-        <a href="https://x.com/stagewise_io" target="_blank" rel="noreferrer">X</a>
+        <a href="https://x.com/klexbot" target="_blank" rel="noreferrer">X</a>
         <a href="https://linkedin.com/company/stagewise-io" target="_blank" rel="noreferrer">LinkedIn</a>
       </nav>
     </div>

@@ -43,7 +43,9 @@ System instructions, input, output, and tool definitions are each limited to 512
 
 ## Grafana Agent Observability
 
-AI SDK spans are built for [Grafana Agent Observability](https://grafana.com/docs/grafana-cloud/monitor-applications/ai-observability/). Every span of an AI SDK call carries `agento11y.record=true`; Grafana Cloud strips `gen_ai.*` content attributes from spans without it. Klex-owned GenAI spans (`execute_tool`) receive the same marker, `gen_ai.agent.id`, and `gen_ai.conversation.id` (the session id) from a span processor at span start.
+AI SDK spans are built for [Grafana Agent Observability](https://grafana.com/docs/grafana-cloud/monitor-applications/ai-observability/). Every span of an AI SDK call carries `agento11y.record=true`; Grafana Cloud strips `gen_ai.*` content attributes from spans without it. Klex-owned GenAI spans (`execute_tool`) receive the same marker, `gen_ai.agent.id`, and `gen_ai.conversation.id` from a span processor at span start.
+
+Agent Observability groups conversations by `gen_ai.conversation.id` alone, across all agents in a stack. Every agent's default session has the session id `default`, so its conversation id is exported as `default:{agentId}`: the enrolled cloud client id, or the per-process `service.instance.id` while not enrolled. God and child session ids are already unique and are exported unchanged. `klex.session.id` always keeps the internal session id.
 
 - `advanced`: Agent Observability records metadata only (model, provider, token usage, latency, errors, agent and conversation ids).
 - `debug`: Agent Observability also records the content described above, including tool calls and tool results.

@@ -18,6 +18,7 @@ import {
 } from 'ai';
 
 import type { ModelCallRecord, ModelCallSource } from '@/model-call-logger';
+import { DEFAULT_SESSION_ID } from '@/session/types';
 import { normalizeAgentName } from '@/telemetry-resource';
 
 type TelemetryStartEvent = Parameters<NonNullable<Telemetry['onStart']>>[0];
@@ -163,6 +164,8 @@ export interface KlexOpenTelemetryOptions {
   agentName?: string;
   /** Evaluated per call; stable agent id recorded as `gen_ai.agent.id`. */
   getAgentId?: () => string | null | undefined;
+  /** Scopes the default conversation id while no agent id is available. */
+  fallbackAgentId?: string;
 }
 
 /**
@@ -185,6 +188,7 @@ export class KlexOpenTelemetry extends OpenTelemetry {
   private readonly agentName: string;
   private readonly contentAllowed: () => boolean;
   private readonly getAgentId: () => string | null | undefined;
+  private readonly fallbackAgentId: string | undefined;
 
   constructor(tracer: Tracer, options: KlexOpenTelemetryOptions = {}) {
     const callAttributes = new Map<string, Attributes>();
@@ -197,6 +201,7 @@ export class KlexOpenTelemetry extends OpenTelemetry {
     this.agentName = normalizeAgentName(options.agentName ?? '');
     this.contentAllowed = options.contentAllowed ?? (() => false);
     this.getAgentId = options.getAgentId ?? (() => null);
+    this.fallbackAgentId = options.fallbackAgentId;
   }
 
   private spanAttributes(
@@ -224,7 +229,10 @@ export class KlexOpenTelemetry extends OpenTelemetry {
     const agentId = resolveAgentId(this.getAgentId);
     if (agentId) attributes['gen_ai.agent.id'] = agentId;
     if (identity.conversationId) {
-      attributes['gen_ai.conversation.id'] = identity.conversationId;
+      attributes['gen_ai.conversation.id'] = exportedConversationId(
+        identity.conversationId,
+        agentId || this.fallbackAgentId,
+      );
     }
     if (identity.compacted != null) {
       attributes['klex.conversation.compacted'] = identity.compacted;
@@ -370,17 +378,39 @@ function resolveAgentId(
 }
 
 /**
+ * `gen_ai.conversation.id` for a Klex session id. Grafana Agent Observability
+ * groups conversations by this id alone, and every agent's default session is
+ * `default`, so the exported default id is scoped by agent:
+ * `default:{agentId}`. Other session ids are UUIDs and are exported unchanged.
+ */
+export function exportedConversationId(
+  sessionId: string,
+  agentId: string | null | undefined,
+): string {
+  return sessionId === DEFAULT_SESSION_ID && agentId
+    ? `${DEFAULT_SESSION_ID}:${agentId}`
+    : sessionId;
+}
+
+/**
  * Gives GenAI spans that Klex creates itself (session `execute_tool` spans)
  * the Agent Observability marker and identity that {@link KlexOpenTelemetry}
  * puts on AI SDK spans. AI SDK spans carry the marker from the start and are
- * left unchanged. `gen_ai.conversation.id` is the Klex session id, as on AI
- * SDK spans.
+ * left unchanged. `gen_ai.conversation.id` is derived from the Klex session id
+ * as on AI SDK spans (see {@link exportedConversationId}).
  */
 export class GenAiIdentitySpanProcessor implements SpanProcessor {
   private readonly getAgentId: () => string | null | undefined;
+  private readonly fallbackAgentId: string | undefined;
 
-  constructor(options: Pick<KlexOpenTelemetryOptions, 'getAgentId'> = {}) {
+  constructor(
+    options: Pick<
+      KlexOpenTelemetryOptions,
+      'getAgentId' | 'fallbackAgentId'
+    > = {},
+  ) {
     this.getAgentId = options.getAgentId ?? (() => null);
+    this.fallbackAgentId = options.fallbackAgentId;
   }
 
   onStart(span: Span): void {
@@ -397,7 +427,10 @@ export class GenAiIdentitySpanProcessor implements SpanProcessor {
       typeof sessionId === 'string' &&
       attributes['gen_ai.conversation.id'] === undefined
     ) {
-      span.setAttribute('gen_ai.conversation.id', sessionId);
+      span.setAttribute(
+        'gen_ai.conversation.id',
+        exportedConversationId(sessionId, agentId || this.fallbackAgentId),
+      );
     }
   }
 

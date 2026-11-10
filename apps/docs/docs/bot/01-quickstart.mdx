@@ -8,7 +8,11 @@ related:
 
 Klex recommends a Cloud-hosted Bot for most users. You can also run a Bot on your own computer, with or without Klex Cloud enrollment. You’ll need access to a model provider; Cloud setup also requires a Klex Cloud account.
 
-## Create a Cloud-hosted Bot
+<div className="hosting-quickstart">
+<Tabs inline hash sync={false}>
+<Tab title="Cloud-hosted" id="create-a-cloud-hosted-bot">
+
+## Cloud-hosted setup
 
 1. Sign in to [Klex Cloud](https://cloud.klex.bot) and start creating a Bot.
 2. Choose Cloud hosting and follow the setup prompts to name the Bot, define its [soul](/bot/concepts/soul), and configure its model providers and models.
@@ -16,16 +20,24 @@ Klex recommends a Cloud-hosted Bot for most users. You can also run a Bot on you
 
 Send the Bot a message in a connected app to check that it responds. You can review its activity in the Cloud dashboard.
 
-## Install Klex for self-hosting
+</Tab>
+<Tab title="Self-hosted" id="install-klex-for-self-hosting">
+
+## Self-hosted setup
 
 To run the Bot on your own computer, install Klex from a system shell:
 
-<Tabs param="install">
-  <Tab title="macOS">`curl -fsSL https://klex.bot/install.sh | sh`</Tab>
-  <Tab title="Linux">`curl -fsSL https://klex.bot/install.sh | sh`</Tab>
-  <Tab title="Windows">`irm https://klex.bot/install.ps1 | iex`</Tab>
-  <Tab title="WSL">`curl -fsSL https://klex.bot/install.sh | sh`</Tab>
-</Tabs>
+**macOS, Linux, or WSL:**
+
+```sh
+curl -fsSL https://klex.bot/install.sh | sh
+```
+
+**Windows (PowerShell):**
+
+```powershell
+irm https://klex.bot/install.ps1 | iex
+```
 
 ### Cloud-assisted setup
 
@@ -46,24 +58,13 @@ klex --no-cloud
 
 To receive events from an external channel, connect an MCP server that supports the relevant resource updates or Klex’s [push-notification extension](https://github.com/stagewise-io/klex/tree/main/packages/mcp-extension-push-notifications).
 
-## Create a self-hosted Bot without the picker
+</Tab>
+</Tabs>
+</div>
 
-For Cloud enrollment, obtain an enrollment token from Klex Cloud and make it available to the process as `KLEX_CLOUD_ENROLLMENT_TOKEN` using your approved secret-management process. Then run:
-
-```sh
-klex --create-bot
-```
-
-Treat the token as a secret: avoid placing it in scripts, command-line arguments, or shell history, and restrict access to the process environment. Add `--headless` to run without the terminal interface.
-
-For a standalone Bot, supply a name instead:
-
-```sh
-klex --create-bot --no-cloud --bot-name Ada
-```
-
-Configure its provider, model, and connections before expecting it to work. `--create-bot` cannot be combined with `--data-dir` or `KLEX_DATA_DIR`: those identify an existing Bot.
-
-If Cloud enrollment fails, the new Bot directory is retained and its path is printed. With the enrollment token available in `KLEX_CLOUD_ENROLLMENT_TOKEN`, retry with `klex --data-dir PATH`, replacing `PATH` with the printed directory, instead of creating another Bot.
+<a id="create-a-self-hosted-bot-without-the-picker"></a>
+For unattended or headless setup, see [Run a self-hosted Bot without the picker](/bot/guides/control-and-limits#run-a-self-hosted-bot-without-the-picker).
 
 If the Bot does not respond, see [troubleshooting steps](/bot/guides/observability#if-a-bot-does-not-respond).
+
+<script src="/quickstart-tabs.js" defer></script>

@@ -13,7 +13,7 @@ Admins can access chats and memory through the Bot’s Admin API. The Klex Cloud
 
 ## Find a self-hosted Bot
 
-In the self-hosted Klex 0.30.1 app, interactive startup discovers Bots under `~/.klex/agents` by default. If `KLEX_HOME` is set, it uses the `agents` folder under that location instead. An explicit `--data-dir` selects a directory directly and takes precedence over `KLEX_DATA_DIR`.
+In the self-hosted Klex app, interactive startup discovers Bots under `~/.klex/agents` by default. If `KLEX_HOME` is set, it uses the `agents` folder under that location instead. An explicit `--data-dir` selects a directory directly and takes precedence over `KLEX_DATA_DIR`.
 
 For example, to open a Bot whose data directory is already known:
 
@@ -25,6 +25,6 @@ Replace the example path with the Bot’s actual directory. See the [quickstart]
 
 ## Protect the data
 
-The directory can contain sensitive information, including configuration and credentials. Restrict access using your operating system’s permissions, and protect any copies you make. Klex 0.30.1 requests owner-only permissions when creating the directory on systems that support Unix modes; it does not change permissions on an existing directory. Windows uses access control lists instead.
+The directory can contain sensitive information, including configuration and credentials. Restrict access using your operating system’s permissions, and protect any copies you make. Klex requests owner-only permissions when creating the directory on systems that support Unix modes; it does not change permissions on an existing directory. Windows uses access control lists instead.
 
 Check your backup and recovery procedures before deleting or moving data. This page does not specify a supported migration or restore procedure, retention rules, or third-party data processing.

@@ -17,7 +17,7 @@ A self-hosted Bot stops when you close its app. For a headless Bot, see [how to 
 
 ## Monitor a self-hosted Bot
 
-Klex 0.30.1 can expose a separate HTTP health listener for monitoring. It is disabled by default. For example, in a POSIX shell, start an existing Bot with the listener bound to the local computer:
+Klex can expose a separate HTTP health listener for monitoring. It is disabled by default. For example, in a POSIX shell, start an existing Bot with the listener bound to the local computer:
 
 ```sh
 KLEX_HEALTH_HOST=127.0.0.1 klex --headless --data-dir /path/to/bot --health-port 8080

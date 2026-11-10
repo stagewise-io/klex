@@ -16,6 +16,16 @@ You can stop a Klex Bot and manage what it can access through its connections an
 - **Cloud-hosted Bot:** Use **Stop** in the Klex Cloud dashboard.
 - **Self-hosted Bot running in the app:** Close the app.
 
+### Stop a headless Bot
+
+On POSIX systems, send `SIGTERM` to the Klex process, or use your service manager’s stop command. If the process is supervised, configure the service so it does not immediately restart the Bot.
+
+For a running headless Bot in Klex 0.30.1, the first `SIGTERM` starts a drain: Klex stops accepting new work and waits for current work to become idle before shutting down. The default drain budget is five minutes. It is a limit, not a guarantee that work will finish.
+
+Set `KLEX_DRAIN_TIMEOUT_MS` before starting Klex to change the budget, in milliseconds. Valid values range from `0` to `3600000`; `0` disables the drain. A second `SIGTERM`, or `SIGINT` such as Ctrl+C, skips the remaining drain wait and starts shutdown. If the process is still starting, it shuts down without the running Bot’s drain.
+
+Allow your service manager or orchestrator enough time for both the drain and shutdown cleanup before it forces termination. The default shutdown cleanup timeout is 15 seconds, separate from the drain budget. For example, with the defaults, a Kubernetes `terminationGracePeriodSeconds` of `330` provides a margin beyond both timeouts. Adjust it if you change them. During a drain, the optional readiness probe returns 503. See [Availability](/bot/reliability/availability#monitor-a-self-hosted-bot).
+
 ## Manage access
 
 Connect or disconnect a Bot's MCP servers in the Cloud dashboard. Configure permissions for the accounts and apps the Bot uses directly in those accounts and apps. See [Connections to computers and apps](/bot/concepts/brain-and-computers) for how connections and account permissions relate.

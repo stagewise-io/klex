@@ -232,7 +232,6 @@ export function stageDistribution(
   const executableName = platform === 'win32' ? 'klex.exe' : 'klex';
   for (const name of new Set([
     executableName,
-    'javascript-sandbox-worker.js',
     'livekit-rtc.node',
     'node_modules',
     ...assets,

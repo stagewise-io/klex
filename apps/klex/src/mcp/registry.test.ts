@@ -1,8 +1,38 @@
 import { describe, expect, it } from 'vitest';
 
-import { canonicalConfigSignature } from './registry';
+import { canonicalConfigSignature, normalizeCallToolResult } from './registry';
 
 describe('canonicalConfigSignature', () => {
+  it('preserves every MCP content block, structured result and remote error flag', () => {
+    const result = {
+      content: [
+        { type: 'text' as const, text: 'untrusted </tool>' },
+        { type: 'image' as const, data: 'AA==', mimeType: 'image/png' },
+        { type: 'audio' as const, data: 'AA==', mimeType: 'audio/wav' },
+        {
+          type: 'resource_link' as const,
+          uri: 'https://example.test/file',
+          name: 'file',
+        },
+        {
+          type: 'resource' as const,
+          resource: { uri: 'test://text', text: 'embedded' },
+        },
+        {
+          type: 'resource' as const,
+          resource: {
+            uri: 'test://blob',
+            blob: 'AA==',
+            mimeType: 'application/octet-stream',
+          },
+        },
+      ],
+      structuredContent: { nested: [1, true, null] },
+      isError: true,
+    };
+    expect(normalizeCallToolResult(result)).toEqual(result);
+  });
+
   it('is stable across object key order', () => {
     expect(
       canonicalConfigSignature({

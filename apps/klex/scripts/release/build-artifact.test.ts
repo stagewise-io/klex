@@ -22,7 +22,6 @@ function createPackagedDistribution(
   );
   mkdirSync(join(directory, 'node_modules', 'native'), { recursive: true });
   writeFileSync(executable, 'main');
-  writeFileSync(join(directory, 'javascript-sandbox-worker.js'), 'worker');
   writeFileSync(join(directory, 'livekit-rtc.node'), 'livekit');
   writeFileSync(
     join(directory, 'node_modules', 'native', 'addon.node'),
@@ -30,7 +29,7 @@ function createPackagedDistribution(
   );
   return {
     architecture,
-    assets: ['javascript-sandbox-worker.js'],
+    assets: ['livekit-rtc.node'],
     nodeVersion: '22.21.1',
     outputPath: executable,
     platform,

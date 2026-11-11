@@ -29,7 +29,7 @@ The image runs with a read-only root filesystem. Klex writes in three places out
 
 - the data directory under `/data/agent`
 - `$HOME/.cache/klex/native`, where it extracts the LiveKit addon at runtime. This is why `HOME` points into the volume.
-- `os.tmpdir()`, used by the JavaScript sandbox, so `/tmp` must be writable.
+- `os.tmpdir()`, used by temporary media operations, so `/tmp` must be writable.
 
 The volume must be writable by uid 10001. Docker named volumes copy the owner of the image's `/data` into a new volume, so they work as is. Kubernetes volumes and bind mounts don't get that copy. On Kubernetes, set `securityContext.fsGroup: 10001` on the pod, ideally with `fsGroupChangePolicy: OnRootMismatch` so large volumes aren't re-chowned on every start.
 
@@ -45,7 +45,7 @@ Headless Klex never runs onboarding. `/data/agent/config.json` must exist before
 
 On SIGTERM Klex stops taking new work, waits for the running turn to finish, acknowledges the Push Notifications it handled, and exits 0. Events that arrive during the drain stay in the server's pending queue for the next start. A second SIGTERM skips the wait. See [`src/drain/architecture.md`](../src/drain/architecture.md).
 
-tini runs as PID 1 and reaps the processes Klex spawns: stdio MCP servers, ffmpeg, and the sandbox worker. It runs without `-g`, so SIGTERM reaches Klex alone. Klex then drains and stops its own children. With `-g`, the children would die mid-turn.
+tini runs as PID 1 and reaps the processes Klex spawns: stdio MCP servers and ffmpeg. It runs without `-g`, so SIGTERM reaches Klex alone. Klex then drains and stops its own children. With `-g`, the children would die mid-turn.
 
 Set the orchestrator's grace period above `KLEX_DRAIN_TIMEOUT_MS + KLEX_SHUTDOWN_TIMEOUT_MS` plus a margin. With the defaults (300 s + 15 s), use about 330 s, e.g. `terminationGracePeriodSeconds: 330`. A shorter grace period is safe but wasteful: work still running at SIGKILL is lost and its events get delivered again.
 

@@ -108,6 +108,19 @@ After local deletion, Klex discovers each saved token issuer's revocation endpoi
 
 The MCP ingress extension installed in the default session subscribes through `mcp.onPushNotification(listener)` and receives `McpPushNotification` objects. It routes resource-linked notifications and converts events into session-inbox events. A session with MCP access does not subscribe automatically; its extension composition determines whether it handles ingress.
 
+## Direct tool gateway
+
+The default session's `mcp-tools` extension exposes exactly three MCP gateway tools: `listTools`, `getToolInfo`, and `runTool`. God and consult/child sessions do not install it or receive MCP access. Independent native tools and MCP ingress remain separate.
+
+- `listTools` selects an exact configured server. Identifier-aware lexical search supports conservative English plural forms, bounded typos, `|` alternatives and `*`/`?` globs without evaluating user regex. Relevance precedes usage; ties use frequency/recency in the last 1,000 dispatched calls, then original server order. Counts are process-local and contain identities only.
+- Discovery returns at most ten lossy `[name, description, inputHints, incomplete]` tuples. Opaque numeric cursors bind immutable rankings to query, session and catalog generation; bounded caches expire after five minutes and are invalidated on catalog changes/session close.
+- `getToolInfo` returns compact live details as untrusted JSON: descriptions, input/output schemas and behavior annotations. Schema-dialect documentation links, display titles, examples, comments, icons and server metadata are omitted; descriptions, constraints, defaults, identifiers and references remain. Only schema positions are transformed, never literal enum/default values or property names. Validation always uses the untouched server schema. Details exceeding 256 KiB fail explicitly rather than truncating.
+- `runTool` captures a coherent definition/connection/validator generation, validates before dispatch and preserves MCP content and error flags. Validators compile lazily per generation. Ajv supports draft-07/default, 2019-09 and 2020-12 with document-local references; standard formats (ajv-formats), regex-bearing keywords and dialect-appropriate local dynamic/recursive references are supported. Unknown formats, remote references and async validation fail closed. No defaults, coercion or property removal occurs. JSON complexity and VM watchdog budgets bound host validation (1000ms compile, 100ms per input, including regex execution). The VM only runs trusted validation code; it is not a model-facing execution capability.
+
+Metadata/results are untrusted, including prose inside valid JSON. Structured local errors never echo raw arguments or transport exceptions. The common interaction executor retains timeout, cancellation, duplicate-execution and output-size policy. Timeout/disconnect/oversized output cannot establish whether a remote mutation completed; never automatically replay it.
+
+There is no internal JavaScript sandbox, worker asset or eval fallback. Computation and large-result filtering require an attached external MCP environment. Dependent chains require separate model tool calls. Historical sandbox transcript parts remain ordinary readable data; no stored representation is changed.
+
 ## Interface to main
 
 `createMcp({ logging, config, realtimeMediaCapability })` composes the module. Main resolves `realtimeMediaCapability` from the realtime provider registry before MCP starts. No external inbox wiring is required.

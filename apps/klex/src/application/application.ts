@@ -64,9 +64,9 @@ import {
   createGodMessagesTrustExt,
 } from '@/session/chat/extensions/god-messages';
 import { createImageInputOptimizerExt } from '@/session/chat/extensions/image-input-optimizer';
-import { createJsReplSandboxExt } from '@/session/chat/extensions/js-repl-sandbox';
 import { createLearningExt } from '@/session/chat/extensions/learning';
 import { createMcpIngressExt } from '@/session/chat/extensions/mcp-ingress';
+import { createMcpToolsExt } from '@/session/chat/extensions/mcp-tools';
 import { createMemoryExt } from '@/session/chat/extensions/memory';
 import { createNameLoaderExt } from '@/session/chat/extensions/name-loader';
 import { createReadAttachmentExt } from '@/session/chat/extensions/read-attachment/read-attachment';
@@ -672,7 +672,7 @@ class ApplicationModule implements Application {
       createNameLoaderExt,
       createSoulExt,
       createGodMessagesDistrustExt,
-      createJsReplSandboxExt,
+      createMcpToolsExt,
       createContextCompactionExt,
       defaultTimeExt,
       createImageInputOptimizerExt,
@@ -708,7 +708,7 @@ class ApplicationModule implements Application {
     });
 
     // God session: no MCP, trust-mode god-messages, soul-god variant.
-    // js-repl-sandbox excluded — it requires MCP access.
+    // mcp-tools excluded — it requires MCP access.
     const godMessages = createGodMessages({
       logging,
       introspection: introspector,

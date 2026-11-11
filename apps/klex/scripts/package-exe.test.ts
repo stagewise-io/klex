@@ -34,7 +34,6 @@ describe('Klex Bot executable packaging', () => {
       outputDirectory: 'dist',
       mainFormat: 'module',
       assets: {
-        'javascript-sandbox-worker.js': 'dist/javascript-sandbox-worker.js',
         'livekit-rtc.node': resolveLiveKitNativeAddon(),
       },
       useCodeCache: false,

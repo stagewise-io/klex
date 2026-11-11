@@ -31,15 +31,11 @@ import {
 import {
   type JsonObject,
   type JsonValue,
-  parseToolSearchOptions,
-  type ToolDescription,
+  ToolGatewayError,
+  type ToolPage,
   type ToolProvider,
   type ToolReference,
   type ToolRequestContext,
-  type ToolSearchOptions,
-  type ToolSearchResult,
-  type ToolSnapshot,
-  toolSearchLimit,
 } from '@/tool-provider';
 
 import {
@@ -75,6 +71,8 @@ import {
   type McpRegistry,
   normalizeCallToolResult,
 } from './registry';
+import { compactToolInfo } from './tool-info';
+import { createToolSearch } from './tool-search';
 
 const RETRY_INITIAL_MS = 1_000;
 const RETRY_MAX_MS = 30_000;
@@ -434,6 +432,7 @@ class McpModule implements Mcp {
   >();
   private readonly realtimeAvailableNamespaces = new Set<string>();
   private registry: McpRegistry = new Map();
+  private readonly toolSearch = createToolSearch();
   private started = false;
   private readonly authorizationRequests = new Map<
     string,
@@ -787,54 +786,49 @@ class McpModule implements Mcp {
       }
     }
     this.resourceSubscriptions.clear();
+    this.toolSearch.clear();
     this.deps.logger.info('MCP stopped');
   }
 
-  async snapshot(_context: ToolRequestContext): Promise<ToolSnapshot> {
-    return {
-      namespaces: [...this.registry.entries()].map(([name, namespace]) => ({
-        name,
-        capabilities: [...namespace.tools.keys()].map((capability) => ({
-          name: capability,
-        })),
-      })),
-    };
-  }
-
-  async search(
+  async listTools(
+    server: string,
     query: string,
-    options: ToolSearchOptions,
-    _context: ToolRequestContext,
-  ): Promise<ToolSearchResult[]> {
-    const parsedOptions = parseToolSearchOptions(options);
-    const terms = query.toLocaleLowerCase().split(/\s+/u).filter(Boolean);
-    const matches = [...this.registry.entries()].flatMap(
-      ([namespace, registeredNamespace]) =>
-        [...registeredNamespace.tools.values()].filter((entry) => {
-          const id = `${namespace}.${entry.tool.name}`;
-          const haystack =
-            `${id} ${entry.tool.title ?? ''} ${entry.tool.description ?? ''}`.toLocaleLowerCase();
-          return terms.every((term) => haystack.includes(term));
-        }),
+    cursor: number,
+    context: ToolRequestContext,
+  ): Promise<ToolPage> {
+    context.signal.throwIfAborted();
+    return this.toolSearch.list(
+      server,
+      query,
+      cursor,
+      context.sessionId,
+      this.getToolNamespace(server),
     );
-    return matches
-      .slice(0, toolSearchLimit(parsedOptions, query) ?? matches.length)
-      .map((entry) => ({
-        reference: entry.descriptor.reference,
-        ...(entry.tool.description
-          ? { description: entry.tool.description }
-          : {}),
-        ...(parsedOptions.includeInputSchema && entry.descriptor.inputSchema
-          ? { inputSchema: entry.descriptor.inputSchema }
-          : {}),
-      }));
   }
 
-  async describe(
+  releaseToolSession(sessionId: string): void {
+    this.toolSearch.release(sessionId);
+  }
+
+  async getToolInfo(
     reference: ToolReference,
-    _context: ToolRequestContext,
-  ): Promise<ToolDescription> {
-    return this.getTool(reference).descriptor;
+    context: ToolRequestContext,
+  ): Promise<JsonObject> {
+    context.signal.throwIfAborted();
+    const { tool } = this.getTool(reference);
+    const result = {
+      mcpServer: reference.namespace,
+      tool: compactToolInfo(tool),
+    };
+    const actualBytes = Buffer.byteLength(JSON.stringify(result));
+    if (actualBytes > 256 * 1024)
+      throw new ToolGatewayError(
+        'tool-info-too-large',
+        'Full tool definition exceeds the output ceiling; no partial definition returned.',
+        [],
+        { actualBytes, allowedBytes: 256 * 1024 },
+      );
+    return result as unknown as JsonObject;
   }
 
   async invoke(
@@ -842,7 +836,10 @@ class McpModule implements Mcp {
     input: JsonObject,
     context: ToolRequestContext,
   ): Promise<JsonValue> {
-    const { connection, tool } = this.getTool(reference);
+    context.signal.throwIfAborted();
+    const { connection, tool, validate } = this.getTool(reference);
+    validate(input);
+    context.signal.throwIfAborted();
     const record: McpToolCallRecord = {
       id: randomUUID(),
       namespace: reference.namespace,
@@ -856,8 +853,22 @@ class McpModule implements Mcp {
     };
     this.addToolCallRecord(record);
     try {
+      this.toolSearch.dispatched(reference.namespace, reference.name);
       const result = await connection.invoke(tool, input, context.signal);
-      const normalized = normalizeCallToolResult(result);
+      let normalized: JsonValue;
+      try {
+        normalized = normalizeCallToolResult(result);
+      } catch {
+        throw new ToolGatewayError(
+          'invalid-output',
+          'Remote output is not valid JSON. The action may have completed; do not automatically replay it.',
+        );
+      }
+      if (Buffer.byteLength(JSON.stringify(normalized)) > 256 * 1024)
+        throw new ToolGatewayError(
+          'result-too-large',
+          'Remote output exceeds 256 KiB. The action may have completed; do not automatically replay it.',
+        );
       record.result = normalized;
       record.isError = Boolean(result.isError);
       record.finishedAt = new Date().toISOString();
@@ -868,16 +879,38 @@ class McpModule implements Mcp {
         error: error instanceof Error ? error.message : String(error),
       };
       record.finishedAt = new Date().toISOString();
-      throw error;
+      if (error instanceof ToolGatewayError) throw error;
+      throw new ToolGatewayError(
+        context.signal.aborted ? 'cancelled' : 'transport-failure',
+        'MCP call did not return a usable result. Remote completion is uncertain; do not automatically replay mutations.',
+      );
     }
   }
 
+  private getToolNamespace(server: string) {
+    const namespace = this.registry.get(server);
+    if (namespace) return namespace;
+    if (!Object.hasOwn(this.deps.config.getMcpServers(), server))
+      throw new ToolGatewayError(
+        'unknown-server',
+        'Unknown configured MCP server. Use exact server names from connected-server context.',
+      );
+    const runtime = this.servers.get(server);
+    throw new ToolGatewayError(
+      runtime?.status === 'authorization_required'
+        ? 'authorization-required'
+        : 'server-unavailable',
+      'Configured MCP server is unavailable or requires authorization. Check server status.',
+    );
+  }
+
   private getTool(reference: ToolReference) {
-    const namespace = this.registry.get(reference.namespace);
+    const namespace = this.getToolNamespace(reference.namespace);
     const tool = namespace?.tools.get(reference.name);
     if (!namespace || !tool)
-      throw new Error(
-        `Unknown MCP tool: ${reference.namespace}.${reference.name}`,
+      throw new ToolGatewayError(
+        'tool-not-found',
+        'Unknown MCP tool. Restart discovery with listTools cursor 0.',
       );
     return { connection: namespace.connection, ...tool };
   }
@@ -1609,7 +1642,9 @@ class McpModule implements Mcp {
       if (runtime.connection)
         connections.set(runtime.namespace, runtime.connection);
     }
-    this.registry = buildMcpRegistry(connections);
+    const next = buildMcpRegistry(connections, this.registry);
+    this.registry = next;
+    this.toolSearch.invalidate(next);
   }
 
   getServerStatuses(): McpServerInfo[] {

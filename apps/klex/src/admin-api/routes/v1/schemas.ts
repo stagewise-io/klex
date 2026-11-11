@@ -3,6 +3,7 @@ import { extendZodWithOpenApi, z } from '@hono/zod-openapi';
 import {
   providerTypeSchema as configProviderTypeSchema,
   MODEL_PURPOSES,
+  PROVIDER_DISPLAY_NAME_MAX_LENGTH,
 } from '@/config';
 import { GenerationHealthErrorSchema } from '@/session-history/generation-health';
 import {
@@ -424,6 +425,15 @@ const modelSelectionPatchResponseSchema = modelSelectionSchema
 const providerSettingsSchema = z.record(z.string(), z.unknown());
 const providerTypeParamSchema = z.object({ type: configProviderTypeSchema });
 const providerIdParamSchema = z.object({ id: z.string().min(1) });
+const providerDisplayNameSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(PROVIDER_DISPLAY_NAME_MAX_LENGTH)
+  .openapi({
+    description:
+      'User-chosen label for this provider instance. Surrounding whitespace is trimmed.',
+  });
 
 const providerMetadataSchema = z.object({
   displayName: z.string(),
@@ -580,6 +590,10 @@ const providerKnownModelsSchema = z.record(
 const providerResponseSchema = z.object({
   id: z.string(),
   type: configProviderTypeSchema,
+  displayName: z.string().optional().openapi({
+    description:
+      'User-chosen label for this instance. Absent when none is set; `metadata.displayName` names the provider type.',
+  }),
   metadata: providerMetadataSchema,
   settings: providerSettingsSchema,
   knownModels: providerKnownModelsSchema.optional().openapi({
@@ -611,12 +625,16 @@ const providersResponseSchema = z.object({
 const createProviderBodySchema = z.object({
   id: z.string().min(1),
   type: configProviderTypeSchema,
+  displayName: providerDisplayNameSchema.optional(),
   settings: providerSettingsSchema,
   knownModels: providerKnownModelsSchema.optional(),
 });
 
 const updateProviderBodySchema = z.object({
   settings: providerSettingsSchema.optional(),
+  displayName: providerDisplayNameSchema.nullable().optional().openapi({
+    description: 'Set the display name, or `null` to clear it.',
+  }),
 });
 
 const canAddProviderBodySchema = z.object({

@@ -381,6 +381,100 @@ describe('provider registry routes', () => {
     });
   });
 
+  it('accepts, returns and clears provider display names', async () => {
+    const named = { ...instance, displayName: 'Team OpenAI' };
+    const addInstance = vi.fn(async () => ({
+      ok: true as const,
+      code: 'available' as const,
+      value: named,
+    }));
+    const updateInstance = vi.fn(async () => ({
+      ok: true as const,
+      code: 'available' as const,
+      value: instance,
+    }));
+    const app = makeApp({
+      addInstance,
+      updateInstance,
+      listInstances: () => [named],
+    });
+
+    const created = await app.request('/v1/providers', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        id: 'test-main',
+        type: 'openai',
+        displayName: '  Team OpenAI  ',
+        settings: { apiKey: 'secret' },
+      }),
+    });
+    expect(created.status).toBe(201);
+    expect(addInstance).toHaveBeenCalledWith({
+      id: 'test-main',
+      type: 'openai',
+      displayName: 'Team OpenAI',
+      settings: { apiKey: 'secret' },
+    });
+    expect(await created.json()).toMatchObject({
+      provider: { displayName: 'Team OpenAI' },
+    });
+
+    const listed = await app.request('/v1/providers');
+    expect(await listed.json()).toMatchObject({
+      providers: [{ id: 'test-main', displayName: 'Team OpenAI' }],
+    });
+
+    const renamed = await app.request('/v1/providers/test-main', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/merge-patch+json' },
+      body: JSON.stringify({ displayName: 'Renamed' }),
+    });
+    expect(renamed.status).toBe(200);
+    expect(updateInstance).toHaveBeenLastCalledWith('test-main', {
+      displayName: 'Renamed',
+    });
+
+    const cleared = await app.request('/v1/providers/test-main', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/merge-patch+json' },
+      body: JSON.stringify({ displayName: null }),
+    });
+    expect(cleared.status).toBe(200);
+    expect(updateInstance).toHaveBeenLastCalledWith('test-main', {
+      displayName: null,
+    });
+    expect(await cleared.json()).not.toHaveProperty('provider.displayName');
+  });
+
+  it.each(['', '   ', 'x'.repeat(129), 42])(
+    'rejects invalid provider display name %j',
+    async (displayName) => {
+      const addInstance = vi.fn();
+      const updateInstance = vi.fn();
+      const app = makeApp({ addInstance, updateInstance });
+      const created = await app.request('/v1/providers', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          id: 'test-main',
+          type: 'openai',
+          displayName,
+          settings: { apiKey: 'secret' },
+        }),
+      });
+      const updated = await app.request('/v1/providers/test-main', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/merge-patch+json' },
+        body: JSON.stringify({ displayName }),
+      });
+      expect(created.status).toBe(400);
+      expect(updated.status).toBe(400);
+      expect(addInstance).not.toHaveBeenCalled();
+      expect(updateInstance).not.toHaveBeenCalled();
+    },
+  );
+
   it('returns 404 for missing provider mutations', async () => {
     const missing = {
       ok: false as const,

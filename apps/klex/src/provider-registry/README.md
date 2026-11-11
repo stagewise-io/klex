@@ -66,7 +66,7 @@ The Admin API exposes enough metadata to build provider-neutral setup interfaces
 - `POST /v1/provider-types/{type}/can-add` runs create preflight for candidate settings.
 - `GET /v1/providers` lists configured instances with their type and redacted settings.
 - `POST /v1/providers` creates an instance.
-- `PATCH /v1/providers/{id}` updates an instance.
+- `PATCH /v1/providers/{id}` updates an instance. `displayName` sets the instance label and `null` clears it; a patch with only `displayName` skips settings validation and preflight.
 - `DELETE /v1/providers/{id}` removes an instance after referential-integrity and lifecycle checks.
 - `POST /v1/providers/{id}/test` runs the standardized connectivity test.
 - `PUT /v1/providers/{id}/authorization` starts or returns the pending sign-in. `DELETE` on the same path cancels it. `DELETE /v1/providers/{id}/credentials` signs out.

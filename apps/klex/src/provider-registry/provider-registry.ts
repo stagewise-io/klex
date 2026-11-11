@@ -47,6 +47,12 @@ export type ProviderInstanceId = string;
 export type ProviderSettings = Record<string, unknown>;
 export type ProviderSettingsPatch = Record<string, unknown | null>;
 
+export interface ProviderInstancePatch {
+  settings?: ProviderSettingsPatch;
+  /** `null` clears the display name. */
+  displayName?: string | null;
+}
+
 export type ProviderErrorCode =
   | 'available'
   | 'dependency_missing'
@@ -164,6 +170,8 @@ export interface ProviderVoicePreview {
 export interface ProviderInstance {
   id: ProviderInstanceId;
   type: ProviderType;
+  /** User-chosen label for this instance; absent means none was set. */
+  displayName?: string;
   settings: ProviderSettings;
   knownModels?: Record<string, Omit<ProviderModel, 'modelId'>>;
 }
@@ -330,6 +338,7 @@ export interface ModelSelectionUpdate {
 export interface ProviderInstanceInfo {
   id: ProviderInstanceId;
   type: ProviderType;
+  displayName?: string;
   settings: SerializedProviderSettings;
   knownModels?: Record<string, ModelDefinition>;
   metadata: ProviderMetadata;
@@ -416,7 +425,7 @@ export interface ProviderRegistry extends ProviderModelResolver {
   ): Promise<ProviderOperationResult<ProviderInstanceInfo>>;
   updateInstance(
     id: ProviderInstanceId,
-    patch: { settings?: ProviderSettingsPatch },
+    patch: ProviderInstancePatch,
   ): Promise<ProviderOperationResult<ProviderInstanceInfo>>;
   removeInstance(id: ProviderInstanceId): Promise<ProviderOperationResult>;
   addKnownModel(
@@ -744,14 +753,14 @@ class ProviderRegistryModule implements ProviderRegistry {
 
   updateInstance(
     id: ProviderInstanceId,
-    patch: { settings?: ProviderSettingsPatch },
+    patch: ProviderInstancePatch,
   ): Promise<ProviderOperationResult<ProviderInstanceInfo>> {
     return this.mutateExclusive(() => this.updateInstanceNow(id, patch));
   }
 
   private async updateInstanceNow(
     id: ProviderInstanceId,
-    patch: { settings?: ProviderSettingsPatch },
+    patch: ProviderInstancePatch,
   ): Promise<ProviderOperationResult<ProviderInstanceInfo>> {
     const config = this.requireConfig();
     const currentConfig = config.get().providers[id];
@@ -763,21 +772,28 @@ class ProviderRegistryModule implements ProviderRegistry {
         'invalid_configuration',
         `Unknown provider type '${current.type}'`,
       );
-    const settings = applySettingsPatch(
-      settingsForModeSwitch(current, patch.settings),
-      patch.settings,
+    let settings = current.settings;
+    // A rename alone must not re-run settings validation or preflight hooks.
+    if (patch.settings !== undefined || patch.displayName === undefined) {
+      const validated = validateSettings(
+        current.type,
+        applySettingsPatch(
+          settingsForModeSwitch(current, patch.settings),
+          patch.settings,
+        ),
+      );
+      if (!validated.ok) return validated;
+      const preflight = definition.preflightCreate;
+      const checked = preflight
+        ? await this.runHook((signal) => preflight(validated.value, signal))
+        : success(undefined);
+      if (!checked.ok) return checked;
+      settings = validated.value;
+    }
+    const updated = withDisplayName(
+      { ...current, settings },
+      patch.displayName,
     );
-    const validated = validateSettings(current.type, settings);
-    if (!validated.ok) return validated;
-    const preflight = definition.preflightCreate;
-    const checked = preflight
-      ? await this.runHook((signal) => preflight(validated.value, signal))
-      : success(undefined);
-    if (!checked.ok) return checked;
-    const updated: ProviderInstance = {
-      ...current,
-      settings: validated.value,
-    };
     try {
       // Forget first: a failed config write then leaves the instance signed
       // out rather than its credential bound to settings it was not issued for.
@@ -1715,6 +1731,9 @@ class ProviderRegistryModule implements ProviderRegistry {
     return {
       id: instance.id,
       type: instance.type,
+      ...(instance.displayName !== undefined && {
+        displayName: instance.displayName,
+      }),
       settings: this.serializeSettings(instance.type, instance.settings),
       metadata: providerMetadata(definition),
       ...(authorization && { authorization }),
@@ -1908,6 +1927,15 @@ function failure(
   remediation?: string,
 ): ProviderOperationFailure {
   return { ok: false, code, message, ...(remediation && { remediation }) };
+}
+
+function withDisplayName(
+  instance: ProviderInstance,
+  displayName: string | null | undefined,
+): ProviderInstance {
+  if (displayName === undefined) return instance;
+  const { displayName: _previous, ...rest } = instance;
+  return displayName === null ? rest : { ...rest, displayName };
 }
 
 function withoutId(instance: ProviderInstance): Omit<ProviderInstance, 'id'> {

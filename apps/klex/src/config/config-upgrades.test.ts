@@ -35,6 +35,7 @@ const cases = [
   'v6-broken-0.27.0',
   'v7',
   'v8',
+  'v9',
 ];
 
 async function snapshot(
@@ -128,9 +129,9 @@ describe('frozen persisted config upgrades', () => {
         ...expected,
         _klex: {
           store: 'config',
-          schemaVersion: 8,
+          schemaVersion: 9,
           compatibilityVersion: 8,
-          minimumKlexVersion: '0.28.3',
+          minimumKlexVersion: '0.31.0',
           writtenByKlexVersion: KLEX_VERSION,
         },
       });
@@ -148,7 +149,7 @@ describe('frozen persisted config upgrades', () => {
       await readFile(new URL('config-expected-v7.json', fixtures), 'utf8'),
     );
     const { _klex } = JSON.parse(
-      await readFile(new URL('config-v8.json', fixtures), 'utf8'),
+      await readFile(new URL('config-v9.json', fixtures), 'utf8'),
     );
     const { instincts, ...selections } = expected.modelSelection;
     // v0.27.1 inherited these positions from v5, then appended instinct.
@@ -271,6 +272,170 @@ describe('frozen persisted config upgrades', () => {
         },
       }).success,
     ).toBe(false);
+  });
+
+  it('migrates v8 provider entries to v9 without rewriting them', async () => {
+    const migration = CONFIG_STORE_DEFINITION.migrations.find(
+      (step) => step.from === 8,
+    );
+    if (!migration) throw new Error('Missing 8→9 migration');
+    const { _klex: _metadata, ...input } = JSON.parse(
+      await readFile(new URL('config-v8.json', fixtures), 'utf8'),
+    );
+    const withCodex = {
+      ...input,
+      providers: {
+        ...input.providers,
+        codex: {
+          type: 'chatgpt-codex-subscription',
+          settings: { authMode: 'managed' },
+        },
+      },
+    };
+    const output = await migration.up(structuredClone(withCodex));
+    expect(output).toEqual(withCodex);
+    expect(Object.keys(output)).toEqual(Object.keys(withCodex));
+  });
+
+  it('accepts a provider display name only from schema 9', () => {
+    const payload = (displayName: unknown) => ({
+      configVersion: 2,
+      providers: {
+        primary: { type: 'openai', displayName, settings: { apiKey: 'key' } },
+      },
+    });
+    const schema = (version: number) => {
+      const found = CONFIG_STORE_DEFINITION.versions.find(
+        (item) => item.version === version,
+      );
+      if (!found) throw new Error(`Missing schema ${version}`);
+      return found.schema;
+    };
+    expect(schema(8).safeParse(payload('Team OpenAI')).success).toBe(false);
+    expect(schema(9).safeParse(payload('Team OpenAI')).success).toBe(true);
+    for (const invalid of ['', ' padded ', 'x'.repeat(129), 42])
+      expect(schema(9).safeParse(payload(invalid)).success).toBe(false);
+  });
+
+  it('loads a v9 provider display name through registered startup and blocks older binaries', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'klex-display-name-'));
+    directories.push(directory);
+    const fixture = JSON.parse(
+      await readFile(new URL('config-v9.json', fixtures), 'utf8'),
+    );
+    const original = {
+      ...fixture,
+      providers: {
+        primary: { ...fixture.providers.primary, displayName: 'Team OpenAI' },
+      },
+    };
+    const configPath = join(directory, 'config.json');
+    await writeFile(configPath, JSON.stringify(original, null, 2));
+    const start = async () => {
+      const localData = createLocalData({
+        logging,
+        dataDirectory: directory,
+        klexVersion: KLEX_VERSION,
+        stores: [CONFIG_STORE_DEFINITION],
+      });
+      await localData.start();
+      const config = createConfig({
+        logging,
+        dataDirectory: directory,
+        env: { PRIMARY_API_KEY: 'fixture-key' },
+      });
+      await config.start();
+      expect(config.get().providers.primary).toEqual(
+        original.providers.primary,
+      );
+      await config.close();
+      await localData.close();
+    };
+    await start();
+    const { _klex, ...persisted } = JSON.parse(
+      await readFile(configPath, 'utf8'),
+    );
+    const { _klex: originalMetadata, ...originalPayload } = original;
+    expect(persisted).toEqual(originalPayload);
+    expect(_klex).toMatchObject({
+      schemaVersion: 9,
+      minimumKlexVersion: originalMetadata.minimumKlexVersion,
+    });
+    const beforeStartup = await snapshot(directory);
+    await start();
+    expect(await snapshot(directory)).toEqual(beforeStartup);
+
+    await expect(
+      createLocalData({
+        logging,
+        dataDirectory: directory,
+        klexVersion: '0.30.1',
+        stores: [
+          {
+            ...CONFIG_STORE_DEFINITION,
+            schemaVersion: 8,
+            minimumKlexVersion: '0.28.3',
+            versions: CONFIG_STORE_DEFINITION.versions.filter(
+              ({ version }) => version <= 8,
+            ),
+            migrations: CONFIG_STORE_DEFINITION.migrations.filter(
+              ({ to }) => to <= 8,
+            ),
+          },
+        ],
+      }).start(),
+    ).rejects.toThrow(/schema|newer/i);
+    expect(await snapshot(directory)).toEqual(beforeStartup);
+  });
+
+  it('restores a v8 config after a failed 8→9 migration and retries successfully', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'klex-v9-failure-'));
+    directories.push(directory);
+    const original = await readFile(
+      new URL('config-v8.json', fixtures),
+      'utf8',
+    );
+    const configPath = join(directory, 'config.json');
+    await writeFile(configPath, original);
+    const start = async (definition: typeof CONFIG_STORE_DEFINITION) => {
+      const localData = createLocalData({
+        logging,
+        dataDirectory: directory,
+        klexVersion: KLEX_VERSION,
+        stores: [definition],
+      });
+      try {
+        await localData.start();
+      } finally {
+        await localData.close();
+      }
+    };
+    await expect(
+      start({
+        ...CONFIG_STORE_DEFINITION,
+        migrations: CONFIG_STORE_DEFINITION.migrations.map((step) =>
+          step.from === 8
+            ? {
+                ...step,
+                up: () => {
+                  throw new Error('injected display-name migration failure');
+                },
+              }
+            : step,
+        ),
+      }),
+    ).rejects.toThrow(/original data was restored/);
+    expect(await readFile(configPath, 'utf8')).toBe(original);
+    await start(CONFIG_STORE_DEFINITION);
+    const { _klex: _before, ...payload } = JSON.parse(original);
+    const { _klex, ...migrated } = JSON.parse(
+      await readFile(configPath, 'utf8'),
+    );
+    expect(migrated).toEqual(payload);
+    expect(_klex).toMatchObject({
+      schemaVersion: 9,
+      minimumKlexVersion: '0.31.0',
+    });
   });
 
   it('keeps the released 5→6 output voice lists; only 6→7 removes them', async () => {

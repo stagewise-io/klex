@@ -8,6 +8,15 @@ const providerInstanceIdSchema = z
     (value) => value.trim() === value,
     'Must not contain surrounding whitespace',
   );
+const PROVIDER_DISPLAY_NAME_MAX_LENGTH = 128;
+const providerDisplayNameSchema = z
+  .string()
+  .min(1)
+  .max(PROVIDER_DISPLAY_NAME_MAX_LENGTH)
+  .refine(
+    (value) => value.trim() === value,
+    'Must not contain surrounding whitespace',
+  );
 const nativeModelIdSchema = z.string().min(1);
 const modelIdSchema = nativeModelIdSchema;
 
@@ -448,6 +457,7 @@ function getProviderSettingsJsonSchema(
 const providerConfigSchema = z
   .object({
     type: providerTypeSchema,
+    displayName: providerDisplayNameSchema.optional(),
     settings: z.record(z.string(), z.unknown()).default({}),
     knownModels: z.record(z.string().min(1), modelDefinitionSchema).optional(),
   })
@@ -695,9 +705,11 @@ export {
   modelIdSchema,
   modelKindSchema,
   modelSelectionSchema,
+  PROVIDER_DISPLAY_NAME_MAX_LENGTH,
   parseKlexConfig,
   parseProviderSettings,
   providerConfigSchema,
+  providerDisplayNameSchema,
   providerInstanceIdSchema,
   providerSettingKeysForAuthMode,
   providerTypeSchema,

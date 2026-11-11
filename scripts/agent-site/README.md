@@ -11,7 +11,7 @@ pnpm format
 pnpm format:check
 ```
 
-The artifact tests require both builds first. Preview marketing with `pnpm --filter @klex/website preview`; preview docs with `node scripts/agent-site/preview.mjs docs --port 4174`. Vite development remains the interactive frontend development server; protocol checks use the built preview, not Vite dev.
+The artifact tests require both builds first. Preview marketing with `pnpm --filter @klex/website preview`; preview docs with `node scripts/agent-site/preview.mjs docs --port 4174`. Vite development also serves live marketing Markdown for `/`, `/brand`, `/press` and their `.md` mirrors, using the production negotiation and extraction helpers. Locale renders are cached until a watched source changes. For example: `curl http://localhost:5173/ -H 'Accept: text/markdown' -H 'Accept-Language: de'`. Legal/discovery artifacts and full deployment-protocol checks still use the built preview. Run `pnpm exec vitest run scripts/agent-site/dev.test.mjs` to check live Vite Markdown without building first.
 
 ## Content contract
 
@@ -42,6 +42,12 @@ Configure `apps/website/discovery.config.json` and `apps/docs/discovery.config.j
 Patterns match canonical pathnames: exact `/page`, `*` within one segment, and `**` across segments. Locale routes must be matched explicitly (e.g. `/de/internal/**`). Queries are not patterns. Invalid configuration fails the build. Exclusions do not hide navigation, feeds, directly addressed JSON, search indexes, linked content, or HTML; they are not access controls or robots/training policy. Use authentication for private information. Run a full clean app build after changing policy, not the postprocessor alone; the framework recreates the artifact inventory first.
 
 Marketing emits a private build diagnostic at `.vercel/output/content-report.json`: meaningful main-text characters, raw HTML size, SVG size, H1 count and heading skips. The ratio is explicitly a diagnostic, not a reproduction of Ora's undocumented calculation. Static office polygon/polyline runs are now extracted automatically into a content-hashed same-origin SVG sprite served with one-year immutable caching. External use references preserve paint order and inherited theme variables; bot portal hosts, human figures, React islands and animated artwork remain inline. Homepage HTML drops by about 114 KB (roughly 27%); the 5% text ratio target is not yet met.
+
+## Localized marketing Markdown
+
+The website build renders independent locale-specific marketing markup from the same translation catalogs, then converts each semantic main to Markdown. The packaged function selects a variant at the existing URL (including `/index.md`, `/brand.md`, and `/press.md`): valid `klex-language` cookie first, then quality-ranked `Accept-Language` for absent/invalid/`auto` cookies, then English. Regional tags match their supported base language. Responses include `Content-Language`, `Vary: Accept, Accept-Language, Cookie`, and all three no-store cache headers. No locale URL or query parameter is required. HTML rendering and docs routes are unchanged. Legal Markdown remains English; dated source artifacts retain their exact bytes. Static-only `dist` hosting does not provide language negotiation; use the packaged function deployment.
+
+`llms.txt`, `llms-full.txt`, and discovery metadata remain English. Only marketing page Markdown is localized by this feature.
 
 ## Progressive animated mascots
 

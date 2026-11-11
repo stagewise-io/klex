@@ -40,14 +40,51 @@ class AgentSite {
     return result.quality;
   }
 
+  language(request, available) {
+    const cookie = String(request.headers?.cookie ?? '')
+      .split(';')
+      .map((part) => part.trim())
+      .find((part) => part.startsWith('klex-language='))
+      ?.slice('klex-language='.length);
+    if (cookie && Object.hasOwn(available, cookie)) return cookie;
+    const preferences = String(request.headers?.['accept-language'] ?? '')
+      .split(',')
+      .map((entry, index) => {
+        const [tag, ...parameters] = entry.trim().toLowerCase().split(';');
+        const parameter = parameters
+          .map((value) => value.trim())
+          .find((value) => value.startsWith('q='));
+        const quality =
+          parameter === undefined ? 1 : Number(parameter.slice(2));
+        return {
+          language: tag.split('-')[0],
+          quality:
+            Number.isFinite(quality) && quality >= 0 && quality <= 1
+              ? quality
+              : 0,
+          index,
+        };
+      })
+      .filter((value) => value.quality > 0)
+      .sort((a, b) => b.quality - a.quality || a.index - b.index);
+    for (const { language } of preferences)
+      if (Object.hasOwn(available, language)) return language;
+    return 'en';
+  }
+
   response(request) {
     const url = new URL(request.url, this.manifest.origin);
     const path = url.pathname;
     const normalized =
       path.replace(/\/index\.html$/, '/').replace(/\/$/, '') || '/';
-    const page = Object.hasOwn(this.manifest.pages, normalized)
-      ? this.manifest.pages[normalized]
-      : undefined;
+    const explicitMarkdown = Object.values(this.manifest.pages).find(
+      (page) => page.markdown !== null && page.markdownPath === path,
+    );
+    const page =
+      explicitMarkdown ??
+      (Object.hasOwn(this.manifest.pages, normalized)
+        ? this.manifest.pages[normalized]
+        : undefined);
     const method = request.method ?? 'GET';
     const accept = String(request.headers?.accept ?? '*/*');
     const api = normalized === '/api' || normalized.startsWith('/api/');
@@ -145,13 +182,18 @@ class AgentSite {
           },
         });
       } else {
-        const useMarkdown = markdown > html;
+        const useMarkdown = Boolean(explicitMarkdown) || markdown > html;
         headers['Content-Type'] = useMarkdown
           ? 'text/markdown; charset=utf-8'
           : 'text/html; charset=utf-8';
         headers.Link += `, <${page.canonical}>; rel="canonical"${page.markdown === null ? '' : `, <${new URL(page.markdownPath, this.manifest.origin).href}>; rel="alternate"; type="text/markdown"`}, <https://docs.klex.bot/openapi.json>; rel="service-desc"; type="application/vnd.oai.openapi+json;version=3.1"`;
         if (page.noindex) headers['X-Robots-Tag'] = 'noindex';
-        body = useMarkdown ? page.markdown : page.html;
+        if (useMarkdown && page.markdownLocales) {
+          const language = this.language(request, page.markdownLocales);
+          headers.Vary = 'Accept, Accept-Language, Cookie';
+          headers['Content-Language'] = language;
+          body = page.markdownLocales[language];
+        } else body = useMarkdown ? page.markdown : page.html;
       }
     }
     headers['Content-Length'] = String(Buffer.byteLength(body));

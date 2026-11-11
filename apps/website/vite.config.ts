@@ -7,51 +7,182 @@ import { type Connect, createServer, defineConfig, type Plugin } from 'vite';
 import { createLegalPlugin } from './src/legal/node/index.ts';
 import { staticMascots } from './static-mascot-plugin.ts';
 
+async function renderMarketingLocale(
+  locale = 'en',
+): Promise<Record<string, string>> {
+  const server = await createServer({
+    configFile: false,
+    root: fileURLToPath(new URL('.', import.meta.url)),
+    appType: 'custom',
+    resolve: {
+      alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
+    },
+    server: { middlewareMode: true, hmr: false, ws: false, watch: null },
+    optimizeDeps: { noDiscovery: true, include: [] },
+    ssr: { noExternal: ['@klex/mascot', '@stagewise/ui'] },
+    plugins: [staticMascots()],
+    build: { assetsInlineLimit: 0 },
+  });
+  try {
+    const { i18n } = await server.ssrLoadModule('/src/i18n/i18n.ts');
+    await i18n.changeLanguage(locale);
+    const { prerenderLandingPage } = await server.ssrLoadModule(
+      '/src/new/prerender.tsx',
+    );
+    const { resourceMarkup } = await server.ssrLoadModule(
+      '/src/new/resources/page-markup.ts',
+    );
+    return {
+      '/index.html': prerenderLandingPage(),
+      '/brand/index.html': resourceMarkup(false),
+      '/press/index.html': resourceMarkup(true),
+    };
+  } finally {
+    await server.close();
+  }
+}
+
+function devMarkdown(): Plugin {
+  return {
+    name: 'klex-dev-markdown',
+    apply: 'serve',
+    configureServer(server) {
+      let variants = new Map<string, Promise<Record<string, string>>>();
+      server.watcher.on('change', () => {
+        variants = new Map();
+      });
+      server.middlewares.use(async (request, response, next) => {
+        const url = new URL(request.url ?? '/', 'http://localhost');
+        const route =
+          url.pathname.replace(/\/index\.html$/, '/').replace(/\/$/, '') || '/';
+        const markdownRoute =
+          route === '/index.md' ? '/' : route.replace(/\.md$/, '');
+        if (!['/', '/brand', '/press'].includes(markdownRoute)) return next();
+        try {
+          const { createAgentSite } = await import(
+            '../../scripts/agent-site/runtime.mjs'
+          );
+          const negotiation = createAgentSite({
+            origin: url.origin,
+            pages: {},
+            errorHtml: '',
+          });
+          const explicit = route.endsWith('.md');
+          if (
+            !explicit &&
+            negotiation.quality(
+              String(request.headers.accept ?? '*/*'),
+              'text/markdown',
+            ) <=
+              negotiation.quality(
+                String(request.headers.accept ?? '*/*'),
+                'text/html',
+              )
+          )
+            return next();
+          const { createDiscoveryPolicy } = await import(
+            '../../scripts/agent-site/policy.mjs'
+          );
+          const policy = createDiscoveryPolicy(
+            JSON.parse(
+              await readFile(
+                new URL('./discovery.config.json', import.meta.url),
+                'utf8',
+              ),
+            ),
+          );
+          if (!policy.includes('markdown', markdownRoute)) return next();
+          const languages = Object.fromEntries(
+            [
+              'en',
+              'zh',
+              'ja',
+              'ko',
+              'de',
+              'fr',
+              'es',
+              'pt',
+              'hi',
+              'uk',
+              'ru',
+              'ar',
+            ].map((locale) => [locale, true]),
+          );
+          const locale = negotiation.language(request, languages);
+          let rendered = variants.get(locale);
+          if (!rendered) {
+            rendered = renderMarketingLocale(locale);
+            variants.set(locale, rendered);
+            rendered.catch(() => variants.delete(locale));
+          }
+          const markup = (await rendered)[
+            markdownRoute === '/'
+              ? '/index.html'
+              : `${markdownRoute}/index.html`
+          ];
+          const { createSiteContent } = await import(
+            '../../scripts/agent-site/content.mjs'
+          );
+          const markdown = createSiteContent().markdown(
+            markup,
+            `${url.origin}${markdownRoute}`,
+          );
+          const page = {
+            html: markup,
+            markdown,
+            markdownLocales: { [locale]: markdown, en: markdown },
+            canonical: `${url.origin}${markdownRoute}`,
+            markdownPath:
+              markdownRoute === '/' ? '/index.md' : `${markdownRoute}.md`,
+            noindex: markdownRoute !== '/',
+          };
+          const handler = createAgentSite({
+            origin: url.origin,
+            pages: { [markdownRoute]: page },
+            errorHtml: '',
+          });
+          handler.handle(request, response);
+        } catch (error) {
+          next(error);
+        }
+      });
+    },
+  };
+}
+
 function prerenderPages(): Plugin {
   let pages: Promise<Record<string, string>> | undefined;
   return {
     name: 'klex-prerender-pages',
     apply: 'build',
+    async generateBundle() {
+      const localized: Record<string, Record<string, string>> = {};
+      for (const locale of [
+        'zh',
+        'ja',
+        'ko',
+        'de',
+        'fr',
+        'es',
+        'pt',
+        'hi',
+        'uk',
+        'ru',
+        'ar',
+      ]) {
+        localized[locale] = await renderMarketingLocale(locale);
+      }
+      this.emitFile({
+        type: 'asset',
+        fileName: '__localized-markup.json',
+        source: JSON.stringify(localized),
+      });
+    },
     transformIndexHtml: {
       order: 'pre',
       async handler(html, context) {
         if (context.path === '/legal/index.html') return html;
-        pages ??= (async () => {
-          const server = await createServer({
-            configFile: false,
-            root: fileURLToPath(new URL('.', import.meta.url)),
-            appType: 'custom',
-            resolve: {
-              alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
-            },
-            server: {
-              middlewareMode: true,
-              hmr: false,
-              ws: false,
-              watch: null,
-            },
-            optimizeDeps: { noDiscovery: true, include: [] },
-            ssr: { noExternal: ['@klex/mascot', '@stagewise/ui'] },
-            plugins: [staticMascots()],
-            build: { assetsInlineLimit: 0 },
-          });
-          try {
-            const { prerenderLandingPage } = await server.ssrLoadModule(
-              '/src/new/prerender.tsx',
-            );
-            const pageMarkup = prerenderLandingPage();
-            const { resourceMarkup } = await server.ssrLoadModule(
-              '/src/new/resources/page-markup.ts',
-            );
-            return {
-              '/index.html': pageMarkup,
-              '/brand/index.html': resourceMarkup(false),
-              '/press/index.html': resourceMarkup(true),
-            };
-          } finally {
-            await server.close();
-          }
-        })();
+        pages ??= renderMarketingLocale();
         const markup = (await pages)[context.path];
         if (!markup)
           throw new Error(`No prerendered markup for ${context.path}`);
@@ -143,6 +274,7 @@ export default defineConfig({
   },
   plugins: [
     staticMascots(),
+    devMarkdown(),
     prerenderPages(),
     {
       name: 'klex-page-routes',

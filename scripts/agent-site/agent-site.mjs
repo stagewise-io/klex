@@ -85,6 +85,17 @@ class AgentBuild {
 
   async marketing() {
     const pages = {};
+    const localizedPath = resolve(
+      this.directory,
+      'dist/__localized-markup.json',
+    );
+    let localized = {};
+    try {
+      localized = JSON.parse(await readFile(localizedPath, 'utf8'));
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+    await rm(localizedPath, { force: true });
     // Discover actual emitted content pages, rather than maintaining a second route list.
     const files = await readdir(resolve(this.directory, 'dist'), {
       recursive: true,
@@ -190,11 +201,22 @@ class AgentBuild {
           'utf8',
         );
       } else markdown = this.content.markdown(html, canonical);
+      const markdownLocales = { en: markdown };
+      for (const [locale, markup] of Object.entries(localized)) {
+        const translated = markup[`/${entry.file}`];
+        if (!translated || !markdownEnabled || entry.route.startsWith('/legal'))
+          continue;
+        markdownLocales[locale] = this.content.markdown(
+          translated.replaceAll('https://klex.bot', this.origin),
+          canonical,
+        );
+      }
       pages[entry.route] = {
         ...entry,
         ...metadata,
         canonical,
         markdown: markdownEnabled ? markdown : null,
+        markdownLocales,
         agentMarkdown: markdown,
         html,
         lastModified: this.lastModified(entry.sources),
@@ -567,7 +589,7 @@ class AgentBuild {
               'X-Robots-Tag': page.noindex ? 'noindex' : 'all',
               Link: `<${page.canonical}>; rel="canonical"`,
             },
-            continue: true,
+            dest: '/site',
           });
       }
     }

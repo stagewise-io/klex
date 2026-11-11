@@ -92,3 +92,13 @@
     display: none;
   }
 }
+
+/* Keep commands and flags in their original order within RTL prose. */
+html[dir="rtl"] code {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+html[dir="rtl"] pre {
+  direction: ltr;
+  text-align: left;
+}

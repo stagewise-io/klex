@@ -3,11 +3,28 @@ name: Legal Integrity
 on:
   push:
     branches:
-      - '**'
+      - main
+    paths: &legal-paths
+      - apps/website/**
+      - scripts/agent-site/**
+      - scripts/check-legal-revisions*
+      - install.ps1
+      - install.sh
+      - .github/workflows/legal-integrity.yml
+      - .npmrc
+      - .nvmrc
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
   pull_request:
+    paths: *legal-paths
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   PNPM_VERSION: 11.22.0
@@ -16,6 +33,7 @@ jobs:
   legal-integrity:
     name: Legal Revision Integrity
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -60,6 +78,15 @@ jobs:
       - run: node --test scripts/check-legal-revisions.test.mjs
       - run: pnpm --filter @klex/website test:legal
       - run: pnpm --filter @klex/website build
-      - run: pnpm --filter @klex/website exec playwright install --with-deps chromium
+      - name: Resolve Playwright version
+        id: playwright
+        run: echo "version=$(jq -r .version apps/website/node_modules/playwright/package.json)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright.outputs.version }}
+      # The runner image already ships Chromium's shared libraries; --with-deps
+      # only adds optional fonts through apt, which fails during mirror outages.
+      - run: pnpm --filter @klex/website exec playwright install chromium
       - run: pnpm --filter @klex/website test:legal-browser
       - run: pnpm --filter @klex/website test:legal-nginx

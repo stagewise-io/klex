@@ -23,12 +23,12 @@ import {
   renderInteractionUpdateText,
 } from '@/session/interaction';
 
-import { assembleRealtimeInstructions } from '../instructions';
 import type {
   RealtimeModelEvent,
   RealtimeModelSession,
   RealtimeModelSessionFactory,
 } from '../model-session';
+import voiceSystemPrompt from '../system-prompt.md';
 import { toGeminiContentTurns } from './conversation-items';
 import {
   type GeminiLiveServerEvent,
@@ -60,7 +60,7 @@ interface Deferred<T> {
 const OPEN = 1;
 const FRAME_BYTES = 960 * 2;
 const STARTUP_TIMEOUT_MS = 10_000;
-const DEFAULT_INSTRUCTIONS = 'You are Klex. Answer clearly and briefly.';
+
 const tracer = trace.getTracer('klex');
 
 export class GeminiLiveSession implements RealtimeModelSession {
@@ -240,9 +240,7 @@ export class GeminiLiveSession implements RealtimeModelSession {
         systemInstruction: {
           parts: [
             {
-              text: assembleRealtimeInstructions(
-                this.context?.instructions ?? DEFAULT_INSTRUCTIONS,
-              ),
+              text: this.context?.instructions ?? voiceSystemPrompt,
             },
           ],
         },

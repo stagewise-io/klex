@@ -7,8 +7,6 @@ import type {
   PreparedInferenceContext,
 } from '@/session/interaction';
 
-import { assembleRealtimeInstructions } from '../instructions';
-
 const tokenizer = getEncoding('o200k_base');
 
 const MAX_HISTORY_TEXT_CHARACTERS = 131_072;
@@ -92,9 +90,7 @@ export function buildGPTLiveSessionConfig(
     'maxHistoryTokens',
   );
 
-  const backendInstructions = assembleRealtimeInstructions(
-    context.instructions,
-  );
+  const backendInstructions = context.instructions;
   const sessionInstructions = [
     options.frontendInstructions.trim(),
     backendInstructions,

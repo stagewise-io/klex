@@ -36,6 +36,7 @@ import {
   ToolExecutor,
   toCanonicalMessage,
 } from '@/session/interaction';
+import voiceSystemPrompt from '@/session/realtime/system-prompt.md';
 import type {
   AgentSession,
   ChatSessionHandle,
@@ -1173,7 +1174,7 @@ class ChatSessionModule implements AgentSession {
       history,
       extensionHandler: this.extensionHandler,
       model,
-      baseInstructions: this.deps.basePrompt,
+      baseInstructions: voiceSystemPrompt,
     });
 
     this.leaseTools = assembled.tools;

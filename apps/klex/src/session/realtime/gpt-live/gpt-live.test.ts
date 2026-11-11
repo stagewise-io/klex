@@ -8,7 +8,6 @@ import {
   type PreparedInferenceContext,
 } from '@/session/interaction';
 
-import { assembleRealtimeInstructions } from '../instructions';
 import { createGPTLiveProtocolState } from './gpt-live';
 import {
   buildGPTLiveSessionConfig,
@@ -417,7 +416,7 @@ describe('GPT-Live startup configuration', () => {
 
     expect(prepared.session).toMatchObject({
       model: 'gpt-live-1',
-      instructions: `frontend voice policy\n\n${assembleRealtimeInstructions(context.instructions)}`,
+      instructions: `frontend voice policy\n\n${context.instructions}`,
       audio: {
         format: { type: 'audio/pcm', rate: 24_000 },
         output: { voice: 'alloy' },
@@ -426,7 +425,7 @@ describe('GPT-Live startup configuration', () => {
         type: 'responses',
         responses: {
           model: 'gpt-5.2',
-          instructions: assembleRealtimeInstructions(context.instructions),
+          instructions: context.instructions,
           tools: [
             {
               type: 'function',
@@ -864,7 +863,7 @@ describe('GPT-Live startup configuration', () => {
         content: [{ type: 'input_text', text: messages.at(-1)?.content }],
       });
       expect(prepared.session.delegation.responses.instructions).toBe(
-        assembleRealtimeInstructions(context.instructions),
+        context.instructions,
       );
     },
     15_000,
@@ -925,13 +924,16 @@ describe('GPT-Live startup configuration', () => {
   it.each([
     ['maxFrontendInstructionTokens', 'frontend instructions'],
     ['maxBackendInstructionTokens', 'backend instructions'],
-  ] as const)('counts the voice policy toward %s', (budget, error) => {
+  ] as const)('counts assembled instructions toward %s', (budget, error) => {
     expect(() =>
-      buildGPTLiveSessionConfig(context, {
-        responsesModel: 'gpt-5.2',
-        frontendInstructions: 'voice',
-        [budget]: 20,
-      }),
+      buildGPTLiveSessionConfig(
+        { ...context, instructions: 'instruction '.repeat(100) },
+        {
+          responsesModel: 'gpt-5.2',
+          frontendInstructions: 'voice',
+          [budget]: 20,
+        },
+      ),
     ).toThrow(error);
   });
 

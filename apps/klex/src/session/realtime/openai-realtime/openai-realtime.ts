@@ -19,12 +19,12 @@ import {
   renderInteractionUpdateText,
 } from '@/session/interaction';
 
-import { assembleRealtimeInstructions } from '../instructions';
 import type {
   RealtimeModelEvent,
   RealtimeModelSession,
   RealtimeModelSessionFactory,
 } from '../model-session';
+import voiceSystemPrompt from '../system-prompt.md';
 import {
   assistantTextItem,
   type ConversationItem,
@@ -94,7 +94,7 @@ const FRAME_DURATION_MS = 20;
 const OUTPUT_SAMPLE_RATE_HZ = 24_000;
 const STARTUP_TIMEOUT_MS = 10_000;
 const DEFAULT_VOICE = 'marin';
-const DEFAULT_INSTRUCTIONS = 'You are Klex. Answer clearly and briefly.';
+
 const TRANSCRIPTION_MODEL = 'gpt-4o-mini-transcribe';
 const DEFAULT_RECONNECT: RealtimeReconnectPolicy = {
   maxAttempts: 1,
@@ -319,9 +319,7 @@ class OpenAIRealtimeSession implements RealtimeModelSession {
       type: 'session.update',
       session: {
         type: 'realtime',
-        instructions: assembleRealtimeInstructions(
-          this.context?.instructions ?? DEFAULT_INSTRUCTIONS,
-        ),
+        instructions: this.context?.instructions ?? voiceSystemPrompt,
         ...(tools.length > 0 && { tools, tool_choice: 'auto' }),
         audio: {
           input: {

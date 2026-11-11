@@ -22,6 +22,7 @@ import { createSessionHost } from '@/session/session-host';
 import type { ChatSessionHandle, SessionFactory } from '@/session/types';
 
 import { createRealtimeSessionCoordinator } from './session-coordinator';
+import voiceSystemPrompt from './system-prompt.md';
 import {
   createDeterministicEchoProcessorFactory,
   createDeterministicMediaTransportConnector,
@@ -266,6 +267,8 @@ describe('realtime and default chat interaction', () => {
     expect(processor.context.messages.at(-1)?.content).toContain(
       '"source":{"namespace":"voice","sessionId":"call-1"}',
     );
+    expect(processor.context.instructions).toContain(voiceSystemPrompt.trim());
+    expect(processor.context.instructions).not.toContain('You are Klex.');
     expect(processor.context.instructions).not.toContain(
       'ephemeral session facts',
     );

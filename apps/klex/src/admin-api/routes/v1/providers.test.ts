@@ -388,11 +388,16 @@ describe('provider registry routes', () => {
       code: 'available' as const,
       value: named,
     }));
-    const updateInstance = vi.fn(async () => ({
-      ok: true as const,
-      code: 'available' as const,
-      value: instance,
-    }));
+    const updateInstance = vi.fn<ProviderRegistry['updateInstance']>(
+      async (_id, patch) => ({
+        ok: true,
+        code: 'available',
+        value:
+          typeof patch.displayName === 'string'
+            ? { ...instance, displayName: patch.displayName }
+            : instance,
+      }),
+    );
     const app = makeApp({
       addInstance,
       updateInstance,
@@ -433,6 +438,9 @@ describe('provider registry routes', () => {
     expect(renamed.status).toBe(200);
     expect(updateInstance).toHaveBeenLastCalledWith('test-main', {
       displayName: 'Renamed',
+    });
+    expect(await renamed.json()).toMatchObject({
+      provider: { displayName: 'Renamed' },
     });
 
     const cleared = await app.request('/v1/providers/test-main', {

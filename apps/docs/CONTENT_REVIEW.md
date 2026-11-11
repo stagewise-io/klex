@@ -24,6 +24,10 @@
 - **Terminology:** Use “computer” rather than “machine” in reader-facing docs.
 - **Memory scope:** Describe implemented capabilities only; do not include planned features in the Memory page.
 
+## Additional confirmation from Glenn (11 Nov 2026)
+
+- **Cloud support access:** Glenn said limited staff can access hosted Bot chats or memory in debug mode for debugging, after discussion and confirmation with the user. Access is persistently logged and visible to the user; it is generally time-limited and not for general training. Source: Slack DM thread `1794402016.555319`, reply `1794406192.682979`. The legal privacy notice and DPA dated 2026-11-04 also describe agreed support debugging, logging and purpose limits; the DPA separately describes full-content tracing, including its limited duration and retention. Do not generalize those trace-specific terms to all access, or imply they exclude separately lawful security or legal processing. Cloud-side debug-mode implementation and the exact user-facing log interface were not found in the public Klex Bot source; Glenn’s confirmation is the source for those details.
+
 ## Editorial direction from Glenn (10 Nov 2026)
 
 - Avoid specific Klex Bot version numbers in reader-facing docs unless they are essential, such as in a changelog. Keep versioned source evidence in this internal register.
@@ -66,7 +70,7 @@
 ## Open questions: do not infer
 
 - Memory behavior beyond current skills and learnings: how memories are created or recalled, scope across chats/channels, and user/admin controls. Also unconfirmed: retention, deletion, backups, and exact file layout.
-- Cloud staff access, third-party/model-provider processing, provider credential storage, encryption details beyond the confirmed Cloud-hosted scope, and other security guarantees.
+- Cloud staff access outside the confirmed support-debugging scope, exact user-facing log interface, third-party/model-provider processing beyond the legal documents, provider credential storage, encryption details beyond the confirmed Cloud-hosted scope, and other security guarantees.
 - Detailed limits or guarantees around sessions, identity, channel access, and connector permissions; how the Bot identifies the exact person speaking; channel recommendations; and how existing customers use Bots.
 - Recommended model configuration, including primary/fallback or task-specific choices.
 - Product claims in the Bot landing page, Soul, Identity, and MCP pages that are not recorded above. Verify claims about autonomy, Bot identity, memory format/access, and protocol behavior before carrying them into an overview or describing them as guaranteed.

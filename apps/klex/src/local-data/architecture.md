@@ -95,6 +95,10 @@ Config schema 6→7 first ships in `0.27.1` and removes only `modelSelection.voi
 
 Version `0.27.0` incorrectly changed the already released schema 6 and the 5→6 migration in place. Existing schema-6 configs failed preflight on their legacy voice keys. The fix restores that historical contract and adds the separate 6→7 step. Schema-6 files written by `0.27.0` without TTS/STT keys also pass validation and migrate. The migration uses the registered checkpoint, preflight, and recovery path.
 
+## Provider display name migration
+
+Config schema 8→9 first ships in `0.31.0` and only widens provider instances with an optional `displayName`. Every schema-8 payload is a valid schema-9 payload, so the step validates both contracts and returns the value unchanged. Compatibility remains 8 because the schema bump already blocks older readers. The minimum-version diagnostic becomes `0.31.0`.
+
 ## Immutable migration history and CI
 
 `local-data-migrations/` groups frozen snapshots by store and transition:

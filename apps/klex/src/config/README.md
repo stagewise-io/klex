@@ -171,6 +171,24 @@ Codex executable or `auth.json`. Tokens are stored with owner-only permissions
 in `credentials/providers.json` under the data directory, refreshed by Klex, and
 never written to `config.json` or returned by the Admin API.
 
+Config schema 9, introduced in `0.31.0`, adds an optional `displayName` to each
+provider instance: a user-chosen label of 1–128 characters without surrounding
+whitespace. The provider ID stays the stable reference; the type's
+`metadata.displayName` still names the provider type. The 8→9 migration changes
+only store metadata. Older binaries reject schema 9 before writing.
+
+```json
+{
+  "providers": {
+    "openai-team": {
+      "type": "openai",
+      "displayName": "Team OpenAI",
+      "settings": { "apiKey": "${env:OPENAI_TEAM_KEY}" }
+    }
+  }
+}
+```
+
 `openai-primary` and `openai-secondary` demonstrate independent instances of
 one provider type. `openai-internal` keeps native OpenAI behavior while routing
 it to a configured internal endpoint. `custom-chat` is a single-endpoint

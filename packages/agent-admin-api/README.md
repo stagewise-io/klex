@@ -39,6 +39,13 @@ routes or hard-coded forms:
   prerequisites without changing configuration.
 - `/v1/providers` exposes instance CRUD. Every instance includes its stable ID
   and provider type; multiple instances may use the same type.
+- Instances may carry an optional user-chosen `displayName` (1–128 characters,
+  trimmed). It is returned when set, accepted on `POST /v1/providers`, and set
+  or cleared with `{ "displayName": "…" }` or `{ "displayName": null }` on
+  `PATCH /v1/providers/{id}`. A rename alone does not re-run settings
+  preflight. `metadata.displayName` remains the provider type's name. Bots
+  before Klex 0.31.0 ignore the field, so check the returned `displayName`
+  before assuming it was saved.
 - `POST /v1/providers/{id}/test` returns the standardized connectivity result.
 - `/v1/providers/{id}/models` exposes merged discovery and manual-model data and
   manages `knownModels` overrides.

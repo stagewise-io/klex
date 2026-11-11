@@ -142,6 +142,84 @@ describe('provider registry module integration', () => {
       await config.close();
     }
   });
+  it('persists, renames and clears instance display names without rerunning settings preflight', async () => {
+    const dataDirectory = await createDataDirectory();
+    const config = createConfig({ logging, dataDirectory });
+    await config.start();
+    const preflightCreate = vi.fn(async () => ({
+      ok: true as const,
+      code: 'available' as const,
+      value: undefined,
+    }));
+    const registry = createProviderRegistry({
+      logging,
+      config,
+      definitions: [
+        {
+          type: 'typesafe-ai',
+          usageGuidance:
+            'Display-name test provider; no network operations or model discovery.',
+          metadata: { displayName: 'Native', description: 'Display test' },
+          createLanguageModel: () => new MockLanguageModelV4(),
+          testConnection: async () => ({
+            ok: true,
+            code: 'available',
+            value: { latencyMs: 0 },
+          }),
+          preflightCreate,
+        },
+      ],
+    });
+    await registry.start();
+    const stored = async () =>
+      JSON.parse(await readFile(join(dataDirectory, CONFIG_FILE_NAME), 'utf8'))
+        .providers.native;
+    try {
+      expect(
+        await registry.addInstance({
+          id: 'native',
+          type: 'typesafe-ai',
+          displayName: 'Team Native',
+          settings: { apiKey: 'secret' },
+        }),
+      ).toMatchObject({ ok: true, value: { displayName: 'Team Native' } });
+      expect(await stored()).toMatchObject({ displayName: 'Team Native' });
+      expect(registry.listInstances()[0]).toMatchObject({
+        displayName: 'Team Native',
+        metadata: { displayName: 'Native' },
+      });
+      expect(preflightCreate).toHaveBeenCalledTimes(1);
+
+      expect(
+        await registry.updateInstance('native', { displayName: 'Renamed' }),
+      ).toMatchObject({ ok: true, value: { displayName: 'Renamed' } });
+      expect(preflightCreate).toHaveBeenCalledTimes(1);
+      expect(await stored()).toEqual({
+        type: 'typesafe-ai',
+        displayName: 'Renamed',
+        settings: { apiKey: 'secret' },
+      });
+
+      await registry.updateInstance('native', {
+        settings: { apiKey: 'rotated' },
+      });
+      expect(preflightCreate).toHaveBeenCalledTimes(2);
+      expect(await stored()).toMatchObject({
+        displayName: 'Renamed',
+        settings: { apiKey: 'rotated' },
+      });
+
+      const cleared = await registry.updateInstance('native', {
+        displayName: null,
+      });
+      expect(cleared.ok && cleared.value).not.toHaveProperty('displayName');
+      expect(await stored()).not.toHaveProperty('displayName');
+      expect(registry.listInstances()[0]).not.toHaveProperty('displayName');
+    } finally {
+      await registry.close();
+      await config.close();
+    }
+  });
   it('keeps catalog model kinds when manual metadata only overrides the display name', async () => {
     const config = createConfig({
       logging,

@@ -82,14 +82,16 @@ export function ProvidersScreen({ apiClient, onBack }: ProvidersScreenProps) {
             : mode === 'configure'
               ? `Configure ${providerType?.displayName ?? ''}`
               : mode === 'edit'
-                ? `Edit ${selected?.metadata.displayName ?? ''}`
+                ? `Edit ${selected ? providerLabel(selected) : ''}`
                 : mode === 'models'
-                  ? `Known Models — ${selected?.metadata.displayName ?? ''}`
+                  ? `Known Models — ${selected ? providerLabel(selected) : ''}`
                   : mode === 'add-model'
                     ? 'Add Known Model'
                     : mode === 'edit-model'
                       ? 'Edit Known Model'
-                      : (selected?.metadata.displayName ?? 'Provider'),
+                      : selected
+                        ? providerLabel(selected)
+                        : 'Provider',
       breadcrumb: ['Home', 'Settings'],
       keys:
         mode === 'list'
@@ -427,6 +429,10 @@ function ProviderTypePicker({
   );
 }
 
+function providerLabel(provider: ProviderInfo): string {
+  return provider.displayName ?? provider.metadata.displayName;
+}
+
 function providerCapabilitySummary(type: ProviderTypeInfo): string {
   const capabilities = [
     type.capabilities.modelDiscovery ? 'discovers models' : 'manual model IDs',
@@ -447,7 +453,7 @@ function ProviderInstanceList({
 }) {
   const sortedProviders = [...providers].sort(
     (left, right) =>
-      left.metadata.displayName.localeCompare(right.metadata.displayName) ||
+      providerLabel(left).localeCompare(providerLabel(right)) ||
       left.id.localeCompare(right.id),
   );
   const [highlightedId, setHighlightedId] = useState<string>();
@@ -474,7 +480,7 @@ function ProviderInstanceList({
       {sortedProviders.length > 0 && (
         <MenuList
           items={sortedProviders.map((provider) => ({
-            label: `${provider.metadata.displayName} · ${provider.id}`,
+            label: `${providerLabel(provider)} · ${provider.id}`,
             value: provider.id,
           }))}
           selectedIndex={highlightedIndex}
@@ -491,11 +497,14 @@ function ProviderInstanceList({
       {highlighted && (
         <InsetPanel marginTop={1} height={6} overflow="hidden">
           <Text bold wrap="truncate">
-            {highlighted.metadata.displayName}
+            {providerLabel(highlighted)}
           </Text>
           <Text wrap="truncate-end">{highlighted.metadata.description}</Text>
           <Text dimColor wrap="truncate">
-            Instance: {highlighted.id} · Type: {highlighted.type}
+            Instance: {highlighted.id} · Type:{' '}
+            {highlighted.displayName
+              ? highlighted.metadata.displayName
+              : highlighted.type}
           </Text>
         </InsetPanel>
       )}
@@ -1116,8 +1125,7 @@ function KnownModelsPage({
   return (
     <ScreenSection title="Known models">
       <Text dimColor>
-        Discovered and manually added models for {provider.metadata.displayName}
-        .
+        Discovered and manually added models for {providerLabel(provider)}.
       </Text>
       <Box marginTop={1}>
         <Text>Search: </Text>
@@ -1189,7 +1197,7 @@ function ProviderDetail({
   if (confirmDelete) {
     return (
       <ConfirmationPanel
-        title={`Delete ${provider.metadata.displayName}?`}
+        title={`Delete ${providerLabel(provider)}?`}
         onConfirm={async () => {
           try {
             await apiClient.deleteProvider(provider.id);
@@ -1208,8 +1216,13 @@ function ProviderDetail({
   }
   return (
     <Box flexDirection="column" marginTop={1}>
-      <Text bold>{provider.metadata.displayName}</Text>
+      <Text bold>{providerLabel(provider)}</Text>
       <DetailList labelWidth={10}>
+        {provider.displayName && (
+          <DetailRow label="Provider">
+            {provider.metadata.displayName}
+          </DetailRow>
+        )}
         <DetailRow label="Type">{provider.type}</DetailRow>
         <DetailRow label="Description">
           {provider.metadata.description}

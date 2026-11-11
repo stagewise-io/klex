@@ -330,6 +330,22 @@ describe('ProvidersScreen', () => {
     view.unmount();
   });
 
+  it('labels providers by their custom display name when one is set', async () => {
+    const view = renderScreen(
+      makeClient([{ ...provider(), displayName: 'Team Vertex' }]),
+    );
+    await vi.waitFor(() =>
+      expect(view.lastFrame()).toContain('Team Vertex · test-primary'),
+    );
+    expect(view.lastFrame()).toContain('Type: Test Provider');
+    view.stdin.write('\r');
+    await vi.waitFor(() => {
+      expect(view.lastFrame()).toContain('Edit settings');
+      expect(view.lastFrame()).toMatch(/Provider\s+Test Provider/);
+    });
+    view.unmount();
+  });
+
   it('opens provider details without presenting a removal blocker as an action result', async () => {
     const view = renderScreen(makeClient([provider(false)]));
     await vi.waitFor(() => expect(view.lastFrame()).toContain('test-primary'));

@@ -23,6 +23,7 @@ export interface ProviderTypeInfo extends ProviderMetadata {
 export interface ProviderInfo {
   id: string;
   type: string;
+  displayName?: string;
   settings: Record<string, unknown>;
   metadata: ProviderMetadata;
   operations: {

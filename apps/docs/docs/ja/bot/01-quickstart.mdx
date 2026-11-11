@@ -50,22 +50,5 @@ klex --no-cloud
 
 外部チャンネルからイベントを受け取るには、該当するリソース更新または Klex の[プッシュ通知拡張](https://github.com/stagewise-io/klex/tree/main/packages/mcp-extension-push-notifications)に対応する MCP サーバーを接続します。
 
-## 選択メニューを使わずにセルフホストのボットを作成する
 
-Cloud に登録する場合は Klex Cloud の登録トークンを取得します。承認されたシークレット管理の手順を使い、`KLEX_CLOUD_ENROLLMENT_TOKEN` としてプロセスに渡します。その後、次を実行します。
-
-```sh
-klex --create-bot
-```
-
-トークンは秘密情報として扱い、スクリプト、コマンドライン引数、ターミナルの履歴に含めないでください。また、プロセスの環境へのアクセスを制限してください。`--headless` を追加すると、ターミナル画面なしで実行できます。
-
-スタンドアロンのボットでは、代わりに名前を指定します。
-
-```sh
-klex --create-bot --no-cloud --bot-name Ada
-```
-
-使用前にプロバイダー、モデル、接続を設定します。`--create-bot` は `--data-dir` や `KLEX_DATA_DIR` と併用できません。これらは既存のボットを指定するためのものです。
-
-Cloud への登録が失敗した場合、新しいボットのデータディレクトリは保持され、そのパスが表示されます。`KLEX_CLOUD_ENROLLMENT_TOKEN` でトークンを渡し、`klex --data-dir PATH` で再試行してください。別のボットを作成する代わりに、`PATH` を表示されたディレクトリに置き換えます。
+<a id="選択メニューを使わずにセルフホストのボットを作成する"></a>

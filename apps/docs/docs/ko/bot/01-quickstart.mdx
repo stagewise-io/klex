@@ -50,22 +50,5 @@ klex --no-cloud
 
 외부 채널에서 이벤트를 받으려면 해당 리소스 업데이트 또는 Klex의 [푸시 알림 확장](https://github.com/stagewise-io/klex/tree/main/packages/mcp-extension-push-notifications)을 지원하는 MCP 서버를 연결합니다.
 
-## 선택 메뉴 없이 셀프 호스팅 봇 만들기
 
-Cloud에 등록하려면 Klex Cloud 등록 토큰을 받습니다. 승인된 비밀 관리 절차를 사용해 `KLEX_CLOUD_ENROLLMENT_TOKEN`으로 프로세스에 전달합니다. 그런 다음 실행합니다.
-
-```sh
-klex --create-bot
-```
-
-토큰은 비밀로 취급하고 스크립트, 명령줄 인자, 터미널 기록에 포함하지 마세요. 프로세스 환경에 대한 접근도 제한하세요. `--headless`를 추가하면 터미널 화면 없이 실행합니다.
-
-독립 실행 봇의 경우 대신 이름을 지정합니다.
-
-```sh
-klex --create-bot --no-cloud --bot-name Ada
-```
-
-사용 전에 제공업체, 모델, 연결을 설정합니다. `--create-bot`은 `--data-dir` 또는 `KLEX_DATA_DIR`과 함께 사용할 수 없습니다. 이 옵션은 기존 봇을 지정하기 위한 것입니다.
-
-Cloud 등록에 실패하면 새 봇의 데이터 디렉터리는 유지되며 그 경로가 표시됩니다. `KLEX_CLOUD_ENROLLMENT_TOKEN`으로 토큰을 전달하고 `klex --data-dir PATH`로 다시 시도하세요. 새 봇을 만드는 대신 `PATH`를 표시된 디렉터리로 바꿉니다.
+<a id="선택-메뉴-없이-셀프-호스팅-봇-만들기"></a>

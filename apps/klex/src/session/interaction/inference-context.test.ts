@@ -77,7 +77,7 @@ describe('assembleInferenceInstructions', () => {
       'text turns: reply on same MCP + conversation message came from',
     );
     expect(instructions).toContain(
-      "text turns: before work or investigation, always acknowledge request immediately on sender's MCP + conversation (react or brief reply). even when stacked: say received request, busy with another task, will follow up ASAP.",
+      "text turns: before work or investigation, always acknowledge request immediately on sender's MCP + conversation (react or brief reply), subject to the messaging etiquette below. even when stacked: say received request, busy with another task, will follow up ASAP. respect activity/DnD status; defer nonessential acknowledgments or use a non-notifying reaction if available.",
     );
     expect(instructions).not.toContain('## Live voice call');
   });

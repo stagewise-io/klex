@@ -50,22 +50,5 @@ klex --no-cloud
 
 Para receber eventos de um canal externo, ligue um servidor MCP que suporte as atualizações de recursos correspondentes ou a [extensão de notificações push](https://github.com/stagewise-io/klex/tree/main/packages/mcp-extension-push-notifications) do Klex.
 
-## Criar um bot auto-hospedado sem o menu de seleção
 
-Para o inscrever no Cloud, obtenha um token de inscrição do Klex Cloud. Forneça-o ao processo como `KLEX_CLOUD_ENROLLMENT_TOKEN` através do procedimento de gestão de segredos aprovado. Depois execute:
-
-```sh
-klex --create-bot
-```
-
-Trate o token como um segredo: não o inclua em scripts, argumentos da linha de comandos ou no histórico do terminal e limite o acesso ao ambiente do processo. Acrescente `--headless` para executar o bot sem interface de terminal.
-
-Para um bot independente, indique antes um nome:
-
-```sh
-klex --create-bot --no-cloud --bot-name Ada
-```
-
-Configure o fornecedor, o modelo e as ligações antes de usar o bot. `--create-bot` não pode ser combinado com `--data-dir` nem com `KLEX_DATA_DIR`: estas opções indicam um bot existente.
-
-Se a inscrição no Cloud falhar, o diretório do novo bot é mantido e o seu caminho é apresentado. Forneça o token em `KLEX_CLOUD_ENROLLMENT_TOKEN` e tente novamente com `klex --data-dir PATH`. Substitua `PATH` pelo diretório apresentado, em vez de criar outro bot.
+<a id="criar-um-bot-auto-hospedado-sem-o-menu-de-seleção"></a>

@@ -11,25 +11,7 @@ related:
 
 You can stop a Klex Bot and manage what it can access through its connections and accounts.
 
-## Run a self-hosted Bot without the picker
-
-For Cloud enrollment, obtain an enrollment token from Klex Cloud and make it available to the process as `KLEX_CLOUD_ENROLLMENT_TOKEN` using your approved secret-management process. Then run:
-
-```sh
-klex --create-bot
-```
-
-Treat the token as a secret: avoid placing it in scripts, command-line arguments, or shell history, and restrict access to the process environment. Add `--headless` to run without the terminal interface.
-
-For a standalone Bot, supply a name instead:
-
-```sh
-klex --create-bot --no-cloud --bot-name Ada
-```
-
-Configure its provider, model, and connections before expecting it to work. `--create-bot` cannot be combined with `--data-dir` or `KLEX_DATA_DIR`: those identify an existing Bot.
-
-If Cloud enrollment fails, the new Bot directory is retained and its path is printed. With the enrollment token available in `KLEX_CLOUD_ENROLLMENT_TOKEN`, retry with `klex --data-dir PATH`, replacing `PATH` with the printed directory, instead of creating another Bot.
+<a id="run-a-self-hosted-bot-without-the-picker"></a>
 
 ## Stop a Bot
 

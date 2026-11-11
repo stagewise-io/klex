@@ -12,7 +12,7 @@ import {
   type PreparedInferenceContext,
 } from '@/session/interaction';
 
-import { assembleRealtimeInstructions } from '../instructions';
+import voiceSystemPrompt from '../system-prompt.md';
 import { toGeminiContentTurns } from './conversation-items';
 import {
   createGeminiLiveProcessorFactory,
@@ -168,7 +168,7 @@ describe('Gemini live processor', () => {
     expect(setupMsg.setup.inputAudioTranscription).toEqual({});
     expect(setupMsg.setup.outputAudioTranscription).toEqual({});
     expect(setupMsg.setup.systemInstruction.parts[0].text).toBe(
-      assembleRealtimeInstructions('You are Klex Gemini.'),
+      'You are Klex Gemini.',
     );
     const declaration = setupMsg.setup.tools[0].functionDeclarations[0];
     expect(declaration.name).toBe('get_weather');
@@ -198,7 +198,7 @@ describe('Gemini live processor', () => {
     socket.open();
     const setupMsg = JSON.parse(socket.sent[0] ?? '{}');
     expect(setupMsg.setup.systemInstruction.parts[0].text).toBe(
-      assembleRealtimeInstructions('You are Klex. Answer clearly and briefly.'),
+      voiceSystemPrompt,
     );
     socket.message({ setupComplete: {} });
     await (await promise).close();

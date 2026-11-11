@@ -12,7 +12,6 @@ import {
   type PreparedInferenceContext,
 } from '@/session/interaction';
 
-import { assembleRealtimeInstructions } from '../instructions';
 import {
   createGPTLiveProcessorFactory,
   type GPTLiveWebSocket,
@@ -246,13 +245,13 @@ describe('GPT-Live model session', () => {
       type: 'session.start',
       session: {
         model: 'gpt-live-1',
-        instructions: `frontend voice policy\n\n${assembleRealtimeInstructions('backend policy')}`,
+        instructions: `frontend voice policy\n\n${'backend policy'}`,
         input: [{ role: 'user' }],
         delegation: {
           type: 'responses',
           responses: {
             model: 'gpt-5.2',
-            instructions: assembleRealtimeInstructions('backend policy'),
+            instructions: 'backend policy',
           },
         },
       },

@@ -79,6 +79,8 @@ export default defineConfig({
     // English: pre-tab URLs → current (re-sectioned) paths.
     { from: '/', to: '/bot' },
     { from: '/quickstart', to: '/bot/quickstart' },
+    // Use cases are being reworked; keep the old route usable in the meantime.
+    { from: '/bot/use-cases', to: '/bot', status: 302 },
     { from: '/architecture', to: '/bot/concepts/how-bots-work' },
     { from: '/concepts/cognitive-architecture', to: '/bot/concepts/memory' },
     { from: '/concepts/soul', to: '/bot/concepts/soul' },
@@ -122,6 +124,11 @@ export default defineConfig({
         '/concepts/data-directory',
       ];
       return [
+        {
+          from: `${locale}/bot/use-cases`,
+          to: `${locale}/bot`,
+          status: 302 as const,
+        },
         ...unchanged.map((path) => ({
           from: `${locale}${path}`,
           to: `${locale}/bot${path}`,

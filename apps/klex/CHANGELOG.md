@@ -2,6 +2,20 @@
 
 All notable Klex changes are documented here.
 
+## 0.31.0 (2026-11-11)
+
+### Features
+
+- add optional provider instance display names (875e7b3)
+
+### Bug Fixes
+
+- refine bot communication and collaboration rules (8f16547)
+
+### Other Changes
+
+- assert renamed provider display name in PATCH response (9f2bcd3)
+
 ## 0.30.1 (2026-11-07)
 
 ### Bug Fixes

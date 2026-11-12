@@ -26,6 +26,8 @@ function createActivitySource(): ActivityHistory & { listeners: number } {
       };
     },
     listNeighbors: async () => [],
+    resolveBoundary: async () => null,
+    readRange: async () => null,
     readPage: async () => null,
     search: async () => ({
       matches: [],

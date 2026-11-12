@@ -5,6 +5,7 @@ import { DEFAULT_SESSION_ID } from '@/session/types';
 import type { SkillNamespaceHandle } from '@/skills';
 
 import type {
+  CheckpointAppliedEvent,
   Extension,
   ExtensionDeps,
   ExtensionFactory,
@@ -74,7 +75,6 @@ class LearningExtension implements Extension {
     if (this.closed) return;
     const worker = createLearningWorker({
       activities: this.options.activities,
-      getLimits: () => this.deps.config.get().extensions.memory.episodes,
       skills,
       state: this.state,
       createChildSession: this.deps.createChildSession,
@@ -95,12 +95,9 @@ class LearningExtension implements Extension {
     worker.start();
   }
 
-  onStepStart(): void {
-    this.worker?.setStepActive(true);
-  }
-
-  onStepComplete(): void {
-    this.worker?.setStepActive(false);
+  /** Post-commit: aborted or retried checkpoints never start a run. */
+  onCheckpointApplied(event: CheckpointAppliedEvent): void {
+    void this.worker?.onCompaction(event.droppedMessageIds);
   }
 
   async onClose(): Promise<void> {
@@ -158,8 +155,8 @@ class LearningExtensionFactory implements ExtensionFactory {
 }
 
 /**
- * Learns skills from bounded canonical activity batches in the background and writes
- * them to the `learning` skill namespace. The default-session instance
+ * Learns skills in the background from the activity each context compaction
+ * drops and writes them to the `learning` skill namespace. The default-session instance
  * imports pre-registry skills once before its worker starts.
  */
 export function createLearningExt(

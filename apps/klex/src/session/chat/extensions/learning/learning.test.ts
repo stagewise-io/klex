@@ -27,6 +27,8 @@ function createActivitySource(): ActivityHistory {
     isAvailable: () => false,
     subscribe: () => () => undefined,
     listNeighbors: async () => [],
+    resolveBoundary: async () => null,
+    readRange: async () => null,
     readPage: async () => null,
     search: async () => ({
       matches: [],
@@ -283,16 +285,10 @@ describe('learning extension', () => {
     await background.onClose?.();
   });
 
-  it('releases subscriptions and timers before a replacement takes ownership', async () => {
+  it('holds no subscriptions or timers and hands ownership to a replacement', async () => {
     const target = await fixture([]);
     const activities = createActivitySource();
-    const listeners = new Set<() => void>();
-    activities.subscribe = (listener) => {
-      listeners.add(listener);
-      return () => {
-        listeners.delete(listener);
-      };
-    };
+    const subscribe = vi.spyOn(activities, 'subscribe');
     const learning = createLearningExt({ activities, getSoul: () => null });
     const first = learning.create(fakeDeps(target, DEFAULT_SESSION_ID));
     const duplicate = learning.create(fakeDeps(target, DEFAULT_SESSION_ID));
@@ -301,26 +297,20 @@ describe('learning extension', () => {
     try {
       await first.onStart?.();
       await duplicate.onStart?.();
-      expect(listeners.size).toBe(1);
-      expect(vi.getTimerCount()).toBe(baseline + 1);
-      await duplicate.onClose?.();
-      expect(listeners.size).toBe(1);
-      await first.onClose?.();
-      expect(listeners.size).toBe(0);
       expect(vi.getTimerCount()).toBe(baseline);
+      await duplicate.onClose?.();
+      await first.onClose?.();
       const successor = learning.create(fakeDeps(target, DEFAULT_SESSION_ID));
       try {
         await successor.onStart?.();
-        expect(listeners.size).toBe(1);
-        await vi.advanceTimersByTimeAsync(90_000);
         expect(successor.introspect?.()).toMatchObject({
           running: false,
-          processedEpisodeCount: 0,
+          cursor: null,
         });
       } finally {
         await successor.onClose?.();
       }
-      expect(listeners.size).toBe(0);
+      expect(subscribe).not.toHaveBeenCalled();
       expect(vi.getTimerCount()).toBe(baseline);
     } finally {
       await duplicate.onClose?.();

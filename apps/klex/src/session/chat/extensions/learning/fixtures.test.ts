@@ -11,7 +11,6 @@ import { LEARNING_EXTENSION_ID } from './learning';
 import { LEARNING_SKILL_NAMESPACE } from './learning-config';
 import { createLearningState } from './learning-state';
 import { createLearningWorker } from './learning-worker';
-import { sourceEpisodesOf } from './prompts';
 import { learningActivities } from './test-activities';
 import { type ChildReply, childHarness, reply as ok } from './test-child';
 
@@ -52,6 +51,14 @@ afterEach(async () => {
   for (const close of cleanup.splice(0).reverse()) await close();
 });
 
+/** Canonical message id inside an activity id (`history:` + base64url JSON). */
+function messageIdOf(activityId: string): string {
+  const decoded = JSON.parse(
+    Buffer.from(activityId.slice('history:'.length), 'base64url').toString(),
+  ) as [number, string, string];
+  return decoded[2];
+}
+
 function reply(...operations: object[]): ChildReply {
   return ok(JSON.stringify({ operations }));
 }
@@ -77,7 +84,6 @@ async function harness() {
   const { runChild, createChildSession } = childHarness();
   const worker = createLearningWorker({
     activities: episodes,
-    getLimits: () => fixture.limits,
     skills,
     state,
     createChildSession,
@@ -86,6 +92,7 @@ async function harness() {
     logger,
     now: fixture.now,
   });
+  worker.start();
   cleanup.push(
     () => registry.close(),
     () => worker.close(),
@@ -116,70 +123,59 @@ describe('learning fixtures', () => {
       worker,
       ids: [feedbackId, fixId, noLessonId],
     } = await harness();
+    const dropped = [feedbackId, fixId, noLessonId].map((id) =>
+      messageIdOf(id as string),
+    );
 
-    runChild
-      .mockImplementationOnce(async ({ system, prompt }) => {
-        expect(system).toContain('### How to determine learning');
-        expect(system).toContain('AI Agent *Atlas*');
-        expect(system).toContain('<soul>Product manager.</soul>');
-        expect(system).not.toMatch(/\{\{[A-Z_]+\}\}/);
-        expect(prompt).toContain('<skills>\n(none)\n</skills>');
-        expect(prompt).toContain(`<activity id="${feedbackId}"`);
-        expect(prompt).toContain('always ask before changing a core contract');
-        return reply({
+    runChild.mockImplementationOnce(async ({ system, prompt }) => {
+      expect(system).toContain('### How to determine learning');
+      expect(system).toContain('AI Agent *Atlas*');
+      expect(system).toContain('<soul>Product manager.</soul>');
+      expect(system).not.toMatch(/\{\{[A-Z_]+\}\}/);
+      expect(prompt).toContain('<skills>\n(none)\n</skills>');
+      // One compaction yields one block covering everything it dropped.
+      expect(prompt).toContain(`<activity id="${noLessonId}"`);
+      expect(prompt).toContain('always ask before changing a core contract');
+      expect(prompt).toContain('Node.js 26 is required');
+      expect(prompt).toContain('team lunch');
+      return reply(
+        {
           op: 'create',
           name: 'ask-before-core-contract-changes',
           description:
             'Use before changing a published protocol, payload, or other core contract.',
           body: '1. Propose the change and its impact.\n2. Wait for approval before editing.',
           reason: 'Teammate asked to be consulted first.',
-        });
-      })
-      .mockImplementationOnce(async ({ prompt }) => {
-        expect(prompt).toContain(
-          '<skill name="ask-before-core-contract-changes">',
-        );
-        expect(prompt).toContain(`<activity id="${fixId}"`);
-        expect(prompt).toContain('Node.js 26 is required');
-        return reply({
+        },
+        {
           op: 'create',
           name: 'use-pinned-node-version',
           description:
             'Use before running repository scripts on a machine whose default Node may be older.',
           body: 'Run `nvm use` in the repository root first; it reads `.nvmrc`.',
           reason: 'A failed run succeeded after switching Node.',
-        });
-      })
-      .mockImplementationOnce(async ({ prompt }) => {
-        expect(prompt).toContain('<skill name="use-pinned-node-version">');
-        expect(prompt).toContain(`<activity id="${noLessonId}"`);
-        expect(prompt).toContain('team lunch');
-        return reply();
-      });
+        },
+      );
+    });
 
-    expect(await worker.runOnce()).toBe('processed');
-    expect(runChild).toHaveBeenCalledTimes(3);
+    await worker.onCompaction(dropped);
+    expect(runChild).toHaveBeenCalledTimes(1);
 
     expect(skills.list().map((skill) => skill.name)).toEqual([
       'ask-before-core-contract-changes',
       'use-pinned-node-version',
     ]);
-    const sources = (name: string) => {
-      const skill = skills.get(name);
-      return skill ? sourceEpisodesOf(skill) : null;
-    };
-    expect(sources('ask-before-core-contract-changes')).toEqual([feedbackId]);
-    expect(sources('use-pinned-node-version')).toEqual([fixId]);
-    const current = state.get();
-    expect(current.cursor).toBe(noLessonId);
-    expect(current.changedRunsSinceConsolidation).toBe(0);
-    expect(current.lastConsolidationAt).toBeNull();
-    expect(current.pendingChangeWeight).toBe(4);
-    expect(current.processedEpisodeCount).toBe(3);
+    expect(state.get().cursor).toBe(noLessonId);
+    expect(state.get().lastConsolidationAt).toBeNull();
   });
 
   it('writes learned skills as Agent Skills files in the learning namespace', async () => {
-    const { root, runChild, worker } = await harness();
+    const {
+      root,
+      runChild,
+      worker,
+      ids: [, , lastId],
+    } = await harness();
     runChild
       .mockResolvedValueOnce(
         reply({
@@ -192,7 +188,7 @@ describe('learning fixtures', () => {
       )
       .mockResolvedValue(reply());
 
-    await worker.runOnce();
+    await worker.onCompaction([messageIdOf(lastId as string)]);
 
     const content = await readFile(
       join(

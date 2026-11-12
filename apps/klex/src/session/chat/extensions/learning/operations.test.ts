@@ -27,13 +27,13 @@ describe('learning submission schema', () => {
     expect(learningSubmissionSchema.parse(batch)).toEqual(batch);
   });
 
-  it('accepts explicit empty batches and deferral', () => {
+  it('accepts explicit empty batches and strips the removed deferral flag', () => {
     expect(learningSubmissionSchema.parse({ operations: [] })).toEqual({
       operations: [],
     });
     expect(
       learningSubmissionSchema.parse({ operations: [], deferred: true }),
-    ).toEqual({ operations: [], deferred: true });
+    ).toEqual({ operations: [] });
   });
 
   it.each([

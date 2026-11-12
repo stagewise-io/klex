@@ -95,7 +95,8 @@ export interface CheckpointManagerDependencies {
   extensionHandler: () => Pick<
     ExtensionHandler,
     'collectCheckpointCarry' | 'runCheckpointApplyingHooks'
-  >;
+  > &
+    Partial<Pick<ExtensionHandler, 'runCheckpointAppliedHooks'>>;
   recorder?: SessionHistoryRecorder;
   /** Called after the window was trimmed. */
   onApplied?: () => void;
@@ -323,6 +324,13 @@ class CheckpointManagerModule implements CheckpointManager {
       'Checkpoint applied — window trimmed',
     );
     this.deps.onApplied?.();
+    void this.deps
+      .extensionHandler()
+      .runCheckpointAppliedHooks?.({
+        droppedMessageIds,
+        checkpointMessageId: header.id,
+      })
+      .catch(() => undefined);
     return 'applied';
   }
 

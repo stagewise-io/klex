@@ -40,7 +40,6 @@ const operationSchema = z.discriminatedUnion('op', [
 
 export const learningSubmissionSchema = z.object({
   operations: z.array(operationSchema).max(MAX_SKILLS * 2),
-  deferred: z.boolean().optional(),
 });
 
 export type LearningSubmission = z.infer<typeof learningSubmissionSchema>;

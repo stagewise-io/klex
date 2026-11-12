@@ -196,6 +196,14 @@ export interface CheckpointApplyingEvent {
   checkpointMessageId: string;
 }
 
+/** Passed to {@link Extension.onCheckpointApplied} after a committed trim. */
+export interface CheckpointAppliedEvent {
+  /** IDs that left the window, in window order. */
+  droppedMessageIds: readonly string[];
+  /** ID of the header that replaced them as `messages[0]`. */
+  checkpointMessageId: string;
+}
+
 export interface CheckpointApplyingResult {
   /** Keep the checkpoint pending and retry at the next boundary. */
   defer?: boolean;
@@ -808,6 +816,13 @@ export interface Extension {
     | CheckpointApplyingResult
     | undefined
     | Promise<CheckpointApplyingResult | undefined>;
+
+  /**
+   * Called once the checkpoint is durable and the window is trimmed. Unlike
+   * `onCheckpointApplying`, it never fires for deferred, changed, rejected
+   * or abandoned attempts. Must not block; failures are logged and ignored.
+   */
+  onCheckpointApplied?: (event: CheckpointAppliedEvent) => void | Promise<void>;
 
   dataPartTransformers?: DataPartTransformers;
 

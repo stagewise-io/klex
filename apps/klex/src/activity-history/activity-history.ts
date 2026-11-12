@@ -57,6 +57,21 @@ export interface ActivityHistory {
       now: number;
     },
   ): Promise<ActivityBatch | null>;
+  /**
+   * Id of the newest activity whose message id is in `messageIds`, or null.
+   * Resolves a compaction's dropped messages to a canonical boundary.
+   */
+  resolveBoundary(messageIds: readonly string[]): Promise<string | null>;
+  /**
+   * Next chunk of activity after `after` up to and including `through`,
+   * ending on a message seam once `maxCharacters` is reached. Null when the
+   * range is exhausted. Ignores idle and duration rules.
+   */
+  readRange(
+    after: string | null,
+    through: string,
+    maxCharacters: number,
+  ): Promise<ActivityBatch | null>;
   readPage(
     id: string,
     options: {
@@ -92,6 +107,20 @@ export function activityOrdinal(id: string | null): number | null {
     )
       return null;
     return value[0] as number;
+  } catch {
+    return null;
+  }
+}
+
+function activityMessageId(id: string): string | null {
+  if (activityOrdinal(id) === null) return null;
+  try {
+    const value: unknown = JSON.parse(
+      Buffer.from(id.slice(8), 'base64url').toString(),
+    );
+    return Array.isArray(value) && typeof value[2] === 'string'
+      ? value[2]
+      : null;
   } catch {
     return null;
   }
@@ -133,6 +162,79 @@ class ActivityHistoryModule implements ActivityHistory {
       limit: count,
       maxBytes: 0,
     });
+  }
+
+  async resolveBoundary(messageIds: readonly string[]): Promise<string | null> {
+    const wanted = new Set(messageIds);
+    const manifest = await this.history.activityManifest();
+    for (let index = manifest.length - 1; index >= 0; index--) {
+      const id = manifest[index]!.id;
+      const messageId = activityMessageId(id);
+      if (messageId !== null && wanted.has(messageId)) return id;
+    }
+    return null;
+  }
+
+  async readRange(
+    after: string | null,
+    through: string,
+    maxCharacters: number,
+  ): Promise<ActivityBatch | null> {
+    if (!this.isAvailable()) return null;
+    const ordinal = activityOrdinal(after);
+    const last = activityOrdinal(through);
+    if (last === null || (after !== null && ordinal === null)) return null;
+    const rows = await this.history.readActivity({
+      after: ordinal ?? -1,
+      through: last,
+    });
+    if (!rows.length) return null;
+    const selected: ActivityMessage[] = [];
+    const blocks: string[] = [];
+    let size = 0;
+    let count = 0;
+    let truncated = false;
+    for (const row of rows) {
+      const records = renderActivityRecords(row);
+      const text = records
+        .map((record) => `${row.persistedAt.slice(11, 16)} ${record}`)
+        .join(RECORD_SEPARATOR);
+      const separatorSize = text && blocks.length ? RECORD_SEPARATOR.length : 0;
+      if (selected.length && size + separatorSize + text.length > maxCharacters)
+        break;
+      selected.push(row);
+      if (text) {
+        const bounded = text.slice(
+          0,
+          Math.max(0, maxCharacters - size - separatorSize),
+        );
+        blocks.push(bounded);
+        size += bounded.length + separatorSize;
+        truncated ||= bounded.length < text.length;
+      }
+      count += records.length;
+    }
+    const first = selected[0]!;
+    const end = selected.at(-1)!;
+    return {
+      id: end.id,
+      firstSourceId: first.id,
+      sourceIds: selected
+        .filter((row) => renderActivityRecords(row).length > 0)
+        .map((row) => row.id)
+        .slice(-6),
+      startedAt: first.persistedAt,
+      endedAt: end.persistedAt,
+      recordCount: count,
+      text: blocks.join(RECORD_SEPARATOR),
+      offset: 0,
+      nextOffset: null,
+      scannedBytes: selected.reduce(
+        (sum, row) => sum + (row.message ? row.bytes : 0),
+        0,
+      ),
+      truncated: truncated || selected.some((row) => row.message === null),
+    };
   }
 
   async readPending(

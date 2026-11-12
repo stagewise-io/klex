@@ -144,6 +144,8 @@ god-sessions
 
 Child sessions register under their parent session's `child-sessions` scope, giving full recursive visibility without a second source of lifecycle state. Session metadata includes the session kind, parent ID, and model purpose so operators can distinguish ordinary and consult execution units.
 
+Each session's info also carries a `childSessions` summary of its live children (id, role name, extension identifier, runtime state, nested children), so a single read of `sessions` or `god-sessions` shows whether memory retrieval (`memory-retrieval`) or learning (`learning-*`) is running. `triggeredByMemoryOnly` is true while a session is busy and every input since it was last idle was a memory-retrieval result.
+
 ## See also
 
 - [Chat Session Architecture](./chat/architecture.md) — session loop, turns, steps, inbox, generation

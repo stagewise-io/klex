@@ -11,8 +11,9 @@ import type {
   ExtensionDeps,
   ExtensionFactory,
 } from './extensions/extension-api';
+import { wrapMemoryResult } from './extensions/memory/retrieval/memory-result';
 import type { ExtendedUIMessage } from './message-types';
-import type { Turn, TurnResult } from './turn';
+import type { createTurn as createTurnType, Turn, TurnResult } from './turn';
 
 const { createTurn } = vi.hoisted(() => ({ createTurn: vi.fn() }));
 
@@ -113,6 +114,118 @@ describe('ChatSession mid-turn input', () => {
     expect(createTurn.mock.calls[1]?.[0]).toMatchObject({ forceCheck: true });
     expect(session.getMessages()).toContainEqual(reminder);
 
+    await session.close();
+  });
+});
+
+describe('ChatSession turn trigger', () => {
+  function createSession() {
+    let deps: ExtensionDeps | undefined;
+    const extension: ExtensionFactory = {
+      identifier: 'test/memory',
+      create: (extensionDeps) => {
+        deps = extensionDeps;
+        return {};
+      },
+    };
+    const session = createChatSession({
+      logging: { child: () => logger } as unknown as RootLogger,
+      config: {
+        get: () => ({ modelSelection: { chat: ['test:model'] } }),
+      } as unknown as Config,
+      modelResolver: { resolveModelInfo: () => undefined } as never,
+      dataDirectory: '/tmp/klex-chat-session-turn-trigger-test',
+      mcp: null,
+      extensionFactories: [extension],
+      introspectionScope: createScope(),
+      sessionContext: { kind: 'default', name: 'main', sessionId: 'default' },
+      basePrompt: 'You are Klex.',
+    });
+    const sendMemory = () =>
+      deps?.inbox.sendMessage(
+        {
+          id: 'memory-1',
+          role: 'user',
+          parts: [{ type: 'text', text: wrapMemoryResult('remembered') }],
+        } as ExtendedUIMessage,
+        SessionInboxUrgency.Deferrable,
+      );
+    // Drains deferred input like a real turn, recording the flag it sees.
+    const seen: (boolean | undefined)[] = [];
+    createTurn.mockImplementationOnce(
+      (turnDeps: Parameters<typeof createTurnType>[0]) =>
+        fakeTurn(() => {
+          turnDeps.inbox.drain(turnDeps.messages, turnDeps.logger);
+          seen.push(session.getSessionInfo().triggeredByMemoryOnly);
+        }),
+    );
+    return { session, sendMemory, seen };
+  }
+
+  it('flags a busy period woken only by memory results', async () => {
+    const { session, sendMemory, seen } = createSession();
+    await session.start();
+
+    sendMemory();
+
+    await expect(session.waitForIdle(1_000)).resolves.toBe(true);
+    expect(seen).toEqual([true]);
+    expect(session.getSessionInfo().triggeredByMemoryOnly).toBe(false);
+    await session.close();
+  });
+
+  const leaseRequest = () => ({
+    mode: 'realtime' as const,
+    externalSessionId: 'test-call',
+    namespace: 'test',
+    signal: new AbortController().signal,
+    model: { modelId: 'test', contextSize: 32_000, inputCapabilities: {} },
+  });
+
+  it('does not flag a turn that follows a lease, even with buffered memory', async () => {
+    const { session, sendMemory, seen } = createSession();
+    await session.start();
+    const lease = await session.acquireInteractionLease(leaseRequest());
+
+    sendMemory();
+    expect(session.getSessionInfo().runtimeState).toBe('leased');
+    await lease.release();
+
+    await expect(session.waitForIdle(1_000)).resolves.toBe(true);
+    expect(seen).toEqual([false]);
+    await session.close();
+  });
+
+  it('flags a memory-only wake after a lease that left no input', async () => {
+    const { session, sendMemory, seen } = createSession();
+    await session.start();
+    const lease = await session.acquireInteractionLease(leaseRequest());
+    await lease.release();
+
+    sendMemory();
+
+    await expect(session.waitForIdle(1_000)).resolves.toBe(true);
+    expect(seen).toEqual([true]);
+    await session.close();
+  });
+
+  it('does not flag a busy period that other input also woke', async () => {
+    const { session, sendMemory, seen } = createSession();
+    await session.start();
+
+    sendMemory();
+    session.inbox.send({
+      sourceEnv: 'test',
+      urgency: SessionInboxUrgency.Deferrable,
+      context: {
+        sourceEnv: 'test',
+        metadata: {},
+        content: [{ type: 'text', text: 'user message' }],
+      },
+    });
+
+    await expect(session.waitForIdle(1_000)).resolves.toBe(true);
+    expect(seen).toEqual([false]);
     await session.close();
   });
 });

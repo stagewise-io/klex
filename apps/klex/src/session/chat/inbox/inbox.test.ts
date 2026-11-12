@@ -305,15 +305,27 @@ describe('Inbox — sendMessage', () => {
     expect(onNewInput).toHaveBeenCalledTimes(3);
   });
 
-  it('passes urgency to onNewInput for sendMessage', () => {
-    inbox.sendMessage(makeMessage('a'), SessionInboxUrgency.Critical);
-    inbox.sendMessage(makeMessage('b'), SessionInboxUrgency.Default);
-    inbox.sendMessage(makeMessage('c'), SessionInboxUrgency.Deferrable);
-    expect(onNewInput).toHaveBeenNthCalledWith(1, SessionInboxUrgency.Critical);
-    expect(onNewInput).toHaveBeenNthCalledWith(2, SessionInboxUrgency.Default);
+  it('passes urgency and the message to onNewInput for sendMessage', () => {
+    const a = makeMessage('a');
+    const b = makeMessage('b');
+    const c = makeMessage('c');
+    inbox.sendMessage(a, SessionInboxUrgency.Critical);
+    inbox.sendMessage(b, SessionInboxUrgency.Default);
+    inbox.sendMessage(c, SessionInboxUrgency.Deferrable);
+    expect(onNewInput).toHaveBeenNthCalledWith(
+      1,
+      SessionInboxUrgency.Critical,
+      a,
+    );
+    expect(onNewInput).toHaveBeenNthCalledWith(
+      2,
+      SessionInboxUrgency.Default,
+      b,
+    );
     expect(onNewInput).toHaveBeenNthCalledWith(
       3,
       SessionInboxUrgency.Deferrable,
+      c,
     );
   });
 });

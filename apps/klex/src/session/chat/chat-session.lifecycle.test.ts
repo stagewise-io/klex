@@ -571,6 +571,61 @@ describe('ChatSession lifecycle', () => {
     await parent.close();
   });
 
+  it('reports live child sessions with their role name and runtime state', async () => {
+    let extensionDeps: ExtensionDeps | undefined;
+    const extension: ExtensionFactory = {
+      identifier: 'io.stagewise/memory',
+      create: (deps) => {
+        extensionDeps = deps;
+        return {};
+      },
+    };
+    let childStatus: 'active' | 'terminated' = 'active';
+    const child = createFakeChild(async () => undefined);
+    child.getSessionInfo = vi.fn(
+      () =>
+        ({
+          id: 'child-1',
+          name: 'memory-retrieval',
+          extensionIdentifier: 'io.stagewise/memory',
+          status: childStatus,
+          runtimeState: childStatus === 'active' ? 'working' : 'terminated',
+          childSessions: [
+            { id: 'grandchild-1', name: 'consult', runtimeState: 'idle' },
+          ],
+        }) as never,
+    );
+    const parent = createSession({
+      extensions: [extension],
+      sessionFactory: () => child,
+    });
+    await parent.start();
+    expect(parent.getSessionInfo().childSessions).toEqual([]);
+
+    await requireExtensionDeps(extensionDeps).createChildSession({
+      name: 'memory-retrieval',
+      extensionIdentifier: 'io.stagewise/memory',
+      extensions: [],
+      basePrompt: 'You are a child.',
+    });
+
+    expect(parent.getSessionInfo().childSessions).toEqual([
+      {
+        id: 'child-1',
+        name: 'memory-retrieval',
+        extensionIdentifier: 'io.stagewise/memory',
+        runtimeState: 'working',
+        childSessions: [
+          { id: 'grandchild-1', name: 'consult', runtimeState: 'idle' },
+        ],
+      },
+    ]);
+
+    childStatus = 'terminated';
+    expect(parent.getSessionInfo().childSessions).toEqual([]);
+    await parent.close();
+  });
+
   it('stays non-quiescent while its own close cleanup is running', async () => {
     let finishClose!: () => void;
     const extension: ExtensionFactory = {
@@ -711,8 +766,9 @@ describe('ChatSession lifecycle', () => {
       sessionFactory: () => child,
     });
     // Reuse the parent's real info shape; no extra session (and span) needed.
+    const parentInfo = parent.getSessionInfo();
     child.getSessionInfo = vi.fn(() => ({
-      ...parent.getSessionInfo(),
+      ...parentInfo,
       status: 'terminated' as const,
     }));
     await parent.start();

@@ -198,6 +198,55 @@ describe('GET /v1/god-messages/session', () => {
     expect(body.runtimeState).toBe('idle');
   });
 
+  it('returns child session activity and documents it recursively', async () => {
+    const childSessions = [
+      {
+        id: 'child-1',
+        name: 'consult',
+        extensionIdentifier: 'consult',
+        runtimeState: 'working' as const,
+        childSessions: [
+          {
+            id: 'child-2',
+            name: 'learning-extraction',
+            runtimeState: 'idle' as const,
+          },
+        ],
+      },
+    ];
+    const info = makeSessionInfo({
+      runtimeState: 'working',
+      childSessions,
+      triggeredByMemoryOnly: false,
+    });
+    const app = createApp(
+      makeDeps({
+        getSessionInfo: vi.fn(() => info),
+        getMessages: vi.fn(() => []),
+        resetSession: vi.fn(),
+        sendGodMessage: vi.fn(),
+      }),
+    );
+
+    const response = await app.request('/v1/god-messages/session');
+    expect(await response.json()).toMatchObject({
+      childSessions,
+      triggeredByMemoryOnly: false,
+    });
+
+    const document = app.getOpenAPI31Document({
+      openapi: '3.1.0',
+      info: { title: 'test', version: '1' },
+    });
+    expect(document.components?.schemas?.ChildSessionSummary).toMatchObject({
+      properties: {
+        childSessions: {
+          items: { $ref: '#/components/schemas/ChildSessionSummary' },
+        },
+      },
+    });
+  });
+
   it('returns 200 with terminated state when session is terminated', async () => {
     const info = makeSessionInfo({
       status: 'terminated',

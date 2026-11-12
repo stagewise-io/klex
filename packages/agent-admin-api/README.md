@@ -13,6 +13,24 @@ const client = hc<AdminApi>('https://agent.example');
 const health = await client.v1.health.$get();
 ```
 
+## Session activity
+
+Session info, returned for each entry of `state.sessions` in
+`GET /v1/introspect/sessions` and `GET /v1/introspect/god-sessions` and by
+`GET /v1/god-messages/session`, includes two optional fields:
+
+- `childSessions`: live child sessions as `{ id, name, extensionIdentifier?,
+  runtimeState, childSessions? }`. `name` is the stable role name:
+  `memory-retrieval`, `learning-extraction`, `learning-consolidation`,
+  `consult`, or another extension-chosen name. Terminated children are omitted.
+- `triggeredByMemoryOnly`: true while the session is busy (`working`,
+  `retrying` or `success`) and every input since it was last idle was a
+  memory-retrieval result. A busy period that spans a realtime call is never
+  memory-only.
+
+Bots before this release omit both fields; treat a missing field as no
+children and `false`.
+
 ## Model providers
 
 Session-history records from `GET /v1/sessions` and `GET /v1/sessions/{instanceId}`

@@ -42,6 +42,7 @@ import type {
   ChatSessionHandle,
   ChildSessionHandle,
   ChildSessionOptions,
+  ChildSessionSummary,
   SessionContext,
   SessionFactory,
   SessionHooks,
@@ -68,6 +69,7 @@ import type {
   GenerateTextResult,
   InstinctClassificationOutcome,
 } from './extensions/extension-api';
+import { isMemoryResultMessage } from './extensions/memory/retrieval/memory-result';
 import {
   type ChatSessionInbox,
   createInbox,
@@ -256,6 +258,11 @@ class ChatSessionModule implements AgentSession {
   // --- Observability tracking ---
 
   private runtimeState: SessionRuntimeState = 'idle';
+  /**
+   * Whether every input since the session was last idle was a memory
+   * result; `null` until the first input arrives.
+   */
+  private memoryOnlyInput: boolean | null = null;
   /** Started child sessions, tracked for {@link isQuiescent}. */
   private readonly childSessions = new Set<ChildSessionHandle>();
   /** Child sessions still in `start()`; they count as busy. */
@@ -1111,6 +1118,9 @@ class ChatSessionModule implements AgentSession {
 
   private async quiesceGenerationLane(reason: string): Promise<void> {
     this.laneSuspended = true;
+    // Lease-consumed input never reaches onNewInput, so a busy period that
+    // spans a lease is never memory-only.
+    this.memoryOnlyInput = false;
     if (this.runtimeState !== 'terminated') this.setRuntimeState('leased');
     this.sessionSpan.addEvent('session.generation_lane_suspended', {
       'klex.session.lane_reason': reason,
@@ -1142,6 +1152,8 @@ class ChatSessionModule implements AgentSession {
     this.applyCheckpointIfIdle();
     if (this.hasPendingInput || !this.sessionInbox.isEmpty()) {
       this.startLoop();
+    } else if (!this.loopActive) {
+      this.memoryOnlyInput = null;
     }
   }
 
@@ -1241,7 +1253,15 @@ class ChatSessionModule implements AgentSession {
     this.scheduleTranscriptSync();
   }
 
-  private onNewInput = (urgency: SessionInboxUrgency): void => {
+  private onNewInput = (
+    urgency: SessionInboxUrgency,
+    message?: ExtendedUIMessage,
+  ): void => {
+    this.memoryOnlyInput =
+      (this.memoryOnlyInput ?? true) &&
+      message !== undefined &&
+      isMemoryResultMessage(message);
+
     // Lease-consumed events are filtered by the inbox before this callback.
     // Native messages still reach it and remain pending until the lane resumes.
 
@@ -1370,6 +1390,7 @@ class ChatSessionModule implements AgentSession {
           !needsCheckRetry
         ) {
           this.setRuntimeState('idle');
+          this.memoryOnlyInput = null;
           this.resolveIdleWaiters(true);
           this.sessionSpan.addEvent('session.idle', {
             'klex.session.id': this.sessionId,
@@ -1759,7 +1780,32 @@ class ChatSessionModule implements AgentSession {
       steps: this.stepCount,
       messageCount: this.messages.length,
       createdAt: this.createdAt,
+      childSessions: this.getChildSessionSummaries(),
+      triggeredByMemoryOnly:
+        this._status !== 'terminated' &&
+        this.memoryOnlyInput === true &&
+        ['working', 'retrying', 'success'].includes(this.runtimeState),
     };
+  }
+
+  private getChildSessionSummaries(): ChildSessionSummary[] {
+    const summaries: ChildSessionSummary[] = [];
+    for (const child of this.childSessions) {
+      const info = child.getSessionInfo();
+      if (info.status === 'terminated') continue;
+      summaries.push({
+        id: info.id,
+        name: info.name,
+        ...(info.extensionIdentifier
+          ? { extensionIdentifier: info.extensionIdentifier }
+          : {}),
+        runtimeState: info.runtimeState,
+        ...(info.childSessions?.length
+          ? { childSessions: info.childSessions }
+          : {}),
+      });
+    }
+    return summaries;
   }
 
   private setRuntimeState(next: SessionRuntimeState): void {

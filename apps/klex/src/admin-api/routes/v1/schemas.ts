@@ -5,6 +5,7 @@ import {
   MODEL_PURPOSES,
   PROVIDER_DISPLAY_NAME_MAX_LENGTH,
 } from '@/config';
+import type { ChildSessionSummary } from '@/session/types';
 import { GenerationHealthErrorSchema } from '@/session-history/generation-health';
 import {
   MAX_BODY_LENGTH,
@@ -859,6 +860,34 @@ const usageSchema = z.object({
   }),
 });
 
+const sessionRuntimeStateSchema = z.enum([
+  'working',
+  'retrying',
+  'success',
+  'idle',
+  'leased',
+  'terminated',
+]);
+
+const childSessionSummarySchema: z.ZodType<ChildSessionSummary> = z
+  .object({
+    id: z.string(),
+    name: z
+      .string()
+      .describe(
+        'Stable role name, e.g. `memory-retrieval`, `learning-extraction`, `learning-consolidation` or `consult`',
+      ),
+    extensionIdentifier: z.string().optional(),
+    runtimeState: sessionRuntimeStateSchema,
+    get childSessions() {
+      return z
+        .array(childSessionSummarySchema)
+        .optional()
+        .describe('Live nested child sessions');
+    },
+  })
+  .openapi('ChildSessionSummary');
+
 const godSessionInfoResponseSchema = z
   .object({
     name: z.string(),
@@ -868,14 +897,7 @@ const godSessionInfoResponseSchema = z
     modelPurpose: z.enum(MODEL_PURPOSES),
     id: z.string(),
     status: z.enum(['active', 'terminated']),
-    runtimeState: z.enum([
-      'working',
-      'retrying',
-      'success',
-      'idle',
-      'leased',
-      'terminated',
-    ]),
+    runtimeState: sessionRuntimeStateSchema,
     model: z.object({
       id: z.string().nullable(),
       isFallback: z.boolean(),
@@ -889,6 +911,16 @@ const godSessionInfoResponseSchema = z
     steps: z.number().int().min(0),
     messageCount: z.number().int().min(0),
     createdAt: z.string().datetime(),
+    childSessions: z
+      .array(childSessionSummarySchema)
+      .optional()
+      .describe('Live child sessions spawned by this session'),
+    triggeredByMemoryOnly: z
+      .boolean()
+      .optional()
+      .describe(
+        'True while the session is busy and only memory-retrieval results woke it since it was last idle',
+      ),
   })
   .openapi('GodSessionInfoResponse');
 

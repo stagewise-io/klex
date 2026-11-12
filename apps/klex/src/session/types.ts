@@ -101,6 +101,26 @@ export interface SessionInfo {
   messageCount: number;
   /** ISO timestamp of session creation. */
   createdAt: string;
+  /** Live (non-terminated) child sessions spawned by this session's extensions. */
+  childSessions?: ChildSessionSummary[];
+  /**
+   * True while the session is busy and every input since it was last idle
+   * was a memory-retrieval result, i.e. memory alone woke it.
+   */
+  triggeredByMemoryOnly?: boolean;
+}
+
+/**
+ * Activity of a child session. `name` is the stable role name, e.g.
+ * `memory-retrieval`, `learning-extraction`, `learning-consolidation` or
+ * `consult`.
+ */
+export interface ChildSessionSummary {
+  id: string;
+  name: string;
+  extensionIdentifier?: string;
+  runtimeState: SessionRuntimeState;
+  childSessions?: ChildSessionSummary[];
 }
 
 /**

@@ -239,6 +239,54 @@ describe('learning worker (compaction-triggered)', () => {
     ).toHaveLength(1);
   });
 
+  it('retries a non-submitting consolidation only after another N jobs', async () => {
+    const { worker, skills, runChild } = await harness(fakeFeed(20));
+    worker.start();
+    for (const name of ['alpha', 'beta'])
+      await skills.put(name, {
+        description: `Use when ${name}.`,
+        body: `Do ${name}.`,
+      });
+    runChild.mockResolvedValue(noSubmissionReply());
+    const consolidations = () =>
+      runChild.mock.calls.filter(([task]) => isConsolidation(task.system))
+        .length;
+    for (let run = 1; run <= CONSOLIDATE_EVERY_RUNS; run++)
+      await worker.onCompaction([String(run)]);
+    expect(consolidations()).toBe(1);
+    for (let run = 1; run < CONSOLIDATE_EVERY_RUNS; run++)
+      await worker.onCompaction([String(CONSOLIDATE_EVERY_RUNS + run)]);
+    expect(consolidations()).toBe(1);
+    await worker.onCompaction([String(CONSOLIDATE_EVERY_RUNS * 2)]);
+    expect(consolidations()).toBe(2);
+  });
+
+  it('does not start consolidation when shutdown happens during the cadence reset', async () => {
+    const { worker, skills, state, runChild, createChildSession } =
+      await harness(fakeFeed(10));
+    worker.start();
+    for (const name of ['alpha', 'beta'])
+      await skills.put(name, {
+        description: `Use when ${name}.`,
+        body: `Do ${name}.`,
+      });
+    runChild.mockResolvedValue(noSubmissionReply());
+    for (let run = 1; run < CONSOLIDATE_EVERY_RUNS; run++)
+      await worker.onCompaction([String(run)]);
+    const sessionsBefore = createChildSession.mock.calls.length;
+    const original = state.update.bind(state);
+    vi.spyOn(state, 'update').mockImplementation(async (mutate) => {
+      const probe = structuredClone(state.get());
+      probe.changedRunsSinceConsolidation = 1;
+      mutate(probe);
+      if (probe.changedRunsSinceConsolidation === 0) void worker.close();
+      return original(mutate);
+    });
+    await worker.onCompaction([String(CONSOLIDATE_EVERY_RUNS)]);
+    // Only the extraction child of the third job; no consolidation child.
+    expect(createChildSession.mock.calls.length - sessionsBefore).toBe(1);
+  });
+
   it('holds the cursor on failure and skips the chunk after repeated failures', async () => {
     const { worker, state, createChildSession } = await harness(fakeFeed(4));
     worker.start();

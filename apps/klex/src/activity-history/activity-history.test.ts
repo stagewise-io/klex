@@ -104,6 +104,38 @@ describe('canonical activity view', () => {
     expect(await activities.readPending(first.id, ready(now()))).toBeNull();
   });
 
+  it('reads exactly the bounded range after the cursor through the boundary', async () => {
+    const { activities, append } = await setup();
+    const first = await append('range-one');
+    const second = await append('range-two');
+    const third = await append('range-three');
+    const all = await activities.readRange(null, second.id, 10_000);
+    expect(all?.text).toContain('range-one');
+    expect(all?.text).toContain('range-two');
+    expect(all?.text).not.toContain('range-three');
+    expect(all?.id).toBe(second.id);
+    const later = await activities.readRange(first.id, third.id, 10_000);
+    expect(later?.text).not.toContain('range-one');
+    expect(later?.text).toContain('range-two');
+    expect(later?.text).toContain('range-three');
+    expect(await activities.readRange(third.id, third.id, 10_000)).toBeNull();
+  });
+
+  it('keeps the tail of an oversized message in a range read', async () => {
+    const { activities, append } = await setup();
+    const only = await append(`HEAD${'x'.repeat(1000)}TAIL`);
+    const batch = await activities.readRange(null, only.id, 50);
+    expect(batch).toMatchObject({ id: only.id, truncated: true });
+    expect(batch?.text.length).toBeLessThanOrEqual(50);
+    expect(batch?.text).toContain('TAIL');
+    expect(batch?.text).not.toContain('HEAD');
+  });
+
+  it('resolves the newest history entry for the given message ids', async () => {
+    const { activities } = await setup();
+    expect(await activities.resolveBoundary(['no-such-message'])).toBeNull();
+  });
+
   it('includes separators in the rendered size budget', async () => {
     const { activities, append, now } = await setup();
     const first = await append('first');

@@ -372,6 +372,44 @@ describe('GPT-Live wire events', () => {
     });
   });
 
+  it('reads flat provider error fields when there is no error record', () => {
+    expect(
+      parseLiveServerEvent({
+        type: 'error',
+        code: 503,
+        message: 'upstream unavailable',
+        param: 'session',
+        client_event_id: 'client-1',
+      }),
+    ).toMatchObject({
+      type: 'provider-error',
+      error: {
+        code: '503',
+        message: 'upstream unavailable',
+        param: 'session',
+        clientEventId: 'client-1',
+      },
+    });
+    expect(
+      parseLiveServerEvent({ type: 'error', error: 'socket reset' }),
+    ).toMatchObject({
+      type: 'provider-error',
+      error: { code: 'unknown', message: 'socket reset' },
+    });
+    expect(
+      parseLiveServerEvent({
+        type: 'response.event',
+        delegation_id: 'delegation-1',
+        event: { type: 'error', code: 'flat', error: { message: 'nested' } },
+      }),
+    ).toEqual({
+      type: 'response-error',
+      delegationId: 'delegation-1',
+      code: 'flat',
+      message: 'nested',
+    });
+  });
+
   it('parses provider errors without any usable error detail', () => {
     for (const error of [undefined, null, 'boom', 7, { message: 42 }]) {
       expect(parseLiveServerEvent({ type: 'error', error })).toMatchObject({

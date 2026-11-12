@@ -122,14 +122,25 @@ export function parseLiveServerEvent(raw: unknown): GPTLiveServerEvent {
         type: 'provider-error',
         error: {
           type: truncate(errorField(error.type) ?? 'unknown'),
-          code: truncate(errorField(error.code) ?? 'unknown'),
-          message: truncate(
-            errorField(error.message) ?? 'GPT-Live reported an error',
+          code: truncate(
+            errorField(error.code) ?? errorField(event.code) ?? 'unknown',
           ),
-          ...withKey('param', truncate(errorField(error.param))),
+          message: truncate(
+            errorField(error.message) ??
+              optionalString(event.error) ??
+              errorField(event.message) ??
+              'GPT-Live reported an error',
+          ),
+          ...withKey(
+            'param',
+            truncate(errorField(error.param) ?? errorField(event.param)),
+          ),
           ...withKey(
             'clientEventId',
-            truncate(optionalString(error.client_event_id)),
+            truncate(
+              optionalString(error.client_event_id) ??
+                optionalString(event.client_event_id),
+            ),
           ),
         },
       };
@@ -288,13 +299,19 @@ function parseResponseEvent(
   }
 
   if (name === 'error') {
-    const error = optionalRecord(event.error) ?? event;
+    const error = optionalRecord(event.error) ?? {};
     return {
       type: 'response-error',
       delegationId,
-      ...withKey('code', truncate(errorField(error.code))),
+      ...withKey(
+        'code',
+        truncate(errorField(error.code) ?? errorField(event.code)),
+      ),
       message: truncate(
-        errorField(error.message) ?? 'GPT-Live delegated response failed',
+        errorField(error.message) ??
+          optionalString(event.error) ??
+          errorField(event.message) ??
+          'GPT-Live delegated response failed',
       ),
     };
   }

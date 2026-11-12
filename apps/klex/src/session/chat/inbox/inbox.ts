@@ -130,8 +130,12 @@ export interface InboxDependencies {
    * and interrupt backoff waits. Lease-consumed events skip this callback.
    * The urgency is passed so the session can distinguish Deferrable
    * arrivals (which do not trigger check-retry) from Critical/Default.
+   * Native messages are passed along; context events are not.
    */
-  onNewInput: (urgency: SessionInboxUrgency) => void;
+  onNewInput: (
+    urgency: SessionInboxUrgency,
+    message?: ExtendedUIMessage,
+  ) => void;
   /** Records changes to the deferred inbox item count. */
   onDepthChange?: (delta: number) => void;
   /** Optional logger for recording unexpected errors from the callback. */
@@ -243,7 +247,7 @@ class InboxModule implements SessionInboxBuffer {
       delivered = this.notifyImmediateMessage(message, urgency);
     }
 
-    this.notifyNewInput(urgency);
+    this.notifyNewInput(urgency, message);
     return delivered;
   }
 
@@ -294,9 +298,13 @@ class InboxModule implements SessionInboxBuffer {
     }
   }
 
-  private notifyNewInput(urgency: SessionInboxUrgency): void {
+  private notifyNewInput(
+    urgency: SessionInboxUrgency,
+    message?: ExtendedUIMessage,
+  ): void {
     try {
-      this.deps.onNewInput(urgency);
+      if (message) this.deps.onNewInput(urgency, message);
+      else this.deps.onNewInput(urgency);
     } catch (err) {
       this.deps.logger?.error({ err }, 'Inbox onNewInput callback threw');
     }

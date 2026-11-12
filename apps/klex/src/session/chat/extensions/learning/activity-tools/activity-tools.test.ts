@@ -37,6 +37,8 @@ function fixture(activities?: ActivityHistory) {
     subscribe: () => () => undefined,
     manifest: async () => [],
     latest: async () => [],
+    resolveBoundary: async () => null,
+    readRange: async () => null,
     listNeighbors: async () => [
       {
         id: 'neighbor',

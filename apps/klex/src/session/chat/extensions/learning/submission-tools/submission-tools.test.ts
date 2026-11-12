@@ -12,7 +12,7 @@ const create = {
   reason: 'observed',
 };
 
-function harness(allowDefer = true) {
+function harness(allowCreate = true) {
   const controller = new AbortController();
   const evidence = new Set(['primary']);
   const persist = vi.fn(async (batch) => batch.operations.length);
@@ -21,8 +21,7 @@ function harness(allowDefer = true) {
     getExistingNames: () => ['old'],
     persist,
     signal: controller.signal,
-    allowDefer,
-    allowCreate: allowDefer,
+    allowCreate,
   });
   const execute = submission.tools.submitLearnings?.execute;
   if (!execute) throw new Error('Submission tool missing');
@@ -50,7 +49,6 @@ describe('learning submission tools', () => {
     expect(await call({ operations: [create] })).toEqual({
       status: 'applied',
       applied: 1,
-      deferred: false,
     });
     expect(persist).toHaveBeenCalledWith({ operations: [create] });
     expect(await call({ operations: [] })).toEqual({
@@ -58,18 +56,14 @@ describe('learning submission tools', () => {
     });
     expect(persist).toHaveBeenCalledOnce();
   });
-  it.each([false, true])(
-    'allows explicit no-learning or deferral: %s',
-    async (deferred) => {
-      const { call, persist } = harness();
-      expect(await call({ operations: [], deferred })).toMatchObject({
-        status: 'applied',
-        applied: 0,
-        deferred,
-      });
-      expect(persist).toHaveBeenCalledOnce();
-    },
-  );
+  it('allows an explicit no-learning submission', async () => {
+    const { call, persist } = harness();
+    expect(await call({ operations: [] })).toMatchObject({
+      status: 'applied',
+      applied: 0,
+    });
+    expect(persist).toHaveBeenCalledOnce();
+  });
   it('permits correction after unread citations without consuming the allowance', async () => {
     const { call, evidence, persist } = harness();
     const batch = {
@@ -91,7 +85,6 @@ describe('learning submission tools', () => {
         { ...create, op: 'update', name: 'old', mergedFrom: ['missing'] },
       ],
     },
-    { operations: [create], deferred: true },
     { operations: [{ ...create, description: 'multi\nline' }] },
     { operations: [create, { op: 'rename', name: 'old' }] },
   ])('rejects the entire invalid batch %j', async (batch) => {
@@ -111,12 +104,9 @@ describe('learning submission tools', () => {
       }),
     ).toMatchObject({ status: 'applied', applied: 3 });
   });
-  it('rejects consolidation creates and deferrals, allowing correction', async () => {
+  it('rejects consolidation creates, allowing correction', async () => {
     const { call } = harness(false);
     expect(await call({ operations: [create] })).toMatchObject({
-      status: 'rejected',
-    });
-    expect(await call({ operations: [], deferred: true })).toMatchObject({
       status: 'rejected',
     });
     expect(

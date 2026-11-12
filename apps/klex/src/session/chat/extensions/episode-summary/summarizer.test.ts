@@ -63,6 +63,8 @@ function createFeed(initial: ActivityBatch[]) {
     isAvailable: () => state.available,
     subscribe: () => () => undefined,
     listNeighbors: async () => [],
+    resolveBoundary: async () => null,
+    readRange: async () => null,
     readPage: async () => null,
     search: async () => ({
       matches: [],

@@ -10,6 +10,7 @@ import type { SkillRegistry } from '@/skills';
 import { CHECKPOINT_DATA_PART_TRANSFORMERS } from '../checkpoint';
 import type {
   BaseExtensionDeps,
+  CheckpointAppliedEvent,
   CheckpointApplyingEvent,
   DataPartTransformers,
   Extension,
@@ -244,6 +245,9 @@ export interface ExtensionHandler {
   runCheckpointApplyingHooks: (
     event: CheckpointApplyingEvent,
   ) => Promise<{ defer: boolean }>;
+
+  /** Run `onCheckpointApplied` after a committed trim; failures are logged. */
+  runCheckpointAppliedHooks: (event: CheckpointAppliedEvent) => Promise<void>;
 }
 
 export interface ExtensionHandlerDependencies {
@@ -819,6 +823,22 @@ class ExtensionHandlerModule implements ExtensionHandler {
     }
 
     return { defer };
+  }
+
+  async runCheckpointAppliedHooks(
+    event: CheckpointAppliedEvent,
+  ): Promise<void> {
+    for (const ext of this.extensions) {
+      if (!ext.onCheckpointApplied) continue;
+      try {
+        await ext.onCheckpointApplied(structuredClone(event));
+      } catch (error) {
+        this.extensionDeps.logger.error(
+          { error, extensionIdentifier: this.identifiersByExtension.get(ext) },
+          'Extension onCheckpointApplied hook failed',
+        );
+      }
+    }
   }
 }
 

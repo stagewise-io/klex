@@ -134,6 +134,8 @@ function activitySource(): ActivityHistory {
     isAvailable: () => false,
     subscribe: () => () => undefined,
     listNeighbors: async () => [],
+    resolveBoundary: async () => null,
+    readRange: async () => null,
     readPage: async () => null,
     search: async () => ({
       matches: [],

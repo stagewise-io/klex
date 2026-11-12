@@ -5,8 +5,8 @@ import type { ToolSet } from 'ai';
 import type { ModuleLogger } from '@stagewise/logger';
 
 import {
+  type ActivityBatch,
   type ActivityHistory,
-  type ActivityLimits,
   activityOrdinal,
 } from '@/activity-history';
 import type {
@@ -23,18 +23,11 @@ import {
 
 import { createActivityInvestigation } from './activity-tools';
 import {
-  CONSOLIDATE_CHANGE_WEIGHT,
-  FAILURE_RETRY_DELAYS_MS,
-  INITIAL_BACKFILL_EPISODES,
+  CONSOLIDATE_EVERY_RUNS,
   MAX_EPISODE_CHARACTERS,
   MAX_FAILURES_PER_EPISODE,
   MAX_SKILLS,
   MAX_SOURCE_EPISODES,
-  MIN_EPISODE_CHARACTERS,
-  PRIMARY_PASS_CHARACTERS,
-  SOFT_SKILL_COUNT,
-  SOFT_THRESHOLD_CHANGE_WEIGHT,
-  STALE_CONSOLIDATION_SPACING,
 } from './learning-config';
 import type { LearningState } from './learning-state';
 import {
@@ -47,7 +40,6 @@ import {
   type BuiltPrompt,
   buildConsolidationPrompt,
   buildExtractionPrompt,
-  isStale,
   lastActiveTurn,
   type PromptAgent,
   sourceEpisodesOf,
@@ -56,7 +48,6 @@ import { createLearningSubmissionTools } from './submission-tools';
 
 export interface LearningWorkerOptions {
   activities: ActivityHistory;
-  getLimits: () => ActivityLimits;
   /** The learning namespace of the core skill registry. */
   skills: SkillNamespaceHandle;
   /** Cursor and consolidation bookkeeping; skill usage lives in the registry. */
@@ -88,35 +79,34 @@ export interface LearningWorkerIntrospection extends Record<string, unknown> {
 
 export interface LearningWorker {
   start(): void;
-  setStepActive(active: boolean): void;
+  /**
+   * A context compaction is about to drop these messages. Learning runs once
+   * over everything from its cursor up to the newest dropped message.
+   * Resolves once the boundary is resolved and the resulting run has settled;
+   * callers on the compaction path must not await it.
+   */
+  onCompaction(droppedMessageIds: readonly string[]): Promise<void>;
   close(): Promise<void>;
   /** One extraction pass; joins the in-flight run instead of overlapping. */
   runOnce(): Promise<LearningRunResult>;
   introspect(): LearningWorkerIntrospection;
 }
 
-type EpisodeOutcome = 'changed' | 'unchanged' | 'deferred' | 'stop';
+type EpisodeOutcome = 'changed' | 'unchanged' | 'stop';
+
+type EpisodePage = ActivityBatch;
 
 /**
- * Agent-wide background loop: reads finished activities in order, turns
- * lessons into skills, and periodically consolidates the skill set.
+ * Agent-wide background loop: on each context compaction, reads the activity
+ * that compaction drops, turns lessons into skills, and consolidates the skill
+ * set every few runs.
  * Logs names, counts, ids, and reasons only, never prompts or episode text.
  */
 class LearningWorkerModule implements LearningWorker {
-  private timer: NodeJS.Timeout | undefined;
-  private idleTimer: NodeJS.Timeout | undefined;
-  private stepActive = false;
-  private lastActivityAt = 0;
-
-  setStepActive(active: boolean): void {
-    this.stepActive = active;
-    this.lastActivityAt = this.now();
-    if (!active) this.wake();
-  }
-  private unsubscribe: (() => void) | undefined;
-  private dirty = false;
-  private pumping = false;
-  private recoveryFailures = 0;
+  /** Newest activity a compaction dropped; learning runs up to it. */
+  private boundary: string | null = null;
+  private started = false;
+  private rerun = false;
   private abort: AbortController | undefined;
   private child: ChildSessionHandle | undefined;
   private inFlight: Promise<LearningRunResult> | undefined;
@@ -131,21 +121,34 @@ class LearningWorkerModule implements LearningWorker {
   }
 
   start(): void {
-    if (this.unsubscribe || this.closed) return;
-    this.unsubscribe = this.options.activities.subscribe(() => this.wake());
-    this.idleTimer = setInterval(() => this.wake(), 30_000);
-    this.idleTimer.unref();
-    this.wake();
+    if (this.started || this.closed) return;
+    this.started = true;
+  }
+
+  async onCompaction(droppedMessageIds: readonly string[]): Promise<void> {
+    if (this.closed || !this.started) return;
+    let id: string | null;
+    try {
+      id = await this.options.activities.resolveBoundary(droppedMessageIds);
+    } catch (error) {
+      this.options.logger.warn(
+        { error: error instanceof Error ? error.message : String(error) },
+        'Resolving compaction boundary failed',
+      );
+      return;
+    }
+    if (!id || this.closed) return;
+    const { activities } = this.options;
+    await this.seedCursor(droppedMessageIds);
+    if (this.closed) return;
+    if (this.boundary === null || activities.compareIds(id, this.boundary) > 0)
+      this.boundary = id;
+    await this.kick();
   }
 
   async close(): Promise<void> {
     this.closed = true;
-    if (this.idleTimer) clearInterval(this.idleTimer);
-    this.unsubscribe?.();
-    this.unsubscribe = undefined;
     this.abort?.abort();
-    if (this.timer) clearTimeout(this.timer);
-    this.timer = undefined;
     await this.child?.close();
     await this.inFlight?.catch(() => undefined);
   }
@@ -169,54 +172,24 @@ class LearningWorkerModule implements LearningWorker {
       skillCount: this.options.skills.list().length,
       changedRunsSinceConsolidation: state.changedRunsSinceConsolidation,
       lastConsolidationAt: state.lastConsolidationAt,
-      processedEpisodeCount: state.processedEpisodeCount,
-      pendingChangeWeight: state.pendingChangeWeight,
-      nextConsolidationEpisode: state.nextConsolidationEpisode,
-      deferred: state.deferred,
     };
   }
 
-  private wake(): void {
+  /**
+   * Starts a run, or asks the running one to look again. A failed run is not
+   * retried on a timer; the next compaction re-covers the unconsumed range.
+   */
+  private async kick(): Promise<void> {
     if (this.closed) return;
-    this.dirty = true;
-    if (this.timer) clearTimeout(this.timer);
-    this.timer = undefined;
-    if (this.pumping) return;
-    this.pumping = true;
-    void this.drain().finally(() => {
-      this.pumping = false;
-      if (this.dirty && !this.closed) this.wake();
-    });
-  }
-
-  private async drain(): Promise<void> {
-    while (!this.closed && this.dirty) {
-      this.dirty = false;
-      const processedBefore = this.options.state.get().processedEpisodeCount;
-      const result = await this.runOnce();
-      if (this.closed) return;
-      if (result === 'processed') {
-        this.recoveryFailures = 0;
-        this.dirty = true;
-      } else if (result === 'retry-later' || result === 'failed') {
-        if (this.options.state.get().processedEpisodeCount > processedBefore)
-          this.recoveryFailures = 0;
-        const delay = FAILURE_RETRY_DELAYS_MS[this.recoveryFailures++];
-        if (delay !== undefined && !this.dirty) {
-          this.timer = setTimeout(() => {
-            this.timer = undefined;
-            this.wake();
-          }, delay);
-          this.timer.unref?.();
-        } else if (delay === undefined && !this.dirty) {
-          this.options.logger.warn(
-            { failures: this.recoveryFailures },
-            'Learning recovery retries exhausted; waiting for episode activity or restart',
-          );
-        }
-      } else this.recoveryFailures = 0;
-      await new Promise<void>((resolve) => setImmediate(resolve));
+    if (this.inFlight) {
+      this.rerun = true;
+      await this.inFlight;
+      return;
     }
+    do {
+      this.rerun = false;
+      await this.runOnce();
+    } while (this.rerun && !this.closed);
   }
 
   private async run(): Promise<LearningRunResult> {
@@ -240,34 +213,34 @@ class LearningWorkerModule implements LearningWorker {
   private async runSteps(): Promise<LearningRunResult> {
     const { activities, state } = this.options;
     if (!activities.isAvailable()) return 'unavailable';
-    await this.backfillCursor();
+    await this.cutoverLegacyCursor();
     let result: LearningRunResult = 'idle';
-    let characters = 0;
-    while (!this.closed && characters < PRIMARY_PASS_CHARACTERS) {
-      const pending = await activities.readPending(state.get().cursor, {
-        ...this.options.getLimits(),
-        active: this.stepActive,
-        lastActivityAt: this.lastActivityAt,
-        now: this.now(),
-      });
-      if (!pending || this.closed) break;
-      const ref = { id: pending.id };
+    while (!this.closed) {
+      const boundary = this.boundary;
+      if (boundary === null) break;
+      const cursor = state.get().cursor;
+      if (cursor !== null && activities.compareIds(cursor, boundary) >= 0) {
+        await this.finishCompactionRun(boundary);
+        continue;
+      }
+      // One compaction's dropped activity, in chunks that fit a model context.
+      const pending = await activities.readRange(
+        cursor,
+        boundary,
+        MAX_EPISODE_CHARACTERS,
+      );
+      if (!pending || this.closed) {
+        await this.finishCompactionRun(boundary);
+        continue;
+      }
       result = 'processed';
       let outcome: EpisodeOutcome;
       try {
-        const page = {
-          ...pending,
-          text: pending.text.slice(-MAX_EPISODE_CHARACTERS),
-          truncated:
-            pending.truncated || pending.text.length > MAX_EPISODE_CHARACTERS,
-        };
-        characters += Math.max(MIN_EPISODE_CHARACTERS, page?.text.length ?? 0);
-        outcome = await this.processEpisode(ref.id, false, page);
+        outcome = await this.processEpisode(pending.id, pending);
       } catch (error) {
         if (this.closed) break;
-        characters += MIN_EPISODE_CHARACTERS;
         outcome = await this.recordFailure(
-          ref.id,
+          pending.id,
           error instanceof Error ? error.message : String(error),
         );
       }
@@ -276,57 +249,73 @@ class LearningWorkerModule implements LearningWorker {
         result = 'retry-later';
         break;
       }
-      if (!(await this.revisitDeferred())) {
-        result = 'retry-later';
-        break;
-      }
-      if (!this.closed) await this.maybeConsolidate();
-    }
-    if (!this.closed && result === 'idle') {
-      if (!(await this.revisitDeferred())) return 'retry-later';
-      await this.maybeConsolidate();
     }
     return result;
   }
 
+  /** Ends one compaction run; consolidates every `CONSOLIDATE_EVERY_RUNS` runs. */
+  private async finishCompactionRun(boundary: string): Promise<void> {
+    if (this.boundary === boundary) this.boundary = null;
+    const { runs } = await this.options.state
+      .update((draft) => {
+        draft.changedRunsSinceConsolidation += 1;
+      })
+      .then((next) => ({ runs: next.changedRunsSinceConsolidation }));
+    if (!this.closed) await this.maybeConsolidate(runs);
+  }
+
   /**
-   * Without a cursor, pins the backfill window by persisting the cursor
-   * just before the newest `INITIAL_BACKFILL_EPISODES`. Later runs then
-   * continue from there instead of re-picking the newest activities. A
-   * recorded failure without a cursor means learning already started from
-   * the beginning; re-pinning then could jump past the failed episode.
+   * Without a cursor nothing was learned yet. Start right before the oldest
+   * dropped message so the first run covers that compaction only, not all
+   * history.
    */
-  private async backfillCursor(): Promise<string | null> {
+  private async seedCursor(
+    droppedMessageIds: readonly string[],
+  ): Promise<void> {
     const { activities, state } = this.options;
-    const { cursor, episodeFailures } = state.get();
+    if (state.get().cursor !== null) return;
+    try {
+      for (const messageId of droppedMessageIds.slice(0, 2)) {
+        const first = await activities.resolveBoundary([messageId]);
+        if (!first) continue;
+        const manifest = await activities.manifest();
+        const index = manifest.findIndex((source) => source.id === first);
+        const before = index > 0 ? manifest[index - 1]!.id : null;
+        if (before === null) return;
+        await state.update((draft) => {
+          draft.cursor ??= before;
+        });
+        return;
+      }
+    } catch (error) {
+      this.options.logger.warn(
+        { error: error instanceof Error ? error.message : String(error) },
+        'Seeding learning cursor failed',
+      );
+    }
+  }
+
+  /** Replaces a pre-canonical cursor by the newest activity. */
+  private async cutoverLegacyCursor(): Promise<string | null> {
+    const { activities, state } = this.options;
+    const { cursor } = state.get();
     if (cursor !== null && activityOrdinal(cursor) === null) {
       const latest = (await activities.latest(1)).at(-1)?.id ?? null;
       await state.update((draft) => {
         draft.cursor = latest;
         draft.episodeFailures = {};
-        draft.deferred = [];
       });
       return latest;
     }
-    if (cursor !== null) return cursor;
-    if (Object.keys(episodeFailures).length > 0) return null;
-    const latest = await activities.latest(INITIAL_BACKFILL_EPISODES + 1);
-    if (latest.length <= INITIAL_BACKFILL_EPISODES) return null;
-    if (this.closed) return null;
-    const start = latest[0]?.id ?? null;
-    await state.update((draft) => {
-      draft.cursor = start;
-    });
-    return start;
+    return cursor;
   }
 
   private async processEpisode(
     id: string,
-    revisit = false,
-    supplied?: Awaited<ReturnType<ActivityHistory['readPage']>>,
+    page: EpisodePage,
   ): Promise<EpisodeOutcome> {
     try {
-      return await this.processEpisodeSteps(id, revisit, supplied);
+      return await this.processEpisodeSteps(id, page);
     } catch (error) {
       if (this.closed) return 'stop';
       return this.recordFailure(
@@ -340,42 +329,13 @@ class LearningWorkerModule implements LearningWorker {
 
   private async processEpisodeSteps(
     id: string,
-    revisit: boolean,
-    supplied?: Awaited<ReturnType<ActivityHistory['readPage']>>,
+    page: EpisodePage,
   ): Promise<EpisodeOutcome> {
     const { activities, skills, logger } = this.options;
-    const firstSourceId = revisit
-      ? this.options.state.get().deferred.find((item) => item.id === id)
-          ?.firstSourceId
-      : undefined;
-    const page =
-      supplied === undefined
-        ? await activities.readPage(id, {
-            firstSourceId,
-            offset: 0,
-            limit: MAX_EPISODE_CHARACTERS,
-            maxBytes: 2_000_000,
-            tail: true,
-          })
-        : supplied;
-    // Shutdown may have begun while the episode reader was awaiting I/O.
     if (this.closed) return 'stop';
-    if (!page) return this.recordFailure(id, 'Episode page unavailable');
-    const episode =
-      page.startedAt && page.endedAt
-        ? { ...page, startedAt: page.startedAt, endedAt: page.endedAt }
-        : null;
-    if (
-      page?.truncated &&
-      (!episode || episode.text.length < MIN_EPISODE_CHARACTERS)
-    )
-      return this.recordFailure(
-        id,
-        'Episode scan budget exhausted without enough complete evidence',
-      );
-    if (!episode || episode.text.length < MIN_EPISODE_CHARACTERS) {
-      logger.debug({ episode: id }, 'Skipping short or empty episode');
-      if (!revisit) await this.advance(id);
+    if (!page.text) {
+      logger.debug({ episode: id }, 'Skipping chunk without text');
+      await this.advance(id);
       return 'unchanged';
     }
 
@@ -385,10 +345,10 @@ class LearningWorkerModule implements LearningWorker {
       agent: this.options.getAgent(),
       skills: skills.list(),
       episode: {
-        ...episode,
-        text: episode.truncated
-          ? `${partialMarker}${episode.text.slice(-(MAX_EPISODE_CHARACTERS - partialMarker.length))}`
-          : episode.text,
+        ...page,
+        text: page.truncated
+          ? `${partialMarker}${page.text.slice(-(MAX_EPISODE_CHARACTERS - partialMarker.length))}`
+          : page.text,
       },
     });
     const controller = new AbortController();
@@ -402,33 +362,9 @@ class LearningWorkerModule implements LearningWorker {
     const submission = createLearningSubmissionTools({
       evidence: investigation.evidence,
       getExistingNames: () => skills.list().map((skill) => skill.name),
-      allowDefer: true,
       allowCreate: true,
       signal: controller.signal,
       persist: async (batch) => {
-        if (batch.deferred) {
-          await this.options.state.update((draft) => {
-            const existing = draft.deferred.find((item) => item.id === id);
-            const after = revisit ? (draft.cursor ?? id) : id;
-            if (existing) {
-              existing.after = after;
-              if (page.firstSourceId !== undefined)
-                existing.firstSourceId = page.firstSourceId;
-            } else {
-              if (draft.deferred.length >= 20) draft.deferred.shift();
-              draft.deferred.push({
-                id,
-                after,
-                attempts: 0,
-                ...(page.firstSourceId === undefined
-                  ? {}
-                  : { firstSourceId: page.firstSourceId }),
-              });
-            }
-          });
-          outcome = 'deferred';
-          return 0;
-        }
         const operations = batch.operations.map((operation) =>
           operation.op === 'delete'
             ? operation
@@ -457,7 +393,7 @@ class LearningWorkerModule implements LearningWorker {
       { ...investigation.tools, ...submission.tools },
     );
     if (this.closed) return 'stop';
-    if (!revisit) await this.advance(id);
+    await this.advance(id);
     return outcome;
   }
 
@@ -485,47 +421,6 @@ class LearningWorkerModule implements LearningWorker {
     return 'unchanged';
   }
 
-  private async revisitDeferred(): Promise<boolean> {
-    const { state, activities, logger } = this.options;
-    const cursor = state.get().cursor;
-    if (!cursor) return true;
-    for (const item of state.get().deferred) {
-      if (this.closed || activities.compareIds(cursor, item.after) <= 0)
-        continue;
-      if (item.attempts >= 3) {
-        logger.debug(
-          { episode: item.id },
-          'Discarding unresolved deferred candidate',
-        );
-        await state.update((draft) => {
-          draft.deferred = draft.deferred.filter(
-            (entry) => entry.id !== item.id,
-          );
-        });
-        continue;
-      }
-      const outcome = await this.processEpisode(item.id, true);
-      if (outcome === 'stop') return false;
-      await state.update((draft) => {
-        delete draft.episodeFailures[item.id];
-        const entry = draft.deferred.find(
-          (candidate) => candidate.id === item.id,
-        );
-        if (entry) {
-          entry.attempts++;
-          entry.after = cursor;
-        }
-      });
-      if (outcome === 'changed' || outcome === 'unchanged')
-        await state.update((draft) => {
-          draft.deferred = draft.deferred.filter(
-            (entry) => entry.id !== item.id,
-          );
-        });
-    }
-    return true;
-  }
-
   private async advance(id: string): Promise<void> {
     await this.options.state.update((draft) => {
       if (
@@ -533,7 +428,6 @@ class LearningWorkerModule implements LearningWorker {
         this.options.activities.compareIds(id, draft.cursor) > 0
       ) {
         draft.cursor = id;
-        draft.processedEpisodeCount += 1;
       }
       delete draft.episodeFailures[id];
     });
@@ -548,7 +442,7 @@ class LearningWorkerModule implements LearningWorker {
     operations: readonly SkillOperation[],
     sourceEpisode: string | null,
   ): Promise<number> {
-    const { skills, state, logger } = this.options;
+    const { skills, logger } = this.options;
     const { accepted, rejected } = validateOperations(
       operations,
       skills.list().map((skill) => skill.name),
@@ -614,10 +508,6 @@ class LearningWorkerModule implements LearningWorker {
             { metadata },
           );
         else await skills.setMetadata(operation.name, metadata);
-        if (sourceEpisode && material)
-          await state.update((draft) => {
-            draft.pendingChangeWeight += operation.op === 'create' ? 2 : 1;
-          });
       }
       logger.info(
         { op: operation.op, skill: operation.name, episode: sourceEpisode },
@@ -628,12 +518,12 @@ class LearningWorkerModule implements LearningWorker {
     return applied;
   }
 
-  private async maybeConsolidate(): Promise<void> {
+  private async maybeConsolidate(runs: number): Promise<void> {
+    if (runs < CONSOLIDATE_EVERY_RUNS) return;
     try {
       await this.consolidate();
     } catch (error) {
       if (!this.closed) {
-        await this.spaceConsolidation();
         this.options.logger.warn({ error }, 'Skill consolidation failed');
       }
     } finally {
@@ -646,25 +536,7 @@ class LearningWorkerModule implements LearningWorker {
     const { skills: handle, state, logger } = this.options;
     const skills = handle.list();
     if (skills.length < 2) return;
-    const current = state.get();
     const currentTurn = handle.currentTurn();
-    const overflow = skills.length > MAX_SKILLS;
-    if (
-      !overflow &&
-      current.nextConsolidationEpisode !== null &&
-      current.processedEpisodeCount < current.nextConsolidationEpisode
-    )
-      return;
-    const due =
-      overflow ||
-      current.pendingChangeWeight >= CONSOLIDATE_CHANGE_WEIGHT ||
-      (skills.length >= SOFT_SKILL_COUNT &&
-        (current.lastConsolidationSkillCount < SOFT_SKILL_COUNT ||
-          current.pendingChangeWeight >= SOFT_THRESHOLD_CHANGE_WEIGHT)) ||
-      (current.processedEpisodeCount - current.lastConsolidationEpisode >=
-        STALE_CONSOLIDATION_SPACING &&
-        skills.some((skill) => isStale(skill, currentTurn)));
-    if (!due) return;
 
     const { system, prompt } = buildConsolidationPrompt({
       agent: this.options.getAgent(),
@@ -678,24 +550,17 @@ class LearningWorkerModule implements LearningWorker {
       controller.signal,
       null,
     );
-    let submitted = false;
     const submission = createLearningSubmissionTools({
       evidence: investigation.evidence,
       getExistingNames: () => handle.list().map((skill) => skill.name),
-      allowDefer: false,
       allowCreate: false,
       signal: controller.signal,
       persist: async (batch) => {
         const applied = await this.persist(batch.operations, null);
         await state.update((draft) => {
-          draft.pendingChangeWeight = 0;
-          draft.lastConsolidationEpisode = draft.processedEpisodeCount;
-          draft.lastConsolidationSkillCount = handle.list().length;
-          draft.consolidationFailures = 0;
-          draft.nextConsolidationEpisode = null;
+          draft.changedRunsSinceConsolidation = 0;
           draft.lastConsolidationAt = new Date(this.now()).toISOString();
         });
-        submitted = true;
         logger.info(
           { applied, skills: handle.list().length },
           'Consolidated skills',
@@ -711,14 +576,6 @@ class LearningWorkerModule implements LearningWorker {
       },
       { ...investigation.tools, ...submission.tools },
     );
-    if (!this.closed && !submitted) await this.spaceConsolidation();
-  }
-
-  private async spaceConsolidation(): Promise<void> {
-    await this.options.state.update((draft) => {
-      draft.nextConsolidationEpisode =
-        draft.processedEpisodeCount + STALE_CONSOLIDATION_SPACING;
-    });
   }
 
   private async persist(

@@ -17,6 +17,10 @@ import {
   type ChatSessionDependencies,
   createChatSession,
 } from '@/session/chat';
+import type {
+  Extension,
+  ExtensionFactory,
+} from '@/session/chat/extensions/extension-api';
 import type { ChatSessionHandle, SessionFactory } from '@/session/types';
 import { createSkillRegistry } from '@/skills';
 
@@ -92,7 +96,12 @@ describe('learning child session execution', () => {
     const availability = vi
       .spyOn(activities, 'isAvailable')
       .mockReturnValue(false);
-    const read = vi.spyOn(activities, 'readPage');
+    const read = vi.spyOn(activities, 'readRange');
+    const messageId = (
+      JSON.parse(
+        Buffer.from(id.slice('history:'.length), 'base64url').toString(),
+      ) as [number, string, string]
+    )[2];
     const skillRegistry = createSkillRegistry({
       dataDirectory: join(root, 'registry'),
       logger: logger as unknown as ModuleLogger,
@@ -183,6 +192,21 @@ describe('learning child session execution', () => {
       children.push(child);
       return child;
     });
+    const learningFactory = createLearningExt({
+      activities,
+      getSoul: () => 'Product manager.',
+    });
+    let learning: Extension | undefined;
+    const capturingFactory: ExtensionFactory = {
+      identifier: learningFactory.identifier,
+      displayName: learningFactory.displayName,
+      skillNamespace: learningFactory.skillNamespace,
+      create: (deps) => {
+        const created = learningFactory.create(deps);
+        learning ??= created;
+        return created;
+      },
+    };
     const parent = createChatSession({
       logging,
       config,
@@ -190,12 +214,7 @@ describe('learning child session execution', () => {
       dataDirectory: root,
       mcp: null,
       skillRegistry,
-      extensionFactories: [
-        createLearningExt({
-          activities,
-          getSoul: () => 'Product manager.',
-        }),
-      ],
+      extensionFactories: [capturingFactory],
       introspectionScope: introspection,
       sessionContext: { kind: 'default', name: 'main', sessionId: 'default' },
       sessionFactory,
@@ -205,7 +224,11 @@ describe('learning child session execution', () => {
       await parent.start();
       expect(parent.isQuiescent()).toBe(true);
       availability.mockRestore();
-      await fixture.append('wake the worker', 'user');
+      // A committed compaction dropped the activity.
+      learning?.onCheckpointApplied?.({
+        droppedMessageIds: [messageId],
+        checkpointMessageId: 'checkpoint',
+      });
       await vi.waitFor(() => expect(step).toBe(3));
       await finalStep.promise;
       expect(parent.isQuiescent()).toBe(false);

@@ -16,7 +16,6 @@ export interface LearningSubmissionToolsOptions {
   evidence: ReadonlySet<string>;
   getExistingNames: () => readonly string[];
   persist: (submission: LearningSubmission) => Promise<number>;
-  allowDefer: boolean;
   allowCreate: boolean;
   signal: AbortSignal;
 }
@@ -32,9 +31,7 @@ class LearningSubmissionToolsModule implements LearningSubmissionTools {
       '## Learning submission protocol',
       'Use the read-only activity tools to investigate, then call submitLearnings once with the complete operation batch. Do not submit learnings as text or fenced JSON. The tool schema defines the operation structure and limits.',
       'Submit operations: [] when nothing should change. A rejected batch is not a submission; correct the reported problem and call submitLearnings again. Never drop an invalid operation silently.',
-      options.allowDefer
-        ? 'If evidence remains insufficient and later activity may resolve it, submit operations: [] with deferred: true. A deferral must not contain operations.'
-        : 'Consolidation cannot defer. Preserve existing skills when evidence is insufficient and submit operations: [] if nothing can safely change.',
+      'Preserve existing skills when evidence is insufficient and submit operations: [] if nothing can safely change.',
       options.allowCreate
         ? 'Create or update skills supported by evidence. Delete only skills verified as superseded; do not discard unrelated skills.'
         : 'Only update or delete existing skills. Consolidation cannot create skills or invent new lessons; merge into an existing survivor.',
@@ -62,11 +59,7 @@ class LearningSubmissionToolsModule implements LearningSubmissionTools {
           this.submitted = true;
           try {
             const applied = await options.persist(parsed.data);
-            return {
-              status: 'applied',
-              applied,
-              deferred: parsed.data.deferred ?? false,
-            };
+            return { status: 'applied', applied };
           } catch {
             return {
               status: 'failed',
@@ -82,11 +75,6 @@ class LearningSubmissionToolsModule implements LearningSubmissionTools {
   private problem(submission: LearningSubmission): string | null {
     if (this.options.signal.aborted) return 'Submission cancelled';
     const existingNames = this.options.getExistingNames();
-    if (
-      submission.deferred &&
-      (!this.options.allowDefer || submission.operations.length > 0)
-    )
-      return 'Deferral is allowed only for extraction with an empty operation batch';
     for (const operation of submission.operations) {
       if (operation.op === 'create' && !this.options.allowCreate)
         return 'Consolidation cannot create skills; update an existing survivor instead';

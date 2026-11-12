@@ -532,6 +532,8 @@ class LearningWorkerModule implements LearningWorker {
       await this.options.state.update((draft) => {
         draft.changedRunsSinceConsolidation = 0;
       });
+      // Shutdown may have happened while the update was pending.
+      if (this.closed) return;
       await this.consolidate();
     } catch (error) {
       if (!this.closed) {

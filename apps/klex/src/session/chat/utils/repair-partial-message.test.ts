@@ -49,6 +49,38 @@ function makeReasoningFilePart(): ExtendedUIMessage['parts'][number] {
 // --- tests ---
 
 describe('repairPartialMessage — salvage decision', () => {
+  it('strips unpersisted references while preserving inline reasoning and text', () => {
+    const msg = makeMessage([
+      {
+        type: 'reasoning',
+        text: 'lost',
+        providerMetadata: { openai: { itemId: 'rs_lost' } },
+      },
+      makeReasoningPart('initial thought'),
+      {
+        type: 'reasoning',
+        text: 'encrypted',
+        providerMetadata: {
+          openai: { itemId: 'rs_kept', reasoningEncryptedContent: 'cipher' },
+        },
+      },
+      {
+        type: 'text',
+        text: 'partial',
+        providerMetadata: { openai: { itemId: 'msg_lost' } },
+      },
+    ]);
+    expect(repairPartialMessage(msg)).toBe(true);
+    expect(msg.parts).toEqual([
+      makeReasoningPart('initial thought'),
+      {
+        type: 'reasoning',
+        text: 'encrypted',
+        providerMetadata: { openai: { reasoningEncryptedContent: 'cipher' } },
+      },
+      makeTextPart('partial'),
+    ]);
+  });
   it('returns true when message has a fully streamed tool call', () => {
     const msg = makeMessage([
       makeTextPart('response'),

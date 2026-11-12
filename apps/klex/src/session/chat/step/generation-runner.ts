@@ -29,6 +29,10 @@ import type { ExtendedUIMessage } from '../message-types';
 import type { AgentTools } from '../tools';
 import type { ModelFallbackManager } from '../utils/model-fallback-manager';
 import { repairPartialMessage } from '../utils/repair-partial-message';
+import {
+  extractMissingOpenAIItemId,
+  stripOpenAIItemReferences,
+} from '../utils/repair-missing-item-references';
 import { runStreamedGeneration } from '../utils/run-streamed-generation';
 import { startChildSpan } from '../utils/tracing';
 import { ToolDispatcher } from './tool-dispatcher';
@@ -157,6 +161,7 @@ export class GenerationRunner {
     let modelFallbackOccurred = false;
     let requestRejected = false;
     let salvagedRejection = false;
+    let repairedMissingItems = false;
 
     const model = this.deps.model;
     let lastUsage: LanguageModelUsage | null = null;
@@ -257,6 +262,29 @@ export class GenerationRunner {
         } else {
           // Non-good finish — check for abort first, then classify.
           const isAborted = generationAbortController.signal.aborted;
+          const hasContent =
+            response.message !== null && response.message.parts.length > 0;
+          if (!isAborted && !hasContent && !repairedMissingItems) {
+            const missingItemId = extractMissingOpenAIItemId(response.error);
+            if (
+              missingItemId !== null &&
+              stripOpenAIItemReferences(messages, this.deps.modelMessages)
+            ) {
+              repairedMissingItems = true;
+              latestMessage = null;
+              generationFailure = null;
+              stepSpan.addEvent('step.missing_item_repaired', {
+                'generation.attempt': attempt,
+                'generation.modelId': currentModelId,
+                'error.missingItemId': missingItemId,
+              });
+              this.deps.logger.warn(
+                { attempt, modelId: currentModelId, missingItemId },
+                'Provider reported missing OpenAI item reference — stripped item references from history and retrying generation',
+              );
+              continue;
+            }
+          }
           const classification =
             response.finishReason === 'error'
               ? classifyGenerationError(response.error)
@@ -268,8 +296,6 @@ export class GenerationRunner {
               this.deps.modelContext,
               classification?.reason,
             );
-          const hasContent =
-            response.message !== null && response.message.parts.length > 0;
           const coarse = this.decideOutcome(
             classification,
             hasContent,
@@ -290,6 +316,29 @@ export class GenerationRunner {
         this.deps.logger.error({ attempt }, 'Generation failed', e);
 
         const isAborted = generationAbortController.signal.aborted;
+        const hasContent =
+          latestMessage !== null && latestMessage.parts.length > 0;
+        if (!isAborted && !hasContent && !repairedMissingItems) {
+          const missingItemId = extractMissingOpenAIItemId(e);
+          if (
+            missingItemId !== null &&
+            stripOpenAIItemReferences(messages, this.deps.modelMessages)
+          ) {
+            repairedMissingItems = true;
+            latestMessage = null;
+            generationFailure = null;
+            stepSpan.addEvent('step.missing_item_repaired', {
+              'generation.attempt': attempt,
+              'generation.modelId': currentModelId,
+              'error.missingItemId': missingItemId,
+            });
+            this.deps.logger.warn(
+              { attempt, modelId: currentModelId, missingItemId },
+              'Provider reported missing OpenAI item reference — stripped item references from history and retrying generation',
+            );
+            continue;
+          }
+        }
         const classification = classifyGenerationError(e);
         lastClassification = classification;
         if (!isAborted && !classification.isAbort)
@@ -298,8 +347,6 @@ export class GenerationRunner {
             this.deps.modelContext,
             classification.reason,
           );
-        const hasContent =
-          latestMessage !== null && latestMessage.parts.length > 0;
         const coarse = this.decideOutcome(
           classification,
           hasContent,

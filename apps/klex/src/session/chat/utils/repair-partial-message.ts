@@ -1,6 +1,7 @@
 import { isToolUIPart } from 'ai';
 
 import type { ExtendedUIMessage } from '../message-types';
+import { stripOpenAIItemReferencesFromMessage } from './repair-missing-item-references';
 
 /**
  * Repairs a partial message that was sent due to stop token or any other failure reason in-place.
@@ -8,6 +9,7 @@ import type { ExtendedUIMessage } from '../message-types';
  * @returns true, if the message should be kept. false, if it's not salvagable and should just be thrown away
  */
 export const repairPartialMessage = (message: ExtendedUIMessage): boolean => {
+  stripOpenAIItemReferencesFromMessage(message);
   const hasFullyStreamedToolCall = message.parts.some(
     (p) => isToolUIPart(p) && p.state !== 'input-streaming',
   );

@@ -1,7 +1,12 @@
 import { randomUUID } from 'node:crypto';
 
 import { trace } from '@opentelemetry/api';
-import { APICallError, type LanguageModel, type ModelMessage } from 'ai';
+import {
+  APICallError,
+  NoOutputGeneratedError,
+  type LanguageModel,
+  type ModelMessage,
+} from 'ai';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ModuleLogger } from '@stagewise/logger';
@@ -115,6 +120,131 @@ function setupDefaultMocks() {
 }
 
 // --- tests ---
+
+describe('GenerationRunner — missing OpenAI items', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setupDefaultMocks();
+  });
+
+  const missingItemId = 'rs_089268cb31bd3682006910bd8be6ac8193b6b332d79c113d76';
+  const missingError = () =>
+    makeApiError({
+      message: `Item with id '${missingItemId}' not found.`,
+      statusCode: 404,
+    });
+  const history = () => [
+    makeAssistantMessage([
+      {
+        type: 'reasoning',
+        text: 'old',
+        providerMetadata: { openai: { itemId: missingItemId } },
+      },
+      {
+        type: 'text',
+        text: 'old answer',
+        providerMetadata: { openai: { itemId: 'msg_old' } },
+      },
+    ]),
+  ];
+
+  it.each(['throw', 'wrapped', 'finish'])(
+    'repairs history and retries after %s',
+    async (mode) => {
+      const deps = makeDeps({
+        messages: history(),
+        modelMessages: [
+          {
+            role: 'assistant',
+            content: [
+              {
+                type: 'reasoning',
+                text: 'old',
+                providerOptions: { openai: { itemId: missingItemId } },
+              },
+              {
+                type: 'text',
+                text: 'old answer',
+                providerOptions: { openai: { itemId: 'msg_old' } },
+              },
+            ],
+          },
+        ],
+      });
+      const fallback = vi.spyOn(deps.fallbackManager, 'fallbackToNextModel');
+      const event = vi.spyOn(deps.stepSpan, 'addEvent');
+      const error = missingError();
+      if (mode === 'finish') {
+        vi.mocked(runStreamedGeneration).mockResolvedValueOnce(
+          makeGenResult(makeAssistantMessage(), 'error', error),
+        );
+      } else {
+        vi.mocked(runStreamedGeneration).mockRejectedValueOnce(
+          mode === 'wrapped'
+            ? new NoOutputGeneratedError({ cause: error })
+            : error,
+        );
+      }
+      vi.mocked(runStreamedGeneration).mockImplementationOnce(
+        async (params) => {
+          expect(params.modelMessages).toEqual([
+            {
+              role: 'assistant',
+              content: [{ type: 'text', text: 'old answer' }],
+            },
+          ]);
+          expect(deps.messages[0]!.parts).toEqual([
+            { type: 'text', text: 'old answer' },
+          ]);
+          return makeGenResult(
+            makeAssistantMessage([{ type: 'text', text: 'recovered' }]),
+            'stop',
+          );
+        },
+      );
+      const result = await new GenerationRunner(deps).run();
+      expect(runStreamedGeneration).toHaveBeenCalledTimes(2);
+      expect(fallback).not.toHaveBeenCalled();
+      expect(result).toMatchObject({
+        requestRejected: false,
+        generationFailed: false,
+        modelFallbackOccurred: false,
+        generationFailure: null,
+      });
+      expect(result.generation?.finishReason).toBe('stop');
+      expect(event).toHaveBeenCalledWith('step.missing_item_repaired', {
+        'generation.attempt': 1,
+        'generation.modelId': 'unknown',
+        'error.missingItemId': missingItemId,
+      });
+    },
+  );
+
+  it.each(['throw', 'finish'])(
+    'stops after a repeated missing item error via %s',
+    async (mode) => {
+      const deps = makeDeps({ messages: history() });
+      const fallback = vi.spyOn(deps.fallbackManager, 'fallbackToNextModel');
+      if (mode === 'throw')
+        vi.mocked(runStreamedGeneration).mockRejectedValue(missingError());
+      else
+        vi.mocked(runStreamedGeneration).mockResolvedValue(
+          makeGenResult(makeAssistantMessage(), 'error', missingError()),
+        );
+      const result = await new GenerationRunner(deps).run();
+      expect(runStreamedGeneration).toHaveBeenCalledTimes(2);
+      expect(result.requestRejected).toBe(true);
+      expect(fallback).not.toHaveBeenCalled();
+    },
+  );
+
+  it('does not retry when history contains no references', async () => {
+    vi.mocked(runStreamedGeneration).mockRejectedValue(missingError());
+    const result = await new GenerationRunner(makeDeps()).run();
+    expect(runStreamedGeneration).toHaveBeenCalledTimes(1);
+    expect(result.requestRejected).toBe(true);
+  });
+});
 
 describe('GenerationRunner — success', () => {
   beforeEach(() => {

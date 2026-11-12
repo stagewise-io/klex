@@ -83,6 +83,7 @@ import {
   createTimeExtGod,
 } from '@/session/chat/extensions/time';
 import { createTodosExt } from '@/session/chat/extensions/todos';
+import { createVoiceCapabilityExt } from '@/session/chat/extensions/voice-capability';
 import systemPrompt from '@/session/chat/utils/system-prompt.md';
 import {
   createProductionMediaTransportConnector,
@@ -683,6 +684,16 @@ class ApplicationModule implements Application {
       createTodosExt,
       createSkillsExt(skillRegistry),
       createMcpIngressExt(),
+      createVoiceCapabilityExt({
+        hasVoiceModel: () => {
+          try {
+            return providerRegistry.resolveRealtimeProvider() !== undefined;
+          } catch {
+            // An unreadable provider state says nothing about voice.
+            return true;
+          }
+        },
+      }),
       createMemoryExt({ activities }),
       createLearningExt({
         activities,

@@ -2,6 +2,21 @@
 
 All notable Klex changes are documented here.
 
+## 0.32.0 (2026-11-12)
+
+### Features
+
+- expose child session activity in session info (c9cbf28)
+
+### Bug Fixes
+
+- clarify MCP messaging and follow-up rules (c21fc56)
+
+### Other Changes
+
+- release 0.31.1 (2df8983)
+- give voice sessions a dedicated system prompt (484e9f6)
+
 ## 0.31.1 (2026-11-12)
 
 ### Bug Fixes

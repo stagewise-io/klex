@@ -2,6 +2,16 @@
 
 All notable Klex changes are documented here.
 
+## 0.31.1 (2026-11-12)
+
+### Bug Fixes
+
+- clarify MCP messaging and follow-up rules (c21fc56)
+
+### Other Changes
+
+- give voice sessions a dedicated system prompt (484e9f6)
+
 ## 0.31.0 (2026-11-11)
 
 ### Features

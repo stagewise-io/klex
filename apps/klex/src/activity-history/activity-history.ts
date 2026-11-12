@@ -204,10 +204,10 @@ class ActivityHistoryModule implements ActivityHistory {
         break;
       selected.push(row);
       if (text) {
-        const bounded = text.slice(
-          0,
-          Math.max(0, maxCharacters - size - separatorSize),
-        );
+        // An oversized message keeps its tail: outcomes sit at the end, and
+        // the cursor moves past this message afterwards.
+        const allowed = Math.max(0, maxCharacters - size - separatorSize);
+        const bounded = allowed >= text.length ? text : text.slice(-allowed);
         blocks.push(bounded);
         size += bounded.length + separatorSize;
         truncated ||= bounded.length < text.length;

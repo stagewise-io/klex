@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import type { JSONObject } from '@ai-sdk/provider';
+import type { JSONObject, LanguageModelV4CallOptions } from '@ai-sdk/provider';
 import {
   EmptyResponseBodyError,
   type FinishReason,
@@ -48,6 +48,7 @@ export interface RunStreamedGenerationParams {
   compacted: boolean;
   /** Provider-specific options resolved from the model selection entry. */
   providerOptions?: Record<string, JSONObject>;
+  reasoning?: LanguageModelV4CallOptions['reasoning'];
   /**
    * System prompt parts collected from extensions at the beginning of
    * the step. Appended to the base system prompt (separated by blank
@@ -132,6 +133,7 @@ export async function runStreamedGeneration(
       streamError ??= error;
     },
     maxRetries: 0,
+    ...(params.reasoning !== undefined && { reasoning: params.reasoning }),
     messages: params.modelMessages,
     ...(params.providerOptions !== undefined && {
       providerOptions: params.providerOptions,
@@ -175,6 +177,15 @@ export async function runStreamedGeneration(
     finishReason = await result.finishReason;
     rawFinishReason = await result.rawFinishReason;
     usage = await result.usage;
+    const warnings = await result.warnings;
+    for (const warning of warnings ?? []) {
+      if (warning.type === 'unsupported' || warning.type === 'compatibility') {
+        params.logger.warn(
+          { type: warning.type, feature: warning.feature },
+          'Generation setting was unsupported or coerced',
+        );
+      }
+    }
   } catch (e) {
     throw attachStreamError(e, streamError);
   }

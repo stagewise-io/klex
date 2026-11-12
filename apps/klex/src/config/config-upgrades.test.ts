@@ -129,9 +129,9 @@ describe('frozen persisted config upgrades', () => {
         ...expected,
         _klex: {
           store: 'config',
-          schemaVersion: 9,
+          schemaVersion: 10,
           compatibilityVersion: 8,
-          minimumKlexVersion: '0.31.0',
+          minimumKlexVersion: '0.31.1',
           writtenByKlexVersion: KLEX_VERSION,
         },
       });
@@ -167,7 +167,14 @@ describe('frozen persisted config upgrades', () => {
     };
     await writeFile(
       join(directory, 'config.json'),
-      JSON.stringify({ ...payload, _klex }, null, 2),
+      JSON.stringify(
+        {
+          ...payload,
+          _klex: { ..._klex, schemaVersion: 10, minimumKlexVersion: '0.31.1' },
+        },
+        null,
+        2,
+      ),
     );
     const beforeStartup = await snapshot(directory);
     const localData = createLocalData({
@@ -355,11 +362,11 @@ describe('frozen persisted config upgrades', () => {
     const { _klex, ...persisted } = JSON.parse(
       await readFile(configPath, 'utf8'),
     );
-    const { _klex: originalMetadata, ...originalPayload } = original;
+    const { _klex: _originalMetadata, ...originalPayload } = original;
     expect(persisted).toEqual(originalPayload);
     expect(_klex).toMatchObject({
-      schemaVersion: 9,
-      minimumKlexVersion: originalMetadata.minimumKlexVersion,
+      schemaVersion: 10,
+      minimumKlexVersion: '0.31.1',
     });
     const beforeStartup = await snapshot(directory);
     await start();
@@ -433,8 +440,8 @@ describe('frozen persisted config upgrades', () => {
     );
     expect(migrated).toEqual(payload);
     expect(_klex).toMatchObject({
-      schemaVersion: 9,
-      minimumKlexVersion: '0.31.0',
+      schemaVersion: 10,
+      minimumKlexVersion: '0.31.1',
     });
   });
 

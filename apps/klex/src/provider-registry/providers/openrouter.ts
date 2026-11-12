@@ -1,3 +1,4 @@
+import { openRouterEffortCapability } from '../effort';
 import type {
   ProviderDefinition,
   ProviderInstance,
@@ -106,6 +107,7 @@ async function discoverModels(
             .flatMap((item) => {
               if (!isRecord(item) || typeof item.id !== 'string') return [];
               const createdAt = parseModelCreatedAt(item.created);
+              const effort = openRouterEffortCapability(item.reasoning);
               const architecture = isRecord(item.architecture)
                 ? item.architecture
                 : undefined;
@@ -143,6 +145,7 @@ async function discoverModels(
               return [
                 {
                   modelId: item.id,
+                  ...(effort && { effort }),
                   ...(createdAt && { createdAt }),
                   ...(kind && { kind }),
                   ...((architecture || supportedParameters.length > 0) && {

@@ -5,6 +5,12 @@ export {
   type StoredProviderCredential,
   type StoredProviderFailure,
 } from './authorization/credential-store';
+export type {
+  EffortCapability,
+  EffortIntent,
+  EffortResolution,
+  EffortTier,
+} from './effort';
 export {
   type ModelValidationInput,
   type ModelValidationResult,

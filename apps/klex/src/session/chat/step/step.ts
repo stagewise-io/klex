@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import type { JSONObject } from '@ai-sdk/provider';
+import type { JSONObject, LanguageModelV4CallOptions } from '@ai-sdk/provider';
 import { type Context, context, type Span, trace } from '@opentelemetry/api';
 import { isToolUIPart, type LanguageModel, type ModelMessage } from 'ai';
 
@@ -305,6 +305,7 @@ class StepModule implements Step {
         let model: LanguageModel;
         let resolvedModel: ResolvedModel;
         let providerOptions: Record<string, JSONObject> | undefined;
+        let effortReasoning: LanguageModelV4CallOptions['reasoning'];
         let telemetryModelContext: {
           providerType: string;
           providerId: string;
@@ -348,6 +349,45 @@ class StepModule implements Step {
             providerOptions = resolved.providerOptions as
               | Record<string, JSONObject>
               | undefined;
+            if (
+              instinct.status === 'ready' &&
+              instinct.effort &&
+              this.deps.modelResolver.resolveEffort
+            ) {
+              const effort = this.deps.modelResolver.resolveEffort(
+                entry,
+                instinct.effort.intent,
+              );
+              stepSpan.addEvent('step.effort', {
+                'effort.mode': instinct.effort.mode,
+                'effort.requested': effort.requested,
+                'effort.status': effort.status,
+                'effort.effective': String(effort.effective ?? 'unknown'),
+                'effort.reason': instinct.effort.reason,
+                'effort.applied':
+                  instinct.effort.mode === 'automatic' &&
+                  (effort.status === 'exact' ||
+                    effort.status === 'approximate' ||
+                    effort.status === 'tentative'),
+                'effort.resolution_reason': effort.reason,
+                'effort.provider_id': effort.identity.providerId,
+                'effort.provider_type': effort.identity.providerType,
+                'effort.model_id': effort.identity.modelId,
+                ...(effort.evidence && {
+                  'effort.evidence_source': effort.evidence.source,
+                  'effort.evidence_reference': effort.evidence.reference,
+                }),
+                ...Object.fromEntries(
+                  Object.entries(instinct.effort.diagnostics ?? {}).map(
+                    ([key, value]) => [`effort.policy.${key}`, value],
+                  ),
+                ),
+              });
+              if (instinct.effort.mode === 'automatic') {
+                providerOptions = effort.providerOptions;
+                effortReasoning = effort.reasoning;
+              }
+            }
             telemetryModelContext = {
               providerType: resolved.providerType,
               providerId: resolved.providerId,
@@ -666,6 +706,9 @@ class StepModule implements Step {
             modelContext: telemetryModelContext,
             telemetryMetrics: this.deps.telemetryMetrics,
             ...(providerOptions !== undefined && { providerOptions }),
+            ...(effortReasoning !== undefined && {
+              reasoning: effortReasoning,
+            }),
           });
           // No await between this check, publishing the runner, and run().
           // Earlier cancellation must not start generation; later cancellation

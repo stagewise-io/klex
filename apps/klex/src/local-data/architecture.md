@@ -99,6 +99,10 @@ Version `0.27.0` incorrectly changed the already released schema 6 and the 5→6
 
 Config schema 8→9 first ships in `0.31.0` and only widens provider instances with an optional `displayName`. Every schema-8 payload is a valid schema-9 payload, so the step validates both contracts and returns the value unchanged. Compatibility remains 8 because the schema bump already blocks older readers. The minimum-version diagnostic becomes `0.31.0`.
 
+## Optional dynamic-effort configuration
+
+Config schema 9→10 adds optional effort policy (off/shadow/automatic, floor and ceiling), preserving absent settings and provider display names. Compatibility remains 8; schema 10 blocks older readers, with minimum version 0.31.1. Runtime absence selects shadow mode without changing persisted defaults. Released migrations remain unchanged.
+
 ## Immutable migration history and CI
 
 `local-data-migrations/` groups frozen snapshots by store and transition:

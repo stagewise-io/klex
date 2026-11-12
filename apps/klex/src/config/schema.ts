@@ -642,7 +642,21 @@ const extensionsConfigSchema = z
   .object({ memory: memoryExtensionConfigSchema.prefault({}) })
   .strict();
 
-/** Live application config, persisted schema version 7. */
+const effortConfigSchema = z
+  .object({
+    mode: z.enum(['off', 'shadow', 'automatic']).default('off'),
+    floor: z.enum(['low', 'medium', 'high']).default('low'),
+    ceiling: z.enum(['low', 'medium', 'high']).default('high'),
+  })
+  .strict()
+  .refine(
+    (value) =>
+      ['low', 'medium', 'high'].indexOf(value.floor) <=
+      ['low', 'medium', 'high'].indexOf(value.ceiling),
+    'Effort floor must not exceed ceiling',
+  );
+
+/** Live application config, persisted schema version 9. */
 const klexConfigSchema = z.object({
   configVersion: z.literal(2).default(2),
   officialName: z
@@ -661,6 +675,7 @@ const klexConfigSchema = z.object({
   extensions: extensionsConfigSchema.prefault({}),
   sessionHistory: sessionHistoryConfigSchema.optional(),
   instinct: instinctConfigSchema.prefault({}),
+  effort: effortConfigSchema.optional(),
 });
 
 type KlexConfig = z.infer<typeof klexConfigSchema>;

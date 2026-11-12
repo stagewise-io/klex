@@ -1,10 +1,14 @@
-import type { InstinctPreparation } from '@/session/chat/extensions/extension-api';
+import type {
+  InstinctPreparation,
+  StepEffortRecommendation,
+} from '@/session/chat/extensions/extension-api';
 import type { ExtendedUIMessage } from '@/session/chat/message-types';
 
 type Parts = ExtendedUIMessage['parts'];
 
 /** Operations one extension staged during its instinct reaction. */
 interface StagedOperations {
+  readonly effort?: StepEffortRecommendation;
   readonly persistent: Parts;
   readonly provisional: Parts;
   readonly ephemeral: Parts;
@@ -20,12 +24,26 @@ export class InstinctPreparationBuffer implements InstinctPreparation {
   private readonly persistent: Parts[number][] = [];
   private readonly provisional: Parts[number][] = [];
   private readonly ephemeral: Parts[number][] = [];
+  private effort: StepEffortRecommendation | undefined;
   private state: 'open' | 'kept' | 'dropped' = 'open';
 
   constructor(
     private readonly extensionIdentifier: string,
     private readonly ownedDataPartKeys: ReadonlySet<string>,
   ) {}
+
+  setEffort(recommendation: StepEffortRecommendation): void {
+    this.assertOpen('setEffort');
+    if (this.extensionIdentifier !== 'io.stagewise/effort' || this.effort)
+      throw new Error('Effort recommendation has one reserved owner');
+    if (
+      !['low', 'medium', 'high'].includes(recommendation.intent) ||
+      !['shadow', 'automatic'].includes(recommendation.mode) ||
+      recommendation.reason.length > 128
+    )
+      throw new Error('Invalid effort recommendation');
+    this.effort = structuredClone(recommendation);
+  }
 
   appendPersistent(parts: Parts): void {
     this.assertOpen('appendPersistent');
@@ -68,6 +86,7 @@ export class InstinctPreparationBuffer implements InstinctPreparation {
       return { persistent: [], provisional: [], ephemeral: [] };
     }
     return {
+      ...(this.effort && { effort: structuredClone(this.effort) }),
       persistent: [...this.persistent],
       provisional: [...this.provisional],
       ephemeral: [...this.ephemeral],

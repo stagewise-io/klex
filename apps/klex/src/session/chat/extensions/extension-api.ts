@@ -554,7 +554,30 @@ export type InstinctClassificationOutcome =
  * drops every buffer. This transaction covers staged context only, not an
  * extension's own state changes or external side effects.
  */
+export interface StepEffortRecommendation {
+  readonly intent: 'low' | 'medium' | 'high';
+  readonly mode: 'shadow' | 'automatic';
+  readonly reason: string;
+  /** Bounded, non-sensitive policy diagnostics for step traces. */
+  readonly diagnostics?: {
+    readonly desired: 'low' | 'medium' | 'high';
+    readonly previous: 'low' | 'medium' | 'high';
+    readonly objectiveReset: boolean;
+    readonly lowerProgress: number;
+    readonly resolutionSeen: boolean;
+    readonly classificationAvailable: boolean;
+    readonly demand?: number;
+    readonly failing?: boolean;
+    readonly consequential?: boolean;
+    readonly missingEvidence?: boolean;
+    readonly resolved?: boolean;
+    readonly progress?: boolean;
+  };
+}
+
 export interface InstinctPreparation {
+  /** Reserved to the default-session effort extension; transactional, never prompt content. */
+  setEffort(recommendation: StepEffortRecommendation): void;
   /**
    * Committed to canonical history at instinct commit as one message per
    * extension, in factory order. Survives generation failure. Only

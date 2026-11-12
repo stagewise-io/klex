@@ -661,13 +661,20 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
       error instanceof Error && error.message.trim()
         ? `${message}: ${error.message}`
         : message;
+    const metadata = session.externalContext?.metadata;
     this.deps.logger.warn(
       {
         error,
+        errorName: error instanceof Error ? error.name : typeof error,
+        errorMessage: error instanceof Error ? error.message : String(error),
+        errorStack: error instanceof Error ? error.stack : undefined,
         namespace: session.namespace,
         externalMediaSessionId: session.sessionId,
         canonicalSessionId: session.lease?.sessionId,
         leaseId: session.lease?.id,
+        accepted: session.accepted,
+        source: metadata?.source,
+        callId: metadata?.callId,
       },
       message,
     );

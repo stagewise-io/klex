@@ -35,13 +35,14 @@ import {
   type DeterministicInteractionLease,
 } from './test-support';
 
+const logger = {
+  debug: () => undefined,
+  error: () => undefined,
+  info: () => undefined,
+  warn: vi.fn(),
+};
 const logging = {
-  child: () => ({
-    debug: () => undefined,
-    error: () => undefined,
-    info: () => undefined,
-    warn: () => undefined,
-  }),
+  child: () => logger,
 } as unknown as RootLogger;
 
 const descriptor = {
@@ -475,6 +476,37 @@ describe('realtime session coordinator', () => {
       type: 'session-ended',
       reason: expect.stringContaining(': model failed'),
     });
+    await coordinator.close();
+  });
+
+  it('logs the failure with its call identifiers and still ends the MCP session', async () => {
+    logger.warn.mockClear();
+    const { coordinator, mcpHarness, processorFactory } = setup();
+    await coordinator.start();
+    await mcpHarness.notify(
+      offered('session-1', undefined, {
+        metadata: { source: 'phone', callId: 'call-42' },
+      }),
+    );
+    const processor = await processorFactory.nextProcessor();
+    await vi.waitFor(() => expect(processor.receivedUpdates).toHaveLength(1));
+    processor.fail(new TypeError('unexpected provider event'));
+
+    await vi.waitFor(() =>
+      expect(mcpHarness.endRealtimeMediaSession).toHaveBeenCalledOnce(),
+    );
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorName: 'TypeError',
+        errorMessage: 'unexpected provider event',
+        errorStack: expect.stringContaining('TypeError'),
+        externalMediaSessionId: 'session-1',
+        accepted: true,
+        source: 'phone',
+        callId: 'call-42',
+      }),
+      expect.any(String),
+    );
     await coordinator.close();
   });
 

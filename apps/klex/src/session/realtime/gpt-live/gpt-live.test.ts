@@ -19,6 +19,7 @@ import {
   GPT_LIVE_MAX_FUNCTION_ARGUMENT_CHARACTERS,
   GPTLiveWireEventError,
   parseLiveServerEvent,
+  providerErrorLogView,
 } from './wire-events';
 
 const delegation = {
@@ -352,6 +353,101 @@ describe('GPT-Live wire events', () => {
     });
     if (parsed.type !== 'provider-error') throw new Error('unexpected event');
     expect(parsed.error.message).toHaveLength(1_000);
+  });
+
+  it.each([
+    ['a number', { type: 'server_error', code: 503, message: 'busy' }, '503'],
+    [
+      'a nested object',
+      { type: 'server_error', code: { code: 'overloaded' }, message: 'busy' },
+      'overloaded',
+    ],
+    ['missing', { type: 'server_error', message: 'busy' }, 'unknown'],
+    ['null', { code: null, message: 'busy' }, 'unknown'],
+    ['an array', { code: ['x'], message: 'busy' }, 'unknown'],
+  ])('parses provider errors whose code is %s', (_shape, error, code) => {
+    expect(parseLiveServerEvent({ type: 'error', error })).toMatchObject({
+      type: 'provider-error',
+      error: { code, message: 'busy' },
+    });
+  });
+
+  it('parses provider errors without any usable error detail', () => {
+    for (const error of [undefined, null, 'boom', 7, { message: 42 }]) {
+      expect(parseLiveServerEvent({ type: 'error', error })).toMatchObject({
+        type: 'provider-error',
+        error: { type: 'unknown', code: 'unknown' },
+      });
+    }
+  });
+
+  it('parses delegated response errors with nested or numeric details', () => {
+    expect(
+      parseLiveServerEvent({
+        type: 'response.event',
+        delegation_id: 'delegation-1',
+        event: {
+          type: 'error',
+          error: { code: { type: 'rate_limit' }, message: 'slow down' },
+        },
+      }),
+    ).toEqual({
+      type: 'response-error',
+      delegationId: 'delegation-1',
+      code: 'rate_limit',
+      message: 'slow down',
+    });
+    expect(
+      parseLiveServerEvent({
+        type: 'response.event',
+        delegation_id: 'delegation-1',
+        event: { type: 'error', code: 429 },
+      }),
+    ).toEqual({
+      type: 'response-error',
+      delegationId: 'delegation-1',
+      code: '429',
+      message: 'GPT-Live delegated response failed',
+    });
+  });
+
+  it('redacts provider error events for logs and ignores other events', () => {
+    expect(
+      providerErrorLogView({
+        type: 'error',
+        event_id: 'error-1',
+        error: {
+          code: { code: 'bad', api_key: 'sk-secret' },
+          message: 'm'.repeat(800),
+          authorization: 'Bearer secret',
+          audio: 'AAAA',
+        },
+      }),
+    ).toEqual({
+      type: 'error',
+      event_id: 'error-1',
+      error: {
+        code: { code: 'bad', api_key: '[REDACTED]' },
+        message: 'm'.repeat(500),
+        authorization: '[REDACTED]',
+        audio: '[REDACTED]',
+      },
+    });
+    expect(
+      providerErrorLogView({
+        type: 'response.event',
+        delegation_id: 'delegation-1',
+        event: { type: 'error', code: 429, text: 'private' },
+      }),
+    ).toEqual({
+      type: 'response.event',
+      delegation_id: 'delegation-1',
+      event: { type: 'error', code: 429, text: '[REDACTED]' },
+    });
+    expect(
+      providerErrorLogView({ type: 'response.output_audio.delta', delta: 'x' }),
+    ).toBeUndefined();
+    expect(providerErrorLogView('not an event')).toBeUndefined();
   });
 });
 

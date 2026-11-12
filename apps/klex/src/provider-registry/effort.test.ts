@@ -161,42 +161,52 @@ describe('effort resolution', () => {
 });
 
 describe('installed SDK wire contracts (no live inference)', () => {
-  it('encodes exact Claude adaptive thinking and effort', async () => {
-    let body: Record<string, unknown> = {};
-    const model = createAnthropic({
-      apiKey: 'fixture',
-      fetch: async (_url, init) => {
-        body = JSON.parse(String(init?.body));
-        return Response.json({
-          id: 'fixture',
-          type: 'message',
-          role: 'assistant',
-          model: 'claude-sonnet-4-6',
-          content: [{ type: 'text', text: 'ok' }],
-          stop_reason: 'end_turn',
-          stop_sequence: null,
-          usage: { input_tokens: 1, output_tokens: 1 },
-        });
-      },
-    }).languageModel('claude-sonnet-4-6');
-    const id = {
-      ...identity,
-      providerType: 'anthropic',
-      modelId: 'claude-sonnet-4-6',
-    };
-    const resolved = resolveEffort({
-      identity: id,
-      intent: 'low',
-      capability: reviewedEffortCapability(id),
-    });
-    await model.doGenerate({
-      prompt: [{ role: 'user', content: [{ type: 'text', text: 'fixture' }] }],
-      providerOptions: resolved.providerOptions,
-    });
-    expect(body.thinking).toEqual({ type: 'adaptive' });
-    expect(body.output_config).toEqual({ effort: 'low' });
-    expect(body.reasoning_effort).toBeUndefined();
-  });
+  it.each(['low', 'off'] as const)(
+    'encodes exact Claude %s thinking controls',
+    async (intent) => {
+      let body: Record<string, unknown> = {};
+      const model = createAnthropic({
+        apiKey: 'fixture',
+        fetch: async (_url, init) => {
+          body = JSON.parse(String(init?.body));
+          return Response.json({
+            id: 'fixture',
+            type: 'message',
+            role: 'assistant',
+            model: 'claude-sonnet-4-6',
+            content: [{ type: 'text', text: 'ok' }],
+            stop_reason: 'end_turn',
+            stop_sequence: null,
+            usage: { input_tokens: 1, output_tokens: 1 },
+          });
+        },
+      }).languageModel('claude-sonnet-4-6');
+      const id = {
+        ...identity,
+        providerType: 'anthropic',
+        modelId: 'claude-sonnet-4-6',
+      };
+      const resolved = resolveEffort({
+        identity: id,
+        intent,
+        capability: reviewedEffortCapability(id),
+      });
+      await model.doGenerate({
+        prompt: [
+          { role: 'user', content: [{ type: 'text', text: 'fixture' }] },
+        ],
+        providerOptions: resolved.providerOptions,
+      });
+      expect(resolved.status).toBe('exact');
+      expect(body.thinking).toEqual({
+        type: intent === 'off' ? 'disabled' : 'adaptive',
+      });
+      expect(body.output_config).toEqual(
+        intent === 'off' ? undefined : { effort: 'low' },
+      );
+      expect(body.reasoning_effort).toBeUndefined();
+    },
+  );
 
   it('encodes native OpenAI Responses effort', async () => {
     let body: Record<string, unknown> = {};

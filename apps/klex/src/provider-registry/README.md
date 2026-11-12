@@ -36,7 +36,7 @@ This registry covers language-model transports only. Full Codex, Claude Code, an
 
 ## Dynamic reasoning effort
 
-See [effort control evidence and contract](./effort-controls.md) for model-generation coverage, authoritative documentation, configuration, and current limitations. Capability resolution stays inside the registry; default-session policy supplies only a step-local intent. The feature is off unless explicitly configured, and fixed native reasoning options always take precedence.
+See [effort control evidence and contract](./effort-controls.md) for model-generation coverage, authoritative documentation, configuration, and current limitations. Capability resolution stays inside the registry; default-session policy supplies only a step-local intent. Default sessions use shadow mode when effort configuration is absent; shadow traces and classification cost can therefore occur without an explicit effort setting. Set `effort.mode: off` to disable it. Automatic control remains opt-in, and fixed native reasoning options always take precedence.
 
 ## Lifecycle semantics
 

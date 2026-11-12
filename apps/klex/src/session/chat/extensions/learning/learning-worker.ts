@@ -103,8 +103,12 @@ type EpisodePage = ActivityBatch;
  * Logs names, counts, ids, and reasons only, never prompts or episode text.
  */
 class LearningWorkerModule implements LearningWorker {
-  /** Newest activity a compaction dropped; learning runs up to it. */
-  private boundary: string | null = null;
+  /**
+   * Pending jobs, oldest first. Each is the newest activity one compaction
+   * dropped; a job covers everything from the cursor up to it. Not persisted:
+   * after a restart the next compaction re-covers the gap from the cursor.
+   */
+  private readonly queue: string[] = [];
   private started = false;
   private rerun = false;
   private abort: AbortController | undefined;
@@ -141,8 +145,9 @@ class LearningWorkerModule implements LearningWorker {
     const { activities } = this.options;
     await this.seedCursor(droppedMessageIds);
     if (this.closed) return;
-    if (this.boundary === null || activities.compareIds(id, this.boundary) > 0)
-      this.boundary = id;
+    const last = this.queue.at(-1);
+    if (last === undefined || activities.compareIds(id, last) > 0)
+      this.queue.push(id);
     await this.kick();
   }
 
@@ -216,21 +221,22 @@ class LearningWorkerModule implements LearningWorker {
     await this.cutoverLegacyCursor();
     let result: LearningRunResult = 'idle';
     while (!this.closed) {
-      const boundary = this.boundary;
-      if (boundary === null) break;
+      const boundary = this.queue[0];
+      if (boundary === undefined) break;
       const cursor = state.get().cursor;
       if (cursor !== null && activities.compareIds(cursor, boundary) >= 0) {
-        await this.finishCompactionRun(boundary);
+        await this.finishJob();
         continue;
       }
-      // One compaction's dropped activity, in chunks that fit a model context.
+      // One job's range, read in chunks that fit a model context. The cursor
+      // moves only after a chunk succeeds, so the job resumes where it stopped.
       const pending = await activities.readRange(
         cursor,
         boundary,
         MAX_EPISODE_CHARACTERS,
       );
       if (!pending || this.closed) {
-        await this.finishCompactionRun(boundary);
+        if (!this.closed) await this.finishJob();
         continue;
       }
       result = 'processed';
@@ -253,9 +259,9 @@ class LearningWorkerModule implements LearningWorker {
     return result;
   }
 
-  /** Ends one compaction run; consolidates every `CONSOLIDATE_EVERY_RUNS` runs. */
-  private async finishCompactionRun(boundary: string): Promise<void> {
-    if (this.boundary === boundary) this.boundary = null;
+  /** Ends the head job; consolidates every `CONSOLIDATE_EVERY_RUNS` jobs. */
+  private async finishJob(): Promise<void> {
+    this.queue.shift();
     const { runs } = await this.options.state
       .update((draft) => {
         draft.changedRunsSinceConsolidation += 1;

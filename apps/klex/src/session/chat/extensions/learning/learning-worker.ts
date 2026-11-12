@@ -527,6 +527,11 @@ class LearningWorkerModule implements LearningWorker {
   private async maybeConsolidate(runs: number): Promise<void> {
     if (runs < CONSOLIDATE_EVERY_RUNS) return;
     try {
+      // Reset on attempt, not on success, so a no-op or failed attempt is
+      // retried only after another `CONSOLIDATE_EVERY_RUNS` jobs.
+      await this.options.state.update((draft) => {
+        draft.changedRunsSinceConsolidation = 0;
+      });
       await this.consolidate();
     } catch (error) {
       if (!this.closed) {

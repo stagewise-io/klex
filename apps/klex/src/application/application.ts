@@ -54,6 +54,7 @@ import { createChatSession } from '@/session/chat';
 import { createAudioInputOptimizerExt } from '@/session/chat/extensions/audio-input-optimizer';
 import { createConsultExt } from '@/session/chat/extensions/consult';
 import { createContextCompactionExt } from '@/session/chat/extensions/context-compaction';
+import { createEffortExt } from '@/session/chat/extensions/effort';
 import {
   createEpisodeSummaryExt,
   createEpisodeSummaryLog,
@@ -669,6 +670,7 @@ class ApplicationModule implements Application {
 
     // Default session: full extension set + MCP access.
     const defaultSessionFactory = makeSessionFactory([
+      createEffortExt,
       createNameLoaderExt,
       createSoulExt,
       createGodMessagesDistrustExt,

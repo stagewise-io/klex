@@ -11,6 +11,7 @@ import type {
   InstinctInput,
   InstinctReactionStatus,
   InstinctSummary,
+  StepEffortRecommendation,
 } from '@/session/chat/extensions/extension-api';
 import type { ExtendedUIMessage } from '@/session/chat/message-types';
 import { tracer } from '@/session/chat/utils/tracing';
@@ -66,6 +67,7 @@ export type InstinctResult =
       readonly provisional: Parts;
       /** Injected into the inference clone only. */
       readonly ephemeral: Parts;
+      readonly effort?: StepEffortRecommendation;
       /**
        * Synchronously appends the persistent messages to `messages` and
        * advances the delta baseline. Call exactly once, before model
@@ -323,6 +325,7 @@ class InstinctRunnerModule implements InstinctRunner {
       ephemeral.push(...operations.ephemeral);
     }
 
+    const effort = buffers.get('io.stagewise/effort')?.operations().effort;
     let committed = false;
     return {
       status: 'ready',
@@ -330,6 +333,7 @@ class InstinctRunnerModule implements InstinctRunner {
       persistent,
       provisional,
       ephemeral,
+      ...(effort && { effort }),
       commit: (messages) => {
         if (committed) throw new Error('Instinct result already committed');
         committed = true;

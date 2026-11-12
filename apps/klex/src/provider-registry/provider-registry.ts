@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 
 import type {
   Experimental_EvaluationModelV4 as EvaluationModelV4,
+  JSONObject,
   LanguageModelV4,
 } from '@ai-sdk/provider';
 import { generateText } from 'ai';
@@ -31,6 +32,13 @@ import {
 import { ProviderCredentialManager } from './authorization/credential-manager';
 import type { ProviderCredentialStore } from './authorization/credential-store';
 import { DeviceAuthorizations } from './authorization/device-authorizations';
+import {
+  type EffortCapability,
+  type EffortIntent,
+  type EffortResolution,
+  resolveEffort,
+  reviewedEffortCapability,
+} from './effort';
 import { mergeProviderModels } from './model-metadata';
 import {
   ModelValidation,
@@ -127,6 +135,8 @@ export interface ModelMetadataProvenance {
 }
 
 export interface ProviderModel {
+  /** Transient reasoning controls, scoped to this provider discovery snapshot. */
+  effort?: EffortCapability;
   modelId: string;
   /** Provider-reported creation or release time, normalized to UTC. */
   createdAt?: string;
@@ -389,6 +399,10 @@ export interface ProviderModelResolver {
   getLanguageModel(reference: ModelSelectionEntry): LanguageModelV4;
   resolveModel(reference: ModelSelectionEntry): ResolvedModelConfig;
   resolveModelInfo(reference: ModelSelectionEntry): ModelInfo;
+  resolveEffort?(
+    reference: ModelSelectionEntry,
+    intent: EffortIntent,
+  ): EffortResolution;
 }
 
 export interface ProviderRegistry extends ProviderModelResolver {
@@ -480,7 +494,7 @@ class ProviderRegistryModule implements ProviderRegistry {
   private unsubscribe: (() => void) | undefined;
   private readonly modelCache = new Map<
     ProviderInstanceId,
-    { signature: string; models: readonly ProviderModel[] }
+    { signature: string; models: readonly ProviderModel[]; fetchedAt: number }
   >();
   private readonly pendingDiscovery = new Map<
     ProviderInstanceId,
@@ -1581,6 +1595,43 @@ class ProviderRegistryModule implements ProviderRegistry {
     });
   }
 
+  resolveEffort(
+    reference: ModelSelectionEntry,
+    intent: EffortIntent,
+  ): EffortResolution {
+    this.assertStarted();
+    const resolved = this.resolveModel(reference);
+    const instance = this.getInstance(reference.providerId);
+    if (!instance.ok) throw new Error(instance.message);
+    const cached = this.modelCache.get(instance.value.id);
+    const discovered =
+      cached?.signature === this.settingsSignature(instance.value.settings) &&
+      Date.now() - cached.fetchedAt < 300_000
+        ? cached.models.find((model) => model.modelId === reference.modelId)
+            ?.effort
+        : undefined;
+    const identity = {
+      providerId: resolved.providerId,
+      providerType: resolved.providerType,
+      modelId: resolved.modelId,
+    };
+    return resolveEffort({
+      identity,
+      intent,
+      capability:
+        discovered ??
+        (instance.value.settings.baseUrl
+          ? {
+              kind: 'unknown',
+              reason: 'Custom endpoint requires its own capability evidence',
+            }
+          : reviewedEffortCapability(identity)),
+      providerOptions: resolved.providerOptions as
+        | Record<string, JSONObject>
+        | undefined,
+    });
+  }
+
   resolveModel(reference: ModelSelectionEntry): ResolvedModelConfig {
     this.assertStarted();
     const config = this.requireConfig();
@@ -1690,7 +1741,11 @@ class ProviderRegistryModule implements ProviderRegistry {
         };
       }
       if (result.ok && generation === this.configGeneration) {
-        this.modelCache.set(id, { signature, models: result.value });
+        this.modelCache.set(id, {
+          signature,
+          models: result.value,
+          fetchedAt: Date.now(),
+        });
         while (this.modelCache.size > 128) {
           const oldest = this.modelCache.keys().next().value;
           if (oldest === undefined) break;

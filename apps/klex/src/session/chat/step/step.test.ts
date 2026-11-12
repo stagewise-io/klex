@@ -136,6 +136,73 @@ function setupDefaultMocks() {
 
 // --- tests ---
 
+describe('Step — effort snapshot', () => {
+  it.each(['shadow', 'automatic'] as const)(
+    '%s only changes wire controls when automatic',
+    async (mode) => {
+      vi.clearAllMocks();
+      setupDefaultMocks();
+      const summary = {
+        durationMs: 1,
+        classifierStatus: 'skipped' as const,
+        reactions: [],
+      };
+      const instinctRunner: InstinctRunner = {
+        lastSummary: summary,
+        run: vi.fn(async () => ({
+          status: 'ready' as const,
+          summary,
+          persistent: [],
+          provisional: [],
+          ephemeral: [],
+          effort: { intent: 'low' as const, mode, reason: 'routine' },
+          commit: vi.fn(),
+        })),
+      };
+      const resolver = {
+        ...makeModelResolver(),
+        resolveModel: vi.fn(() => ({
+          providerId: 'test',
+          providerType: 'openai',
+          modelId: 'o3',
+          settings: {},
+          contextSize: 128000,
+          capabilities: {},
+          inputCapabilities: {},
+        })),
+        resolveModelInfo: vi.fn(() => ({
+          displayName: undefined,
+          contextSize: 128000,
+          capabilities: {},
+          inputCapabilities: {},
+        })),
+        resolveInstinctCandidates: vi.fn(() => []),
+        resolveEffort: vi.fn(() => ({
+          identity: {
+            providerId: 'test',
+            providerType: 'openai',
+            modelId: 'o3',
+          },
+          requested: 'low' as const,
+          status: 'exact' as const,
+          reasoning: 'low' as const,
+          reason: 'portable-level',
+        })),
+      };
+      await createStep(
+        makeDeps({
+          messages: [makeUserMessage()],
+          modelResolver: resolver,
+          instinctRunner,
+        }),
+      ).run();
+      const args = vi.mocked(createGenerationRunner).mock.calls.at(-1)?.[0];
+      expect(args).toBeDefined();
+      expect(args?.reasoning).toBe(mode === 'automatic' ? 'low' : undefined);
+    },
+  );
+});
+
 describe('Step — extension skip', () => {
   it('keeps new canonical history when an extension skips without removing it', async () => {
     vi.clearAllMocks();

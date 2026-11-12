@@ -122,6 +122,17 @@ describe('GenerationRunner — success', () => {
     setupDefaultMocks();
   });
 
+  it('forwards portable reasoning even without native provider options', async () => {
+    const deps = makeDeps({ reasoning: 'low' });
+    await new GenerationRunner(deps).run();
+    expect(
+      vi.mocked(runStreamedGeneration).mock.calls.at(-1)?.[0].reasoning,
+    ).toBe('low');
+    expect(
+      vi.mocked(runStreamedGeneration).mock.calls.at(-1)?.[0].providerOptions,
+    ).toBeUndefined();
+  });
+
   it.each([
     'explicit',
     'output-available',

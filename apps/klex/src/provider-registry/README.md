@@ -34,6 +34,10 @@ The provider registry is the single integration point for language-model transpo
 
 This registry covers language-model transports only. Full Codex, Claude Code, and OpenCode agent runtimes are outside Klex's provider abstraction: Klex does not adopt their tool loop, process lifecycle, memory, or agent behavior. The ChatGPT Codex Subscription and OpenCode Go/Zen entries above remain supported because they expose model transports to Klex's own agent runtime.
 
+## Dynamic reasoning effort
+
+See [effort control evidence and contract](./effort-controls.md) for model-generation coverage, authoritative documentation, configuration, and current limitations. Capability resolution stays inside the registry; default-session policy supplies only a step-local intent. The feature is off unless explicitly configured, and fixed native reasoning options always take precedence.
+
 ## Lifecycle semantics
 
 Every provider definition exposes user-facing metadata (`name`, `description`, optional SVG logo, capabilities, setup fields, and usage guidance) and implements the shared provider contract.

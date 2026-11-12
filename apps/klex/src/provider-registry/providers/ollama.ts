@@ -1,5 +1,6 @@
 import { interpolateEnvironment } from '@/config';
 
+import { ollamaEffortCapability } from '../effort';
 import type {
   ProviderDefinition,
   ProviderInstance,
@@ -102,8 +103,10 @@ async function discoverModels(
               const capabilities = metadata.capabilities.filter(
                 (item): item is string => typeof item === 'string',
               );
+              const effort = ollamaEffortCapability(metadata.thinking);
               return {
                 modelId,
+                ...(effort && { effort }),
                 kind: capabilities.includes('completion')
                   ? ('language' as const)
                   : capabilities.includes('embedding')

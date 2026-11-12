@@ -1,4 +1,4 @@
-import type { JSONObject } from '@ai-sdk/provider';
+import type { JSONObject, LanguageModelV4CallOptions } from '@ai-sdk/provider';
 import type { Span } from '@opentelemetry/api';
 import {
   type FinishReason,
@@ -62,6 +62,7 @@ export interface GenerationRunnerDependencies {
   };
   /** Provider-specific options resolved from the model selection entry. */
   providerOptions?: Record<string, JSONObject>;
+  reasoning?: LanguageModelV4CallOptions['reasoning'];
   /**
    * System prompt parts collected from extensions at the beginning of
    * the step. Appended to the base system prompt (separated by blank
@@ -205,6 +206,9 @@ export class GenerationRunner {
           basePrompt: this.deps.basePrompt,
           ...(this.deps.providerOptions !== undefined && {
             providerOptions: this.deps.providerOptions,
+          }),
+          ...(this.deps.reasoning !== undefined && {
+            reasoning: this.deps.reasoning,
           }),
           onUpdate: (msg) => {
             chunkCount++;

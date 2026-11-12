@@ -39,6 +39,38 @@ describe('InstinctPreparationBuffer', () => {
     });
   });
 
+  it('stages effort only for its reserved owner and discards late/cancelled writes', () => {
+    const recommendation = {
+      intent: 'low',
+      mode: 'shadow',
+      reason: 'routine',
+    } as const;
+    const buffer = new InstinctPreparationBuffer(
+      'io.stagewise/effort',
+      new Set(),
+    );
+    buffer.setEffort(recommendation);
+    expect(() => buffer.setEffort(recommendation)).toThrow(
+      'one reserved owner',
+    );
+    expect(buffer.operations().effort).toBeUndefined();
+    buffer.keep();
+    expect(buffer.operations().effort).toEqual(recommendation);
+    expect(() => buffer.setEffort(recommendation)).toThrow('after');
+    const cancelled = new InstinctPreparationBuffer(
+      'io.stagewise/effort',
+      new Set(),
+    );
+    cancelled.setEffort(recommendation);
+    cancelled.drop();
+    expect(cancelled.operations().effort).toBeUndefined();
+    expect(() =>
+      new InstinctPreparationBuffer('other', new Set()).setEffort(
+        recommendation,
+      ),
+    ).toThrow('one reserved owner');
+  });
+
   it('rejects persistent non-data parts and writes after sealing', () => {
     const buffer = new InstinctPreparationBuffer('test', new Set(['context']));
     expect(() =>

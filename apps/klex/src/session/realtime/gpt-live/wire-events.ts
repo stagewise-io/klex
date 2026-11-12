@@ -89,7 +89,7 @@ export class GPTLiveWireEventError extends Error {
 }
 
 export function parseLiveServerEvent(raw: unknown): GPTLiveServerEvent {
-  const parsed = parseRaw(raw);
+  const parsed = parseLiveEventJson(raw);
   const event = requiredRecord(parsed, 'Live event');
   const name = requiredString(event.type, 'Live event', 'type');
 
@@ -115,17 +115,18 @@ export function parseLiveServerEvent(raw: unknown): GPTLiveServerEvent {
       };
     }
 
+    // Error events describe a failure; their shape must never cause another.
     case 'error': {
-      const error = requiredRecord(event.error, name);
+      const error = optionalRecord(event.error) ?? {};
       return {
         type: 'provider-error',
         error: {
-          type: truncate(requiredString(error.type, name, 'error.type')),
-          code: truncate(requiredString(error.code, name, 'error.code')),
+          type: truncate(errorField(error.type) ?? 'unknown'),
+          code: truncate(errorField(error.code) ?? 'unknown'),
           message: truncate(
-            requiredString(error.message, name, 'error.message'),
+            errorField(error.message) ?? 'GPT-Live reported an error',
           ),
-          ...withKey('param', truncate(optionalString(error.param))),
+          ...withKey('param', truncate(errorField(error.param))),
           ...withKey(
             'clientEventId',
             truncate(optionalString(error.client_event_id)),
@@ -287,18 +288,68 @@ function parseResponseEvent(
   }
 
   if (name === 'error') {
+    const error = optionalRecord(event.error) ?? event;
     return {
       type: 'response-error',
       delegationId,
-      ...withKey('code', truncate(optionalString(event.code))),
-      message: truncate(requiredString(event.message, name, 'message')),
+      ...withKey('code', truncate(errorField(error.code))),
+      message: truncate(
+        errorField(error.message) ?? 'GPT-Live delegated response failed',
+      ),
     };
   }
 
   return { type: 'ignored', name: `${outerName}:${name}` };
 }
 
-function parseRaw(raw: unknown): unknown {
+const REDACTED_ERROR_FIELD =
+  /secret|token|key|auth|password|cookie|credential|audio|delta|argument|content|transcript|instruction|text/i;
+
+/**
+ * A redacted copy of a raw provider error event, for logs. Returns undefined for
+ * every other event, so callers can run it before typed parsing.
+ */
+export function providerErrorLogView(raw: unknown): unknown {
+  const event = optionalRecord(raw);
+  if (event === undefined) return undefined;
+  if (event.type === 'error') return redactErrorValue(event);
+  const inner = optionalRecord(event.event);
+  if (event.type === 'response.event' && inner?.type === 'error')
+    return redactErrorValue({
+      type: event.type,
+      delegation_id: event.delegation_id,
+      event: inner,
+    });
+  return undefined;
+}
+
+function redactErrorValue(value: unknown, depth = 0): unknown {
+  if (typeof value === 'string') return value.slice(0, 500);
+  if (
+    typeof value === 'number' ||
+    typeof value === 'boolean' ||
+    value === null ||
+    value === undefined
+  )
+    return value;
+  if (depth >= 4) return '[MAX_DEPTH]';
+  if (Array.isArray(value))
+    return value.slice(0, 8).map((entry) => redactErrorValue(entry, depth + 1));
+  const record = optionalRecord(value);
+  if (record === undefined) return typeof value;
+  return Object.fromEntries(
+    Object.entries(record)
+      .slice(0, 32)
+      .map(([key, entry]) => [
+        key,
+        REDACTED_ERROR_FIELD.test(key)
+          ? '[REDACTED]'
+          : redactErrorValue(entry, depth + 1),
+      ]),
+  );
+}
+
+export function parseLiveEventJson(raw: unknown): unknown {
   if (typeof raw !== 'string') return raw;
   try {
     return JSON.parse(raw);
@@ -375,6 +426,20 @@ function requiredBase64(
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
+}
+
+/** Reads a string, number or nested `{ code | type | message }` error field. */
+function errorField(value: unknown, depth = 0): string | undefined {
+  if (typeof value === 'string') return value.length > 0 ? value : undefined;
+  if (typeof value === 'number' || typeof value === 'bigint')
+    return String(value);
+  const record = optionalRecord(value);
+  if (record === undefined || depth >= 2) return undefined;
+  return (
+    errorField(record.code, depth + 1) ??
+    errorField(record.type, depth + 1) ??
+    errorField(record.message, depth + 1)
+  );
 }
 
 function nonNegativeNumber(

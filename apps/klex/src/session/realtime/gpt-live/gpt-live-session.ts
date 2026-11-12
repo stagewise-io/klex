@@ -37,7 +37,9 @@ import { createGPTLiveTranscriptGrouper } from './transcript-groups';
 import {
   GPT_LIVE_MAX_AUDIO_DELTA_BYTES,
   type GPTLiveServerEvent,
+  parseLiveEventJson,
   parseLiveServerEvent,
+  providerErrorLogView,
 } from './wire-events';
 
 export interface GPTLiveWebSocket {
@@ -299,7 +301,14 @@ class GPTLiveSession implements RealtimeModelSession {
     if (this.settled) return;
     let event: GPTLiveServerEvent;
     try {
-      event = parseLiveServerEvent(data.toString());
+      const raw = parseLiveEventJson(data.toString());
+      const providerError = providerErrorLogView(raw);
+      if (providerError !== undefined)
+        this.logger.warn(
+          { providerSessionId: this.providerSessionId, providerError },
+          'GPT-Live provider error event received',
+        );
+      event = parseLiveServerEvent(raw);
       this.protocolState.apply(event);
     } catch (error) {
       this.fail(error);
@@ -737,7 +746,16 @@ class GPTLiveSession implements RealtimeModelSession {
   }
 
   private fail(error: unknown): void {
-    this.logger.error({ error }, 'GPT-Live session failed');
+    this.logger.error(
+      {
+        error,
+        errorName: error instanceof Error ? error.name : typeof error,
+        errorMessage: error instanceof Error ? error.message : String(error),
+        errorStack: error instanceof Error ? error.stack : undefined,
+        providerSessionId: this.providerSessionId,
+      },
+      'GPT-Live session failed',
+    );
     this.finish({ type: 'failed', error });
   }
 

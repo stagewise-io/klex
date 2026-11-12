@@ -758,6 +758,61 @@ describe('GPT-Live model session', () => {
     expect(setupResult.replacementSocket()).toBeUndefined();
   });
 
+  it('ends cleanly and logs the redacted event when a provider error has an unexpected code', async () => {
+    logger.warn.mockClear();
+    logger.error.mockClear();
+    const setupResult = setup();
+    setupResult.socket.open();
+    setupResult.socket.message({
+      type: 'session.started',
+      session: { id: 'live-1' },
+    });
+    const session = await setupResult.creating;
+    setupResult.socket.message({
+      type: 'error',
+      error: {
+        type: 'server_error',
+        code: { code: 503 },
+        message: 'upstream unavailable',
+        authorization: 'Bearer secret-test-key',
+      },
+    });
+
+    const closure = await session.closed;
+    expect(closure).toMatchObject({ type: 'failed' });
+    if (closure.type !== 'failed') throw new Error('unexpected closure');
+    expect(String(closure.error)).toContain(
+      'GPT-Live provider error 503: upstream unavailable',
+    );
+    expect(logger.warn).toHaveBeenCalledWith(
+      {
+        providerSessionId: 'live-1',
+        providerError: {
+          type: 'error',
+          error: {
+            type: 'server_error',
+            code: { code: 503 },
+            message: 'upstream unavailable',
+            authorization: '[REDACTED]',
+          },
+        },
+      },
+      'GPT-Live provider error event received',
+    );
+    expect(JSON.stringify(logger.warn.mock.calls)).not.toContain(
+      'secret-test-key',
+    );
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorName: 'Error',
+        errorMessage: 'GPT-Live provider error 503: upstream unavailable',
+        errorStack: expect.stringContaining('GPT-Live provider error'),
+        providerSessionId: 'live-1',
+      }),
+      'GPT-Live session failed',
+    );
+  });
+
   it('ignores late events from a replaced socket', async () => {
     const setupResult = setup();
     setupResult.socket.open();

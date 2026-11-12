@@ -159,6 +159,10 @@ describe('Step — effort snapshot', () => {
           commit: vi.fn(),
         })),
       };
+      const modelOptions = { openai: { unrelated: 'original' } };
+      const effortOptions = {
+        openai: { unrelated: 'original', reasoningEffort: 'low' },
+      };
       const resolver = {
         ...makeModelResolver(),
         resolveModel: vi.fn(() => ({
@@ -166,6 +170,7 @@ describe('Step — effort snapshot', () => {
           providerType: 'openai',
           modelId: 'o3',
           settings: {},
+          providerOptions: modelOptions,
           contextSize: 128000,
           capabilities: {},
           inputCapabilities: {},
@@ -187,6 +192,7 @@ describe('Step — effort snapshot', () => {
           status: 'exact' as const,
           reasoning: 'low' as const,
           reason: 'portable-level',
+          providerOptions: effortOptions,
         })),
       };
       await createStep(
@@ -199,6 +205,9 @@ describe('Step — effort snapshot', () => {
       const args = vi.mocked(createGenerationRunner).mock.calls.at(-1)?.[0];
       expect(args).toBeDefined();
       expect(args?.reasoning).toBe(mode === 'automatic' ? 'low' : undefined);
+      expect(args?.providerOptions).toEqual(
+        mode === 'automatic' ? effortOptions : modelOptions,
+      );
     },
   );
 });

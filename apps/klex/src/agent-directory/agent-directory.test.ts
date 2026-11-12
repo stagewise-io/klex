@@ -50,7 +50,7 @@ describe('AgentDirectory', () => {
     ).toMatchObject({
       _klex: {
         store: 'config',
-        schemaVersion: 9,
+        schemaVersion: 10,
         compatibilityVersion: 8,
       },
       configVersion: 2,

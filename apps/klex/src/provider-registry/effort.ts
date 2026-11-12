@@ -290,6 +290,21 @@ export function resolveEffort(input: {
       reason: 'mandatory-thinking',
       evidence,
     };
+  if (input.intent === 'off' && capability.encoding === 'anthropic-adaptive')
+    return {
+      ...base,
+      status: evidence.source === 'tentative' ? 'tentative' : 'exact',
+      effective: false,
+      reason: 'native-disable',
+      evidence,
+      providerOptions: {
+        ...providerOptions,
+        [capability.namespace]: {
+          ...providerOptions?.[capability.namespace],
+          thinking: { type: 'disabled' },
+        },
+      },
+    };
   const discrete = capability.controls.find(
     (control) => control.kind === 'levels',
   );

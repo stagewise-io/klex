@@ -84,7 +84,10 @@ export function advanceEffort(
       state: {
         active: tiers[target] ?? 'low',
         lowerProgress: 0,
-        resolutionSeen: false,
+        resolutionSeen:
+          target === current
+            ? state.resolutionSeen || signals?.resolved === true
+            : false,
       },
     };
   }

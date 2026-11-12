@@ -56,6 +56,30 @@ describe('low-first policy', () => {
     result = advanceEffort(result.state, routine, bounds);
     expect(result.intent).toBe('low');
   });
+  it('retains resolution across equal-tier steps but clears it on escalation', () => {
+    const bounds = { floor: 'low', ceiling: 'high' } as const;
+    const routine = {
+      demand: 0,
+      failing: false,
+      consequential: false,
+      missingEvidence: false,
+      progress: true,
+    };
+    let result = advanceEffort(
+      { active: 'high', lowerProgress: 0, resolutionSeen: false },
+      { ...routine, demand: 3, resolved: true },
+      bounds,
+    );
+    expect(result.state.resolutionSeen).toBe(true);
+    result = advanceEffort(result.state, { ...routine, demand: 3 }, bounds);
+    expect(result.state.resolutionSeen).toBe(true);
+    result = advanceEffort(result.state, routine, bounds);
+    expect(result.intent).toBe('high');
+    result = advanceEffort(result.state, routine, bounds);
+    expect(result.intent).toBe('medium');
+    result = advanceEffort(result.state, { ...routine, demand: 3 }, bounds);
+    expect(result.state.resolutionSeen).toBe(false);
+  });
   it('scopes future structured triggers and respects bounds', () => {
     const options = {
       floor: 'low',

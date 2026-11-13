@@ -1,3 +1,5 @@
+import { configV10ToV11 } from './config/v10-to-v11/migration';
+import { configV11 } from './config/v10-to-v11/schemas';
 import { configV1ToV2 } from './config/v1-to-v2/migration';
 import { configV1, configV2 } from './config/v1-to-v2/schemas';
 import { configV2ToV3 } from './config/v2-to-v3/migration';
@@ -42,6 +44,7 @@ export const LOCAL_DATA_MIGRATIONS = {
       configV8,
       configV9,
       configV10,
+      configV11,
     ],
     migrations: [
       configV1ToV2,
@@ -53,6 +56,7 @@ export const LOCAL_DATA_MIGRATIONS = {
       configV7ToV8,
       configV8ToV9,
       configV9ToV10,
+      configV10ToV11,
     ],
   },
   'learning-extension-state': {

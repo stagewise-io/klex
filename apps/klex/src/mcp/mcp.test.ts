@@ -172,6 +172,60 @@ async function waitForNamespace(
   });
 }
 
+describe('MCP Events coexistence', () => {
+  it('delivers both extensions and settles their progress independently', async () => {
+    const ack = vi.fn(async () => undefined);
+    const poll = vi.fn(async () => ({
+      events: [
+        {
+          eventId: 'event-1',
+          name: 'watch',
+          timestamp: '2026-01-01T00:00:00Z',
+          data: { text: 'watch' },
+        },
+      ],
+      cursor: 'c1',
+      nextPollMs: 60000,
+    }));
+    const { mcp } = setup(
+      { chat: { url: 'https://example.com/mcp', events: [{ name: 'watch' }] } },
+      async () =>
+        ({
+          ...pushNotificationConnection({
+            listen: async () => ({
+              closed: new Promise<void>(() => undefined),
+            }),
+            getEvents: async () => ({ events: [pushNotification] }),
+            acknowledgeEvents: ack,
+          }),
+          supportsEvents: true,
+          events: {
+            listEvents: async () => [{ name: 'watch', delivery: ['poll'] }],
+            poll,
+          },
+        }) as unknown as McpConnection,
+    );
+    const received: string[] = [];
+    mcp.onPushNotification(({ event }) => {
+      received.push(event.sourceId);
+    });
+    try {
+      await mcp.start();
+      await vi.waitFor(() => expect(received).toHaveLength(2));
+      expect(received).toContain('chat:local');
+      expect(received.some((source) => source.startsWith('events:'))).toBe(
+        true,
+      );
+      expect(mcp.hasUnacknowledgedEvents()).toBe(true);
+      await mcp.acknowledgeDeliveredEvents();
+      expect(ack).toHaveBeenCalled();
+      expect(mcp.hasUnacknowledgedEvents()).toBe(false);
+    } finally {
+      await mcp.close();
+    }
+  });
+});
+
 describe('MCP Realtime Media configuration', () => {
   it('disables capability registration and lifecycle operations', async () => {
     const options = deferred<ConnectMcpServerOptions>();

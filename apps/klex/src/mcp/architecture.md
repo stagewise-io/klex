@@ -11,6 +11,40 @@ The MCP module is the environment boundary between the agent core and external M
 
 The module exposes `onPushNotification()` to the MCP ingress extension installed in the default session. MCP access and MCP ingress are separate capabilities: providing an `Mcp` instance does not implicitly subscribe a session to push notifications.
 
+## Events extension (SEP-3415)
+
+Klex can also consume `io.modelcontextprotocol/events`, pinned to draft SEP commit
+`f77a5fe31b91c052dbfc2a37add98b9e84662b34`. Configure each server with optional
+`events: [{ name, arguments, delivery }]`; delivery defaults to push then poll.
+Webhook delivery and a server-side facade are not included.
+
+`connection.ts` registers the facade and captures stream JSON-RPC ids on the
+transport. `events-source` runs one loop per canonical `(name, arguments)` and
+registers with the same source registry as Push Notifications. Its event IDs
+include namespace, origin, subscription hash and upstream ID. Push retains its
+existing namespace-scoped inbox and ACK behavior. Both use the existing
+`onPushNotification()` compatibility envelope and session ingress.
+
+Events delivery registers an unsettled receipt before publishing. The driver
+waits for `acknowledgeDeliveredEvents()` before advancing its in-memory cursor.
+Pause aborts the source and releases waiters. **Cursors are not persisted and a
+new connection starts with null. Events during disconnection or process downtime
+may be lost.** This does not weaken the durable Push Notification queue.
+
+Configured arguments and payloads are validated against descriptor JSON Schemas
+using Zod conversion; unsupported schema features fail closed. Limits are 32
+subscriptions per connection, 100 events per poll batch, 64 KiB per payload,
+4096 dedup entries and 128 queued stream messages. Slow consumers apply
+quiescence backpressure. JSON content is explicitly untrusted; arguments and
+upstream error details are excluded from source logs.
+
+Server status exposes `supportsEvents` and subscription mode/lifecycle/gap state.
+For servers also supporting Push Notifications, the shared listen request adds
+`eventsListChanged`; a change re-lists and retries terminated subscriptions.
+Events-only servers currently refresh discovery only on reconnection. Config
+schema 10→11 adds the optional subscriptions without transforming existing data;
+released schemas and fixtures remain frozen.
+
 ## Realtime Media boundary
 
 The MCP module exposes an independent `io.stagewise/realtime-media` control-plane facade: capability negotiation, an ephemeral notification stream, namespace-addressed accept/reject/end calls, and process-local availability events. Realtime notifications never enter the durable Push Notification inbox. Media transport, LiveKit connections, and realtime model sessions remain outside this module. Realtime capability registration is startup-gated; changing the mode requires a process restart.

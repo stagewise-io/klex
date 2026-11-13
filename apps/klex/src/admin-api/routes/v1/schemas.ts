@@ -145,6 +145,18 @@ const mcpServerInfoSchema = z
     toolCount: z.number().int().min(0),
     resourceCount: z.number().int().min(0),
     supportsPushNotifications: z.boolean(),
+    supportsEvents: z.boolean().optional(),
+    eventSubscriptions: z
+      .array(
+        z.object({
+          name: z.string(),
+          sourceKey: z.string(),
+          delivery: z.enum(['push', 'poll']).optional(),
+          status: z.enum(['starting', 'active', 'terminated', 'paused']),
+          gap: z.boolean(),
+        }),
+      )
+      .optional(),
     supportsRealtimeMedia: z.boolean(),
     supportsResourceSubscription: z.boolean(),
     transport: z.enum(['stdio', 'http']),

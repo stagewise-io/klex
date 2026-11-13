@@ -658,10 +658,29 @@ export class GeminiLiveSession implements RealtimeModelSession {
     clearTimeout(outage.graceTimer);
     clearTimeout(outage.retryTimer);
     const resumed = this.connectionHandle !== undefined;
-    const replayedItems = resumed
-      ? this.replayUnconfirmed(token)
-      : this.seedFreshSession(token);
-    const bufferedAudioChunks = this.flushAudioBacklog(token, resumed);
+    // Gap audio must precede anything that completes a turn, or the model
+    // starts answering before it heard the caller.
+    let replayedItems: number;
+    let bufferedAudioChunks: number;
+    if (resumed) {
+      bufferedAudioChunks = this.flushAudioBacklog(token, true);
+      replayedItems = this.replayUnconfirmed(token);
+    } else {
+      const seed = this.freshSessionSeed();
+      if (seed.history.length > 0)
+        this.sendOn(token, {
+          clientContent: { turns: seed.history, turnComplete: false },
+        });
+      bufferedAudioChunks = this.flushAudioBacklog(token, false);
+      if (seed.last)
+        this.sendOn(token, {
+          clientContent: {
+            turns: [seed.last],
+            turnComplete: this.awaitingResponse,
+          },
+        });
+      replayedItems = seed.history.length + (seed.last ? 1 : 0);
+    }
     const durationMs = Date.now() - outage.startedAt;
     const outcome = resumed ? 'resumed' : 'fresh';
     const metric = reconnectInstruments();
@@ -702,33 +721,44 @@ export class GeminiLiveSession implements RealtimeModelSession {
    * state. Tool results become context: the resumed state predates the call.
    */
   private replayUnconfirmed(token: number): number {
-    for (const item of this.unconfirmed)
-      this.sendOn(
-        token,
-        textContent(
-          item.text,
-          item.kind === 'tool-result' ? true : item.turnComplete,
+    if (this.unconfirmed.length === 0) return 0;
+    this.sendOn(token, {
+      clientContent: {
+        turns: this.unconfirmed.map((item) => ({
+          role: 'user',
+          parts: [{ text: item.text }],
+        })),
+        turnComplete: this.unconfirmed.some(
+          (item) => item.kind === 'tool-result' || item.turnComplete,
         ),
-      );
+      },
+    });
     return this.unconfirmed.length;
   }
 
-  /** Rebuilds a new provider session from canonical history plus this call. */
-  private seedFreshSession(token: number): number {
+  /**
+   * Rebuilds a new provider session from canonical history plus this call.
+   * The newest call entry is split off so it can complete the turn after
+   * the gap audio.
+   */
+  private freshSessionSeed(): {
+    history: GeminiContentTurn[];
+    last?: GeminiContentTurn;
+  } {
     this.unconfirmed = [];
     this.audioSinceHandle = [];
-    const turns: GeminiContentTurn[] = [
-      ...toGeminiContentTurns(this.context?.messages ?? []),
-      ...this.callLog.map((entry) => ({
-        role: entry.role,
-        parts: [{ text: entry.text }],
-      })),
-    ];
-    if (turns.length > 0)
-      this.sendOn(token, {
-        clientContent: { turns, turnComplete: this.awaitingResponse },
-      });
-    return turns.length;
+    const callTurns: GeminiContentTurn[] = this.callLog.map((entry) => ({
+      role: entry.role,
+      parts: [{ text: entry.text }],
+    }));
+    const last = callTurns.pop();
+    return {
+      history: [
+        ...toGeminiContentTurns(this.context?.messages ?? []),
+        ...callTurns,
+      ],
+      ...(last && { last }),
+    };
   }
 
   /**

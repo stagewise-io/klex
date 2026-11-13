@@ -683,14 +683,8 @@ class ApplicationModule implements Application {
       createSkillsExt(skillRegistry),
       createMcpIngressExt(),
       createVoiceCapabilityExt({
-        hasVoiceModel: () => {
-          try {
-            return providerRegistry.resolveRealtimeProvider() !== undefined;
-          } catch {
-            // An unreadable provider state says nothing about voice.
-            return true;
-          }
-        },
+        hasVoiceModel: () =>
+          providerRegistry.resolveRealtimeProvider() !== undefined,
       }),
       createMemoryExt({ activities }),
       createLearningExt({

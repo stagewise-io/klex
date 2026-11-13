@@ -49,6 +49,7 @@ export interface StreamDriverOptions {
   cursor?: string | null;
   maxAgeMs?: number;
   heartbeatMs?: number;
+  activationTimeoutMs?: number;
   signal: AbortSignal;
   /**
    * Same contract as the poll driver. Resolve = durably handled, so the
@@ -101,6 +102,10 @@ export async function runStreamLoop(
     let consumerFailed = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let grantMs: number | undefined;
+    const activationTimer = setTimeout(() => {
+      stalled = true;
+      connection.abort();
+    }, options.activationTimeoutMs ?? 30_000);
     let queued = 0;
 
     const arm = (): void => {
@@ -145,6 +150,7 @@ export async function runStreamLoop(
 
     const sink: StreamSink = {
       active(params) {
+        clearTimeout(activationTimer);
         if (
           params.heartbeatMs !== undefined &&
           (!Number.isFinite(params.heartbeatMs) || params.heartbeatMs <= 0)
@@ -211,6 +217,7 @@ export async function runStreamLoop(
     } catch (error) {
       openError = error;
     }
+    clearTimeout(activationTimer);
     if (timer !== undefined) clearTimeout(timer);
     await tail;
 

@@ -27,6 +27,16 @@ function makeTransport(log: Msg[]) {
       log.push(message);
       const reply = (m: object) =>
         queueMicrotask(() => transport.onmessage?.({ jsonrpc: '2.0', ...m }));
+      if (message.method === 'server/discover') {
+        reply({
+          id: message.id,
+          result: {
+            supportedVersions: ['2026-07-28'],
+            capabilities: { extensions: { [EVENTS_EXTENSION_ID]: {} } },
+            serverInfo: { name: 'fake', version: '0' },
+          },
+        });
+      }
       if (message.method === 'initialize') {
         reply({
           id: message.id,
@@ -74,32 +84,42 @@ function recorder() {
 }
 
 describe('createSdkStreamPort (real SDK Client)', () => {
-  it('demultiplexes two concurrent streams by subscription id', async () => {
-    const log: Msg[] = [];
-    const transport = makeTransport(log);
-    const tap = createRequestIdTap(transport);
-    const client = new Client({ name: 'port', version: '0' }, {} as never);
-    await client.connect(transport);
-    const port = createSdkStreamPort(client, tap);
+  it.each(['legacy', 'modern'] as const)(
+    'demultiplexes concurrent streams with the %s handshake',
+    async (era) => {
+      const log: Msg[] = [];
+      const transport = makeTransport(log);
+      const tap = createRequestIdTap(transport);
+      const client = new Client(
+        { name: 'port', version: '0' },
+        era === 'modern'
+          ? ({ versionNegotiation: { mode: { pin: '2026-07-28' } } } as never)
+          : ({} as never),
+      );
+      await client.connect(transport);
+      if (era === 'modern')
+        expect(log.some((m) => m.method === 'server/discover')).toBe(true);
+      const port = createSdkStreamPort(client, tap);
 
-    const a = recorder();
-    const b = recorder();
-    const abort = new AbortController();
-    const opens = [
-      port.open({ name: 'a', cursor: null }, a.sink, abort.signal),
-      port.open({ name: 'b', cursor: null }, b.sink, abort.signal),
-    ];
-    await new Promise((r) => setTimeout(r, 50));
+      const a = recorder();
+      const b = recorder();
+      const abort = new AbortController();
+      const opens = [
+        port.open({ name: 'a', cursor: null }, a.sink, abort.signal),
+        port.open({ name: 'b', cursor: null }, b.sink, abort.signal),
+      ];
+      await new Promise((r) => setTimeout(r, 50));
 
-    expect(a.got).toEqual(['active:a-0', 'event:a-1']);
-    expect(b.got).toEqual(['active:b-0', 'event:b-1']);
+      expect(a.got).toEqual(['active:a-0', 'event:a-1']);
+      expect(b.got).toEqual(['active:b-0', 'event:b-1']);
 
-    const sent = log.filter((m) => m.method === EVENTS_STREAM_METHOD);
-    expect(sent).toHaveLength(2);
-    expect(sent[0]?.id).not.toBe(sent[1]?.id);
+      const sent = log.filter((m) => m.method === EVENTS_STREAM_METHOD);
+      expect(sent).toHaveLength(2);
+      expect(sent[0]?.id).not.toBe(sent[1]?.id);
 
-    abort.abort();
-    await Promise.all(opens);
-    await client.close();
-  });
+      abort.abort();
+      await Promise.all(opens);
+      await client.close();
+    },
+  );
 });

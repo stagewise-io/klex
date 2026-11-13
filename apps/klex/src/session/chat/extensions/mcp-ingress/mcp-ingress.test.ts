@@ -946,7 +946,7 @@ describe('MCP Ingress extension', () => {
 
     const prompt = ext.getSystemPromptPart?.() ?? '';
     expect(prompt).toContain('live resource');
-    expect(prompt).toContain('<resource');
+    expect(prompt).toContain('`data` divider');
     expect(prompt).not.toContain('Open resource windows (authoritative)');
   });
 

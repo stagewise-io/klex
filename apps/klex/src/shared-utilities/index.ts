@@ -6,6 +6,7 @@ export {
   dataContentToBuffer,
   extractBufferFromUrl,
 } from './buffer-utils';
+export { loadSharp, type SharpFn } from './sharp';
 export {
   extractFileData,
   genFailure,

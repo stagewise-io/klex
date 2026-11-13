@@ -12,7 +12,14 @@ describe('VoiceCapabilityExt — getSystemPromptPart', () => {
     );
     const part = ext.getSystemPromptPart?.();
     expect(part).toContain('cannot take calls, join voice channels');
-    expect(part).toContain('voice conversation model must first be added');
+    expect(part).toContain('configure and connect a voice conversation model');
+  });
+
+  it('does not tell the user where to add the voice model', () => {
+    const ext = createVoiceCapabilityExt({ hasVoiceModel: () => false }).create(
+      deps,
+    );
+    expect(ext.getSystemPromptPart?.()).not.toContain('Klex Cloud');
   });
 
   it('adds nothing once a voice model resolves', () => {

@@ -6,39 +6,12 @@ import {
   dataContentToBuffer,
   estimatePartSize,
   extractBufferFromUrl,
+  loadSharp,
 } from '@/shared-utilities';
-
-// Lazy-load sharp — it's a native addon. In SEA builds, sharp's JS is
-// bundled into the blob and the native @img/sharp-* packages are copied to
-// dist/node_modules/@img/ during packaging (see package-exe.ts).
-// The build fails if native packages are missing, so this should always
-// succeed. The lazy loading remains as a safety net for dev/non-SEA runs.
-type SharpFn = typeof import('sharp')['default'];
-let sharpModule: SharpFn | null = null;
-let sharpChecked = false;
-
-function getSharp(): SharpFn | null {
-  if (sharpChecked) return sharpModule;
-  sharpChecked = true;
-  try {
-    // Use require() for CJS compatibility in SEA builds.
-    // In SEA builds `sharp` resolves to the ESM shim in build.ts, so esbuild
-    // compiles this require() into a namespace object ({ default, path }) rather
-    // than the callable sharp function. Unwrap `.default` or every sharp(...)
-    // call throws "is not a function" while isSharpAvailable() still reports
-    // true. Caught by `klex --verify-native`.
-    const loaded = require('sharp') as SharpFn | { default: SharpFn };
-    sharpModule =
-      typeof loaded === 'function' ? loaded : (loaded.default ?? null);
-  } catch {
-    sharpModule = null;
-  }
-  return sharpModule;
-}
 
 /** Returns true if sharp is available for image processing. */
 export function isSharpAvailable(): boolean {
-  return getSharp() !== null;
+  return loadSharp() !== null;
 }
 
 const DEFAULT_MAX_WIDTH = 2048;
@@ -216,7 +189,7 @@ async function transformImage(
   settings: EffectiveVision,
   originalFormat: string | undefined,
 ): Promise<{ buffer: Buffer; format: ImageFormat }> {
-  const sharp = getSharp();
+  const sharp = loadSharp();
   if (sharp === null) {
     throw new Error('sharp is not available — image processing disabled');
   }
@@ -290,7 +263,7 @@ export async function runOptimization(
   part: FilePart | ImagePart,
   settings: EffectiveVision,
 ): Promise<FilePart> {
-  const sharp = getSharp();
+  const sharp = loadSharp();
   if (sharp === null) {
     throw new Error('sharp is not available — image processing disabled');
   }

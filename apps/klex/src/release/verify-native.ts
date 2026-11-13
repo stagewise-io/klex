@@ -62,12 +62,12 @@ export async function verifyNativeDependencies(): Promise<
   readonly NativeProbeResult[]
 > {
   return [
-    // Mirrors the production require() in image-processing.ts, but without the
+    // Mirrors the production require() in shared-utilities/sharp.ts, but without the
     // try/catch that turns a load failure into a silent no-op. Encoding a real
     // image forces libvips to initialise, not just the addon to link.
     await probe('sharp', async () => {
       type SharpFn = typeof import('sharp')['default'];
-      // Mirrors the interop unwrap in image-processing.ts: the SEA shim is ESM,
+      // Mirrors the interop unwrap in shared-utilities/sharp.ts: the SEA shim is ESM,
       // so require() yields a namespace object here, not the callable.
       const loaded = require('sharp') as SharpFn | { default: SharpFn };
       const sharp = typeof loaded === 'function' ? loaded : loaded.default;
@@ -85,6 +85,12 @@ export async function verifyNativeDependencies(): Promise<
         },
       })
         .png()
+        .toBuffer();
+      // Realtime video encodes decoded RGBA frames to JPEG.
+      await sharp(new Uint8Array(2 * 2 * 4), {
+        raw: { channels: 4, height: 2, width: 2 },
+      })
+        .jpeg()
         .toBuffer();
     }),
 

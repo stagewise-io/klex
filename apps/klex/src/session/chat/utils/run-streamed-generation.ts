@@ -11,6 +11,7 @@ import {
   NoOutputGeneratedError,
   readUIMessageStream,
   streamText,
+  type TextStreamPart,
   toUIMessageStream,
 } from 'ai';
 
@@ -22,8 +23,6 @@ import type { ExtendedUIMessage } from '../message-types';
 import type { AgentTools } from '../tools';
 import { toolsWithoutExecute } from './tools-without-execute';
 
-export const DEFAULT_INITIAL_PROGRESS_TIMEOUT_MS = 90_000;
-
 export type StreamedGenerationOutput = {
   message: ExtendedUIMessage;
   finishReason: FinishReason;
@@ -31,14 +30,27 @@ export type StreamedGenerationOutput = {
   usage: LanguageModelUsage;
 };
 
+/**
+ * Stream liveness reported to {@link RunStreamedGenerationParams.onProgress}.
+ * `response`: the provider started streaming. `output`: the model produced
+ * usable output (non-empty text or reasoning, tool input, a tool call or a
+ * file). Empty deltas and part boundaries are not output.
+ */
+export type StreamProgress = 'response' | 'output';
+
 export interface RunStreamedGenerationParams {
   allowEmptyStop?: boolean;
   model: LanguageModel;
   modelMessages: ModelMessage[];
   tools: AgentTools;
   onUpdate: (msg: ExtendedUIMessage) => void;
+  onProgress?: (progress: StreamProgress) => void;
   abortSignal: AbortSignal;
-  initialProgressTimeoutMs?: number;
+  /**
+   * Once aborted, pending stream reads reject with its reason right away,
+   * even if the provider ignores the abort. Also abort `abortSignal`.
+   */
+  stallSignal?: AbortSignal;
   logger: ModuleLogger;
   modelContext: {
     providerType: string;
@@ -101,131 +113,101 @@ export async function runStreamedGeneration(
   // Capture the original so the classifier sees the real APICallError.
   let streamError: unknown;
 
-  const attemptAbortController = new AbortController();
-  const timeoutMs =
-    params.initialProgressTimeoutMs ?? DEFAULT_INITIAL_PROGRESS_TIMEOUT_MS;
-  let initialProgressTimer: ReturnType<typeof setTimeout> | undefined;
-  let timeoutError: Error | undefined;
-  let hasVisibleProgress = false;
-  let iterator: AsyncIterator<ExtendedUIMessage> | undefined;
-  let iteratorDone = false;
-  const forwardAbort = () => {
-    clearTimeout(initialProgressTimer);
-    attemptAbortController.abort(params.abortSignal.reason);
-  };
-  if (params.abortSignal.aborted) {
-    forwardAbort();
-  } else {
-    params.abortSignal.addEventListener('abort', forwardAbort, { once: true });
-  }
-  const initialProgressTimeout = new Promise<never>((_, reject) => {
-    if (timeoutMs > 0 && !params.abortSignal.aborted) {
-      initialProgressTimer = setTimeout(() => {
-        timeoutError = new Error(
-          `Initial generation progress timeout after ${timeoutMs}ms.`,
-        );
-        reject(timeoutError);
-        attemptAbortController.abort(timeoutError);
-      }, timeoutMs);
-    }
+  const result = streamText({
+    model: params.model,
+    tools: toolsWithoutExecute(params.tools),
+    instructions: {
+      role: 'system',
+      content: assembleInferenceInstructions(
+        params.basePrompt,
+        params.extensionSystemPromptParts ?? [],
+      ),
+    },
+    telemetry: {
+      isEnabled: true,
+      functionId: 'chat-session',
+      // The AI SDK's restricted telemetry dispatcher strips runtime
+      // context keys unless they are explicitly allow-listed here.
+      includeRuntimeContext: {
+        'conversation.id': true,
+        'conversation.compacted': true,
+        'conversation.providerType': true,
+        'conversation.providerId': true,
+        'conversation.modelId': true,
+      },
+    },
+    runtimeContext: {
+      'conversation.id': params.sessionId,
+      'conversation.compacted': params.compacted,
+      'conversation.providerType': params.modelContext.providerType,
+      'conversation.providerId': params.modelContext.providerId,
+      'conversation.modelId': params.modelContext.modelId,
+    },
+    abortSignal: params.abortSignal,
+    onError: ({ error }) => {
+      streamError ??= error;
+    },
+    ...(params.onProgress !== undefined && {
+      onChunk: ({ chunk }: { chunk: TextStreamPart<AgentTools> }) => {
+        if (chunk.type === 'start-step') params.onProgress?.('response');
+        else if (isOutputChunk(chunk)) params.onProgress?.('output');
+      },
+    }),
+    maxRetries: 0,
+    ...(params.reasoning !== undefined && { reasoning: params.reasoning }),
+    messages: params.modelMessages,
+    ...(params.providerOptions !== undefined && {
+      providerOptions: params.providerOptions,
+    }),
   });
-  const waitForProgress = <T>(pending: PromiseLike<T>): Promise<T> =>
-    hasVisibleProgress
-      ? Promise.resolve(pending)
-      : Promise.race([pending, initialProgressTimeout]);
 
+  const toolInputErrors = new Map<string, string>();
+  const uiMsgChunkStream = toUIMessageStream<AgentTools, ExtendedUIMessage>({
+    stream: result.stream,
+    generateMessageId: randomUUID,
+    tools: params.tools,
+    // This stream also becomes model history. Keep argument feedback so the
+    // model can correct its call, without exposing unrelated server errors.
+    onError: (error) => {
+      if (InvalidToolInputError.isInstance(error)) {
+        // The SDK emits the typed error first, then a tool-error containing
+        // error.toString(). Preserve both, or the second chunk hides the first.
+        toolInputErrors.set(error.toString(), error.message);
+        return error.message;
+      }
+      return (
+        (typeof error === 'string' ? toolInputErrors.get(error) : undefined) ??
+        'An error occurred.'
+      );
+    },
+  });
+  const uiMsgUpdateStream = readUIMessageStream<ExtendedUIMessage>({
+    stream: uiMsgChunkStream,
+    message: message,
+  });
+
+  let finishReason: FinishReason;
+  let rawFinishReason: unknown;
+  let usage: LanguageModelUsage;
+  const iterator = uiMsgUpdateStream[Symbol.asyncIterator]();
+  let iteratorDone = false;
+  const read = <T>(pending: PromiseLike<T>) =>
+    untilAborted(pending, params.stallSignal);
   try {
-    const result = streamText({
-      model: params.model,
-      tools: toolsWithoutExecute(params.tools),
-      instructions: {
-        role: 'system',
-        content: assembleInferenceInstructions(
-          params.basePrompt,
-          params.extensionSystemPromptParts ?? [],
-        ),
-      },
-      telemetry: {
-        isEnabled: true,
-        functionId: 'chat-session',
-        // The AI SDK's restricted telemetry dispatcher strips runtime
-        // context keys unless they are explicitly allow-listed here.
-        includeRuntimeContext: {
-          'conversation.id': true,
-          'conversation.compacted': true,
-          'conversation.providerType': true,
-          'conversation.providerId': true,
-          'conversation.modelId': true,
-        },
-      },
-      runtimeContext: {
-        'conversation.id': params.sessionId,
-        'conversation.compacted': params.compacted,
-        'conversation.providerType': params.modelContext.providerType,
-        'conversation.providerId': params.modelContext.providerId,
-        'conversation.modelId': params.modelContext.modelId,
-      },
-      abortSignal: attemptAbortController.signal,
-      onError: ({ error }) => {
-        streamError ??= error;
-      },
-      maxRetries: 0,
-      ...(params.reasoning !== undefined && { reasoning: params.reasoning }),
-      messages: params.modelMessages,
-      ...(params.providerOptions !== undefined && {
-        providerOptions: params.providerOptions,
-      }),
-    });
-
-    const toolInputErrors = new Map<string, string>();
-    const uiMsgChunkStream = toUIMessageStream<AgentTools, ExtendedUIMessage>({
-      stream: result.stream,
-      generateMessageId: randomUUID,
-      tools: params.tools,
-      // This stream also becomes model history. Keep argument feedback so the
-      // model can correct its call, without exposing unrelated server errors.
-      onError: (error) => {
-        if (InvalidToolInputError.isInstance(error)) {
-          // The SDK emits the typed error first, then a tool-error containing
-          // error.toString(). Preserve both, or the second chunk hides the first.
-          toolInputErrors.set(error.toString(), error.message);
-          return error.message;
-        }
-        return (
-          (typeof error === 'string'
-            ? toolInputErrors.get(error)
-            : undefined) ?? 'An error occurred.'
-        );
-      },
-    });
-    const uiMsgUpdateStream = readUIMessageStream<ExtendedUIMessage>({
-      stream: uiMsgChunkStream,
-      message: message,
-    });
-
-    let finishReason: FinishReason;
-    let rawFinishReason: unknown;
-    let usage: LanguageModelUsage;
-    iterator = uiMsgUpdateStream[Symbol.asyncIterator]();
-    while (true) {
-      const next = await waitForProgress(iterator.next());
+    for (;;) {
+      const next = await read(iterator.next());
       if (next.done) {
         iteratorDone = true;
         break;
       }
-      const uiMessage = next.value;
-      if (uiMessage.parts.length > 0) {
-        hasVisibleProgress = true;
-        clearTimeout(initialProgressTimer);
-      }
-      message = uiMessage;
-      params.onUpdate?.(uiMessage);
+      message = next.value;
+      params.onUpdate?.(next.value);
     }
 
-    finishReason = await waitForProgress(result.finishReason);
-    rawFinishReason = await waitForProgress(result.rawFinishReason);
-    usage = await waitForProgress(result.usage);
-    const warnings = await waitForProgress(result.warnings);
+    finishReason = await read(result.finishReason);
+    rawFinishReason = await read(result.rawFinishReason);
+    usage = await read(result.usage);
+    const warnings = await read(result.warnings);
     for (const warning of warnings ?? []) {
       if (warning.type === 'unsupported' || warning.type === 'compatibility') {
         params.logger.warn(
@@ -234,53 +216,75 @@ export async function runStreamedGeneration(
         );
       }
     }
-
-    if (
-      message.parts.length === 0 &&
-      !(params.allowEmptyStop && finishReason === 'stop')
-    ) {
-      throw new EmptyResponseBodyError({
-        message: 'No content received during generation.',
-      });
-    }
-
-    const response: StreamedGenerationOutput = {
-      message: message,
-      finishReason: finishReason,
-      error: finishReason === 'error' ? rawFinishReason : undefined,
-      usage: usage,
-    };
-
-    params.logger.trace(
-      {
-        'event.name': 'generation.finished',
-        generationId: id,
-        sessionId: params.sessionId,
-        finishReason,
-        partCount: message.parts.length,
-        hasError: response.error !== undefined,
-      },
-      'Generation finished',
-    );
-    return response;
   } catch (e) {
-    if (timeoutError) {
-      params.abortSignal.throwIfAborted();
-      throw timeoutError;
-    }
     throw attachStreamError(e, streamError);
   } finally {
-    clearTimeout(initialProgressTimer);
-    params.abortSignal.removeEventListener('abort', forwardAbort);
-    if (iterator && !iteratorDone) {
-      // An abort-ignoring iterator can also stall in return(). Request cleanup
-      // without delaying fallback or letting cleanup mask the original error.
-      try {
-        void Promise.resolve(iterator.return?.()).catch(() => {});
-      } catch {}
-    }
+    // Not awaited: a stalled stream may never settle its return().
+    if (!iteratorDone) void Promise.resolve(iterator.return?.()).catch(noop);
+  }
+
+  if (
+    message.parts.length === 0 &&
+    !(params.allowEmptyStop && finishReason === 'stop')
+  ) {
+    throw new EmptyResponseBodyError({
+      message: 'No content received during generation.',
+    });
+  }
+
+  const response: StreamedGenerationOutput = {
+    message: message,
+    finishReason: finishReason,
+    error: finishReason === 'error' ? rawFinishReason : undefined,
+    usage: usage,
+  };
+
+  params.logger.trace(
+    {
+      'event.name': 'generation.finished',
+      generationId: id,
+      sessionId: params.sessionId,
+      finishReason,
+      partCount: message.parts.length,
+      hasError: response.error !== undefined,
+    },
+    'Generation finished',
+  );
+  return response;
+}
+
+function isOutputChunk(chunk: TextStreamPart<AgentTools>): boolean {
+  switch (chunk.type) {
+    case 'text-delta':
+    case 'reasoning-delta':
+      return chunk.text.length > 0;
+    case 'tool-input-delta':
+      return chunk.delta.length > 0;
+    case 'tool-call':
+    case 'file':
+    case 'reasoning-file':
+      return true;
+    default:
+      return false;
   }
 }
+
+function untilAborted<T>(
+  pending: PromiseLike<T>,
+  signal: AbortSignal | undefined,
+): Promise<T> {
+  if (signal === undefined) return Promise.resolve(pending);
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener('abort', onAbort, { once: true });
+    Promise.resolve(pending)
+      .then(resolve, reject)
+      .finally(() => signal.removeEventListener('abort', onAbort));
+  });
+}
+
+function noop(): void {}
 
 /**
  * Re-wraps a cause-less NoOutputGeneratedError with the error captured

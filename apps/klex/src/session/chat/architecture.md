@@ -153,6 +153,17 @@ Model-message conversion projects media for the selected model: if the model dec
 
 Owns the retry loop, model fallback, error classification, message salvage, stream progress tracking, and the ToolDispatcher. On failure, `decideOutcome` (pure) maps classification + content state to a coarse outcome, then `applyOutcome` performs side effects and refines it. A request rejection without content ends the step with `requestRejected: true` and no model fallback; the turn decides how to continue.
 
+### Stream deadlines
+
+Each attempt runs under a `StreamWatchdog` that aborts it with a typed `GenerationStallError` when it makes no usable progress. Usable progress is a non-empty text, reasoning, or tool-input delta, a complete tool call, or a file; response headers, step boundaries, empty blocks, and empty deltas are not. Two budgets apply:
+
+- **First output** starts when the request is sent, so it covers the wait for response headers and for the first usable part. A stall reports stage `response` if headers never arrived, otherwise `first-output`.
+- **Idle** starts at the first usable part and resets on every later one, so a slow stream that keeps producing never times out. A stall reports stage `idle`.
+
+`resolveStreamDeadlines` derives the budgets from the model entry when the step resolves its model: reasoning capability, the effort actually applied, and the provider type (local Ollama gets a longer first-output budget). The policy is code-defined, not persisted configuration. The watchdog has its own abort signal, separate from the caller's, so a stall is never mistaken for a user cancel. Stream reads also race the stall signal, so a provider that ignores the abort cannot hang the attempt.
+
+Telemetry: `step.generation_invoked` carries both budgets; `step.first_output_received` marks the first usable part; `step.generation_finished` carries `generation.timeToResponseMs` and `generation.timeToFirstOutputMs` when reached; `step.generation_stalled` carries the stage, elapsed time, and budget.
+
 ## ToolDispatcher
 
 At-most-once tool execution via a `dispatchedToolCallIds` set. Owns tool lookup, execution, and in-place state mutation. Decoupled from generation abort. Post-generation sweep catches tool calls that reached `input-available` after the stream ended. Tool execution is bounded by a configurable timeout.
@@ -309,6 +320,7 @@ On startup, any instance that has no end marker is marked as ended with reason `
 ## Error handling
 
 - **Model errors** (5xx, 408, 429, 401/403, timeouts, no output) → fallback to next model, retry
+- **Stalls** — a `GenerationStallError` is a model error. Before the first usable part, the message holds at most empty parts and is discarded; after it, the partial message is salvaged
 - **Request rejections** (other 4xx, including 400 and 404) → no fallback within the step; extensions degrade injected content, the turn retries within its failure budget, then ends without session backoff
 - **Fatal errors** (invalid prompt, raised locally before any request) → terminate session
 - **Salvage** — partial content with repairable issues → push to history, force next step; a salvaged request rejection is still reported as `requestRejected`

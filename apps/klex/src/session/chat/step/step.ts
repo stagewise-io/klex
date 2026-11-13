@@ -7,7 +7,7 @@ import { isToolUIPart, type LanguageModel, type ModelMessage } from 'ai';
 import type { ModuleLogger } from '@stagewise/logger';
 
 import type { Config } from '@/config';
-import type { ProviderModelResolver } from '@/provider-registry';
+import type { EffortIntent, ProviderModelResolver } from '@/provider-registry';
 import {
   convertInferenceHistory,
   runInferenceContextTransformers,
@@ -32,6 +32,10 @@ import {
   createGenerationRunner,
   type GenerationRunner,
 } from './generation-runner';
+import {
+  resolveStreamDeadlines,
+  type StreamDeadlines,
+} from './stream-deadlines';
 
 /**
  * Dependencies required to run a single step within a turn.
@@ -306,6 +310,8 @@ class StepModule implements Step {
         let resolvedModel: ResolvedModel;
         let providerOptions: Record<string, JSONObject> | undefined;
         let effortReasoning: LanguageModelV4CallOptions['reasoning'];
+        let appliedEffort: EffortIntent | undefined;
+        let streamDeadlines: StreamDeadlines;
         let telemetryModelContext: {
           providerType: string;
           providerId: string;
@@ -358,17 +364,19 @@ class StepModule implements Step {
                 entry,
                 instinct.effort.intent,
               );
+              const effortApplied =
+                instinct.effort.mode === 'automatic' &&
+                (effort.status === 'exact' ||
+                  effort.status === 'approximate' ||
+                  effort.status === 'tentative');
+              if (effortApplied) appliedEffort = effort.requested;
               stepSpan.addEvent('step.effort', {
                 'effort.mode': instinct.effort.mode,
                 'effort.requested': effort.requested,
                 'effort.status': effort.status,
                 'effort.effective': String(effort.effective ?? 'unknown'),
                 'effort.reason': instinct.effort.reason,
-                'effort.applied':
-                  instinct.effort.mode === 'automatic' &&
-                  (effort.status === 'exact' ||
-                    effort.status === 'approximate' ||
-                    effort.status === 'tentative'),
+                'effort.applied': effortApplied,
                 'effort.resolution_reason': effort.reason,
                 'effort.provider_id': effort.identity.providerId,
                 'effort.provider_type': effort.identity.providerType,
@@ -393,6 +401,11 @@ class StepModule implements Step {
               providerId: resolved.providerId,
               modelId: resolved.modelId,
             };
+            streamDeadlines = resolveStreamDeadlines({
+              providerType: resolved.providerType,
+              capabilities: info.capabilities,
+              ...(appliedEffort !== undefined && { effort: appliedEffort }),
+            });
             resolvedModel = {
               reference: entry,
               modelId,
@@ -704,6 +717,7 @@ class StepModule implements Step {
             compacted,
             model,
             modelContext: telemetryModelContext,
+            streamDeadlines,
             telemetryMetrics: this.deps.telemetryMetrics,
             ...(providerOptions !== undefined && { providerOptions }),
             ...(effortReasoning !== undefined && {

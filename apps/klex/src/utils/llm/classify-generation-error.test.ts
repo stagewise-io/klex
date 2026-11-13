@@ -13,6 +13,7 @@ import {
 import { describe, expect, it } from 'vitest';
 
 import { classifyGenerationError } from './classify-generation-error';
+import { GenerationStallError } from './generation-stall-error';
 
 /** Creates a DOMException-like AbortError. */
 function makeAbortError(
@@ -328,6 +329,33 @@ describe('classifyGenerationError', () => {
       expect(result.isModelError).toBe(false);
       expect(result.isAbort).toBe(false);
       expect(result.reason).toBe('unknown error');
+    });
+  });
+
+  describe('generation stalls', () => {
+    it.each(['response', 'first-output', 'idle'] as const)(
+      'classifies a %s stall as a model error by type',
+      (stage) => {
+        expect(
+          classifyGenerationError(new GenerationStallError(stage, 1, 1)),
+        ).toEqual({
+          isModelError: true,
+          isFatal: false,
+          isAbort: false,
+          isRequestRejected: false,
+          reason: `generation stalled (${stage})`,
+        });
+      },
+    );
+
+    it('classifies a stall wrapped as NoOutputGeneratedError cause', () => {
+      const result = classifyGenerationError(
+        new NoOutputGeneratedError({
+          cause: new GenerationStallError('idle', 1, 1),
+        }),
+      );
+      expect(result.isModelError).toBe(true);
+      expect(result.isAbort).toBe(false);
     });
   });
 

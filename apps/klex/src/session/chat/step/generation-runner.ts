@@ -19,6 +19,7 @@ import type { TelemetryMetrics } from '@/telemetry-metrics';
 import {
   classifyGenerationError,
   type GenerationErrorClassification,
+  type GenerationStallError,
 } from '@/utils/llm';
 
 import type {
@@ -28,13 +29,18 @@ import type {
 import type { ExtendedUIMessage } from '../message-types';
 import type { AgentTools } from '../tools';
 import type { ModelFallbackManager } from '../utils/model-fallback-manager';
-import { repairPartialMessage } from '../utils/repair-partial-message';
 import {
   extractMissingOpenAIItemId,
   stripOpenAIItemReferences,
 } from '../utils/repair-missing-item-references';
+import { repairPartialMessage } from '../utils/repair-partial-message';
 import { runStreamedGeneration } from '../utils/run-streamed-generation';
 import { startChildSpan } from '../utils/tracing';
+import {
+  resolveStreamDeadlines,
+  type StreamDeadlines,
+} from './stream-deadlines';
+import { StreamWatchdog } from './stream-watchdog';
 import { ToolDispatcher } from './tool-dispatcher';
 
 export interface GenerationRunnerDependencies {
@@ -67,6 +73,11 @@ export interface GenerationRunnerDependencies {
   /** Provider-specific options resolved from the model selection entry. */
   providerOptions?: Record<string, JSONObject>;
   reasoning?: LanguageModelV4CallOptions['reasoning'];
+  /**
+   * No-progress budgets for each attempt, resolved from the model entry and
+   * applied effort. Defaults to the policy for an unknown model.
+   */
+  streamDeadlines?: StreamDeadlines;
   /**
    * System prompt parts collected from extensions at the beginning of
    * the step. Appended to the base system prompt (separated by blank
@@ -167,6 +178,11 @@ export class GenerationRunner {
     let lastUsage: LanguageModelUsage | null = null;
     let lastFinishReason: FinishReason | null = null;
     let lastModelId: string | null = null;
+    const deadlines =
+      this.deps.streamDeadlines ??
+      resolveStreamDeadlines({
+        providerType: this.deps.modelContext.providerType,
+      });
 
     while (attempt < MAX_GENERATION_ATTEMPTS) {
       attempt++;
@@ -191,7 +207,10 @@ export class GenerationRunner {
 
       stepSpan.addEvent('step.generation_invoked', {
         'generation.attempt': attempt,
+        'generation.deadline.firstOutputMs': deadlines.firstOutputMs,
+        'generation.deadline.idleMs': deadlines.idleMs,
       });
+      const watchdog = new StreamWatchdog(deadlines);
 
       try {
         const response = await runStreamedGeneration({
@@ -199,7 +218,18 @@ export class GenerationRunner {
           model,
           modelMessages: this.deps.modelMessages,
           tools: this.deps.tools,
-          abortSignal: generationAbortController.signal,
+          abortSignal: AbortSignal.any([
+            generationAbortController.signal,
+            watchdog.signal,
+          ]),
+          stallSignal: watchdog.signal,
+          onProgress: (progress) => {
+            if (!watchdog.record(progress)) return;
+            stepSpan.addEvent('step.first_output_received', {
+              'generation.attempt': attempt,
+              ...timingAttributes(watchdog),
+            });
+          },
           logger: this.deps.logger,
           modelContext: {
             ...this.deps.modelContext,
@@ -237,6 +267,7 @@ export class GenerationRunner {
           'generation.usage.inputTokens': response.usage.inputTokens,
           'generation.usage.outputTokens': response.usage.outputTokens,
           'generation.attempt': attempt,
+          ...timingAttributes(watchdog),
         });
         stepSpan.setAttribute('step.finishReason', response.finishReason);
         stepSpan.setAttribute(
@@ -262,10 +293,15 @@ export class GenerationRunner {
         } else {
           // Non-good finish — check for abort first, then classify.
           const isAborted = generationAbortController.signal.aborted;
+          const stall = isAborted ? undefined : watchdog.stall;
+          if (stall) this.recordStall(stall, attempt, currentModelId, watchdog);
+          const responseError = stall ?? response.error;
           const hasContent =
-            response.message !== null && response.message.parts.length > 0;
+            !stalledBeforeOutput(stall) &&
+            response.message !== null &&
+            response.message.parts.length > 0;
           if (!isAborted && !hasContent && !repairedMissingItems) {
-            const missingItemId = extractMissingOpenAIItemId(response.error);
+            const missingItemId = extractMissingOpenAIItemId(responseError);
             if (
               missingItemId !== null &&
               stripOpenAIItemReferences(messages, this.deps.modelMessages)
@@ -286,13 +322,13 @@ export class GenerationRunner {
             }
           }
           const classification =
-            response.finishReason === 'error'
-              ? classifyGenerationError(response.error)
+            stall || response.finishReason === 'error'
+              ? classifyGenerationError(responseError)
               : null;
           lastClassification = classification;
           if (!isAborted && !classification?.isAbort)
             generationFailure = summarizeGenerationFailure(
-              response.error,
+              responseError,
               this.deps.modelContext,
               classification?.reason,
             );
@@ -309,15 +345,21 @@ export class GenerationRunner {
             response.finishReason,
           );
         }
-      } catch (e) {
+      } catch (thrown) {
+        const isAborted = generationAbortController.signal.aborted;
+        // A stalled stream can reject with an SDK abort error; report the stall.
+        const stall = isAborted ? undefined : watchdog.stall;
+        const e = stall ?? thrown;
         stepSpan.setAttribute('step.chunkCount', chunkCount);
         stepSpan.recordException(e as Error);
         stepSpan.setAttribute('step.error', String(e));
         this.deps.logger.error({ attempt }, 'Generation failed', e);
+        if (stall) this.recordStall(stall, attempt, currentModelId, watchdog);
 
-        const isAborted = generationAbortController.signal.aborted;
         const hasContent =
-          latestMessage !== null && latestMessage.parts.length > 0;
+          !stalledBeforeOutput(stall) &&
+          latestMessage !== null &&
+          latestMessage.parts.length > 0;
         if (!isAborted && !hasContent && !repairedMissingItems) {
           const missingItemId = extractMissingOpenAIItemId(e);
           if (
@@ -359,6 +401,8 @@ export class GenerationRunner {
           latestMessage,
           'exception',
         );
+      } finally {
+        watchdog.stop();
       }
 
       // Shared outcome handling.
@@ -507,6 +551,32 @@ export class GenerationRunner {
             part.state === 'approval-responded',
         )) ||
       this.deps.modelMessages.at(-1)?.role === 'tool'
+    );
+  }
+
+  private recordStall(
+    stall: GenerationStallError,
+    attempt: number,
+    modelId: string,
+    watchdog: StreamWatchdog,
+  ): void {
+    this.deps.stepSpan.addEvent('step.generation_stalled', {
+      'generation.attempt': attempt,
+      'generation.modelId': modelId,
+      'generation.stall.stage': stall.stage,
+      'generation.stall.elapsedMs': stall.elapsedMs,
+      'generation.stall.budgetMs': stall.budgetMs,
+      ...timingAttributes(watchdog),
+    });
+    this.deps.logger.warn(
+      {
+        attempt,
+        modelId,
+        stage: stall.stage,
+        elapsedMs: stall.elapsedMs,
+        budgetMs: stall.budgetMs,
+      },
+      'Generation made no usable progress within its deadline — aborting the attempt',
     );
   }
 
@@ -724,6 +794,26 @@ function extractToolCalls(message: ExtendedUIMessage | null): ToolCallInfo[] {
     toolCalls.push(info);
   }
   return toolCalls;
+}
+
+/**
+ * Before its first usable output a stalled message holds at most empty parts
+ * (e.g. an opened reasoning block), so it is discarded rather than salvaged.
+ */
+function stalledBeforeOutput(stall: GenerationStallError | undefined): boolean {
+  return stall !== undefined && stall.stage !== 'idle';
+}
+
+function timingAttributes(watchdog: StreamWatchdog): Record<string, number> {
+  const { timeToResponseMs, timeToFirstOutputMs } = watchdog;
+  return {
+    ...(timeToResponseMs !== undefined && {
+      'generation.timeToResponseMs': timeToResponseMs,
+    }),
+    ...(timeToFirstOutputMs !== undefined && {
+      'generation.timeToFirstOutputMs': timeToFirstOutputMs,
+    }),
+  };
 }
 
 /**

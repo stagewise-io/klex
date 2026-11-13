@@ -830,15 +830,15 @@ describe('ChatSession instinct integration', () => {
     try {
       await session.start();
       await send('Initial input');
-      // Existing Critical-input semantics include a final check-retry turn.
-      expect(contexts).toHaveLength(3);
+      // The next clean step consumes the Critical input within this turn.
+      expect(contexts).toHaveLength(2);
       expect(contexts[0]?.signal.aborted).toBe(true);
       expect(contexts[1]?.delta.initial).toBe(true);
       expect(
         contexts[1]?.delta.added.some((message) => message.id === 'interrupt'),
       ).toBe(true);
       expect(completed[0]?.instinctAborted).toBe(true);
-      expect(mainPrompts).toHaveLength(2);
+      expect(mainPrompts).toHaveLength(1);
       expect(
         session
           .getMessages()

@@ -204,11 +204,14 @@ class ChatSessionModule implements AgentSession {
   private backoffInterrupt: (() => void) | null = null;
 
   /**
-   * Watermarks for non-deferrable input received while the loop is active.
-   * Only a clean step consumes the input present when that step began.
+   * Watermarks for non-deferrable input that entered history while the loop
+   * was active. Counted when flushed from pendingImmediate, not on receipt,
+   * so queued input is never mistaken for input a model could see. Only a
+   * clean step consumes the input present when that step began; the loop
+   * runs a check-retry turn while appended input is unconsumed.
    */
-  private nonDeferrableInputSeq = 0;
-  private consumedNonDeferrableInputSeq = 0;
+  private appendedInputSeq = 0;
+  private consumedInputSeq = 0;
 
   /**
    * Set when any input arrives while the loop is idle.
@@ -1028,6 +1031,9 @@ class ChatSessionModule implements AgentSession {
    */
   private flushPendingImmediate = (): void => {
     if (this.pendingImmediate.length > 0) {
+      // Every queued entry is one non-deferrable, non-lease-consumed input:
+      // a lease is only issued after the loop exits, and it flushes first.
+      this.appendedInputSeq += this.pendingImmediate.length;
       this.messages.push(...this.pendingImmediate);
       this.pendingImmediate = [];
     }
@@ -1281,12 +1287,9 @@ class ChatSessionModule implements AgentSession {
       this.backoffInterrupt();
     }
 
-    // Track that new non-deferrable input arrived during an active turn.
-    // Deferrable input is buffered and will be drained at the next turn
-    // start, so it does not need a check-retry turn.
-    if (this.loopActive && urgency !== SessionInboxUrgency.Deferrable) {
-      this.nonDeferrableInputSeq++;
-    }
+    // Non-deferrable input that arrives while the loop is active is queued
+    // in pendingImmediate and counted when flushed into history. Deferrable
+    // input is drained at the next turn start and needs no check-retry.
 
     // If no turn is active, flag that there is pending input and
     // start the loop. The flag ensures the loop doesn't go idle
@@ -1352,7 +1355,10 @@ class ChatSessionModule implements AgentSession {
     await this.idleCheckpointApply;
 
     let needsBackoffRetry = false;
-    let needsCheckRetry = false;
+    // Whether the previous turn's outcome permits a check-retry turn for
+    // input no clean step consumed. A backoff retry reviews history anyway.
+    let checkRetryAllowed = false;
+    let afterTurn = false;
 
     try {
       while (true) {
@@ -1368,6 +1374,32 @@ class ChatSessionModule implements AgentSession {
           return;
         }
 
+        // Input queued between turns (backoff wait, transcript writes, idle
+        // checkpoint apply) enters history before any idle or retry decision.
+        this.flushPendingImmediate();
+        const hasUnconsumedInput =
+          this.appendedInputSeq > this.consumedInputSeq;
+        const needsCheckRetry = checkRetryAllowed && hasUnconsumedInput;
+        if (afterTurn) {
+          const watermark = {
+            'klex.session.appended_input_seq': this.appendedInputSeq,
+            'klex.session.consumed_input_seq': this.consumedInputSeq,
+            'klex.session.check_retry_scheduled': needsCheckRetry,
+          };
+          this.sessionSpan.addEvent('session.input_watermark', watermark);
+          this.deps.logger.debug(
+            {
+              'event.name': 'session.input_watermark',
+              'klex.session.id': this.sessionId,
+              ...watermark,
+            },
+            needsCheckRetry
+              ? 'Check-retry turn scheduled for unconsumed input'
+              : 'No unconsumed input after turn',
+          );
+          afterTurn = false;
+        }
+
         // The generation lane was leased to another interaction mode.
         // Leave the loop; pending input is picked up on resume.
         if (this.laneSuspended) {
@@ -1380,14 +1412,15 @@ class ChatSessionModule implements AgentSession {
           return;
         }
 
-        // If the inbox is empty AND no pending immediate input AND
-        // we're not in a backoff retry cycle AND no check-retry is
-        // needed, go idle.
+        // Go idle only when the inbox is empty, no idle-time input is
+        // pending, no backoff retry is due, and every non-deferrable input
+        // appended to history was consumed by a clean step. An empty inbox
+        // alone is not enough: immediate input goes straight to history.
         if (
           this.sessionInbox.isEmpty() &&
           !this.hasPendingInput &&
           !needsBackoffRetry &&
-          !needsCheckRetry
+          !hasUnconsumedInput
         ) {
           this.setRuntimeState('idle');
           this.memoryOnlyInput = null;
@@ -1404,9 +1437,9 @@ class ChatSessionModule implements AgentSession {
 
         this.setRuntimeState('working');
 
-        // Reset the input flags before each turn so we only detect
-        // input that arrives during this specific turn.
-        this.consumedNonDeferrableInputSeq = this.nonDeferrableInputSeq;
+        // Input already in history is this turn's input, so a turn that
+        // fails on it (e.g. a rejection) does not loop on check-retries.
+        this.consumedInputSeq = this.appendedInputSeq;
         this.hasPendingInput = false;
 
         // Run exactly one turn per iteration. The turn drains deferred
@@ -1418,8 +1451,8 @@ class ChatSessionModule implements AgentSession {
         // (or a "Continue." message from the prior forceNextStep) and retry.
         //
         // If needsCheckRetry is true, the turn injects a data-check message
-        // prompting the model to review new input that arrived during the
-        // previous turn.
+        // prompting the model to review input that no clean step of the
+        // previous turn consumed.
         const turn = createTurn({
           logger: this.deps.logger,
           sessionId: this.sessionId,
@@ -1435,10 +1468,11 @@ class ChatSessionModule implements AgentSession {
           forceContinue: needsBackoffRetry,
           forceCheck: needsCheckRetry,
           beginStepInputWindow: () => {
-            // Immediate input is flushed between steps, never during step.run().
-            const inputSeq = this.nonDeferrableInputSeq;
+            // Queued input is counted only once flushed, so this snapshot
+            // covers exactly the input in history when the step starts.
+            const inputSeq = this.appendedInputSeq;
             return () => {
-              this.consumedNonDeferrableInputSeq = inputSeq;
+              this.consumedInputSeq = inputSeq;
             };
           },
           flushPendingImmediate: this.flushPendingImmediate,
@@ -1462,9 +1496,7 @@ class ChatSessionModule implements AgentSession {
         // Turn end is a boundary too (commits during the last step).
         await this.atStepBoundary();
         if (this.runtimeState === 'terminated') return;
-
-        const hasUnconsumedInput =
-          this.nonDeferrableInputSeq > this.consumedNonDeferrableInputSeq;
+        afterTurn = true;
 
         // Update observability counters.
         this.turnCount++;
@@ -1547,7 +1579,7 @@ class ChatSessionModule implements AgentSession {
             'turn.steps': turnResult.stepCount,
           });
           needsBackoffRetry = false;
-          needsCheckRetry = hasUnconsumedInput;
+          checkRetryAllowed = true;
           continue;
         }
 
@@ -1570,7 +1602,7 @@ class ChatSessionModule implements AgentSession {
             'turn.steps': turnResult.stepCount,
           });
           needsBackoffRetry = false;
-          needsCheckRetry = hasUnconsumedInput;
+          checkRetryAllowed = true;
           continue;
         }
 
@@ -1596,7 +1628,7 @@ class ChatSessionModule implements AgentSession {
           );
           this.backoffManager.recordFailure();
           needsBackoffRetry = true;
-          needsCheckRetry = false;
+          checkRetryAllowed = false;
 
           // Terminate after too many consecutive failures to prevent
           // infinite retry loops.
@@ -1624,20 +1656,12 @@ class ChatSessionModule implements AgentSession {
           this.setRuntimeState('success');
           this.backoffManager.recordSuccess();
           needsBackoffRetry = false;
-          // Retry only input that no clean step in this turn consumed.
-          needsCheckRetry = hasUnconsumedInput;
+          checkRetryAllowed = true;
         }
 
-        // If the turn succeeded or was a no-op, and no check-retry is
-        // needed, loop back to the top to check for more inbox input or
-        // go idle.
-        if (!needsBackoffRetry && !needsCheckRetry) {
-          continue;
-        }
-
-        // If a check-retry is needed (and no backoff), loop back to run
-        // a check-retry turn.
-        if (!needsBackoffRetry && needsCheckRetry) {
+        // Without a backoff retry, the loop top decides between idle, the
+        // next inbox input, and a check-retry turn for unconsumed input.
+        if (!needsBackoffRetry) {
           continue;
         }
 

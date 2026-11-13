@@ -39,7 +39,7 @@ export interface InboundEventSource {
   hasUnsettled(): boolean;
   /** Settles everything delivered so far. */
   settleDelivered(): Promise<void>;
-  /** Stops delivering and settling for the rest of the process lifetime. */
+  /** Stops new deliveries for the process lifetime; delivered events may still settle. */
   pause(): void;
 }
 

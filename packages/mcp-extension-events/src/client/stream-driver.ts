@@ -102,19 +102,28 @@ export async function runStreamLoop(
     let consumerFailed = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let grantMs: number | undefined;
-    const activationTimer = setTimeout(() => {
-      stalled = true;
-      connection.abort();
-    }, options.activationTimeoutMs ?? 30_000);
+    const activationTimer = setTimeout(
+      () => {
+        stalled = true;
+        connection.abort();
+      },
+      Math.min(
+        Math.max(options.activationTimeoutMs ?? 30_000, 1),
+        2_147_483_647,
+      ),
+    );
     let queued = 0;
 
     const arm = (): void => {
       if (timer !== undefined) clearTimeout(timer);
       if (grantMs === undefined) return;
-      timer = setTimeout(() => {
-        stalled = true;
-        connection.abort();
-      }, grantMs * HEARTBEAT_TIMEOUT_FACTOR);
+      timer = setTimeout(
+        () => {
+          stalled = true;
+          connection.abort();
+        },
+        Math.min(grantMs * HEARTBEAT_TIMEOUT_FACTOR, 2_147_483_647),
+      );
     };
 
     const enqueue = (work: () => Promise<void>): void => {
@@ -128,7 +137,14 @@ export async function runStreamLoop(
       queued++;
       tail = tail.then(async () => {
         queued--;
-        if (signal.aborted) return;
+        // A server termination closes the transport, not work already received.
+        // Consumer failure and caller cancellation still stop queued delivery.
+        if (
+          options.signal.aborted ||
+          consumerFailed ||
+          (signal.aborted && terminated === undefined)
+        )
+          return;
         try {
           await work();
         } catch (error) {

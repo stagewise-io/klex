@@ -61,7 +61,7 @@ async function buildJsonSchema(generated: string): Promise<string> {
     }
     definitions[name.slice(0, -'Schema'.length)] = toJSONSchema(
       schema as $ZodType,
-      { unrepresentable: 'any' },
+      { unrepresentable: 'any', io: 'input' },
     );
   }
 

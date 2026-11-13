@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+
+import Ajv2020 from 'ajv/dist/2020.js';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -52,6 +55,34 @@ describe('capabilities', () => {
 });
 
 describe('schemas', () => {
+  it('allows extension metadata in the generated JSON schema', () => {
+    const schema = JSON.parse(
+      readFileSync(new URL('../schema.json', import.meta.url), 'utf8'),
+    );
+    const ajv = new Ajv2020();
+    ajv.addSchema(schema);
+    const validate = ajv.compile({
+      $ref: `${schema.$id}#/$defs/EventsEventParams`,
+    });
+    const params = {
+      eventId: 'e1',
+      name: 'x',
+      timestamp: '2026-01-01T00:00:00Z',
+      data: {},
+      _meta: {
+        'io.modelcontextprotocol/subscriptionId': 1,
+        'example.com/project': 'production',
+      },
+    };
+    expect(validate(params)).toBe(true);
+    expect(
+      validate({
+        ...params,
+        _meta: { 'io.modelcontextprotocol/subscriptionId': false },
+      }),
+    ).toBe(false);
+  });
+
   it('accepts a poll result with absent cursor (absent means null)', () => {
     const parsed = EventsPollResultSchema.parse({
       events: [

@@ -1092,16 +1092,26 @@ class McpModule implements Mcp {
                 return false;
               const listeners = [...this.eventListeners];
               if (listeners.length === 0) return false;
-              const results = await Promise.allSettled(
-                listeners.map((listener) =>
-                  listener({
-                    namespace: connection.namespace,
-                    event: structuredClone(event),
-                    occurrence: structuredClone(occurrence),
-                  }),
-                ),
+              const results = await Promise.all(
+                listeners.map(async (listener) => {
+                  try {
+                    await listener({
+                      namespace: connection.namespace,
+                      event: structuredClone(event),
+                      occurrence: structuredClone(occurrence),
+                    });
+                    return true;
+                  } catch {
+                    // Listener errors may contain untrusted payloads or secrets.
+                    this.deps.logger.warn(
+                      { namespace: connection.namespace },
+                      'MCP Events listener failed',
+                    );
+                    return false;
+                  }
+                }),
               );
-              return results.every((result) => result.status === 'fulfilled');
+              return results.every(Boolean);
             },
           });
           const unregister = this.inboundSources.register(source);

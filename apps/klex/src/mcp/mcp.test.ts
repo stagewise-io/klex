@@ -173,6 +173,46 @@ async function waitForNamespace(
 }
 
 describe('MCP Events coexistence', () => {
+  it('isolates synchronous and asynchronous Events listener failures', async () => {
+    const { mcp } = setup(
+      { chat: { url: 'https://example.com/mcp', events: [{ name: 'watch' }] } },
+      async () =>
+        ({
+          ...connection('chat'),
+          supportsEvents: true,
+          events: {
+            listEvents: async () => [{ name: 'watch', delivery: ['poll'] }],
+            poll: async () => ({
+              events: [
+                {
+                  eventId: 'e',
+                  name: 'watch',
+                  timestamp: '2026-01-01T00:00:00Z',
+                  data: {},
+                },
+              ],
+              cursor: 'c',
+            }),
+          },
+        }) as unknown as McpConnection,
+    );
+    mcp.onPushNotification(() => {
+      throw new Error('sync failure');
+    });
+    mcp.onPushNotification(async () => {
+      throw new Error('async failure');
+    });
+    const received = vi.fn();
+    mcp.onPushNotification(received);
+    try {
+      await mcp.start();
+      await vi.waitFor(() => expect(received).toHaveBeenCalledTimes(1));
+      expect(mcp.hasUnacknowledgedEvents()).toBe(false);
+    } finally {
+      await mcp.close();
+    }
+  });
+
   it('delivers both extensions and settles their progress independently', async () => {
     const ack = vi.fn(async () => undefined);
     const poll = vi.fn(async () => ({

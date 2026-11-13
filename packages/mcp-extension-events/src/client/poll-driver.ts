@@ -3,7 +3,10 @@ import {
   EVENTS_ERROR_CODES,
 } from '../constants.js';
 import type { EventOccurrence, EventsPollResult } from '../spec.types.js';
-import type { RegisteredEventsClient } from './events-client.js';
+import {
+  EventsUnsupportedError,
+  type RegisteredEventsClient,
+} from './events-client.js';
 
 export interface PollBatch {
   events: EventOccurrence[];
@@ -50,6 +53,7 @@ const TERMINAL_CODES: ReadonlySet<number> = new Set([
 ]);
 
 export function isTerminalEventsError(error: unknown): boolean {
+  if (error instanceof EventsUnsupportedError) return true;
   const code = (error as { code?: unknown } | null)?.code;
   return typeof code === 'number' && TERMINAL_CODES.has(code);
 }
@@ -138,7 +142,10 @@ export async function runPollLoop(options: PollDriverOptions): Promise<void> {
       continue;
     immediatePolls = 0;
     // Floor protects against a server that induces a tight loop.
-    await sleep(Math.max(result.nextPollMs ?? floor, floor), options.signal);
+    await sleep(
+      Math.min(Math.max(result.nextPollMs ?? floor, floor), 2_147_483_647),
+      options.signal,
+    );
   }
 }
 

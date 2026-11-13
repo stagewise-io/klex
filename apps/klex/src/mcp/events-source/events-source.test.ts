@@ -39,6 +39,33 @@ const event = {
 };
 
 describe('EventsSource', () => {
+  it('advances past an oversized batch instead of retrying it forever', async () => {
+    const h = harness();
+    h.poll.mockResolvedValueOnce({
+      events: Array.from({ length: 129 }, () => event),
+      cursor: 'oversized',
+      hasMore: true,
+    });
+    h.poll.mockImplementation(
+      async (_params, options) =>
+        new Promise((resolve) => {
+          options?.request?.signal?.addEventListener(
+            'abort',
+            () => resolve({ events: [] }),
+            { once: true },
+          );
+        }),
+    );
+    try {
+      await h.source.start();
+      await vi.waitFor(() => expect(h.poll).toHaveBeenCalledTimes(2));
+      expect(h.poll.mock.calls[1]?.[0].cursor).toBe('oversized');
+      expect(h.published).toEqual([]);
+      expect(h.source.statuses()[0]?.gap).toBe(true);
+    } finally {
+      h.source.close();
+    }
+  });
   it('does not settle an event while its publisher is still running', async () => {
     let release!: () => void;
     const h = harness(
@@ -135,6 +162,46 @@ describe('EventsSource', () => {
     expect(h.published).toEqual([]);
     expect(h.poll).toHaveBeenCalledTimes(1);
     h.source.close();
+  });
+
+  it('skips invalid occurrences, reports a gap, and advances after valid delivery', async () => {
+    const h = harness();
+    vi.mocked(h.events.listEvents).mockResolvedValue([
+      {
+        name: 'x',
+        delivery: ['poll'],
+        payloadSchema: {
+          type: 'object',
+          properties: { value: { type: 'number' } },
+          required: ['value'],
+        },
+      },
+    ]);
+    h.poll.mockResolvedValueOnce({
+      events: [
+        { ...event, _meta: { huge: 'x'.repeat(65536) } },
+        { ...event, name: 'wrong' },
+        { ...event, data: { value: 'invalid' } },
+        { ...event, eventId: 'valid' },
+      ],
+      cursor: 'c1',
+      hasMore: true,
+    });
+    h.poll.mockImplementationOnce(async () => {
+      h.source.close();
+      return { events: [], cursor: 'c2' };
+    });
+    try {
+      await h.source.start();
+      await vi.waitFor(() => expect(h.source.hasUnsettled()).toBe(true));
+      expect(h.published).toHaveLength(1);
+      expect(h.source.statuses()[0]?.gap).toBe(true);
+      await h.source.settleDelivered();
+      await vi.waitFor(() => expect(h.poll).toHaveBeenCalledTimes(2));
+      expect(h.poll.mock.calls[1]?.[0].cursor).toBe('c1');
+    } finally {
+      h.source.close();
+    }
   });
 
   it('rejects excess subscriptions instead of silently dropping them', () => {

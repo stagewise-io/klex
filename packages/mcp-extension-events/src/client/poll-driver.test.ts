@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { EventsPollResult } from '../spec.types.js';
+import { EventsUnsupportedError } from './events-client.js';
 import { type PollBatch, runPollLoop } from './poll-driver.js';
 
 const occurrence = (id: string) => ({
@@ -145,6 +146,21 @@ describe('runPollLoop', () => {
     await runPollLoop({ ...h.base, onError });
     expect(onError).toHaveBeenCalledTimes(1);
     expect(h.sleeps[0]).toBe(500);
+  });
+
+  it('clamps oversized server poll delays', async () => {
+    const h = harness([{ events: [], nextPollMs: Number.MAX_VALUE }]);
+    await runPollLoop(h.base);
+    expect(h.sleeps).toEqual([2_147_483_647]);
+  });
+
+  it('stops on unsupported-extension errors without retrying', async () => {
+    const h = harness([new EventsUnsupportedError()]);
+    const onTerminated = vi.fn();
+    await runPollLoop({ ...h.base, onTerminated });
+    expect(onTerminated).toHaveBeenCalledTimes(1);
+    expect(h.calls).toHaveLength(1);
+    expect(h.sleeps).toEqual([]);
   });
 
   it('stops on terminal errors', async () => {

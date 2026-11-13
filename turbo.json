@@ -70,6 +70,15 @@
         "$TURBO_ROOT$/biome.jsonc"
       ]
     },
+    "@stagewise/mcp-extension-events#test": {
+      "dependsOn": ["^build"],
+      "outputs": ["coverage**"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/scripts/**",
+        "$TURBO_ROOT$/biome.jsonc"
+      ]
+    },
     "verify": {
       "dependsOn": ["build"],
       "cache": false

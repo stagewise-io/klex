@@ -244,15 +244,38 @@ class EventsSourceModule implements EventsSource {
     signal: AbortSignal,
   ): Promise<void> {
     if (signal.aborted) throw new Error('Events source closed');
-    if (batch.events.length > MAX_BATCH_EVENTS)
-      throw new Error('Events batch exceeds limit');
     state.status = 'active';
     state.gap ||= batch.truncated;
+    if (batch.events.length > MAX_BATCH_EVENTS) {
+      state.gap = true;
+      this.deps.logger.warn(
+        {
+          namespace: this.deps.connection.namespace,
+          sourceKey: state.sourceKey,
+        },
+        'MCP Events oversized batch rejected',
+      );
+      return;
+    }
     for (const occurrence of batch.events) {
-      this.validateOccurrenceBounds(occurrence);
-      this.payloadValidators.get(state.sourceKey)?.parse(occurrence.data);
-      if (occurrence.name !== state.name)
-        throw new Error('Event name mismatch');
+      try {
+        this.validateOccurrenceBounds(occurrence);
+        this.payloadValidators.get(state.sourceKey)?.parse(occurrence.data);
+        if (occurrence.name !== state.name)
+          throw new Error('Event name mismatch');
+      } catch {
+        // Deterministic rejection must not pin the replay cursor forever.
+        // Surface a gap without copying rejected (possibly secret) data to logs.
+        state.gap = true;
+        this.deps.logger.warn(
+          {
+            namespace: this.deps.connection.namespace,
+            sourceKey: state.sourceKey,
+          },
+          'MCP Events occurrence rejected',
+        );
+        continue;
+      }
       const key = inboundEventKey({
         namespace: this.deps.connection.namespace,
         origin: this.origin,

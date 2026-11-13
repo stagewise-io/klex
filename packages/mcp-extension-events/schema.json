@@ -55,8 +55,7 @@
           "additionalProperties": {}
         }
       },
-      "required": ["name", "delivery"],
-      "additionalProperties": false
+      "required": ["name", "delivery"]
     },
     "EventOccurrence": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -96,8 +95,7 @@
           "additionalProperties": {}
         }
       },
-      "required": ["eventId", "name", "timestamp", "data"],
-      "additionalProperties": false
+      "required": ["eventId", "name", "timestamp", "data"]
     },
     "EventsActiveParams": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -141,13 +139,11 @@
                     }
                   ]
                 }
-              },
-              "additionalProperties": false
+              }
             }
           ]
         }
-      },
-      "additionalProperties": false
+      }
     },
     "EventsCapabilities": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -166,8 +162,7 @@
             "additionalProperties": {}
           }
         }
-      },
-      "additionalProperties": false
+      }
     },
     "EventsDeliveryMode": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -204,8 +199,7 @@
           "additionalProperties": {}
         }
       },
-      "required": ["code", "message"],
-      "additionalProperties": false
+      "required": ["code", "message"]
     },
     "EventsErrorParams": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -228,8 +222,7 @@
               "additionalProperties": {}
             }
           },
-          "required": ["code", "message"],
-          "additionalProperties": false
+          "required": ["code", "message"]
         },
         "_meta": {
           "allOf": [
@@ -253,14 +246,12 @@
                     }
                   ]
                 }
-              },
-              "additionalProperties": false
+              }
             }
           ]
         }
       },
-      "required": ["error"],
-      "additionalProperties": false
+      "required": ["error"]
     },
     "EventsEventParams": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -314,14 +305,12 @@
                     }
                   ]
                 }
-              },
-              "additionalProperties": false
+              }
             }
           ]
         }
       },
-      "required": ["eventId", "name", "timestamp", "data"],
-      "additionalProperties": false
+      "required": ["eventId", "name", "timestamp", "data"]
     },
     "EventsHeartbeatParams": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -359,13 +348,11 @@
                     }
                   ]
                 }
-              },
-              "additionalProperties": false
+              }
             }
           ]
         }
-      },
-      "additionalProperties": false
+      }
     },
     "EventsListChangedFilter": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -374,8 +361,7 @@
         "eventsListChanged": {
           "type": "boolean"
         }
-      },
-      "additionalProperties": false
+      }
     },
     "EventsListChangedParams": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -388,8 +374,7 @@
           },
           "additionalProperties": {}
         }
-      },
-      "additionalProperties": false
+      }
     },
     "EventsListParams": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -398,8 +383,7 @@
         "cursor": {
           "type": "string"
         }
-      },
-      "additionalProperties": false
+      }
     },
     "EventsListResult": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -461,8 +445,7 @@
                 "additionalProperties": {}
               }
             },
-            "required": ["name", "delivery"],
-            "additionalProperties": false
+            "required": ["name", "delivery"]
           }
         },
         "nextCursor": {
@@ -476,8 +459,7 @@
           "additionalProperties": {}
         }
       },
-      "required": ["events"],
-      "additionalProperties": false
+      "required": ["events"]
     },
     "EventsPollParams": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -517,8 +499,7 @@
           "additionalProperties": {}
         }
       },
-      "required": ["name"],
-      "additionalProperties": false
+      "required": ["name"]
     },
     "EventsPollResult": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -567,8 +548,7 @@
                 "additionalProperties": {}
               }
             },
-            "required": ["eventId", "name", "timestamp", "data"],
-            "additionalProperties": false
+            "required": ["eventId", "name", "timestamp", "data"]
           }
         },
         "cursor": {
@@ -598,8 +578,7 @@
           "additionalProperties": {}
         }
       },
-      "required": ["events"],
-      "additionalProperties": false
+      "required": ["events"]
     },
     "EventsServerSettings": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -608,8 +587,7 @@
         "listChanged": {
           "type": "boolean"
         }
-      },
-      "additionalProperties": false
+      }
     },
     "EventsStreamParams": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -649,8 +627,7 @@
           "additionalProperties": {}
         }
       },
-      "required": ["name"],
-      "additionalProperties": false
+      "required": ["name"]
     },
     "EventsStreamResult": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -667,8 +644,7 @@
           },
           "additionalProperties": {}
         }
-      },
-      "additionalProperties": false
+      }
     },
     "EventsSubscriptionMeta": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -693,8 +669,7 @@
                 }
               ]
             }
-          },
-          "additionalProperties": false
+          }
         }
       ]
     },
@@ -719,8 +694,7 @@
               "additionalProperties": {}
             }
           },
-          "required": ["code", "message"],
-          "additionalProperties": false
+          "required": ["code", "message"]
         },
         "_meta": {
           "allOf": [
@@ -744,14 +718,12 @@
                     }
                   ]
                 }
-              },
-              "additionalProperties": false
+              }
             }
           ]
         }
       },
-      "required": ["error"],
-      "additionalProperties": false
+      "required": ["error"]
     },
     "JsonSchemaObject": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -790,11 +762,9 @@
                     "additionalProperties": {}
                   }
                 }
-              },
-              "additionalProperties": false
+              }
             }
-          },
-          "additionalProperties": false
+          }
         }
       ]
     }

@@ -103,6 +103,11 @@ class Discovery implements AsyncIterable<VideoSourceDescriptor> {
 function fakeInput() {
   const frames: EncodedImageFrame[] = [];
   const descriptions: string[] = [];
+  const gate = {
+    held: undefined as Promise<void> | undefined,
+    /** Extra microtasks before a matching note resolves. */
+    delay: { match: '', ticks: 0 },
+  };
   const input: RealtimeVideoInput = {
     maxFps: 1,
     write: vi.fn(async (frame: EncodedImageFrame) => {
@@ -110,14 +115,17 @@ function fakeInput() {
     }),
     describe: vi.fn(async (text: string) => {
       descriptions.push(text);
+      await gate.held;
+      if (gate.delay.match && text.includes(gate.delay.match))
+        for (let tick = 0; tick < gate.delay.ticks; tick += 1) await null;
     }),
   };
-  return { input, frames, descriptions };
+  return { input, frames, descriptions, gate };
 }
 
 function setup() {
   const discovery = new Discovery();
-  const { input, frames, descriptions } = fakeInput();
+  const { input, frames, descriptions, gate } = fakeInput();
   let now = 0;
   const encode = vi.fn(async (frame: RawVideoFrame) => ({
     width: frame.width,
@@ -138,6 +146,7 @@ function setup() {
     running,
     frames,
     descriptions,
+    gate,
     encode,
     async tick(ms = 1_000) {
       now += ms;
@@ -240,6 +249,43 @@ describe('RealtimeVision', () => {
     expect(share.opened).toHaveLength(2);
     expect(harness.descriptions).toHaveLength(1);
     await harness.vision.close();
+  });
+
+  it('keeps one source open when refocus and discovery race', async () => {
+    // Shifting the stop note moves the refocus across discovery's focus.
+    for (let ticks = 0; ticks < 8; ticks += 1) {
+      const harness = setup();
+      const first = new FakeDescriptor('first', 'screenshare', 'Dana');
+      const second = new FakeDescriptor('second', 'screenshare', 'Lee');
+      const third = new FakeDescriptor('third', 'screenshare', 'Kim');
+      const all = [first, second, third];
+      harness.discovery.add(first);
+      await vi.waitFor(() => expect(first.opened).toHaveLength(1));
+      let release!: () => void;
+      harness.gate.held = new Promise((resolve) => {
+        release = resolve;
+      });
+      harness.gate.delay = { match: 'stopped sharing', ticks };
+      harness.discovery.add(second);
+      await vi.waitFor(() => expect(second.opened).toHaveLength(1));
+      await second.unpublish();
+      harness.discovery.add(third);
+      harness.gate.held = undefined;
+      release();
+      await harness.tick();
+      await harness.tick();
+
+      const open = all.flatMap((descriptor) =>
+        descriptor.opened.filter((source) => !source.isClosed),
+      );
+      expect(open, `with ${ticks} extra ticks`).toHaveLength(1);
+      await harness.vision.close();
+      expect(
+        all.every((descriptor) =>
+          descriptor.opened.every((source) => source.isClosed),
+        ),
+      ).toBe(true);
+    }
   });
 
   it('closes the focused source and returns from run on close', async () => {

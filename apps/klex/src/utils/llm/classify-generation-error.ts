@@ -11,6 +11,8 @@ import {
   UnsupportedFunctionalityError,
 } from 'ai';
 
+import { GenerationStallError } from './generation-stall-error';
+
 /**
  * Checks whether an error is an abort error. Abort errors are produced by:
  * - `AbortController.abort()` → `DOMException` with name `'AbortError'`
@@ -212,6 +214,17 @@ export function classifyGenerationError(
       isAbort: false,
       isRequestRejected: false,
       reason: `model error: ${error}`,
+    };
+  }
+
+  // A watchdog stall aborts the stream too, so check it before aborts.
+  if (error instanceof GenerationStallError) {
+    return {
+      isModelError: true,
+      isFatal: false,
+      isAbort: false,
+      isRequestRejected: false,
+      reason: `generation stalled (${error.stage})`,
     };
   }
 

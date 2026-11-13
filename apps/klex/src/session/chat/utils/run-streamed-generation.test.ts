@@ -8,7 +8,7 @@ import {
   streamText,
   toUIMessageStream,
 } from 'ai';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { classifyGenerationError } from '@/utils/llm';
 
@@ -17,7 +17,6 @@ import { testLogger as logger } from '../test-helpers';
 import type { AgentTools } from '../tools';
 import {
   attachStreamError,
-  DEFAULT_INITIAL_PROGRESS_TIMEOUT_MS,
   runStreamedGeneration,
 } from './run-streamed-generation';
 
@@ -204,7 +203,6 @@ describe('runStreamedGeneration — success', () => {
   });
 
   it('passes model, tools, messages, and abortSignal to streamText', async () => {
-    const caller = new AbortController();
     setupSuccessResult({
       messages: [
         {
@@ -223,8 +221,8 @@ describe('runStreamedGeneration — success', () => {
       model,
       modelMessages,
       tools,
-      onUpdate: () => caller.abort(),
-      abortSignal: caller.signal,
+      onUpdate: vi.fn(),
+      abortSignal,
       logger,
       modelContext,
       sessionId: 'test-session',
@@ -240,9 +238,7 @@ describe('runStreamedGeneration — success', () => {
     const arg = call[0];
     expect(arg.model).toBe(model);
     expect(arg.messages).toBe(modelMessages);
-    expect(arg.abortSignal).toBeInstanceOf(AbortSignal);
-    expect((arg.abortSignal as AbortSignal).aborted).toBe(true);
-    expect((arg.abortSignal as AbortSignal).reason).toBe(caller.signal.reason);
+    expect(arg.abortSignal).toBe(abortSignal);
     // No chunk timeout — it kills long generations when the model
     // pauses between chunks.
     expect(arg.timeout).toBeUndefined();
@@ -392,208 +388,6 @@ describe('runStreamedGeneration — success', () => {
     expect(result.finishReason).toBe('error');
     expect(result.error).toBe('rate-limited');
   });
-});
-
-describe('runStreamedGeneration — initial progress timeout', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.useFakeTimers();
-    setupSuccessResult({});
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  function start(
-    initialProgressTimeoutMs?: number,
-    caller = new AbortController(),
-  ) {
-    return runStreamedGeneration({
-      model,
-      modelMessages: [],
-      tools,
-      onUpdate: vi.fn(),
-      abortSignal: caller.signal,
-      logger,
-      modelContext,
-      sessionId: 'test-session',
-      compacted: false,
-      basePrompt: 'mock system prompt',
-      initialProgressTimeoutMs,
-    });
-  }
-
-  function attemptSignal() {
-    return vi.mocked(streamText).mock.calls.at(-1)![0].abortSignal!;
-  }
-
-  it.each([false, true])(
-    'times out a stalled stream (initial empty update: %s)',
-    async (emptyUpdate) => {
-      const next = vi.fn(
-        () => new Promise<IteratorResult<ExtendedUIMessage>>(() => {}),
-      );
-      if (emptyUpdate) {
-        next.mockResolvedValueOnce({
-          done: false,
-          value: { id: 'empty', role: 'assistant', parts: [] },
-        });
-      }
-      const close = vi.fn(
-        () => new Promise<IteratorResult<ExtendedUIMessage>>(() => {}),
-      );
-      vi.mocked(readUIMessageStream).mockReturnValue({
-        [Symbol.asyncIterator]: () => ({ next, return: close }),
-      } as never);
-      const outcome = start(20).catch((error: unknown) => error);
-      const signal = attemptSignal();
-      await vi.advanceTimersByTimeAsync(19);
-      expect(signal.aborted).toBe(false);
-      await vi.advanceTimersByTimeAsync(1);
-      const error = await outcome;
-      expect(error).toEqual(
-        new Error('Initial generation progress timeout after 20ms.'),
-      );
-      expect(classifyGenerationError(error)).toEqual({
-        isModelError: true,
-        isFatal: false,
-        isAbort: false,
-        isRequestRejected: false,
-        reason: 'network error',
-      });
-      expect(signal.aborted).toBe(true);
-      expect(signal.reason).toBe(error);
-      expect(close).toHaveBeenCalledOnce();
-      expect(vi.getTimerCount()).toBe(0);
-    },
-  );
-
-  it.each(['text', 'reasoning'] as const)(
-    'allows slow chunks after initial %s progress',
-    async (type) => {
-      const message: ExtendedUIMessage = {
-        id: 'visible',
-        role: 'assistant',
-        parts: [{ type, text: 'hi' }],
-      };
-      vi.mocked(readUIMessageStream).mockReturnValue(
-        (async function* () {
-          yield message;
-          await new Promise((resolve) => setTimeout(resolve, 100));
-          yield message;
-        })() as never,
-      );
-      const pending = start(20);
-      await vi.advanceTimersByTimeAsync(100);
-      expect((await pending).message).toBe(message);
-      expect(attemptSignal().aborted).toBe(false);
-      expect(vi.getTimerCount()).toBe(0);
-    },
-  );
-
-  it.each([false, true])(
-    'preserves caller cancellation (already aborted: %s)',
-    async (alreadyAborted) => {
-      const caller = new AbortController();
-      if (alreadyAborted) caller.abort();
-      vi.mocked(readUIMessageStream).mockReturnValue(
-        (async function* () {
-          const signal = attemptSignal();
-          await new Promise<never>((_, reject) => {
-            if (signal.aborted) reject(signal.reason);
-            else
-              signal.addEventListener('abort', () => reject(signal.reason), {
-                once: true,
-              });
-          });
-        })() as never,
-      );
-      const outcome = start(20, caller).catch((error: unknown) => error);
-      if (!alreadyAborted) {
-        await vi.advanceTimersByTimeAsync(5);
-        caller.abort();
-      }
-      const error = await outcome;
-      expect(error).toBe(caller.signal.reason);
-      expect(classifyGenerationError(error).isAbort).toBe(true);
-      await vi.advanceTimersByTimeAsync(30);
-      expect(attemptSignal().reason).toBe(caller.signal.reason);
-      expect(vi.getTimerCount()).toBe(0);
-    },
-  );
-
-  it('uses the 90 second default deadline', async () => {
-    vi.mocked(readUIMessageStream).mockReturnValue({
-      [Symbol.asyncIterator]: () => ({ next: () => new Promise(() => {}) }),
-    } as never);
-    const outcome = start().catch((error: unknown) => error);
-    expect(DEFAULT_INITIAL_PROGRESS_TIMEOUT_MS).toBe(90_000);
-    await vi.advanceTimersByTimeAsync(90_000);
-    expect(await outcome).toEqual(
-      new Error('Initial generation progress timeout after 90000ms.'),
-    );
-  });
-
-  it.each([false, true])(
-    'handles SDK abort errors at the deadline (caller also cancels: %s)',
-    async (callerCancels) => {
-      const caller = new AbortController();
-      vi.mocked(readUIMessageStream).mockReturnValue(
-        (async function* () {
-          await new Promise<never>((_, reject) => {
-            attemptSignal().addEventListener(
-              'abort',
-              () => {
-                if (callerCancels) caller.abort();
-                reject(
-                  new DOMException('The operation was aborted.', 'AbortError'),
-                );
-              },
-              { once: true },
-            );
-          });
-        })() as never,
-      );
-      const outcome = start(20, caller).catch((error: unknown) => error);
-      await vi.advanceTimersByTimeAsync(20);
-      const error = await outcome;
-      if (callerCancels) {
-        expect(error).toBe(caller.signal.reason);
-        expect(classifyGenerationError(error).isAbort).toBe(true);
-      } else {
-        expect(error).toBe(attemptSignal().reason);
-        expect(classifyGenerationError(error)).toMatchObject({
-          isModelError: true,
-          isAbort: false,
-        });
-      }
-    },
-  );
-
-  it.each([0, -1])(
-    'disables the deadline when configured to %s',
-    async (timeoutMs) => {
-      const caller = new AbortController();
-      vi.mocked(readUIMessageStream).mockReturnValue(
-        (async function* () {
-          await new Promise((resolve) => setTimeout(resolve, 100_000));
-          yield {
-            id: 'late',
-            role: 'assistant',
-            parts: [{ type: 'text', text: 'hi' }],
-          };
-        })() as never,
-      );
-      const pending = start(timeoutMs, caller);
-      await vi.advanceTimersByTimeAsync(100_000);
-      expect((await pending).message.parts).toHaveLength(1);
-      caller.abort();
-      // Completion removes the forwarding listener.
-      expect(attemptSignal().aborted).toBe(false);
-      expect(vi.getTimerCount()).toBe(0);
-    },
-  );
 });
 
 describe('runStreamedGeneration — empty response', () => {
@@ -805,5 +599,112 @@ describe('runStreamedGeneration — stream errors', () => {
   it('leaves non-NoOutputGeneratedError errors unchanged', () => {
     const thrown = new Error('boom');
     expect(attachStreamError(thrown, notFound())).toBe(thrown);
+  });
+});
+
+describe('runStreamedGeneration — progress and stalls', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function start(
+    overrides: Partial<Parameters<typeof runStreamedGeneration>[0]> = {},
+  ) {
+    return runStreamedGeneration({
+      model,
+      modelMessages: [],
+      tools,
+      onUpdate: vi.fn(),
+      abortSignal,
+      logger,
+      modelContext,
+      sessionId: 'test-session',
+      compacted: false,
+      basePrompt: 'mock system prompt',
+      ...overrides,
+    });
+  }
+
+  it('reports the response start and only usable output chunks', async () => {
+    setupSuccessResult({
+      messages: [
+        { id: 'm', role: 'assistant', parts: [{ type: 'text', text: 'hi' }] },
+      ],
+    });
+    const onProgress = vi.fn();
+    await start({ onProgress });
+    const onChunk = vi.mocked(streamText).mock.calls.at(-1)![0].onChunk!;
+    const chunks = [
+      { type: 'start' },
+      { type: 'start-step' },
+      { type: 'reasoning-start', id: 'r' },
+      { type: 'reasoning-delta', id: 'r', text: '' },
+      { type: 'text-start', id: 't' },
+      { type: 'text-delta', id: 't', text: '' },
+      { type: 'text-delta', id: 't', text: 'hi' },
+      { type: 'reasoning-delta', id: 'r', text: 'hm' },
+      { type: 'tool-input-start', id: 'c', toolName: 'x' },
+      { type: 'tool-input-delta', id: 'c', delta: '' },
+      { type: 'tool-input-delta', id: 'c', delta: '{' },
+      { type: 'tool-call', toolCallId: 'c', toolName: 'x', input: {} },
+      { type: 'finish-step' },
+    ];
+    for (const chunk of chunks) await onChunk({ chunk: chunk as never });
+    expect(onProgress.mock.calls).toEqual([
+      ['response'],
+      ['output'],
+      ['output'],
+      ['output'],
+      ['output'],
+    ]);
+  });
+
+  it('does not observe chunks without a progress listener', async () => {
+    setupSuccessResult({
+      messages: [
+        { id: 'm', role: 'assistant', parts: [{ type: 'text', text: 'hi' }] },
+      ],
+    });
+    await start();
+    expect(vi.mocked(streamText).mock.calls.at(-1)![0].onChunk).toBeUndefined();
+  });
+
+  it('rejects a read the provider never settles once the stall signal fires', async () => {
+    setupSuccessResult({});
+    const close = vi.fn(() => new Promise<never>(() => {}));
+    vi.mocked(readUIMessageStream).mockReturnValue({
+      [Symbol.asyncIterator]: () => ({
+        next: () => new Promise<never>(() => {}),
+        return: close,
+      }),
+    } as never);
+    const stall = new AbortController();
+    const reason = new Error('stalled');
+    const outcome = start({ stallSignal: stall.signal }).catch(
+      (error: unknown) => error,
+    );
+    await Promise.resolve();
+    stall.abort(reason);
+    expect(await outcome).toBe(reason);
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it('rejects a pending finish once the stall signal fires', async () => {
+    setupSuccessResult({
+      messages: [
+        { id: 'm', role: 'assistant', parts: [{ type: 'text', text: 'hi' }] },
+      ],
+    });
+    vi.mocked(streamText).mockReturnValue({
+      stream: Symbol('stream'),
+      finishReason: new Promise(() => {}),
+    } as never);
+    const stall = new AbortController();
+    const outcome = start({ stallSignal: stall.signal }).catch(
+      (error: unknown) => error,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    stall.abort(new Error('stalled'));
+    expect(await outcome).toEqual(new Error('stalled'));
   });
 });

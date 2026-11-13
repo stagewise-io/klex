@@ -14,7 +14,7 @@ SessionHost
 
 Owns message history, inbox, extension handler, fallback manager, backoff manager, and the run loop. Lives for the application lifetime (or until a fatal error self-terminates it). Exposes `status: 'active' | 'terminated'` so the session host can detect dead sessions and replace them.
 
-**Loop:** processes one turn per iteration. Goes idle only when the inbox deferred buffer is empty, no pending immediate input, no backoff retry, and no check-retry needed. If a turn fails completely (all models exhausted) and no new input arrives, applies exponential backoff. A turn that fails because the provider rejected the request skips backoff and its termination counter; the session stays alive and the next inbox input starts a fresh turn. Fatal errors terminate immediately.
+**Loop:** processes one turn per iteration. Each iteration first flushes `pendingImmediate`, so input queued between turns (backoff wait, transcript writes, idle checkpoint apply) is in history before any decision. Goes idle only when the inbox deferred buffer is empty, no idle-time input is pending, no backoff retry is due, and every non-deferrable input appended to history was consumed by a clean step. An empty inbox alone never means idle: immediate input goes straight to history. If a turn fails completely (all models exhausted) and no new input arrives, applies exponential backoff. A turn that fails because the provider rejected the request skips backoff and its termination counter; the session stays alive and the next inbox input starts a fresh turn. Fatal errors terminate immediately.
 
 ## Inbox
 
@@ -22,15 +22,17 @@ Three-urgency event buffer. Two entry points: `send(event)` for context events (
 
 ### Urgency levels
 
-- **Critical** — appended to history immediately. Aborts current generation. Triggers a check-retry turn.
-- **Default** — appended to history immediately. Does not abort. Triggers a check-retry turn.
+- **Critical** — appended to history immediately. Aborts current generation. Triggers a check-retry turn unless a later clean step consumed it.
+- **Default** — appended to history immediately. Does not abort. Triggers a check-retry turn unless a later clean step consumed it.
 - **Deferrable** — buffered in the inbox, drained at turn start. Background context.
 
 ### Mid-turn ordering
 
 Critical/Default events arriving during an active turn are queued in `pendingImmediate` instead of being pushed to history immediately. This prevents a stale response from appearing after the new event. The buffer is flushed after each step commits its response, preserving `[..., ASSISTANT_RESPONSE, NEW_USER_EVENT]` ordering.
 
-After a turn ends with a valid stop, if non-deferrable input arrived during the turn, the loop runs a check-retry turn asking the model to review new input and decide whether to respond.
+Input consumption is tracked with two watermarks. `appendedInputSeq` counts non-deferrable input when it is flushed from `pendingImmediate` into history, not when it is received, so queued input never counts as visible. Before each step the turn snapshots `appendedInputSeq` (`beginStepInputWindow`); a clean step (no abort, salvage, fallback, failure, or rejection) advances `consumedInputSeq` to that snapshot. At turn start, `consumedInputSeq` is set to `appendedInputSeq`: input already in history is that turn's input, so a rejected turn does not loop on check-retries.
+
+After a turn that ends with a valid stop, a request rejection, or the step cap, the loop runs a check-retry turn only when `appendedInputSeq > consumedInputSeq`, i.e. some input reached history after the last clean step began. Input that a later step of the same turn already answered needs no extra turn. Each post-turn decision emits a `session.input_watermark` span event and debug log with `klex.session.appended_input_seq`, `klex.session.consumed_input_seq`, and `klex.session.check_retry_scheduled`.
 
 ### Session termination and event recovery
 
@@ -52,7 +54,7 @@ Both chat steps and leased interactions use the same context assembly: provision
 
 Drains deferrable inbox, then runs steps sequentially until no more generation is needed. Unifies "Continue." injection (backoff retry or salvage) and `data-check` injection (check-retry after new input) into a single code path.
 
-Every turn terminates. A hard cap of `MAX_STEPS_PER_TURN` (200) steps covers long tool loops. Consecutive failed steps (generation failure, model fallback, or request rejection) are limited to one full model rotation plus one retry: `max(1, chatModelCount) + 1`. A successful step resets the counter and the rejection count. On the first request rejection the next step runs on the same model, so extensions can drop the content they injected. From the second rejection on, the turn falls back to the next model before the next step, so a bad model ID still reaches the backup models. `TurnResult.stopReason` (`completed`, `failure_budget_exhausted`, `step_cap_reached`, `yielded`, `fatal`) and `TurnResult.requestRejected` report why the turn ended. A turn that ends on a failed step reports `completeFailure` even if earlier steps succeeded. The session does not retry a turn that hit the step cap or ended on an unsalvaged rejection; it waits for new input, or runs a check-retry turn if immediate input arrived during the turn. A turn that ends on a salvaged rejection gets a backoff retry, because its partial work is in history and the rejected content was dropped.
+Every turn terminates. A hard cap of `MAX_STEPS_PER_TURN` (200) steps covers long tool loops. Consecutive failed steps (generation failure, model fallback, or request rejection) are limited to one full model rotation plus one retry: `max(1, chatModelCount) + 1`. A successful step resets the counter and the rejection count. On the first request rejection the next step runs on the same model, so extensions can drop the content they injected. From the second rejection on, the turn falls back to the next model before the next step, so a bad model ID still reaches the backup models. `TurnResult.stopReason` (`completed`, `failure_budget_exhausted`, `step_cap_reached`, `yielded`, `fatal`) and `TurnResult.requestRejected` report why the turn ended. A turn that ends on a failed step reports `completeFailure` even if earlier steps succeeded. The session does not retry a turn that hit the step cap or ended on an unsalvaged rejection; it waits for new input, or runs a check-retry turn if immediate input reached history that no clean step consumed. A turn that ends on a salvaged rejection gets a backoff retry, because its partial work is in history and the rejected content was dropped.
 
 ## Step
 

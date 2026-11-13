@@ -5,6 +5,7 @@ import type { RootLogger } from '@stagewise/logger';
 import type { Config } from '@/config';
 import type { IntrospectionScope } from '@/introspection';
 import { SessionInboxUrgency } from '@/session/inbox';
+import type { SessionHistory, SessionHistoryRecorder } from '@/session-history';
 
 import { createChatSession } from './chat-session';
 import type {
@@ -151,6 +152,146 @@ describe('ChatSession mid-turn input', () => {
       }
     },
   );
+
+  function createWatermarkSession(sessionHistory?: SessionHistory) {
+    const session = createChatSession({
+      logging: { child: () => logger } as unknown as RootLogger,
+      config: {
+        get: () => ({ modelSelection: { chat: ['test:model'] } }),
+      } as unknown as Config,
+      modelResolver: { resolveModelInfo: () => undefined } as never,
+      dataDirectory: '/tmp/klex-chat-session-watermark-test',
+      mcp: null,
+      extensionFactories: [],
+      introspectionScope: createScope(),
+      sessionContext: { kind: 'default', name: 'main', sessionId: 'default' },
+      basePrompt: 'You are Klex.',
+      ...(sessionHistory && { sessionHistory }),
+    });
+    const send = (id: string) =>
+      session.inbox.sendMessage(
+        {
+          id,
+          role: 'user',
+          parts: [{ type: 'text', text: id }],
+        } as ExtendedUIMessage,
+        SessionInboxUrgency.Default,
+      );
+    return { session, send };
+  }
+
+  /** One clean step that consumes the input in history when it starts. */
+  function cleanStepTurn(
+    turnDeps: Parameters<typeof createTurnType>[0],
+    onRun: () => void = () => undefined,
+    result: TurnResult = success,
+  ): Turn {
+    return {
+      ...fakeTurn(() => undefined),
+      run: async () => {
+        onRun();
+        const markConsumed = turnDeps.beginStepInputWindow?.();
+        turnDeps.flushPendingImmediate?.();
+        if (!result.completeFailure) markConsumed?.();
+        return result;
+      },
+    } as Turn;
+  }
+
+  it('reviews input that arrives while the turn outcome is being recorded', async () => {
+    let send: (id: string) => boolean = () => false;
+    const recorder = {
+      instanceId: 'recorder',
+      scheduleSync: vi.fn(),
+      seed: vi.fn(),
+      markTrimmed: vi.fn(),
+      commitCheckpoint: vi.fn(async () => undefined),
+      end: vi.fn(async () => undefined),
+      recordGenerationFailure: vi.fn(async () => undefined),
+      clearGenerationFailure: vi.fn(async () => {
+        if (recorder.clearGenerationFailure.mock.calls.length === 1) {
+          send('during-clear');
+        }
+      }),
+    } satisfies SessionHistoryRecorder;
+    const sessionHistory = {
+      openRecorder: () => recorder,
+      loadWindow: async () => ({ entries: [] }),
+    } as unknown as SessionHistory;
+    const created = createWatermarkSession(sessionHistory);
+    const { session } = created;
+    send = created.send;
+    await session.start();
+    let sawInput = false;
+    createTurn
+      .mockImplementationOnce(
+        (turnDeps: Parameters<typeof createTurnType>[0]) =>
+          cleanStepTurn(turnDeps),
+      )
+      .mockImplementationOnce(
+        (turnDeps: Parameters<typeof createTurnType>[0]) =>
+          cleanStepTurn(turnDeps, () => {
+            sawInput = turnDeps.messages.some((m) => m.id === 'during-clear');
+          }),
+      );
+
+    try {
+      send('start');
+      await expect(session.waitForIdle(1_000)).resolves.toBe(true);
+      expect(createTurn).toHaveBeenCalledTimes(2);
+      expect(createTurn.mock.calls[1]?.[0]).toMatchObject({ forceCheck: true });
+      expect(sawInput).toBe(true);
+      expect(logger.debug).toHaveBeenCalledWith(
+        expect.objectContaining({
+          'event.name': 'session.input_watermark',
+          'klex.session.appended_input_seq': 1,
+          'klex.session.consumed_input_seq': 0,
+          'klex.session.check_retry_scheduled': true,
+        }),
+        'Check-retry turn scheduled for unconsumed input',
+      );
+    } finally {
+      await session.close();
+      createTurn.mockReset();
+    }
+  });
+
+  it('shows input that arrives during a backoff wait to the retry turn', async () => {
+    const { session, send } = createWatermarkSession();
+    await session.start();
+    let sawInput = false;
+    createTurn
+      .mockImplementationOnce(
+        (turnDeps: Parameters<typeof createTurnType>[0]) =>
+          cleanStepTurn(
+            turnDeps,
+            () => {
+              // Lands in the 2 s backoff wait and interrupts it.
+              setTimeout(() => send('during-backoff'), 20);
+            },
+            { ...success, completeFailure: true },
+          ),
+      )
+      .mockImplementationOnce(
+        (turnDeps: Parameters<typeof createTurnType>[0]) =>
+          cleanStepTurn(turnDeps, () => {
+            sawInput = turnDeps.messages.some((m) => m.id === 'during-backoff');
+          }),
+      );
+
+    try {
+      send('start');
+      await expect(session.waitForIdle(1_000)).resolves.toBe(true);
+      expect(createTurn).toHaveBeenCalledTimes(2);
+      expect(createTurn.mock.calls[1]?.[0]).toMatchObject({
+        forceContinue: true,
+      });
+      expect(sawInput).toBe(true);
+    } finally {
+      await session.close();
+      createTurn.mockReset();
+    }
+  });
 
   it('runs a check turn for input sent during a turn instead of going idle', async () => {
     let deps: ExtensionDeps | undefined;

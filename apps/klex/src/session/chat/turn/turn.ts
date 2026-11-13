@@ -63,6 +63,11 @@ export interface TurnDependencies {
    */
   forceCheck?: boolean;
   /**
+   * Snapshot input available before a step starts. The returned callback marks
+   * only that input consumed when the step succeeds cleanly.
+   */
+  beginStepInputWindow?: () => () => void;
+  /**
    * Called after each step commits its response to messages[]. Flushes
    * any immediate (Critical/Default) events that were queued during the
    * step's generation, preserving response-before-new-input ordering.
@@ -299,6 +304,7 @@ class TurnModule implements Turn {
             }),
           });
           this.currentStep = step;
+          const markConsumed = this.deps.beginStepInputWindow?.();
 
           try {
             stepResult = await step.run();
@@ -347,6 +353,7 @@ class TurnModule implements Turn {
             !stepResult.requestRejected
           ) {
             hadAnySuccess = true;
+            markConsumed?.();
           }
           const stepFailed =
             stepResult.generationFailed ||

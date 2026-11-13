@@ -73,6 +73,89 @@ function makeMockStep(overrides: Partial<StepCompleteEvent> = {}, delay = 0) {
 
 // --- tests ---
 
+describe('Turn — step input consumption', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it.each<[string, Partial<StepCompleteEvent>, boolean]>([
+    ['continuing success', { shouldContinue: true }, true],
+    [
+      'final generation',
+      {
+        generation: {
+          modelId: 'test',
+          finishReason: 'stop',
+          usage: {} as never,
+        },
+      },
+      true,
+    ],
+    ['skipped', {}, false],
+    ['aborted', { shouldContinue: true, instinctAborted: true }, false],
+    ['salvaged', { shouldContinue: true, forceNextStep: true }, false],
+    ['fallback', { shouldContinue: true, modelFallbackOccurred: true }, false],
+    ['failed', { shouldContinue: true, generationFailed: true }, false],
+    ['rejected', { shouldContinue: true, requestRejected: true }, false],
+  ])('marks only clean input consumed: %s', async (_name, result, consumes) => {
+    const markConsumed = vi.fn();
+    const beginStepInputWindow = vi.fn(() => markConsumed);
+    const step = makeMockStep(result);
+    step.run.mockImplementation(async () => {
+      expect(beginStepInputWindow).toHaveBeenCalledOnce();
+      expect(markConsumed).not.toHaveBeenCalled();
+      return { ...NOOP_RESULT, ...result };
+    });
+    vi.mocked(createStep)
+      .mockReturnValueOnce(step)
+      .mockReturnValue(makeMockStep());
+    await createTurn(makeDeps({ beginStepInputWindow })).run();
+    expect(markConsumed).toHaveBeenCalledTimes(consumes ? 1 : 0);
+  });
+
+  it('consumes the pre-step snapshot, leaving later input unconsumed even after a skipped step', async () => {
+    let inputSeq = 0;
+    let consumedSeq = 0;
+    const snapshots: number[] = [];
+    const step = () => {
+      const mock = makeMockStep();
+      mock.run.mockImplementation(async () => {
+        inputSeq++;
+        return { ...NOOP_RESULT, shouldContinue: true };
+      });
+      return mock;
+    };
+    vi.mocked(createStep)
+      .mockReturnValueOnce(step())
+      .mockReturnValueOnce(step())
+      .mockReturnValueOnce(makeMockStep());
+    await createTurn(
+      makeDeps({
+        beginStepInputWindow: () => {
+          const snapshot = inputSeq;
+          snapshots.push(snapshot);
+          return () => {
+            consumedSeq = snapshot;
+          };
+        },
+      }),
+    ).run();
+    expect(snapshots).toEqual([0, 1, 2]);
+    expect(consumedSeq).toBe(1);
+    expect(inputSeq).toBe(2);
+  });
+
+  it('does not consume input when salvaged steps exhaust the step cap', async () => {
+    const markConsumed = vi.fn();
+    vi.mocked(createStep).mockReturnValue(
+      makeMockStep({ shouldContinue: true, forceNextStep: true }),
+    );
+    const result = await createTurn(
+      makeDeps({ beginStepInputWindow: () => markConsumed }),
+    ).run();
+    expect(result.stopReason).toBe('step_cap_reached');
+    expect(markConsumed).not.toHaveBeenCalled();
+  });
+});
+
 describe('Turn — inbox draining', () => {
   beforeEach(() => {
     vi.clearAllMocks();

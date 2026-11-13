@@ -204,11 +204,11 @@ class ChatSessionModule implements AgentSession {
   private backoffInterrupt: (() => void) | null = null;
 
   /**
-   * Set when non-deferrable input arrives during an active turn.
-   * Checked after the turn completes — if true, the loop runs a
-   * check-retry turn so the model can review the new input.
+   * Watermarks for non-deferrable input received while the loop is active.
+   * Only a clean step consumes the input present when that step began.
    */
-  private newInputDuringTurn = false;
+  private nonDeferrableInputSeq = 0;
+  private consumedNonDeferrableInputSeq = 0;
 
   /**
    * Set when any input arrives while the loop is idle.
@@ -1285,7 +1285,7 @@ class ChatSessionModule implements AgentSession {
     // Deferrable input is buffered and will be drained at the next turn
     // start, so it does not need a check-retry turn.
     if (this.loopActive && urgency !== SessionInboxUrgency.Deferrable) {
-      this.newInputDuringTurn = true;
+      this.nonDeferrableInputSeq++;
     }
 
     // If no turn is active, flag that there is pending input and
@@ -1406,7 +1406,7 @@ class ChatSessionModule implements AgentSession {
 
         // Reset the input flags before each turn so we only detect
         // input that arrives during this specific turn.
-        this.newInputDuringTurn = false;
+        this.consumedNonDeferrableInputSeq = this.nonDeferrableInputSeq;
         this.hasPendingInput = false;
 
         // Run exactly one turn per iteration. The turn drains deferred
@@ -1434,6 +1434,13 @@ class ChatSessionModule implements AgentSession {
           config: this.deps.config,
           forceContinue: needsBackoffRetry,
           forceCheck: needsCheckRetry,
+          beginStepInputWindow: () => {
+            // Immediate input is flushed between steps, never during step.run().
+            const inputSeq = this.nonDeferrableInputSeq;
+            return () => {
+              this.consumedNonDeferrableInputSeq = inputSeq;
+            };
+          },
           flushPendingImmediate: this.flushPendingImmediate,
           atStepBoundary: this.atStepBoundary,
           shouldYieldGenerationLane: () =>
@@ -1455,6 +1462,9 @@ class ChatSessionModule implements AgentSession {
         // Turn end is a boundary too (commits during the last step).
         await this.atStepBoundary();
         if (this.runtimeState === 'terminated') return;
+
+        const hasUnconsumedInput =
+          this.nonDeferrableInputSeq > this.consumedNonDeferrableInputSeq;
 
         // Update observability counters.
         this.turnCount++;
@@ -1537,7 +1547,7 @@ class ChatSessionModule implements AgentSession {
             'turn.steps': turnResult.stepCount,
           });
           needsBackoffRetry = false;
-          needsCheckRetry = this.newInputDuringTurn;
+          needsCheckRetry = hasUnconsumedInput;
           continue;
         }
 
@@ -1560,7 +1570,7 @@ class ChatSessionModule implements AgentSession {
             'turn.steps': turnResult.stepCount,
           });
           needsBackoffRetry = false;
-          needsCheckRetry = this.newInputDuringTurn;
+          needsCheckRetry = hasUnconsumedInput;
           continue;
         }
 
@@ -1614,9 +1624,8 @@ class ChatSessionModule implements AgentSession {
           this.setRuntimeState('success');
           this.backoffManager.recordSuccess();
           needsBackoffRetry = false;
-          // Check if new non-deferrable input arrived during this turn.
-          // If so, run a check-retry turn so the model can review it.
-          needsCheckRetry = this.newInputDuringTurn;
+          // Retry only input that no clean step in this turn consumed.
+          needsCheckRetry = hasUnconsumedInput;
         }
 
         // If the turn succeeded or was a no-op, and no check-retry is

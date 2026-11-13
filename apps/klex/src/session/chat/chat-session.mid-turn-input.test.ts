@@ -61,6 +61,97 @@ function fakeTurn(run: () => void): Turn {
 }
 
 describe('ChatSession mid-turn input', () => {
+  it.each(
+    ['completed', 'rejected', 'step_cap_reached'].flatMap((ending) =>
+      [
+        'consumed',
+        'unconsumed',
+        'during-success',
+        'during-skip',
+        'after-turn',
+      ].map((arrival) => ({ ending, arrival })),
+    ),
+  )(
+    '$ending with $arrival input retries only unseen input',
+    async ({ ending, arrival }) => {
+      const session = createChatSession({
+        logging: { child: () => logger } as unknown as RootLogger,
+        config: {
+          get: () => ({ modelSelection: { chat: ['test:model'] } }),
+        } as unknown as Config,
+        modelResolver: { resolveModelInfo: () => undefined } as never,
+        dataDirectory: '/tmp/klex-chat-session-watermark-test',
+        mcp: null,
+        extensionFactories: [],
+        introspectionScope: createScope(),
+        sessionContext: { kind: 'default', name: 'main', sessionId: 'default' },
+        basePrompt: 'You are Klex.',
+      });
+      await session.start();
+      const send = (id: string) =>
+        session.inbox.sendMessage(
+          {
+            id,
+            role: 'user',
+            parts: [{ type: 'text', text: id }],
+          } as ExtendedUIMessage,
+          SessionInboxUrgency.Default,
+        );
+      createTurn
+        .mockImplementationOnce(
+          (turnDeps: Parameters<typeof createTurnType>[0]) =>
+            ({
+              ...fakeTurn(() => undefined),
+              run: async () => {
+                const first = turnDeps.beginStepInputWindow?.();
+                send('input-1');
+                expect(turnDeps.messages.some((m) => m.id === 'input-1')).toBe(
+                  false,
+                );
+                turnDeps.flushPendingImmediate?.();
+                first?.();
+                expect(turnDeps.messages.some((m) => m.id === 'input-1')).toBe(
+                  true,
+                );
+                const second = turnDeps.beginStepInputWindow?.();
+                if (arrival === 'during-success') send('input-2');
+                turnDeps.flushPendingImmediate?.();
+                if (arrival !== 'unconsumed') second?.();
+                // A skipped final step must not consume its snapshot.
+                turnDeps.beginStepInputWindow?.();
+                if (arrival === 'during-skip') send('input-2');
+                turnDeps.flushPendingImmediate?.();
+                if (arrival === 'after-turn') send('input-2');
+                return {
+                  ...success,
+                  completeFailure: ending === 'rejected',
+                  requestRejected: ending === 'rejected',
+                  stopReason:
+                    ending === 'step_cap_reached'
+                      ? 'step_cap_reached'
+                      : 'completed',
+                };
+              },
+            }) as Turn,
+        )
+        .mockImplementationOnce(() => fakeTurn(() => undefined));
+
+      try {
+        send('start');
+        await expect(session.waitForIdle(1_000)).resolves.toBe(true);
+        const retry = arrival !== 'consumed';
+        expect(createTurn).toHaveBeenCalledTimes(retry ? 2 : 1);
+        if (retry)
+          expect(createTurn.mock.calls[1]?.[0]).toMatchObject({
+            forceCheck: true,
+          });
+      } finally {
+        await session.close();
+        createTurn.mockReset();
+      }
+    },
+  );
+
   it('runs a check turn for input sent during a turn instead of going idle', async () => {
     let deps: ExtensionDeps | undefined;
     const extension: ExtensionFactory = {

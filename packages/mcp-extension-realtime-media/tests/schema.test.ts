@@ -84,7 +84,7 @@ describe('Realtime Media schemas', () => {
     ).toBe(false);
   });
 
-  it('accepts video and future media kinds', () => {
+  it('accepts video and future media kinds alongside audio', () => {
     for (const media of [
       ['audio', 'video'],
       ['audio', 'video', 'future-kind'],
@@ -95,12 +95,13 @@ describe('Realtime Media schemas', () => {
           media,
         }).success,
       ).toBe(true);
-    expect(
-      RealtimeMediaExtensionCapabilitySchema.safeParse({
-        transports: ['livekit-room'],
-        media: [],
-      }).success,
-    ).toBe(false);
+    for (const media of [[], ['video']])
+      expect(
+        RealtimeMediaExtensionCapabilitySchema.safeParse({
+          transports: ['livekit-room'],
+          media,
+        }).success,
+      ).toBe(false);
   });
 
   it('accepts an offer without transport credentials', () => {

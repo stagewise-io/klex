@@ -8,6 +8,7 @@ import {
   type MediaTransport,
   type MediaTransportConnector,
   type RealtimeEndpointClosure,
+  type VideoSourceDescriptor,
 } from '@/media-transport';
 import { BoundedAsyncQueue } from '@/media-transport/async-queue';
 import type {
@@ -29,6 +30,7 @@ import type {
   RealtimeModelEvent,
   RealtimeModelSession,
   RealtimeModelSessionFactory,
+  RealtimeVideoInput,
 } from '@/session/realtime/model-session';
 import { DEFAULT_SESSION_ID } from '@/session/types';
 
@@ -112,6 +114,10 @@ class DeterministicMediaTransportModule implements DeterministicMediaTransport {
   readonly audioSources = this.sourceQueue;
   readonly audioOutput = {
     write: (frame: AudioFrame) => this.writeAudio(frame),
+  };
+  /** Publishes no video sources; tests only check its wiring. */
+  readonly videoSources: AsyncIterable<VideoSourceDescriptor> = {
+    async *[Symbol.asyncIterator]() {},
   };
   readonly closed = this.closure.promise;
 
@@ -296,6 +302,12 @@ class DeterministicEchoProcessorModule implements DeterministicEchoProcessor {
     attach: (source: AudioSource) => this.attachSource(source),
   };
   readonly audioOutput = this.outputQueue;
+  /** Discards frames; tests only check its wiring. */
+  readonly videoInput: RealtimeVideoInput = {
+    maxFps: 1,
+    write: async () => {},
+    describe: async () => {},
+  };
   readonly events = this.eventQueue;
   readonly closed = this.closure.promise;
 

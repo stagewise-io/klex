@@ -409,6 +409,8 @@ describe('realtime session coordinator', () => {
     const transport = await connector.nextTransport();
     const processor = await processorFactory.nextProcessor();
     await vi.waitFor(() => expect(vision.run).toHaveBeenCalledOnce());
+    expect(transport.videoSources).toBeDefined();
+    expect(processor.videoInput).toBeDefined();
     expect(createVision).toHaveBeenCalledWith({
       logger: expect.anything(),
       sources: transport.videoSources,

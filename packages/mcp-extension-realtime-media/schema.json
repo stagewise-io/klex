@@ -190,11 +190,13 @@
                               }
                             },
                             "media": {
-                              "minItems": 1,
                               "type": "array",
                               "items": {
                                 "type": "string",
                                 "minLength": 1
+                              },
+                              "contains": {
+                                "const": "audio"
                               }
                             }
                           },
@@ -248,11 +250,13 @@
                           }
                         },
                         "media": {
-                          "minItems": 1,
                           "type": "array",
                           "items": {
                             "type": "string",
                             "minLength": 1
+                          },
+                          "contains": {
+                            "const": "audio"
                           }
                         }
                       },
@@ -315,11 +319,13 @@
                                   }
                                 },
                                 "media": {
-                                  "minItems": 1,
                                   "type": "array",
                                   "items": {
                                     "type": "string",
                                     "minLength": 1
+                                  },
+                                  "contains": {
+                                    "const": "audio"
                                   }
                                 }
                               },
@@ -398,11 +404,13 @@
                   }
                 },
                 "media": {
-                  "minItems": 1,
                   "type": "array",
                   "items": {
                     "type": "string",
                     "minLength": 1
+                  },
+                  "contains": {
+                    "const": "audio"
                   }
                 }
               },
@@ -425,11 +433,13 @@
           }
         },
         "media": {
-          "minItems": 1,
           "type": "array",
           "items": {
             "type": "string",
             "minLength": 1
+          },
+          "contains": {
+            "const": "audio"
           }
         }
       },
@@ -1152,11 +1162,13 @@
                                   }
                                 },
                                 "media": {
-                                  "minItems": 1,
                                   "type": "array",
                                   "items": {
                                     "type": "string",
                                     "minLength": 1
+                                  },
+                                  "contains": {
+                                    "const": "audio"
                                   }
                                 }
                               },

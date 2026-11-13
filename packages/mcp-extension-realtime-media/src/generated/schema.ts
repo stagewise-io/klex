@@ -170,7 +170,10 @@ export const RealtimeMediaSubscriptionAcknowledgedNotificationsSchema =
  */
 export const RealtimeMediaExtensionCapabilitySchema = z.object({
   transports: z.array(z.string().min(1)).min(1),
-  media: z.array(z.string().min(1)).min(1),
+  media: z
+    .array(z.string().min(1))
+    .refine((media) => media.includes('audio'), 'media must include audio')
+    .meta({ contains: { const: 'audio' } }),
 });
 
 export const RealtimeMediaExtensionCapabilitiesSchema = z

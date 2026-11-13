@@ -167,6 +167,12 @@ const REJECTED_HANDLE_PATTERN = /handle|resum/i;
 const RESUME_CONFLICT_PATTERN = /already connected/i;
 /** How long a reconnect waits for the replaced socket to finish closing. */
 const PREVIOUS_SOCKET_CLOSE_TIMEOUT_MS = 1_000;
+/**
+ * Google keeps a session claimed briefly after its socket closes, so the
+ * first resume attempt waits this long after the close to avoid an
+ * "already connected" refusal and the retry it costs.
+ */
+const RESUME_AFTER_CLOSE_DELAY_MS = 400;
 
 /** Node clamps longer delays to 1 ms. */
 const MAX_TIMER_MS = 2_147_483_647;
@@ -956,18 +962,28 @@ export class GeminiLiveSession implements RealtimeModelSession {
             this.reconnectPolicy.initialDelayMs * 2 ** outage.attempts,
           );
     outage.attempts += 1;
+    const resume = this.resumptionHandle !== undefined;
+    const settleMs =
+      resume && previous && outage.attempts === 1
+        ? RESUME_AFTER_CLOSE_DELAY_MS
+        : 0;
     this.logger.info(
       {
         reason: outage.reason,
         attempt: outage.attempts,
         maxAttempts: this.reconnectPolicy.maxAttempts,
         delayMs,
-        resume: this.resumptionHandle !== undefined,
+        settleMs,
+        resume,
       },
       'Gemini live reconnect attempt scheduled',
     );
     const scheduledToken = this.connectionToken;
-    const closeWait = this.waitForClose(previous, previousClosed);
+    const closeWait = this.waitForClose(previous, previousClosed).then(() =>
+      settleMs > 0
+        ? new Promise<void>((resolve) => setTimeout(resolve, settleMs))
+        : undefined,
+    );
     outage.retryTimer = setTimeout(() => {
       void closeWait.then(() => {
         if (this.connectionToken === scheduledToken && this.outage === outage)

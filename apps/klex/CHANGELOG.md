@@ -2,6 +2,44 @@
 
 All notable Klex changes are documented here.
 
+## 0.34.0 (2026-11-13)
+
+### Features
+
+- make Gemini Live sessions durable across connection resets (59b7a91)
+- tell the bot when it has no voice model (81e7cb4)
+- add dynamic effort policy and shadow traces (16c4685)
+
+### Bug Fixes
+
+- count mid-turn input when it enters history (35497ae)
+- skip redundant check-retry turn when mid-turn input was already consumed (f8f26c0)
+- abort generations that make no usable progress (50f2df6)
+- abort generations that stall without initial visible progress (ea3c230)
+- skip the Gemini settle delay once the handle is gone (e3bd7da)
+- let Gemini release the session before resuming (78fd5ff)
+- await a terminated Gemini socket before resuming (742c0e6)
+- wait for the old Gemini socket and retry resume conflicts (834a63b)
+- keep fresh Gemini seed history ahead of gap audio (0cd6a5f)
+- complete Gemini reconnect turns after gap audio (c884727)
+- harden Gemini Live resumption edge cases (ca4aa0c)
+- recover chat sessions from missing OpenAI reasoning items (KLEX-87) (8f29261)
+- count a misconfigured voice model as missing (c3237ae)
+- keep the voice model hint free of Klex Cloud (a7c8c6d)
+- keep flat GPT-Live error fields (25d3be9)
+- parse any GPT-Live error event shape and log call failures (4e5fecc)
+- address dynamic effort review findings (647f5db)
+- skip consolidation after shutdown (2ef43f6)
+- address learning review comments (bfd12de)
+
+### Other Changes
+
+- report the forced Gemini close in the terminate test (714fe1a)
+- release 0.33.0 (b1efe6a)
+- cover range reads, consolidation cadence and shutdown (9e0c8c0)
+- queue one learning job per compaction (a0ab23c)
+- run learning on context compaction (66b6484)
+
 ## 0.33.0 (2026-11-13)
 
 ### Features

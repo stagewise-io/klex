@@ -160,6 +160,13 @@ const MAX_CALL_LOG_CHARS = 120_000;
 const MAX_RESUME_FAILURES = 2;
 const REJECTED_HANDLE_CLOSE_CODES = new Set([1007, 1008]);
 const REJECTED_HANDLE_PATTERN = /handle|resum/i;
+/**
+ * Google refuses a resume while the previous client still holds the session.
+ * The handle stays valid, so this is retried rather than treated as rejected.
+ */
+const RESUME_CONFLICT_PATTERN = /already connected/i;
+/** How long a reconnect waits for the replaced socket to finish closing. */
+const PREVIOUS_SOCKET_CLOSE_TIMEOUT_MS = 1_000;
 
 /** Node clamps longer delays to 1 ms. */
 const MAX_TIMER_MS = 2_147_483_647;
@@ -215,6 +222,7 @@ export class GeminiLiveSession implements RealtimeModelSession {
   private callLogChars = 0;
   private liveCallIds = new Set<string>();
   private socket: GeminiRealtimeWebSocket | undefined;
+  private socketClosed: Promise<void> = Promise.resolve();
   private connectionToken = 0;
   private connectionCount = 0;
   private connectionReady = false;
@@ -307,6 +315,9 @@ export class GeminiLiveSession implements RealtimeModelSession {
       return;
     }
     this.socket = socket;
+    const closed = deferred<void>();
+    this.socketClosed = closed.promise;
+    socket.on('close', () => closed.resolve());
     socket.on('open', () => this.handleOpen(token));
     socket.on('message', (data: RawData) => this.handleMessage(token, data));
     socket.on('error', (error: Error) =>
@@ -835,6 +846,14 @@ export class GeminiLiveSession implements RealtimeModelSession {
       !this.connectionReady &&
       this.connectionHandle !== undefined
     ) {
+      if (resumeConflict(details)) {
+        this.logger.warn(
+          { error, ...details, connection: this.connectionCount },
+          'Gemini live resume conflicted with the previous connection, retrying',
+        );
+        this.startReconnect('connection-lost', error, details);
+        return;
+      }
       outage.resumeFailures += 1;
       if (
         rejectsHandle(details) ||
@@ -869,6 +888,7 @@ export class GeminiLiveSession implements RealtimeModelSession {
   ): void {
     if (this.settled) return;
     const previous = this.socket;
+    const previousClosed = this.socketClosed;
     this.socket = undefined;
     this.connectionToken += 1;
     this.connectionReady = false;
@@ -946,7 +966,46 @@ export class GeminiLiveSession implements RealtimeModelSession {
       },
       'Gemini live reconnect attempt scheduled',
     );
-    outage.retryTimer = setTimeout(() => this.openConnection(), delayMs);
+    const scheduledToken = this.connectionToken;
+    const closeWait = this.waitForClose(previous, previousClosed);
+    outage.retryTimer = setTimeout(() => {
+      void closeWait.then(() => {
+        if (this.connectionToken === scheduledToken && this.outage === outage)
+          this.openConnection();
+      });
+    }, delayMs);
+  }
+
+  /**
+   * Resolves once the replaced socket has closed, so the resumed connection
+   * doesn't race the old client for the provider session.
+   */
+  private async waitForClose(
+    socket: GeminiRealtimeWebSocket | undefined,
+    closed: Promise<void>,
+  ): Promise<void> {
+    if (!socket) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = await Promise.race([
+      closed.then(() => false),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(
+          () => resolve(true),
+          PREVIOUS_SOCKET_CLOSE_TIMEOUT_MS,
+        );
+      }),
+    ]);
+    clearTimeout(timer);
+    if (!timedOut) return;
+    this.logger.warn(
+      { timeoutMs: PREVIOUS_SOCKET_CLOSE_TIMEOUT_MS },
+      'Gemini live previous connection did not close in time, terminating it',
+    );
+    try {
+      socket.terminate();
+    } catch {
+      // A socket that fails to terminate is already unusable.
+    }
   }
 
   private failReconnect(error: Error): void {
@@ -1312,6 +1371,13 @@ function rejectsHandle(details: CloseDetails): boolean {
       REJECTED_HANDLE_CLOSE_CODES.has(details.closeCode)) ||
     (details.closeReason !== undefined &&
       REJECTED_HANDLE_PATTERN.test(details.closeReason))
+  );
+}
+
+function resumeConflict(details: CloseDetails): boolean {
+  return (
+    details.closeReason !== undefined &&
+    RESUME_CONFLICT_PATTERN.test(details.closeReason)
   );
 }
 

@@ -55,6 +55,8 @@ class RealtimeVisionModule implements RealtimeVision {
   private readonly reopenAttempts = new Map<string, number>();
   private readonly now: () => number;
   private focused: FocusState | undefined;
+  /** Bumped by every focus change, so an overtaken `focus()` opens nothing. */
+  private focusGeneration = 0;
   private timer: ReturnType<typeof setInterval> | undefined;
   private reopenTimer: ReturnType<typeof setTimeout> | undefined;
   private encoding = false;
@@ -87,6 +89,7 @@ class RealtimeVisionModule implements RealtimeVision {
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    this.focusGeneration += 1;
     clearInterval(this.timer);
     clearTimeout(this.reopenTimer);
     const focused = this.focused;
@@ -103,9 +106,11 @@ class RealtimeVisionModule implements RealtimeVision {
     reason: 'started' | 'resumed' | 'reopened',
   ): Promise<void> {
     if (this.closed || this.focused?.descriptor === descriptor) return;
+    const generation = ++this.focusGeneration;
     const previous = this.focused;
     this.focused = undefined;
     await previous?.source.close().catch(() => undefined);
+    if (generation !== this.focusGeneration || this.closed) return;
     let source: VideoSource;
     try {
       source = descriptor.open({ maxFps: this.deps.input.maxFps * 2 });
@@ -114,10 +119,6 @@ class RealtimeVisionModule implements RealtimeVision {
         { error, trackId: descriptor.metadata.trackId },
         'Realtime video source could not be opened',
       );
-      return;
-    }
-    if (this.closed) {
-      await source.close().catch(() => undefined);
       return;
     }
     const state: FocusState = { descriptor, source, lastSentAt: 0 };
@@ -139,7 +140,7 @@ class RealtimeVisionModule implements RealtimeVision {
   private async readFrames(state: FocusState): Promise<void> {
     try {
       for await (const frame of state.source.readable) {
-        if (this.focused !== state) return;
+        if (this.focused !== state) break;
         state.latest = frame;
       }
     } catch (error) {
@@ -148,7 +149,10 @@ class RealtimeVisionModule implements RealtimeVision {
         'Realtime video source failed',
       );
     }
-    if (this.focused !== state || this.closed) return;
+    if (this.focused !== state || this.closed) {
+      await state.source.close().catch(() => undefined);
+      return;
+    }
     const { descriptor } = state;
     // An unpublished track ends its open source before `closed` settles;
     // give handleGone the chance to own that case.
@@ -182,8 +186,13 @@ class RealtimeVisionModule implements RealtimeVision {
     this.descriptors.delete(descriptor.id);
     this.reopenAttempts.delete(descriptor.id);
     if (this.closed || descriptor.metadata.kind !== 'screenshare') return;
-    const wasFocused = this.focused?.descriptor === descriptor;
-    if (wasFocused) this.focused = undefined;
+    const focused = this.focused;
+    const wasFocused = focused?.descriptor === descriptor;
+    if (wasFocused) {
+      this.focusGeneration += 1;
+      this.focused = undefined;
+      void focused.source.close().catch(() => undefined);
+    }
     await this.describe(
       `[Video] ${displayName(descriptor)} stopped sharing their screen.${wasFocused ? ' You can no longer see it.' : ''}`,
     );

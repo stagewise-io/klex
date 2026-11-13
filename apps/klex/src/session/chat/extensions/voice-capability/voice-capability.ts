@@ -10,7 +10,7 @@ export interface VoiceCapabilityExtConfig {
 
 const NO_VOICE_MODEL_PROMPT = `## Voice calls
 
-You have no voice conversation model right now, so you cannot take calls, join voice channels or talk live. When someone asks for that, do not try. Tell them that a voice conversation model must first be added to your models, under Models in Klex Cloud.`;
+You have no voice conversation model right now, so you cannot take calls, join voice channels or talk live. When someone asks for that, do not try. Ask them to configure and connect a voice conversation model first.`;
 
 class VoiceCapabilityExt implements Extension {
   constructor(private readonly config: VoiceCapabilityExtConfig) {}

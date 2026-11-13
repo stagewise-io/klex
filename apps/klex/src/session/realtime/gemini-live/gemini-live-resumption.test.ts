@@ -43,13 +43,18 @@ interface WireMessage {
 class FakeGeminiSocket extends EventEmitter implements GeminiRealtimeWebSocket {
   readyState = 0;
   readonly sent: WireMessage[] = [];
+  /** Keeps a close handshake pending until `finishClose()`. */
+  holdClose = false;
   close = vi.fn(() => {
-    this.readyState = 3;
-    queueMicrotask(() => this.emit('close', 1000, Buffer.from('')));
+    this.readyState = 2;
+    if (!this.holdClose) queueMicrotask(() => this.finishClose());
   });
-  terminate = vi.fn(() => {
+  terminate = vi.fn(() => this.finishClose(1006));
+  finishClose(code = 1000): void {
+    if (this.readyState === 3) return;
     this.readyState = 3;
-  });
+    this.emit('close', code, Buffer.from(''));
+  }
   send(data: string): void {
     this.sent.push(JSON.parse(data));
   }
@@ -267,6 +272,80 @@ describe('Gemini live session durability', () => {
         new Promise((resolve) => setTimeout(() => resolve('open'), 50)),
       ]),
     ).resolves.toBe('open');
+  });
+
+  it('opens the resumed connection only after the previous socket has closed', async () => {
+    const { sockets, processor } = await start();
+    processorUnderTest = processor;
+    const first = sockets[0] as FakeGeminiSocket;
+    first.holdClose = true;
+    first.message(handleUpdate('handle-1'));
+    first.message({ goAway: { timeLeft: '30s' } });
+    await vi.waitFor(() => expect(first.close).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(sockets).toHaveLength(1);
+
+    first.finishClose();
+    const second = await nextSocket(sockets, 1);
+    second.open();
+    expect(second.setup.sessionResumption).toEqual({ handle: 'handle-1' });
+    expect(first.terminate).not.toHaveBeenCalled();
+  });
+
+  it('terminates a previous socket that does not close in time', async () => {
+    const { sockets, processor } = await start();
+    processorUnderTest = processor;
+    const first = sockets[0] as FakeGeminiSocket;
+    first.holdClose = true;
+    first.message(handleUpdate('handle-1'));
+    first.message({ goAway: { timeLeft: '30s' } });
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(sockets).toHaveLength(1);
+    const second = await nextSocket(sockets, 1);
+    expect(first.terminate).toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ timeoutMs: 1_000 }),
+      'Gemini live previous connection did not close in time, terminating it',
+    );
+    second.open();
+    expect(second.setup.sessionResumption).toEqual({ handle: 'handle-1' });
+  });
+
+  it('retries the same handle when the previous client still holds the session', async () => {
+    const { sockets, processor } = await start();
+    processorUnderTest = processor;
+    const first = sockets[0] as FakeGeminiSocket;
+    first.message(handleUpdate('handle-1'));
+    first.message({ goAway: { timeLeft: '30s' } });
+
+    for (const index of [1, 2]) {
+      const conflicted = await nextSocket(sockets, index);
+      conflicted.open();
+      expect(conflicted.setup.sessionResumption).toEqual({
+        handle: 'handle-1',
+      });
+      conflicted.drop(
+        1008,
+        'session is already connected to an existing client',
+      );
+    }
+
+    const resumed = await nextSocket(sockets, 3);
+    resumed.open();
+    expect(resumed.setup.sessionResumption).toEqual({ handle: 'handle-1' });
+    resumed.message({ setupComplete: {} });
+    expect(info).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: 'resumed' }),
+      'Gemini live session resumed',
+    );
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ closeCode: 1008 }),
+      'Gemini live resume conflicted with the previous connection, retrying',
+    );
+    expect(warn).not.toHaveBeenCalledWith(
+      expect.anything(),
+      'Gemini live resumption handle rejected, falling back to a fresh session',
+    );
   });
 
   it('waits for an in-flight model turn and a fresh handle before acting on goAway', async () => {

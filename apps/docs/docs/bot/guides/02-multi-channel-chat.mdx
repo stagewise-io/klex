@@ -1,0 +1,20 @@
+---
+title: Chat on multiple channels
+sidebar:
+  label: Multi-channel chat
+description: Connect a Klex Bot to messaging apps and check access on each channel.
+related:
+  - /bot/concepts/communication
+  - /bot/concepts/mcp
+  - /cloud
+---
+
+A Bot can use more than one messaging connection. Each connection needs an MCP server that provides the required messaging capabilities and an account with access to the conversations you want to use.
+
+## Connect and check each channel
+
+1. Add or connect the relevant MCP server for the messaging app. See [MCP and Klex Bots](/bot/concepts/mcp).
+2. Configure or authorize the Bot’s account and grant it access in the messaging app. Repeat for each app.
+3. Send a test message in each intended conversation and check that the Bot can respond there. If it cannot, check the connection status, authorization, and the account’s access to that conversation.
+
+For a group conversation, check who can see it and whether the Bot’s account is allowed to participate. Set the audience and permissions in the messaging app; do not assume a connection grants access to every conversation.

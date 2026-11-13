@@ -1,0 +1,38 @@
+---
+title: Availability
+description: What keeps a Klex Bot available and how to plan for scheduled work.
+related:
+  - /bot/reliability/updates
+  - /bot/guides/recurring-tasks
+  - /cloud/hosted-vs-local
+---
+
+A Klex Bot can be available around the clock while its hosting environment is running. It can be idle between tasks rather than continuously generating responses. New events from a connected MCP server or a one-time reminder can prompt it to resume work.
+
+Availability is not a guarantee that every task will run or succeed. The Bot also needs working model access and the connections required for its task. Event delivery depends on the connected service and MCP server.
+
+For scheduled work, keep the Bot and its connections available when the task is due, and check important results. Use a suitable connected scheduling service for recurring work; internal reminders are one-time. See [Automate recurring tasks](/bot/guides/recurring-tasks).
+
+A self-hosted Bot stops when you close its app. For a headless Bot, see [how to stop it](/bot/guides/control-and-limits#stop-a-headless-bot). You can stop a Cloud-hosted Bot using the dashboard’s Stop control.
+
+## Monitor a self-hosted Bot
+
+Klex can expose a separate HTTP health listener for monitoring. It is disabled by default. For example, in a POSIX shell, start an existing Bot with the listener bound to the local computer:
+
+```sh
+KLEX_HEALTH_HOST=127.0.0.1 klex --headless --data-dir /path/to/bot --health-port 8080
+```
+
+Replace the path with your Bot’s directory. If you change the port, use the same port in the checks below. From the same computer, check the endpoints:
+
+```sh
+curl -i http://127.0.0.1:8080/livez
+curl -i http://127.0.0.1:8080/readyz
+```
+
+- `GET /livez` returns HTTP 200 while the listener is running.
+- `GET /readyz` returns HTTP 200 once Klex has started its runtime modules. It returns 503 while startup is incomplete and during shutdown. A stopped listener cannot respond.
+
+These probes do not confirm that a model provider, connected service, or individual task is working. Monitor those separately.
+
+The listener is unauthenticated and defaults to `0.0.0.0` when enabled; restrict network access or set `KLEX_HEALTH_HOST` to an appropriate bind address. It does not expose the Admin API. You can also set the port with `KLEX_HEALTH_PORT`; `--health-port` takes precedence.

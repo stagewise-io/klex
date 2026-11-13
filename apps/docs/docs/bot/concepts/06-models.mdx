@@ -1,0 +1,28 @@
+---
+title: Models
+description: Configure a model provider and select models for a Klex Bot’s different tasks.
+related:
+  - /bot/quickstart
+  - /bot/concepts/how-bots-work
+  - /cloud/hosted-vs-local
+---
+
+A Klex Bot uses models from the providers you configure. Klex supports a range of provider types, including OpenAI, Anthropic, Google Gemini, local Ollama, and compatible custom endpoints. The models available to you depend on your provider and account.
+
+A provider is the service or endpoint Klex connects to; a model is a specific model available through that provider. Configuring a provider does not automatically select a model for every task.
+
+## Configure models
+
+In the self-hosted Klex app:
+
+1. Open **Settings → Providers & Endpoints**, press `a`, and choose a provider type. Enter the required settings and complete any sign-in steps.
+2. Open **Settings → Model Selection**, choose **Chat**, and add a model from a configured provider. A chat model is needed for regular conversation and soul generation.
+3. Review the other purposes and add compatible models as needed. The screen includes choices for memory, consultation, image input, audio input, and voice.
+
+Some providers discover models automatically; others require you to add model information manually. Availability and supported capabilities vary by provider and model.
+
+## Choosing models for different tasks
+
+You can use the same model for more than one purpose or choose different models for different work. Consider whether a model supports the required input and the cost and latency of your provider. Check provider terms and pricing before use.
+
+For chat, you can configure an ordered list of models. Klex can fall back to another configured chat model after a model error; a fallback does not guarantee a successful response. You can reorder the list in **Model Selection**.

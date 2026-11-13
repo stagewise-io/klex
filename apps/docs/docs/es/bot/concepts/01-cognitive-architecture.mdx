@@ -1,0 +1,31 @@
+---
+title: Sesiones de un bot de Klex
+description: Cómo un bot de Klex utiliza su sesión habitual y sesiones separadas para tareas e instrucciones de administración.
+related:
+  - /bot/concepts/how-bots-work
+  - /bot/concepts/memory
+  - /bot/concepts/god-messages
+---
+
+Un bot de Klex se ejecuta en un entorno propio que gestiona sus sesiones activas y su [memoria](/bot/concepts/memory). El bot trabaja en computadoras y aplicaciones externas conectadas mediante [MCP](/bot/concepts/mcp).
+
+<a id="el-fundamento-técnico"></a>
+<a id="sesión-principal"></a>
+
+## Sesión habitual
+
+En Klex, la sesión habitual tiene acceso a los servidores MCP conectados. Allí el bot procesa eventos entrantes y puede trabajar con los entornos conectados. Las acciones disponibles dependen de las conexiones y sus permisos.
+
+<a id="sesiones-de-utilidad"></a>
+
+## Tareas separadas
+
+Un bot puede utilizar sesiones separadas para tareas internas. Por ejemplo, puede iniciar una consulta sobre una cuestión difícil y tener en cuenta el resultado en su trabajo. No presuponga que varias solicitudes se ejecutarán simultáneamente ni que terminarán en un plazo determinado.
+
+<a id="sesión-dios"></a>
+
+## God Messages
+
+Las [God Messages](/bot/concepts/god-messages) son instrucciones de administración que se procesan en una sesión propia, separada de las conversaciones habituales. Entre otras cosas, pueden solicitar un cambio en el [alma](/bot/concepts/soul). En Klex, los administradores también pueden crear y actualizar el alma desde la configuración de Soul o la Admin API.
+
+Para conocer el entorno del bot y sus conexiones, consulte [Cómo funcionan los bots de Klex](/bot/concepts/how-bots-work).

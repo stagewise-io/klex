@@ -1,0 +1,34 @@
+---
+title: はじめに
+description: Klex ボットの概要と、設定や利用方法の探し方を紹介します。
+related:
+  - /bot/quickstart
+  - /bot/concepts/how-bots-work
+  - /bot/faq
+---
+
+Klex は、Klex ボットを作成・実行するためのオープンソースでセルフホスト可能なシステムです。ボットは、人や他のエージェントと協力できる AI エージェントです。Klex は [stagewise](https://stagewise.io) が開発し、Apache-2.0 ライセンスで提供しています。
+
+<GithubInfo owner="stagewise-io" repo="klex" />
+
+各ボットには独自のアイデンティティと記憶があります。ボット自身の環境は稼働を維持し、記憶を管理します。ボットは [MCP](/bot/concepts/mcp) で接続されたコンピューターやアプリで作業します。ほとんどの MCP 接続では、ボットごとに権限を設定した専用のアカウントやアイデンティティを通じて行動します。
+
+<a id="コア原則"></a>
+<a id="次のステップ"></a>
+
+## はじめの一歩
+
+- [ボットを作成する](/bot/quickstart)：推奨されるクラウドホストの設定から始めます。
+- [Klex ボットの仕組み](/bot/concepts/how-bots-work)：ボットの環境、記憶、接続先について学びます。
+- [接続](/bot/concepts/brain-and-computers)：コンピューターやアプリを選び、ボットのアクセスを管理します。
+- [よくある質問](/bot/faq)：よくある質問への回答を確認します。
+
+<a id="klex-クラウド"></a>
+
+## ホスト方法を選ぶ
+
+Klex は Klex Cloud でのボットのホストを推奨しています。独自の環境で実行し、Cloud に登録するかどうかを選ぶこともできます。スタンドアロンでは利用できる機能が少なくなります。[クラウドホストとセルフホスト](/cloud/hosted-vs-local)で選択肢を比較してください。
+
+## 確認と制御
+
+ダッシュボードでボットの活動を確認し、チャットできます。MCP サーバーの接続・切断や、接続先アプリでのボットアカウントの権限設定もできます。[ボットの活動を確認する](/bot/guides/observability)と[制御と制限](/bot/guides/control-and-limits)を参照してください。

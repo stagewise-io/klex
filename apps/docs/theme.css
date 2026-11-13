@@ -42,3 +42,63 @@
 [data-blume-header] img {
   height: 1.75rem;
 }
+
+/* Blume renders the native "Related pages" heading as text-sm font-medium.
+   Bump it to text-base font-semibold so it reads as a section, not a caption. */
+[data-blume-related] h2 {
+  @apply text-xl font-semibold;
+}
+
+/* Use the diagram composition suited to the article width, not viewport width. */
+.bot-overview-diagram,
+.bot-concept-diagram,
+.bot-collaboration-diagram {
+  container-type: inline-size;
+}
+.bot-overview-diagram img,
+.bot-concept-diagram img,
+.bot-collaboration-diagram img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.bot-overview-diagram .bot-overview-wide,
+.bot-concept-diagram .bot-concept-wide,
+.bot-collaboration-diagram .bot-collaboration-wide {
+  display: none;
+}
+@container (min-width: 640px) {
+  .bot-overview-diagram .bot-overview-wide,
+  .bot-concept-diagram .bot-concept-wide,
+  .bot-collaboration-diagram .bot-collaboration-wide {
+    display: block;
+  }
+  .bot-overview-diagram .bot-overview-compact,
+  .bot-concept-diagram .bot-concept-compact,
+  .bot-collaboration-diagram .bot-collaboration-compact {
+    display: none;
+  }
+}
+
+/* When scripts are unavailable, show both setup paths instead of hiding one. */
+@media (scripting: none) {
+  .hosting-quickstart
+    blume-tabs:not(:defined)
+    [data-blume-tab-content]
+    > *:nth-child(n + 2) {
+    display: block;
+  }
+  .hosting-quickstart blume-tabs:not(:defined) [data-blume-tablist] {
+    display: none;
+  }
+}
+
+/* Keep commands and flags in their original order within RTL prose. */
+html[dir="rtl"] code {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+html[dir="rtl"] pre {
+  direction: ltr;
+  text-align: left;
+}

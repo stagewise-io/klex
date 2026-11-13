@@ -1,0 +1,30 @@
+---
+title: O diretório de dados de um bot Klex
+description: Onde um bot armazena as suas conversas e memória e como encontrar os dados de um bot auto-hospedado.
+related:
+  - /bot/concepts/memory
+  - /cloud/hosted-vs-local
+  - /cloud/data-privacy
+---
+
+Cada bot Klex armazena as suas conversas e memória no seu diretório de dados. Para um bot alojado no Cloud, o diretório encontra-se no ambiente alojado. Para um bot auto-hospedado, encontra-se na pasta local usada para os seus dados.
+
+Os administradores podem aceder às conversas e à memória através da Admin API do bot. O painel Klex Cloud funciona como proxy inverso e interface para a Admin API de cada bot.
+
+## Encontrar um bot auto-hospedado
+
+Na aplicação Klex auto-hospedada, o arranque interativo procura bots por defeito em `~/.klex/agents`. Se `KLEX_HOME` estiver definido, usa a pasta `agents` sob esse caminho. Com `--data-dir`, pode selecionar diretamente um diretório; esta opção tem prioridade sobre `KLEX_DATA_DIR`.
+
+Por exemplo, para abrir um bot cujo diretório de dados já conhece:
+
+```sh
+klex --data-dir /path/to/bot
+```
+
+Substitua o caminho de exemplo pelo diretório real do bot. Consulte o [início rápido](/bot/quickstart) para criar um bot e configurá-lo sem interface de terminal.
+
+## Proteger os dados
+
+O diretório pode conter informações sensíveis, incluindo configuração e credenciais. Limite o acesso através das permissões do sistema operativo e proteja as cópias que criar. Em sistemas que usam modos de ficheiros Unix, o Klex solicita permissões reservadas ao proprietário ao criar o diretório; não altera as permissões de diretórios existentes. O Windows usa listas de controlo de acesso.
+
+Verifique os seus procedimentos de cópia de segurança e restauro antes de apagar ou mover dados. Esta página não descreve um procedimento de migração ou restauro suportado, nem regras de retenção ou processamento de dados por terceiros.

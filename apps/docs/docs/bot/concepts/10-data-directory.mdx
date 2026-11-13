@@ -1,0 +1,35 @@
+---
+title: The Klex Bot data directory
+description: Where a Klex Bot stores chats and memory, and how to locate a self-hosted Bot’s data.
+related:
+  - /bot/concepts/memory
+  - /cloud/hosted-vs-local
+  - /cloud/data-privacy
+---
+
+Each Klex Bot stores its chats and memory in its data directory. For a Cloud-hosted Bot, the directory is in the hosted environment. For a self-hosted Bot, it is in the local folder used to store the Bot’s data.
+
+<div class="bot-concept-diagram">
+  <img class="bot-concept-wide" src="/images/data-wide.svg" width="1200" height="480" alt="A cloud and a user-managed computer or server each contain a Klex Bot and its own data folder." />
+  <img class="bot-concept-compact" src="/images/data-compact.svg" width="640" height="820" alt="A cloud and a user-managed computer or server each contain a Klex Bot and its own data folder." />
+</div>
+
+Admins can access chats and memory through the Bot’s Admin API. The Klex Cloud dashboard acts as a reverse proxy and frontend to each Bot’s own Admin API.
+
+## Find a self-hosted Bot
+
+In the self-hosted Klex app, interactive startup discovers Bots under `~/.klex/agents` by default. If `KLEX_HOME` is set, it uses the `agents` folder under that location instead. An explicit `--data-dir` selects a directory directly and takes precedence over `KLEX_DATA_DIR`.
+
+For example, to open a Bot whose data directory is already known:
+
+```sh
+klex --data-dir /path/to/bot
+```
+
+Replace the example path with the Bot’s actual directory. See the [quickstart](/bot/quickstart) for creating a new Bot and for headless setup.
+
+## Protect the data
+
+The directory can contain sensitive information, including configuration and credentials. Restrict access using your operating system’s permissions, and protect any copies you make. Klex requests owner-only permissions when creating the directory on systems that support Unix modes; it does not change permissions on an existing directory. Windows uses access control lists instead.
+
+Check your backup and recovery procedures before deleting or moving data. This page does not specify a supported migration or restore procedure, retention rules, or third-party data processing.

@@ -1,0 +1,24 @@
+---
+title: Limit blast radius
+description: Reduce what an exposed or compromised Bot account can access and change.
+related:
+  - /guides/secure-bot-usage
+  - /guides/trust-critical-operations
+  - /bot/concepts/brain-and-computers
+---
+
+Limit the potential impact of a compromised Bot by limiting the access available to its accounts and connected environments. The right boundaries depend on the apps, computers, and data involved; a Bot’s instructions alone are not an access control.
+
+## Reduce exposure
+
+- Use a distinct account for the Bot where the connected app supports it. Give it only the resources and permissions needed for its work.
+- Separate sensitive resources from general-purpose work. Avoid connecting production systems or sensitive data unless the Bot needs them.
+- Restrict who can reach the Bot and the conversations or tools it uses through the access controls available in those services.
+- Review permissions to share information, modify settings, and perform destructive actions. Use a separate approval process for high-impact changes.
+- Review access periodically and remove connections and grants that are no longer needed.
+
+See [Use Klex Bots securely](/guides/secure-bot-usage) for an account-permission checklist. These measures reduce exposure; they do not guarantee that an incident cannot occur.
+
+## Prepare to respond
+
+Know which accounts, connections, and environments the Bot uses before an incident. If compromise is suspected, follow your incident response process: consider stopping the Bot, revoking access in connected services, rotating affected credentials, and reviewing relevant activity. Stopping a Bot alone is not a substitute for revoking access or investigating any actions already taken.

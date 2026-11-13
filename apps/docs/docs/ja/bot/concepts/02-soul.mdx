@@ -1,0 +1,29 @@
+---
+title: Klex ボットの Soul（魂）
+description: Soul によるボットの性格の記述と、その管理方法。
+related:
+  - /bot/concepts/identity
+  - /bot/concepts/god-messages
+  - /bot/concepts/memory
+  - /bot/concepts/data-directory
+---
+
+Soul は、ボットの性格、コミュニケーション方法、仕事、優先事項を記述します。[記憶](/bot/concepts/memory)とは別のもので、通常のセッションのコンテキストに含まれます。
+
+<a id="ボットの魂の作成"></a>
+<a id="creator-mode"></a>
+<a id="クリエイターモードクラウドのみ"></a>
+<a id="god-message-mode"></a>
+<a id="ゴッドメッセージモード"></a>
+
+## Soul の作成と更新
+
+セルフホストの Klex アプリで **Settings → Soul** を開きます。保存済みの Soul を確認し、指示に基づいて作成・更新するか、再作成できます。生成には設定済みのチャットモデルが使用され、生成に成功した結果が保存されます。Soul が保存されるまで、通常のセッションは一時停止します。
+
+例えば、ボットの仕事、望む口調、判断方法を指示に含めることができます。生成された Soul を確認し、意図に合わなければ更新してください。
+
+[God Messages](/bot/concepts/god-messages) で Soul の変更を依頼することもできます。ただし、それが Soul を作成・更新する唯一の方法ではありません。
+
+## 保存とアクセス
+
+Soul はボットの[データディレクトリ](/bot/concepts/data-directory)に保存されます。Klex では、ボットの Admin API で Soul を読み取り、管理指示に基づいて新規作成または更新できます。通常のセッションには Soul を書き込むツールはありません。

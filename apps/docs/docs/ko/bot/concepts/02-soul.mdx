@@ -1,0 +1,29 @@
+---
+title: Klex 봇의 Soul
+description: Soul이 봇의 성격을 설명하는 방식과 Soul을 관리하는 방법.
+related:
+  - /bot/concepts/identity
+  - /bot/concepts/god-messages
+  - /bot/concepts/memory
+  - /bot/concepts/data-directory
+---
+
+Soul은 봇의 성격, 소통 방식, 작업과 우선순위를 설명합니다. [메모리](/bot/concepts/memory)와는 별개이며 일반 세션의 컨텍스트에 포함됩니다.
+
+<a id="봇의-영혼-만들기"></a>
+<a id="creator-mode"></a>
+<a id="크리에이터-모드-클라우드-전용"></a>
+<a id="god-message-mode"></a>
+<a id="갓-메시지-모드"></a>
+
+## Soul 만들기 및 업데이트
+
+셀프 호스팅 Klex 앱에서 **Settings → Soul**을 엽니다. 저장된 Soul을 확인하고, 지시에 따라 새로 만들거나 업데이트하거나, 다시 만들 수 있습니다. 생성에는 설정된 채팅 모델이 사용되며 성공적으로 생성된 결과가 저장됩니다. Soul을 저장하기 전까지 일반 세션은 일시 중지됩니다.
+
+예를 들어 지시에 봇의 작업, 선호하는 말투, 의사결정 방식을 설명할 수 있습니다. 생성된 Soul을 확인하고 의도와 다르면 업데이트하세요.
+
+[God Messages](/bot/concepts/god-messages)로 Soul 변경을 요청할 수도 있습니다. 이것이 Soul을 만들거나 업데이트하는 유일한 방법은 아닙니다.
+
+## 저장 및 접근
+
+Soul은 봇의 [데이터 디렉터리](/bot/concepts/data-directory)에 저장됩니다. Klex에서 봇의 Admin API는 Soul을 읽고 관리 지시에 따라 새로 만들거나 업데이트할 수 있습니다. 일반 세션에는 Soul을 쓰는 도구가 없습니다.

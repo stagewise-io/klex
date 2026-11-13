@@ -1,0 +1,29 @@
+---
+title: A alma de um bot Klex
+description: Como a alma descreve o caráter de um bot e como geri-la.
+related:
+  - /bot/concepts/identity
+  - /bot/concepts/god-messages
+  - /bot/concepts/memory
+  - /bot/concepts/data-directory
+---
+
+A alma descreve a personalidade, a forma de comunicar, o trabalho e as prioridades de um bot. É distinta da sua [memória](/bot/concepts/memory) e faz parte do contexto da sua sessão habitual.
+
+<a id="criar-a-alma-de-um-bot"></a>
+<a id="creator-mode"></a>
+<a id="modo-criador-apenas-cloud"></a>
+<a id="god-message-mode"></a>
+<a id="modo-mensagem-deus"></a>
+
+## Criar ou atualizar uma alma
+
+Na aplicação Klex auto-hospedada, abra **Settings → Soul**. Pode consultar a alma guardada, criá-la ou atualizá-la a partir de instruções, ou recriá-la de raiz. A geração usa os modelos de chat configurados e guarda os resultados gerados com sucesso. As sessões habituais permanecem em pausa até existir uma alma guardada.
+
+Nas instruções, pode por exemplo descrever o trabalho do bot, o tom preferido e a forma como deve abordar decisões. Reveja a alma gerada e atualize-a se não corresponder ao que pretende.
+
+O Klex também suporta [God Messages](/bot/concepts/god-messages) para pedir uma alteração à alma. Não são a única forma de a criar ou atualizar.
+
+## Armazenamento e acesso
+
+A alma é armazenada no [diretório de dados](/bot/concepts/data-directory) do bot. No Klex, a Admin API do bot pode ler a alma e gerar uma alma nova ou atualizada a partir de instruções de administração. A sessão habitual não dispõe de uma ferramenta para escrever a alma.

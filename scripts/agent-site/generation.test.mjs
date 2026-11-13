@@ -71,7 +71,12 @@ it('filters docs aggregates and removes Markdown mirrors without removing HTML p
     );
   };
   try {
-    const pages = ['/', '/quickstart', '/architecture'].map((route) => ({
+    const pages = [
+      '/',
+      '/quickstart',
+      '/architecture',
+      '/guides/limit-blast-radius',
+    ].map((route) => ({
       route,
       title: route === '/' ? 'Introduction' : route.slice(1),
       url: `https://docs.klex.bot${route}`,
@@ -82,6 +87,11 @@ it('filters docs aggregates and removes Markdown mirrors without removing HTML p
     await save('docs/index.mdx', '# Introduction');
     await save('docs/01-quickstart.mdx', '# Quickstart');
     await save('docs/02-architecture.mdx', '# Architecture');
+    // Blume route groups do not appear in the published URL.
+    await save(
+      'docs/guides/(security)/limit-blast-radius.mdx',
+      '# Limit blast radius',
+    );
     await save('discovery.config.json', {
       sitemap: ['/architecture'],
       agents: ['/quickstart'],
@@ -117,6 +127,7 @@ it('filters docs aggregates and removes Markdown mirrors without removing HTML p
     await createAgentBuild({ kind: 'docs', directory }).build();
     const llms = await readFile(join(directory, 'dist/llms.txt'), 'utf8');
     expect(llms).not.toContain('/quickstart');
+    expect(llms).toContain('/guides/limit-blast-radius');
     expect(llms).toContain(
       '[architecture](https://docs.klex.bot/architecture)',
     );

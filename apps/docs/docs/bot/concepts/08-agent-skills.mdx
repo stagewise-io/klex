@@ -1,0 +1,23 @@
+---
+title: Agent Skills
+description: How Klex Bots use and store Agent Skills for recurring tasks.
+related:
+  - /bot/concepts/memory
+  - /bot/concepts/data-directory
+---
+
+An Agent Skill is a reusable set of instructions for a recurring task. For example, a skill might describe how to prepare a project status update. Its description tells the Bot when the instructions apply; its body contains the procedure.
+
+Klex makes available skills discoverable to the Bot and instructs it to load a matching skill before acting. A skill guides the Bot; it does not guarantee a particular outcome or replace account permissions.
+
+## Where skills come from
+
+A Bot can learn skills from its activity. Skills can also come from other sources, such as templates. Each Bot stores its skills in its own [data directory](/bot/concepts/data-directory); skills are identified by a namespace and name, such as `learning/project-status`.
+
+Each skill is stored as a `SKILL.md` file under `skills/{namespace}/{name}/`. The file contains a name, a description, and a Markdown body.
+
+## Review and manage skills
+
+The Bot’s Admin API can list skills, retrieve their contents, and edit or delete them. Use `GET /v1/skills` to list skills and `GET /v1/skills/{namespace}/{name}` to read one. The same qualified path supports `PATCH` and `DELETE`.
+
+Review learned skills for accuracy. Learning can update or remove them over time, including skills an administrator has edited; an edit does not lock a learned skill against later changes.

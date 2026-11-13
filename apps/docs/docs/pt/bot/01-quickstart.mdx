@@ -1,0 +1,54 @@
+---
+title: Início rápido
+description: Crie um bot Klex alojado na nuvem ou execute-o no seu computador.
+related:
+  - /cloud/hosted-vs-local
+  - /bot/concepts/brain-and-computers
+---
+
+O Klex recomenda um bot alojado na nuvem para a maioria dos utilizadores. Também pode executar um bot no seu computador, com ou sem inscrição no Klex Cloud. Precisa de acesso a um fornecedor de modelos; para a configuração na nuvem precisa ainda de uma conta Klex Cloud.
+
+<a id="criar-o-seu-bot"></a>
+
+## Criar um bot alojado na nuvem
+
+1. Inicie sessão no [Klex Cloud](https://cloud.klex.bot) e comece a criar um bot.
+2. Escolha o alojamento na nuvem e siga os passos para dar um nome ao bot, definir a sua [alma](/bot/concepts/soul) e configurar fornecedores e modelos.
+3. Ligue as aplicações ou computadores de que o bot precisa. Consulte [Ligações](/bot/concepts/brain-and-computers) para gerir o seu acesso.
+
+Envie uma mensagem ao bot numa aplicação ligada para verificar se responde. Pode consultar a sua atividade no painel Cloud.
+
+<a id="instalação"></a>
+
+## Instalar o Klex para auto-hospedagem
+
+Para executar o bot no seu computador, instale o Klex num terminal:
+
+<Tabs param="install">
+  <Tab title="macOS">`curl -fsSL https://klex.bot/install.sh | sh`</Tab>
+  <Tab title="Linux">`curl -fsSL https://klex.bot/install.sh | sh`</Tab>
+  <Tab title="Windows">`irm https://klex.bot/install.ps1 | iex`</Tab>
+  <Tab title="WSL">`curl -fsSL https://klex.bot/install.sh | sh`</Tab>
+</Tabs>
+
+### Configuração com apoio do Cloud
+
+Inicie a configuração de um bot auto-hospedado no Klex Cloud e siga as instruções de inscrição. O bot é executado no seu computador; o Cloud fornece uma interface de administração.
+
+### Configuração independente
+
+Para executar o bot sem o inscrever no Cloud, inicie a aplicação interativa:
+
+```sh
+klex --no-cloud
+```
+
+1. Prima `a` para criar um bot e introduza o seu nome.
+2. Em **Settings → Providers & Endpoints**, configure um fornecedor de modelos. Em **Model Selection**, selecione um modelo válido para chat.
+3. Abra **Settings → Soul** e crie uma alma que descreva o caráter e o trabalho do bot.
+4. Em **Settings → MCP Servers**, ligue os servidores de que o bot precisa. Configure as permissões das suas contas nas aplicações ligadas.
+
+Para receber eventos de um canal externo, ligue um servidor MCP que suporte as atualizações de recursos correspondentes ou a [extensão de notificações push](https://github.com/stagewise-io/klex/tree/main/packages/mcp-extension-push-notifications) do Klex.
+
+
+<a id="criar-um-bot-auto-hospedado-sem-o-menu-de-seleção"></a>

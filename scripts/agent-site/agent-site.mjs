@@ -282,6 +282,7 @@ class AgentBuild {
               .replace(/\\/g, '/')
               .replace(/\.mdx?$/, '')
               .split('/')
+              .filter((part) => !/^\(.+\)$/.test(part))
               .map((part) => part.replace(/^\d+-/, ''))
               .join('/')}`.replace(/\/index$/, '') || '/';
           return [route, `apps/docs/docs/${file}`];

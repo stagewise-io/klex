@@ -1,0 +1,28 @@
+---
+title: Automate recurring tasks
+sidebar:
+  label: Recurring tasks
+description: Set up repeated work with a connected scheduling service and clear instructions.
+related:
+  - /bot/concepts/memory
+  - /bot/concepts/agent-skills
+  - /bot/guides/control-and-limits
+---
+
+For recurring work, use a connected calendar or scheduling service that can deliver events to the Bot. The service must support the schedule you need and provide the required capabilities through its MCP connection.
+
+## Set up a routine
+
+1. Connect the scheduling service and authorize the Bot’s account. Check that it can create the schedule and receive its events.
+2. Tell the Bot what to do, how often, the time zone, and where to send the result. Give it access to any apps or data it needs.
+3. Ask the Bot to create the schedule, then check it in the scheduling service. Test the workflow and review the result before relying on it.
+
+For example: “Every Monday at 09:00 Europe/Berlin, summarize the open project issues and post the summary in our project channel.” The Bot needs access to the issue source and the destination channel as well as a working schedule.
+
+## Reminders and learned procedures
+
+A Bot can use its internal to-dos for short-term work and one-time reminders. They are not a recurring calendar: use a suitable connected service for repeating schedules.
+
+A Bot may also learn a reusable procedure from experience as an [Agent Skill](/bot/concepts/agent-skills). Review its work and correct mistakes; learning does not guarantee that future runs will be correct.
+
+Keep the Bot and its connections available when the routine is due. A schedule is not proof that a task completed, so check important results and use your normal monitoring or escalation process.

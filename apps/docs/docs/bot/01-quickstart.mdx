@@ -1,0 +1,69 @@
+---
+title: Quickstart
+description: Create a Klex Bot with Cloud hosting or run it on your own computer.
+related:
+  - /cloud/hosted-vs-local
+  - /bot/concepts/brain-and-computers
+---
+
+Klex recommends a Cloud-hosted Bot for most users. You can also run a Bot on your own computer, with or without Klex Cloud enrollment. You’ll need access to a model provider; Cloud setup also requires a Klex Cloud account.
+
+<div className="hosting-quickstart">
+<Tabs inline hash sync={false}>
+<Tab title="Cloud-hosted" id="create-a-cloud-hosted-bot">
+
+## Cloud-hosted setup
+
+1. Sign in to [Klex Cloud](https://cloud.klex.bot) and start creating a Bot.
+2. Choose Cloud hosting and follow the setup prompts to name the Bot, define its [soul](/bot/concepts/soul), and configure its model providers and models.
+3. Connect the apps or computers the Bot needs. See [Connections](/bot/concepts/brain-and-computers) for how to manage access.
+
+Send the Bot a message in a connected app to check that it responds. You can review its activity in the Cloud dashboard.
+
+</Tab>
+<Tab title="Self-hosted" id="install-klex-for-self-hosting">
+
+## Self-hosted setup
+
+To run the Bot on your own computer, install Klex from a system shell:
+
+**macOS, Linux, or WSL:**
+
+```sh
+curl -fsSL https://klex.bot/install.sh | sh
+```
+
+**Windows (PowerShell):**
+
+```powershell
+irm https://klex.bot/install.ps1 | iex
+```
+
+### Cloud-assisted setup
+
+Start a self-hosted Bot from the Cloud setup flow and follow the enrollment instructions. The Bot runs on your computer; the Cloud provides a management interface.
+
+### Standalone setup
+
+To run without Cloud enrollment, start the interactive app:
+
+```sh
+klex --no-cloud
+```
+
+1. Press `a` to create a Bot and enter its name.
+2. In **Settings → Providers & Endpoints**, configure a model provider. In **Model Selection**, select a valid chat model.
+3. Open **Settings → Soul** and create a soul describing the Bot’s character and work.
+4. In **Settings → MCP Servers**, connect the servers the Bot needs. Configure the permissions for its accounts in the connected apps.
+
+To receive events from an external channel, connect an MCP server that supports the relevant resource updates or Klex’s [push-notification extension](https://github.com/stagewise-io/klex/tree/main/packages/mcp-extension-push-notifications).
+
+</Tab>
+</Tabs>
+</div>
+
+<a id="create-a-self-hosted-bot-without-the-picker"></a>
+
+If the Bot does not respond, see [troubleshooting steps](/bot/guides/observability#if-a-bot-does-not-respond).
+
+<script src="/quickstart-tabs.js" defer></script>

@@ -1,0 +1,30 @@
+---
+title: Le répertoire de données d'un bot Klex
+description: Où un bot stocke ses conversations et sa mémoire et comment trouver les données d'un bot auto-hébergé.
+related:
+  - /bot/concepts/memory
+  - /cloud/hosted-vs-local
+  - /cloud/data-privacy
+---
+
+Chaque bot Klex stocke ses conversations et sa mémoire dans son répertoire de données. Pour un bot hébergé dans le Cloud, ce répertoire se trouve dans l'environnement hébergé. Pour un bot auto-hébergé, il se trouve dans le dossier local utilisé pour ses données.
+
+Les administrateurs peuvent accéder aux conversations et à la mémoire par l'Admin API du bot. Le tableau de bord Klex Cloud sert de proxy inverse et d'interface pour l'Admin API de chaque bot.
+
+## Trouver un bot auto-hébergé
+
+Dans l'application Klex auto-hébergée, le démarrage interactif cherche par défaut les bots dans `~/.klex/agents`. Si `KLEX_HOME` est défini, il utilise le dossier `agents` sous ce chemin. Avec `--data-dir`, vous pouvez sélectionner directement un répertoire ; cette option est prioritaire sur `KLEX_DATA_DIR`.
+
+Par exemple, pour ouvrir un bot dont vous connaissez déjà le répertoire de données :
+
+```sh
+klex --data-dir /path/to/bot
+```
+
+Remplacez le chemin d'exemple par le répertoire réel du bot. Consultez le [démarrage rapide](/bot/quickstart) pour créer un bot et le configurer sans interface de terminal.
+
+## Protéger les données
+
+Le répertoire peut contenir des informations sensibles, notamment la configuration et les identifiants. Limitez l'accès à l'aide des permissions de votre système d'exploitation et protégez les copies que vous créez. Sur les systèmes utilisant les modes de fichiers Unix, Klex demande des permissions réservées au propriétaire lors de la création du répertoire ; il ne modifie pas les permissions des répertoires existants. Windows utilise des listes de contrôle d'accès.
+
+Vérifiez vos procédures de sauvegarde et de restauration avant de supprimer ou de déplacer des données. Cette page ne décrit ni procédure de migration ou de restauration prise en charge, ni règles de conservation ou traitement des données par des tiers.

@@ -1,0 +1,54 @@
+---
+title: 快速开始
+description: 创建云托管的 Klex 机器人，或在自己的计算机上运行机器人。
+related:
+  - /cloud/hosted-vs-local
+  - /bot/concepts/brain-and-computers
+---
+
+对于大多数用户，Klex 推荐使用云托管机器人。你也可以在自己的计算机上运行机器人，并选择是否注册到 Klex Cloud。你需要访问模型提供商；使用云端设置还需要 Klex Cloud 账户。
+
+<a id="创建你的机器人"></a>
+
+## 创建云托管机器人
+
+1. 登录 [Klex Cloud](https://cloud.klex.bot)，开始创建机器人。
+2. 选择云托管，按照步骤为机器人命名、定义其[灵魂](/bot/concepts/soul)，并配置提供商和模型。
+3. 连接机器人需要的应用或计算机。请参阅[连接](/bot/concepts/brain-and-computers)，了解如何管理访问权限。
+
+在已连接的应用中向机器人发送消息，检查它是否响应。你可以在 Cloud 控制台查看其活动。
+
+<a id="安装"></a>
+
+## 安装 Klex 以自托管
+
+要在自己的计算机上运行机器人，请在终端中安装 Klex：
+
+<Tabs param="install">
+  <Tab title="macOS">`curl -fsSL https://klex.bot/install.sh | sh`</Tab>
+  <Tab title="Linux">`curl -fsSL https://klex.bot/install.sh | sh`</Tab>
+  <Tab title="Windows">`irm https://klex.bot/install.ps1 | iex`</Tab>
+  <Tab title="WSL">`curl -fsSL https://klex.bot/install.sh | sh`</Tab>
+</Tabs>
+
+### 使用 Cloud 辅助设置
+
+在 Klex Cloud 中开始设置自托管机器人，并按照注册说明操作。机器人运行在你的计算机上；Cloud 提供管理界面。
+
+### 独立设置
+
+要在不注册到 Cloud 的情况下运行机器人，请启动交互式应用：
+
+```sh
+klex --no-cloud
+```
+
+1. 按 `a` 创建机器人并输入其名称。
+2. 在 **Settings → Providers & Endpoints** 中配置模型提供商。在 **Model Selection** 中选择有效的聊天模型。
+3. 打开 **Settings → Soul**，创建描述机器人性格和工作的灵魂。
+4. 在 **Settings → MCP Servers** 中连接机器人需要的服务器。在已连接的应用中配置机器人账户的权限。
+
+要接收外部频道的事件，请连接支持相应资源更新或 Klex [推送通知扩展](https://github.com/stagewise-io/klex/tree/main/packages/mcp-extension-push-notifications)的 MCP 服务器。
+
+
+<a id="不使用选择菜单创建自托管机器人"></a>

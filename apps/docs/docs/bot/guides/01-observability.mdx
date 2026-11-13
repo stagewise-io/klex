@@ -1,0 +1,62 @@
+---
+title: Review Bot activity
+sidebar:
+  label: Activity
+description: Where to review a Klex Bot's activity and access its chats and memory.
+related:
+  - /bot/guides/control-and-limits
+  - /bot/concepts/data-directory
+  - /bot/concepts/how-bots-work
+---
+
+In the [Klex Cloud dashboard](https://cloud.klex.bot), you can see what your Bot is doing and chat with it.
+
+Administrators can also access a Bot's chats and memory through its Admin API. The Cloud dashboard provides a frontend to each Bot's Admin API. For where that data is stored, see [the data directory](/bot/concepts/data-directory).
+
+## Check self-hosted diagnostics
+
+In the interactive Klex app, open **Settings → Logs** to review recent runtime logs. Use the arrow keys to scroll, `l` to change the minimum displayed level, and `v` to change the display style. Changing the displayed level does not necessarily enable collection of additional logs.
+
+The viewer keeps up to 500 captured entries in memory for the current process, so older entries may no longer be available. Runtime logs are not a complete record of Bot conversations or task results. In headless mode, Klex writes logs to the console instead of using the interactive viewer.
+
+For version and connection details, open **Settings → Debug Information**. It shows the Klex version, data directory, and Cloud enrollment and tunnel status when available. Review logs and diagnostics for sensitive information before sharing them.
+
+## If a Bot does not respond
+
+Check each part of the path, starting with the Bot and ending with the message source:
+
+1. **Check the Bot is running.** For a self-hosted Bot, check its process or service. If you enabled the optional health listener, check readiness as described in [Availability](/bot/reliability/availability#monitor-a-self-hosted-bot). A successful probe does not prove that the model or connections are working.
+2. **Check model access.** Confirm that a provider is configured and that a chat model is selected. Check the provider’s account and service if requests are failing. See [Models](/bot/concepts/models).
+3. **Check the connection and account.** For a message from a connected app, check the MCP server’s status, required authorization, and the Bot account’s access to the conversation. Event delivery also depends on the server’s capabilities. See [MCP and Klex Bots](/bot/concepts/mcp#if-a-connection-needs-attention).
+4. **Review available activity and logs.** Look for errors around the time of the request. Use the Cloud dashboard where available, or the self-hosted diagnostics above. Logs and activity may be incomplete; a missing entry alone does not establish where delivery failed.
+
+Review any diagnostics for sensitive information before sharing them. Do not include credentials in a support request.
+
+## Review activity with the Admin API
+
+Administrators using the Admin API can:
+
+- List persisted session instances with `GET /v1/sessions`, then retrieve a session's messages with `GET /v1/sessions/{instanceId}/messages`. Follow `nextCursor` to retrieve older pages. Some older messages may have been trimmed; check `trimmedMessageCount`.
+- Query recorded model-call usage with `GET /v1/usage`. Results can be grouped by model or provider and aggregated over time. Token totals may be incomplete when a provider does not report usage; check `tokenUsageUnreportedCount`.
+
+Use `GET /v1/openapi.json` for the API's available routes and query parameters. Session messages and tool outputs can contain sensitive information; limit who can access and retain them.
+
+### Access the local Admin API
+
+The self-hosted app does not expose a local Admin API port by default. Its optional listener is bound to `127.0.0.1` and has **no authentication**. Anyone who can reach it, including other local users and processes, can access sensitive Bot data and use management routes. Enable it only where those users and processes are trusted; do not expose or forward it to an untrusted network.
+
+For example, to start an existing headless Bot with the local listener enabled:
+
+```sh
+klex --headless --data-dir /path/to/bot --dangerous-local-admin-api-port 2706
+```
+
+Replace the path and port with your own. From the same computer, you can inspect the available routes:
+
+```sh
+curl http://127.0.0.1:2706/v1/openapi.json
+```
+
+You can set the port with `KLEX_DANGEROUS_LOCAL_ADMIN_API_PORT` instead; the command-line option takes precedence. When finished, stop the Bot and restart it without the option or environment variable to disable the listener.
+
+To stop a Bot or change its connected access, see [Control your Klex Bot](/bot/guides/control-and-limits).

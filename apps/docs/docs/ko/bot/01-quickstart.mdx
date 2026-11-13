@@ -1,0 +1,54 @@
+---
+title: 빠른 시작
+description: 클라우드 호스팅 Klex 봇을 만들거나 자신의 컴퓨터에서 실행합니다.
+related:
+  - /cloud/hosted-vs-local
+  - /bot/concepts/brain-and-computers
+---
+
+Klex는 대부분의 사용자에게 클라우드 호스팅 봇을 권장합니다. 자신의 컴퓨터에서 봇을 실행하고 Klex Cloud 등록 여부를 선택할 수도 있습니다. 모델 제공업체에 대한 접근 권한이 필요하며, Cloud 설정에는 Klex Cloud 계정도 필요합니다.
+
+<a id="봇-만들기"></a>
+
+## 클라우드 호스팅 봇 만들기
+
+1. [Klex Cloud](https://cloud.klex.bot)에 로그인하고 봇 만들기를 시작합니다.
+2. 클라우드 호스팅을 선택하고 안내에 따라 봇의 이름, [Soul](/bot/concepts/soul), 제공업체와 모델을 설정합니다.
+3. 봇에 필요한 앱과 컴퓨터를 연결합니다. 접근 관리에 관해서는 [연결](/bot/concepts/brain-and-computers)을 참고하세요.
+
+연결된 앱에서 봇에 메시지를 보내 응답을 확인합니다. Cloud 대시보드에서 활동을 확인할 수 있습니다.
+
+<a id="설치"></a>
+
+## 셀프 호스팅을 위한 Klex 설치
+
+자신의 컴퓨터에서 봇을 실행하려면 터미널에서 Klex를 설치합니다.
+
+<Tabs param="install">
+  <Tab title="macOS">`curl -fsSL https://klex.bot/install.sh | sh`</Tab>
+  <Tab title="Linux">`curl -fsSL https://klex.bot/install.sh | sh`</Tab>
+  <Tab title="Windows">`irm https://klex.bot/install.ps1 | iex`</Tab>
+  <Tab title="WSL">`curl -fsSL https://klex.bot/install.sh | sh`</Tab>
+</Tabs>
+
+### Cloud를 사용한 설정
+
+Klex Cloud에서 셀프 호스팅 봇 설정을 시작하고 등록 안내를 따릅니다. 봇은 자신의 컴퓨터에서 실행되고 Cloud는 관리 화면을 제공합니다.
+
+### 독립 실행 설정
+
+Cloud에 등록하지 않고 봇을 실행하려면 대화형 앱을 시작합니다.
+
+```sh
+klex --no-cloud
+```
+
+1. `a`를 눌러 봇을 만들고 이름을 입력합니다.
+2. **Settings → Providers & Endpoints**에서 모델 제공업체를 설정합니다. **Model Selection**에서 유효한 채팅 모델을 선택합니다.
+3. **Settings → Soul**을 열고 봇의 성격과 작업을 설명하는 Soul을 만듭니다.
+4. **Settings → MCP Servers**에서 필요한 서버를 연결합니다. 연결된 앱에서 봇 계정의 권한을 설정합니다.
+
+외부 채널에서 이벤트를 받으려면 해당 리소스 업데이트 또는 Klex의 [푸시 알림 확장](https://github.com/stagewise-io/klex/tree/main/packages/mcp-extension-push-notifications)을 지원하는 MCP 서버를 연결합니다.
+
+
+<a id="선택-메뉴-없이-셀프-호스팅-봇-만들기"></a>

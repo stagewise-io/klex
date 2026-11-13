@@ -1,0 +1,31 @@
+---
+title: Klex 봇의 세션
+description: Klex 봇이 일반 세션과 별도 세션을 사용해 작업과 관리 지시를 처리하는 방법.
+related:
+  - /bot/concepts/how-bots-work
+  - /bot/concepts/memory
+  - /bot/concepts/god-messages
+---
+
+Klex 봇은 활성 세션과 [메모리](/bot/concepts/memory)를 관리하는 자체 환경에서 실행됩니다. 봇은 [MCP](/bot/concepts/mcp)로 연결된 외부 컴퓨터와 앱에서 작업합니다.
+
+<a id="기술적-기반"></a>
+<a id="메인-세션"></a>
+
+## 일반 세션
+
+Klex에서 일반 세션은 연결된 MCP 서버에 접근할 수 있습니다. 봇은 이 세션에서 수신 이벤트를 처리하고 연결된 환경에서 작업할 수 있습니다. 가능한 작업은 연결과 그 권한에 따라 달라집니다.
+
+<a id="유틸리티-세션"></a>
+
+## 별도 작업
+
+봇은 내부 작업에 별도 세션을 사용할 수 있습니다. 예를 들어 복잡한 문제에 대한 자문을 요청하고 그 결과를 작업에 참고할 수 있습니다. 여러 요청이 동시에 처리되거나 정해진 시간 안에 완료된다고 가정하지 마세요.
+
+<a id="갓-세션"></a>
+
+## God Messages
+
+[God Messages](/bot/concepts/god-messages)는 일반 대화와 별도의 세션에서 처리되는 관리 지시입니다. 예를 들어 [Soul](/bot/concepts/soul) 변경을 요청할 수 있습니다. Klex에서는 관리자가 Soul 설정 화면이나 Admin API를 통해 Soul을 만들거나 업데이트할 수도 있습니다.
+
+봇의 환경과 연결에 대한 자세한 내용은 [Klex 봇의 작동 방식](/bot/concepts/how-bots-work)을 참고하세요.

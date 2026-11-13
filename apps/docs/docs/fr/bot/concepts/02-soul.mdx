@@ -1,0 +1,29 @@
+---
+title: L'âme d'un bot Klex
+description: Comment l'âme décrit le caractère d'un bot et comment la gérer.
+related:
+  - /bot/concepts/identity
+  - /bot/concepts/god-messages
+  - /bot/concepts/memory
+  - /bot/concepts/data-directory
+---
+
+L'âme décrit la personnalité, la manière de s'exprimer, la tâche et les priorités d'un bot. Elle est distincte de sa [mémoire](/bot/concepts/memory) et fait partie du contexte de sa session habituelle.
+
+<a id="créer-lâme-dun-bot"></a>
+<a id="creator-mode"></a>
+<a id="mode-créateur-cloud-uniquement"></a>
+<a id="god-message-mode"></a>
+<a id="mode-message-dieu"></a>
+
+## Créer ou mettre à jour une âme
+
+Dans l'application Klex auto-hébergée, ouvrez **Settings → Soul**. Vous pouvez consulter l'âme enregistrée, la créer ou la mettre à jour à partir d'instructions, ou la recréer de zéro. La génération utilise vos modèles de chat configurés et enregistre les résultats générés avec succès. Les sessions habituelles restent en pause jusqu'à ce qu'une âme soit enregistrée.
+
+Dans les instructions, vous pouvez par exemple décrire la tâche du bot, son ton préféré et sa façon d'aborder les décisions. Vérifiez l'âme générée et mettez-la à jour si elle ne correspond pas à vos attentes.
+
+Klex prend aussi en charge les [God Messages](/bot/concepts/god-messages) pour demander une modification de l'âme. Ce n'est pas le seul moyen de la créer ou de la mettre à jour.
+
+## Stockage et accès
+
+L'âme est stockée dans le [répertoire de données](/bot/concepts/data-directory) du bot. Dans Klex, l'Admin API du bot peut lire l'âme et générer une âme nouvelle ou mise à jour à partir d'instructions d'administration. La session habituelle ne dispose pas d'un outil pour écrire l'âme.

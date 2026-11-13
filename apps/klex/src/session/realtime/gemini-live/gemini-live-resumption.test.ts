@@ -254,7 +254,7 @@ describe('Gemini live video across reconnects', () => {
       {
         realtimeInput: {
           video: { data: 'AQ==', mimeType: 'image/jpeg' },
-          mediaResolution: 'MEDIA_RESOLUTION_HIGH',
+          mediaResolution: { level: 'MEDIA_RESOLUTION_HIGH' },
         },
       },
     ]);

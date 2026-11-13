@@ -106,10 +106,12 @@ export class GeminiLiveVideoInput implements RealtimeVideoInput {
           data: Buffer.from(frame.data).toString('base64'),
           mimeType: frame.mimeType,
         },
-        mediaResolution:
-          frame.detail === 'high'
-            ? 'MEDIA_RESOLUTION_HIGH'
-            : 'MEDIA_RESOLUTION_LOW',
+        mediaResolution: {
+          level:
+            frame.detail === 'high'
+              ? 'MEDIA_RESOLUTION_HIGH'
+              : 'MEDIA_RESOLUTION_LOW',
+        },
       },
     });
   }

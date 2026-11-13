@@ -5,7 +5,8 @@
  * snapshot retrieved 2026-11-12. The SEP is not final: error codes
  * `-32023..-32027` are provisional. Keep wire details in this package only.
  *
- * Conventions: `cursor` is optional and nullable everywhere; absent means null.
+ * Replay cursors are optional and nullable; absent means null.
+ * Catalogue pagination cursors use core tools/list semantics (optional strings).
  * Only the poll and push (stream) delivery modes are modelled here. Webhook
  * delivery is intentionally out of scope for this package version.
  */

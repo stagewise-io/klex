@@ -144,6 +144,56 @@ describe('runStreamLoop', () => {
     expect(h.batches.map((b) => b.cursor)).toContain('c1');
   });
 
+  it('drains queued events before reporting termination and closes transport', async () => {
+    let closed = false;
+    const h = harness([
+      (_p, s, signal) => {
+        s.active({ cursor: 'c0' });
+        s.event(occ('1', 'c1'));
+        s.event(occ('2', 'c2'));
+        signal.addEventListener('abort', () => {
+          closed = true;
+        });
+        s.terminated({ error: { code: -32024, message: 'Forbidden' } });
+        s.event(occ('late', 'c3'));
+      },
+    ]);
+    const onTerminated = vi.fn(() => {
+      expect(closed).toBe(true);
+      expect(h.batches.flatMap((b) => b.events.map((e) => e.eventId))).toEqual([
+        '1',
+        '2',
+      ]);
+    });
+    await runStreamLoop({
+      ...h.base,
+      onBatch: async (b) => {
+        await Promise.resolve();
+        h.batches.push(b);
+      },
+      onTerminated,
+    });
+    expect(onTerminated).toHaveBeenCalledTimes(1);
+    expect(h.opens).toHaveLength(1);
+  });
+
+  it('does not overflow a large granted heartbeat timer', async () => {
+    vi.useFakeTimers();
+    const h = harness([
+      (_p, s, signal) => {
+        s.active({ cursor: 'c0', heartbeatMs: Number.MAX_VALUE });
+        return new Promise<void>((resolve) =>
+          signal.addEventListener('abort', () => resolve()),
+        );
+      },
+    ]);
+    const done = runStreamLoop(h.base);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(h.opens).toHaveLength(1);
+    h.controller.abort();
+    await done;
+  });
+
   it('stops and reports on notifications/events/terminated', async () => {
     const h = harness([
       (_p, s) => {

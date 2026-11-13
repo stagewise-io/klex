@@ -730,6 +730,33 @@ describe('OpenAI realtime processor', () => {
     ]);
   });
 
+  it('pins the configured caller language for transcription and speech', async () => {
+    const socket = new FakeSocket();
+    const factory = createOpenAIRealtimeProcessorFactory({
+      logging,
+      config: { ...config, languages: ['de-DE', 'en-US'] },
+      connect: () => socket,
+    });
+    const created = factory.create({
+      namespace: 'test',
+      sessionId: 'session',
+      signal: new AbortController().signal,
+      context: preparedContext,
+    });
+    socket.open();
+    const update = JSON.parse(socket.sent[0] ?? '{}');
+    expect(update.session.audio.input.transcription).toEqual({
+      model: 'gpt-4o-mini-transcribe',
+      language: 'de',
+    });
+    expect(update.session.instructions).toContain(preparedContext.instructions);
+    expect(update.session.instructions).toContain(
+      '- speak German. start the call in German.',
+    );
+    socket.message({ type: 'session.updated' });
+    await (await created).close();
+  });
+
   it('includes voice visibility rules without a prepared context', async () => {
     const { update, processor } = await activate();
     expect(update.session.instructions).toBe(voiceSystemPrompt);

@@ -1965,6 +1965,69 @@ describe('config v2', () => {
     await config.close();
   });
 
+  it('resolves caller languages from realtime provider options', async () => {
+    const config = createConfig({
+      logging,
+      dataDirectory: await directory(true),
+      env: {},
+    });
+    await config.start();
+    await config.writeProviderInstance('gemini-voice', {
+      type: 'google-gemini',
+      settings: { apiKey: 'sk-gemini-test' },
+      knownModels: {
+        'gemini-3.8-live': { capabilities: { voice: { sts: true } } },
+      },
+    });
+    await config.writeProviderInstance('openai-voice', {
+      type: 'openai',
+      settings: { apiKey: 'test-key' },
+      knownModels: {
+        'gpt-realtime': { capabilities: { voice: { sts: true } } },
+      },
+    });
+    const select = (providerId: string, modelId: string, live: unknown) =>
+      config.writeModelSelection({
+        ...emptyModelSelection,
+        voice: {
+          ...emptyModelSelection.voice,
+          sts: [
+            {
+              providerId,
+              modelId,
+              providerOptions: {
+                [providerId === 'gemini-voice' ? 'google' : 'openai']: { live },
+              },
+            },
+          ],
+        },
+      });
+
+    await select('gemini-voice', 'gemini-3.8-live', {
+      languages: ['de-de', 'en'],
+    });
+    expect(config.resolveRealtimeProvider()).toMatchObject({
+      kind: 'gemini-live',
+      config: { languages: ['de-DE', 'en'] },
+    });
+    await select('openai-voice', 'gpt-realtime', { languages: ['fr-FR'] });
+    expect(config.resolveRealtimeProvider()).toMatchObject({
+      kind: 'openai-realtime',
+      config: { languages: ['fr-FR'] },
+    });
+    await select('openai-voice', 'gpt-realtime', {});
+    expect(config.resolveRealtimeProvider()?.config).not.toHaveProperty(
+      'languages',
+    );
+    for (const languages of [[], ['not a tag'], 'de-DE']) {
+      await select('gemini-voice', 'gemini-3.8-live', { languages });
+      expect(() => config.resolveRealtimeProvider()).toThrow(
+        'Live languages must be a non-empty list of BCP-47 language tags',
+      );
+    }
+    await config.close();
+  });
+
   it('validates explicit object references for voice and arbitrary model IDs', () => {
     const parsed = klexConfigSchema.parse({
       configVersion: 2,

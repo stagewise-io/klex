@@ -204,6 +204,35 @@ describe('Gemini live processor', () => {
     await (await promise).close();
   });
 
+  it('hints the configured caller languages without a speech language code', async () => {
+    const socket = new FakeSocket();
+    const factory = createGeminiLiveProcessorFactory({
+      logging,
+      config: { ...config, languages: ['de-DE', 'en-US'] },
+      connect: () => socket,
+    });
+    const promise = factory.create({
+      namespace: 'test',
+      sessionId: 'session',
+      signal: new AbortController().signal,
+    });
+    socket.open();
+    const { setup } = JSON.parse(socket.sent[0] ?? '{}');
+    expect(setup.inputAudioTranscription).toEqual({
+      languageCodes: ['de-DE', 'en-US'],
+    });
+    // Native audio models reject an explicit speech language code.
+    expect(setup.generationConfig).not.toHaveProperty('speechConfig');
+    const instruction = setup.systemInstruction.parts[0].text;
+    expect(instruction.startsWith(voiceSystemPrompt.trimEnd())).toBe(true);
+    expect(instruction).toContain('- speak German. start the call in German.');
+    expect(instruction).toContain(
+      '- the caller may also speak English. answer in whichever of German, English the caller last used.',
+    );
+    socket.message({ setupComplete: {} });
+    await (await promise).close();
+  });
+
   it('seeds external session data as a user turn without completing it', async () => {
     const messages = appendExternalInteractionContext([], {
       namespace: 'voice',

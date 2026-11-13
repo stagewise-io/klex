@@ -31,6 +31,7 @@ import {
   renderInteractionUpdateText,
 } from '@/session/interaction';
 
+import { withSpokenLanguage } from '../language';
 import type {
   RealtimeModelEvent,
   RealtimeModelSession,
@@ -465,7 +466,10 @@ export class GeminiLiveSession implements RealtimeModelSession {
             },
           }),
         },
-        inputAudioTranscription: {},
+        inputAudioTranscription:
+          this.config.languages !== undefined
+            ? { languageCodes: this.config.languages }
+            : {},
         outputAudioTranscription: {},
         contextWindowCompression: contextWindowCompression(
           this.context?.model.contextSize,
@@ -477,7 +481,10 @@ export class GeminiLiveSession implements RealtimeModelSession {
         systemInstruction: {
           parts: [
             {
-              text: this.context?.instructions ?? voiceSystemPrompt,
+              text: withSpokenLanguage(
+                this.context?.instructions ?? voiceSystemPrompt,
+                this.config.languages,
+              ),
             },
           ],
         },

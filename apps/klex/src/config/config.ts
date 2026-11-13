@@ -46,6 +46,8 @@ export interface ResolvedOpenAIRealtimeConfig {
   modelId: string;
   apiKey: string;
   websocketUrl: string;
+  /** BCP-47 tags the caller speaks, primary first. */
+  languages?: readonly string[];
 }
 
 export interface ResolvedGeminiLiveConfig {
@@ -53,6 +55,8 @@ export interface ResolvedGeminiLiveConfig {
   modelId: string;
   apiKey: string;
   websocketUrl: string;
+  /** BCP-47 tags the caller speaks, primary first. */
+  languages?: readonly string[];
 }
 
 export interface ResolvedOpenAILiveConfig {
@@ -61,6 +65,8 @@ export interface ResolvedOpenAILiveConfig {
   apiKey: string;
   baseUrl: string;
   responsesModelId: string;
+  /** BCP-47 tags the caller speaks, primary first. */
+  languages?: readonly string[];
 }
 
 /**
@@ -372,9 +378,11 @@ class ConfigModule implements Config {
           modelId: resolved.modelId,
           apiKey,
           websocketUrl: geminiLiveWebSocketUrl(baseUrl, apiKey),
+          ...languageField(resolved.providerOptions, 'google'),
         },
       };
     }
+    const openAILanguages = languageField(resolved.providerOptions, 'openai');
     if (/^gpt-live-1(?:-\d{4}-\d{2}-\d{2})?$/.test(resolved.modelId)) {
       return {
         kind: 'openai-live',
@@ -389,6 +397,7 @@ class ConfigModule implements Config {
           responsesModelId: resolveOpenAILiveResponsesModel(
             resolved.providerOptions,
           ),
+          ...openAILanguages,
         },
       };
     }
@@ -400,6 +409,7 @@ class ConfigModule implements Config {
         modelId: resolved.modelId,
         apiKey,
         websocketUrl: openAIRealtimeWebSocketUrl(baseUrl, resolved.modelId),
+        ...openAILanguages,
       },
     };
   }
@@ -643,6 +653,39 @@ function resolveOpenAILiveResponsesModel(
     );
   }
   return responsesModelId;
+}
+
+/**
+ * Reads `providerOptions.<namespace>.live.languages`: BCP-47 tags the caller
+ * speaks, primary first. Unset keeps provider auto-detection.
+ */
+function languageField(
+  providerOptions:
+    | Readonly<Record<string, Record<string, unknown>>>
+    | undefined,
+  namespace: 'google' | 'openai',
+): { languages?: string[] } {
+  const live = providerOptions?.[namespace]?.live;
+  if (live === undefined) return {};
+  if (typeof live !== 'object' || live === null || Array.isArray(live))
+    throw new ConfigValidationError('Live provider option must be an object');
+  const languages = (live as Record<string, unknown>).languages;
+  if (languages === undefined) return {};
+  if (
+    !Array.isArray(languages) ||
+    languages.length === 0 ||
+    !languages.every((tag) => typeof tag === 'string')
+  )
+    throw new ConfigValidationError(
+      'Live languages must be a non-empty list of BCP-47 language tags',
+    );
+  try {
+    return { languages: Intl.getCanonicalLocales(languages) };
+  } catch {
+    throw new ConfigValidationError(
+      'Live languages must be a non-empty list of BCP-47 language tags',
+    );
+  }
 }
 
 export function geminiLiveWebSocketUrl(

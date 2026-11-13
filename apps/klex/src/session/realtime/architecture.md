@@ -91,6 +91,14 @@ STS references carry optional `voiceId` through resolved provider configuration.
 
 Voice auditions belong to the provider registry, not the conversation/session coordinator. An isolated WebSocket uses the exact selected Live model and voice, no canonical history or tools, and no Live Responses delegation. Realtime/Gemini improvise a short introduction using the current agent name and full soul as reference data. GPT-Live first generates bounded commentary with the first configured chat model, then speaks it in client mode. The full soul is intentionally supplied to the relevant generation provider; other configuration and conversation content are excluded. OpenAI Realtime completes at `response.done`; Gemini at `turnComplete`. GPT-Live uses client-mode commentary and silence-clock input, completing after 750 ms without voiced output even while silent PCM frames continue. Only bounded mono 24-kHz PCM16 is wrapped as WAV. Abort, timeout, malformed/empty audio, and upstream closure terminate resources without retries. Credentialed upstream acceptance is separate from mock protocol verification.
 
+## Caller language
+
+STS references may carry `languages` (BCP-47, primary first) through resolved provider configuration; see the config README. Without it every provider auto-detects the language per turn. With it, every adapter appends a "Spoken language" rule to its instructions (GPT-Live: frontend instructions), Gemini sends `inputAudioTranscription.languageCodes`, and OpenAI Realtime sends the primary ISO-639-1 code as `audio.input.transcription.language`. Gemini never sends `speechConfig.languageCode`: native audio models reject an explicit speech language. The call-start greeting names the language to use, because it is a text-only turn that otherwise gives the model no language cue.
+
+## Input audio
+
+LiveKit delivers 48 kHz mono PCM16 in 20 ms frames, downmixed and resampled natively. The adapter mixer paces sources into 20 ms frames, and each adapter decimates 48 kHz to 24 kHz with a 31-tap low-pass FIR: flat to 8 kHz, -3 dB at 10 kHz, at least 40 dB rejection above 13 kHz. All three providers receive 24 kHz little-endian PCM16 and declare that rate (Gemini `audio/pcm;rate=24000`, OpenAI `audio/pcm` at 24 kHz). `input-audio-fidelity.test.ts` drives a known signal from a LiveKit source to the provider wire and checks duration, pitch and declared rate.
+
 ## Observability and data handling
 
 Lifecycle logs correlate `leaseId`, `canonicalSessionId`, `externalMediaSessionId`, and MCP namespace. Observability must never include transcript bodies, tool arguments or results, secrets, credentials, or binary media. Counts, sequence numbers, non-secret tool names, model metadata, and closure classes are sufficient for diagnosis.

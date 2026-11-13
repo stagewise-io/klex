@@ -754,7 +754,7 @@ describe('realtime session coordinator', () => {
               content: [
                 {
                   type: 'text',
-                  text: 'A realtime voice call connected. Greet the user briefly to start the conversation.',
+                  text: 'A realtime voice call connected. Greet the user briefly to start the conversation. Speak the language your instructions set; without one, use the language of your earlier conversations with this caller, or English if there are none.',
                 },
               ],
             },

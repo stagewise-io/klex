@@ -19,6 +19,7 @@ import {
   renderInteractionUpdateText,
 } from '@/session/interaction';
 
+import { transcriptionLanguage, withSpokenLanguage } from '../language';
 import type {
   RealtimeModelEvent,
   RealtimeModelSession,
@@ -175,6 +176,7 @@ class OpenAIRealtimeSession implements RealtimeModelSession {
     private readonly logger: ModuleLogger,
     private readonly context: PreparedInferenceContext | undefined,
     private readonly voice: string,
+    private readonly languages: readonly string[] | undefined,
   ) {
     this.socket = this.attachSocket(connect());
     signal.addEventListener('abort', this.handleAbort, { once: true });
@@ -315,16 +317,23 @@ class OpenAIRealtimeSession implements RealtimeModelSession {
   private handleOpen(token: number): void {
     if (token !== this.connectionToken || this.settled) return;
     const tools = toSessionTools(this.context?.tools ?? []);
+    const language = transcriptionLanguage(this.languages);
     this.send({
       type: 'session.update',
       session: {
         type: 'realtime',
-        instructions: this.context?.instructions ?? voiceSystemPrompt,
+        instructions: withSpokenLanguage(
+          this.context?.instructions ?? voiceSystemPrompt,
+          this.languages,
+        ),
         ...(tools.length > 0 && { tools, tool_choice: 'auto' }),
         audio: {
           input: {
             format: { type: 'audio/pcm', rate: OUTPUT_SAMPLE_RATE_HZ },
-            transcription: { model: TRANSCRIPTION_MODEL },
+            transcription: {
+              model: TRANSCRIPTION_MODEL,
+              ...(language !== undefined && { language }),
+            },
             turn_detection: {
               type: 'server_vad',
               create_response: true,
@@ -859,6 +868,7 @@ class OpenAIRealtimeSessionFactory implements RealtimeModelSessionFactory {
       this.logger,
       options.context,
       this.config.voiceId ?? DEFAULT_VOICE,
+      this.config.languages,
     );
     await session.waitUntilReady();
     return session;

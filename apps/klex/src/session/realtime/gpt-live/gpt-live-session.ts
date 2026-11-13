@@ -23,6 +23,7 @@ import {
   renderInteractionUpdateText,
 } from '@/session/interaction';
 
+import { withSpokenLanguage } from '../language';
 import type {
   RealtimeModelEvent,
   RealtimeModelSession,
@@ -889,7 +890,10 @@ class GPTLiveSessionFactory implements RealtimeModelSessionFactory {
       const prepared = buildGPTLiveSessionConfig(options.context, {
         modelId: this.config.modelId,
         responsesModel: this.config.responsesModelId,
-        frontendInstructions: this.frontendInstructions,
+        frontendInstructions: withSpokenLanguage(
+          this.frontendInstructions,
+          this.config.languages,
+        ),
         voice: this.voice,
       });
       const reconnect = () =>

@@ -10,8 +10,7 @@ import {
  * can be fed into a session inbox.
  *
  * - `sourceEnv` ← MCP namespace
- * - `metadata`  ← event source ID, type, timestamp, `resourceLink` URI (when
- *                 set), and structured event data
+ * - `metadata`  ← semantic envelope with nested data (never flattened)
  * - `content`   ← ordered MCP content blocks (text, image, audio,
  *                 resource_link, resource), mapped 1:1
  *
@@ -65,15 +64,34 @@ export function mcpPushNotificationToInboxEvent(
     })
     .filter((block): block is NonNullable<typeof block> => block !== undefined);
 
-  // Spread uses own data properties, so even `__proto__` is inert. Stable
-  // envelope fields come last and cannot be overwritten by event data.
-  const metadata: ContextDataUIPart['metadata'] = {
-    ...event.data,
-    sourceId: event.sourceId,
-    type: event.type,
-    createdAt: event.createdAt,
-    ...(event.resourceLink ? { resourceLink: event.resourceLink.uri } : {}),
-  };
+  const occurrence = ev.occurrence;
+  const metadata: ContextDataUIPart['metadata'] = occurrence
+    ? {
+        origin: 'events',
+        eventId: occurrence.eventId,
+        type: occurrence.name,
+        createdAt: occurrence.timestamp,
+        data: occurrence.data as ContextDataUIPart['metadata'],
+        // The subscription id is transport routing, not semantic event data.
+        ...(occurrence._meta
+          ? {
+              _meta: Object.fromEntries(
+                Object.entries(occurrence._meta).filter(
+                  ([key]) => key !== 'io.modelcontextprotocol/subscriptionId',
+                ),
+              ) as ContextDataUIPart['metadata'],
+            }
+          : {}),
+      }
+    : {
+        origin: 'push-notifications',
+        eventId: event.eventId,
+        sourceId: event.sourceId,
+        type: event.type,
+        createdAt: event.createdAt,
+        ...(event.data !== undefined ? { data: event.data } : {}),
+        ...(event.resourceLink ? { resourceLink: event.resourceLink } : {}),
+      };
 
   return {
     eventId: `${namespace}:${event.eventId}`,
@@ -82,7 +100,7 @@ export function mcpPushNotificationToInboxEvent(
     context: {
       sourceEnv: namespace,
       metadata,
-      content,
+      content: occurrence ? [] : content,
     },
   };
 }

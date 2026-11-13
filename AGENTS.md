@@ -110,6 +110,8 @@ Released storage contracts are immutable. Never change a released version's acce
 - `apps/klex/src/mcp/architecture.md`
 - `apps/klex/src/session/architecture.md`
 - `apps/klex/src/session/chat/architecture.md`
+- `packages/mcp-extension-events/README.md`
+- `packages/mcp-extension-events/specification/draft/events-compat.md`
 - `packages/mcp-extension-push-notifications/README.md`
 - `packages/mcp-extension-push-notifications/specification/draft/events.md`
 - `mcp-servers/chat-simulator/README.md`

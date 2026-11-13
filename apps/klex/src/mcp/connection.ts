@@ -17,6 +17,14 @@ import {
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 
 import type { ModuleLogger } from '@stagewise/logger';
+import { EventsListChangedParamsSchema } from '@stagewise/mcp-extension-events';
+import {
+  createRequestIdTap,
+  createSdkStreamPort,
+  type RegisteredEventsClient,
+  registerEventsClient,
+  type StreamPort,
+} from '@stagewise/mcp-extension-events/client';
 import type { PushNotificationNotification } from '@stagewise/mcp-extension-push-notifications';
 import {
   type RegisteredPushNotificationsClient,
@@ -79,6 +87,9 @@ export interface McpConnection {
   readonly tools: readonly McpToolDefinition[];
   readonly pushNotifications: RegisteredPushNotificationsClient;
   readonly supportsPushNotifications: boolean;
+  readonly events?: RegisteredEventsClient;
+  readonly eventsStream?: StreamPort;
+  readonly supportsEvents?: boolean;
   readonly realtimeMedia: RegisteredRealtimeMediaClient | undefined;
   readonly supportsRealtimeMedia: boolean;
   /** Whether the server supports resource subscriptions (`resources.subscribe`). */
@@ -116,6 +127,7 @@ export interface ConnectMcpServerOptions {
   realtimeMediaCapability?: RealtimeMediaExtensionCapability;
   cloudAuth?: CloudAuthProvider;
   onToolsChanged(connection: McpConnection): void;
+  onEventsChanged?(connection: McpConnection): void;
   onPushNotification(
     connection: McpConnection,
     notification: PushNotificationNotification,
@@ -159,6 +171,9 @@ class McpServerConnection implements McpConnection {
     readonly supportsResourceSubscription: boolean,
     private currentTools: readonly McpToolDefinition[],
     private readonly serverMetadata: McpServerMetadata,
+    readonly events: RegisteredEventsClient,
+    readonly eventsStream: StreamPort,
+    readonly supportsEvents: boolean,
   ) {}
 
   get metadata(): McpServerMetadata {
@@ -281,12 +296,22 @@ export async function connectMcpServer(
       },
     },
   );
+  const events = registerEventsClient(client);
   const pushNotifications = registerPushNotificationsClient(client, {
+    notifications: () =>
+      connection?.supportsEvents ? { eventsListChanged: true } : {},
     onEvent: async (notification) => {
       if (connection)
         await options.onPushNotification(connection, notification);
     },
   });
+  client.setNotificationHandler(
+    'notifications/events/list_changed' as never,
+    { params: EventsListChangedParamsSchema },
+    async () => {
+      if (connection) options.onEventsChanged?.(connection);
+    },
+  );
   const realtimeMedia = options.realtimeMediaCapability
     ? registerRealtimeMediaClient(client, {
         capability: options.realtimeMediaCapability,
@@ -322,6 +347,7 @@ export async function connectMcpServer(
     options.cloudAuth,
     oauth?.tokenEndpoint,
   );
+  let eventsTap = createRequestIdTap(transport);
   client.onclose = () => {
     if (connection) {
       oauthLifetime.abort();
@@ -377,6 +403,7 @@ export async function connectMcpServer(
         options.cloudAuth,
         oauth.tokenEndpoint,
       );
+      eventsTap = createRequestIdTap(transport);
       options.onAuthorizationStatus?.('connecting');
       await client.connect(transport, { signal: options.signal });
     }
@@ -395,6 +422,9 @@ export async function connectMcpServer(
           : false,
         client.listTools(undefined, { signal: options.signal }),
       ]);
+    const supportsEvents = await events.serverSupportsEvents({
+      request: { signal: options.signal },
+    });
     connection = new McpServerConnection(
       options.namespace,
       client,
@@ -406,6 +436,9 @@ export async function connectMcpServer(
       supportsResourceSubscription,
       result.tools,
       readServerMetadata(client),
+      events,
+      createSdkStreamPort(client, eventsTap),
+      supportsEvents,
     );
     const originalClose = connection.close.bind(connection);
     connection.close = async () => {

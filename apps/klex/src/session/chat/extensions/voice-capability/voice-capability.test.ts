@@ -22,6 +22,18 @@ describe('VoiceCapabilityExt — getSystemPromptPart', () => {
     expect(ext.getSystemPromptPart?.()).not.toContain('Klex Cloud');
   });
 
+  it('treats a voice model that fails to resolve as missing', () => {
+    const ext = createVoiceCapabilityExt({
+      hasVoiceModel: () => {
+        throw new Error('Realtime OpenAI provider requires an API key');
+      },
+    }).create(deps);
+    expect(ext.getSystemPromptPart?.()).toContain(
+      'configure and connect a voice conversation model',
+    );
+    expect(ext.introspect?.()).toEqual({ hasVoiceModel: false });
+  });
+
   it('adds nothing once a voice model resolves', () => {
     const ext = createVoiceCapabilityExt({ hasVoiceModel: () => true }).create(
       deps,

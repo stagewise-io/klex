@@ -4,6 +4,8 @@ export interface VoiceCapabilityExtConfig {
   /**
    * Whether a voice conversation model resolves right now. Read once per
    * step, so adding or removing a voice model applies to the next step.
+   * Throwing counts as no voice model: a selected but misconfigured model
+   * fails the call path the same way.
    */
   hasVoiceModel: () => boolean;
 }
@@ -16,11 +18,19 @@ class VoiceCapabilityExt implements Extension {
   constructor(private readonly config: VoiceCapabilityExtConfig) {}
 
   getSystemPromptPart(): string {
-    return this.config.hasVoiceModel() ? '' : NO_VOICE_MODEL_PROMPT;
+    return this.hasVoiceModel() ? '' : NO_VOICE_MODEL_PROMPT;
   }
 
   introspect(): Record<string, unknown> {
-    return { hasVoiceModel: this.config.hasVoiceModel() };
+    return { hasVoiceModel: this.hasVoiceModel() };
+  }
+
+  private hasVoiceModel(): boolean {
+    try {
+      return this.config.hasVoiceModel();
+    } catch {
+      return false;
+    }
   }
 }
 

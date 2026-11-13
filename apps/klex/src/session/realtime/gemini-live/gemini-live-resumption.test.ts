@@ -735,6 +735,59 @@ describe('Gemini live session durability', () => {
     expect(third.setup.sessionResumption).toEqual({});
   });
 
+  it('reports the provider close reason, not a write racing the close', async () => {
+    const { sockets, processor, input } = await start();
+    processorUnderTest = processor;
+    const first = sockets[0] as FakeGeminiSocket;
+    first.message(handleUpdate('handle-1'));
+    await input.push(frame());
+    await vi.waitFor(() =>
+      expect(first.sent.some((message) => message.realtimeInput)).toBe(true),
+    );
+    // The provider's close frame arrived; its close event has not yet.
+    first.readyState = 2;
+    await input.push(frame());
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(sockets).toHaveLength(1);
+
+    first.drop(1007, "Invalid value at 'realtime_input.media_resolution'");
+    await nextSocket(sockets, 1);
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reason: 'connection-lost',
+        closeCode: 1007,
+        closeReason: "Invalid value at 'realtime_input.media_resolution'",
+      }),
+      'Gemini live connection lost, reconnecting',
+    );
+    expect(String(warn.mock.calls.at(-1)?.[0]?.error)).toContain('code 1007');
+    expect(
+      warn.mock.calls.some((call) =>
+        String(call[0]?.error).includes('is not open'),
+      ),
+    ).toBe(false);
+  });
+
+  it('declares a closing socket lost when its close event never arrives', async () => {
+    const { sockets, processor, input } = await start();
+    processorUnderTest = processor;
+    const first = sockets[0] as FakeGeminiSocket;
+    first.message(handleUpdate('handle-1'));
+    first.readyState = 2;
+    await input.push(frame());
+    await vi.waitFor(() => expect(sockets).toHaveLength(2), {
+      timeout: 5_000,
+    });
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        error: expect.objectContaining({
+          message: 'Gemini live connection closed without a close event',
+        }),
+      }),
+      'Gemini live connection lost, reconnecting',
+    );
+  }, 10_000);
+
   it('ends the call after the retry cap', async () => {
     const { sockets, processor } = await start();
     sockets[0]?.message(handleUpdate('handle-1'));

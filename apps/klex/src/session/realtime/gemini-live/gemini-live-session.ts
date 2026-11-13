@@ -133,6 +133,8 @@ interface CloseDetails {
 }
 
 const OPEN = 1;
+/** Bounds the wait for a closing socket's close event before declaring it lost. */
+const CLOSE_EVENT_TIMEOUT_MS = 2_000;
 const FRAME_BYTES = 960 * 2;
 const STARTUP_TIMEOUT_MS = 10_000;
 const DEFAULT_RECONNECT_POLICY: GeminiLiveReconnectPolicy = {
@@ -243,6 +245,7 @@ export class GeminiLiveSession implements RealtimeModelSession {
   private attemptTimer: ReturnType<typeof setTimeout> | undefined;
   private goAwayPending = false;
   private goAwayTimer: ReturnType<typeof setTimeout> | undefined;
+  private closeEventTimer: ReturnType<typeof setTimeout> | undefined;
   private debugTimers: ReturnType<typeof setTimeout>[] = [];
   private audioBacklog: string[] = [];
   private audioSinceHandle: string[] = [];
@@ -928,6 +931,8 @@ export class GeminiLiveSession implements RealtimeModelSession {
     this.goAwayPending = false;
     clearTimeout(this.goAwayTimer);
     clearTimeout(this.attemptTimer);
+    clearTimeout(this.closeEventTimer);
+    this.closeEventTimer = undefined;
     this.clearDebugTimers();
     closeSocket(previous);
     if (!this.outage) {
@@ -1188,6 +1193,10 @@ export class GeminiLiveSession implements RealtimeModelSession {
   private sendOn(token: number, event: object): boolean {
     if (token !== this.connectionToken || this.settled) return false;
     const socket = this.socket;
+    if (socket && socket.readyState > OPEN) {
+      this.awaitCloseEvent(token);
+      return false;
+    }
     if (socket?.readyState !== OPEN) {
       this.handleConnectionLoss(
         token,
@@ -1197,6 +1206,22 @@ export class GeminiLiveSession implements RealtimeModelSession {
     }
     socket.send(JSON.stringify(event));
     return true;
+  }
+
+  /**
+   * A provider close moves the socket to closing before its close event
+   * arrives. Writes in between are dropped so the provider's close code and
+   * reason, not a failed write, end the connection.
+   */
+  private awaitCloseEvent(token: number): void {
+    if (this.closeEventTimer !== undefined) return;
+    this.closeEventTimer = setTimeout(() => {
+      this.closeEventTimer = undefined;
+      this.handleConnectionLoss(
+        token,
+        new Error('Gemini live connection closed without a close event'),
+      );
+    }, CLOSE_EVENT_TIMEOUT_MS);
   }
 
   private resolveReady(): void {
@@ -1217,6 +1242,7 @@ export class GeminiLiveSession implements RealtimeModelSession {
     clearTimeout(this.startupTimer);
     clearTimeout(this.attemptTimer);
     clearTimeout(this.goAwayTimer);
+    clearTimeout(this.closeEventTimer);
     this.clearDebugTimers();
     const outage = this.outage;
     this.outage = undefined;

@@ -45,6 +45,8 @@ export type PushNotificationsClientProtocol = Pick<
 
 export interface RegisterPushNotificationsClientOptions {
   onEvent?(notification: PushNotificationNotification): void | Promise<void>;
+  /** Additional core notification filters to share this listen request. */
+  notifications?: () => Record<string, unknown>;
 }
 
 export interface PushNotificationsRequestOptions {
@@ -219,6 +221,7 @@ export function registerPushNotificationsClient(
           params: paramsWithCapability(
             {
               notifications: {
+                ...options.notifications?.(),
                 'io.stagewise/push-notifications': subscription,
               },
             },

@@ -510,6 +510,21 @@ const mcpVersionNegotiationSchema = z.union([
 
 type McpVersionNegotiation = z.infer<typeof mcpVersionNegotiationSchema>;
 
+/**
+ * One `io.modelcontextprotocol/events` subscription (SEP-3415). Selected by the
+ * operator, never by the server. `delivery` forces a mode; absent means push,
+ * then poll.
+ */
+const mcpEventSubscriptionSchema = z
+  .object({
+    name: z.string().min(1),
+    arguments: z.record(z.string(), z.unknown()).optional(),
+    delivery: z.enum(['push', 'poll']).optional(),
+  })
+  .strict();
+
+type McpEventSubscription = z.infer<typeof mcpEventSubscriptionSchema>;
+
 const stdioServerConfigSchema = z
   .object({
     type: z.literal('stdio').optional(),
@@ -517,6 +532,7 @@ const stdioServerConfigSchema = z
     args: z.array(z.string()).optional(),
     env: z.record(z.string(), z.string()).optional(),
     versionNegotiation: mcpVersionNegotiationSchema.optional(),
+    events: z.array(mcpEventSubscriptionSchema).optional(),
   })
   .strict();
 
@@ -528,6 +544,7 @@ const httpServerConfigSchema = z
     url: z.url(),
     headers: z.record(z.string(), z.string()).optional(),
     versionNegotiation: mcpVersionNegotiationSchema.optional(),
+    events: z.array(mcpEventSubscriptionSchema).optional(),
   })
   .strict();
 
@@ -692,6 +709,7 @@ export type {
   InstinctConfig,
   InstinctModelSelectionEntry,
   KlexConfig,
+  McpEventSubscription,
   McpServerConfig,
   McpVersionNegotiation,
   ModelCapabilities,

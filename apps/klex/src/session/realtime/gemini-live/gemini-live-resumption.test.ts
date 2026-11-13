@@ -353,10 +353,16 @@ describe('Gemini live session durability', () => {
     ]);
     // The call belongs to the lost connection, so no raw toolResponse.
     expect(replayed.some((message) => message.toolResponse)).toBe(false);
+    // One replay message completes the turn, and only after all gap audio.
+    const contentIndexes = replayed.flatMap((message, index) =>
+      message.clientContent ? [index] : [],
+    );
+    expect(contentIndexes).toHaveLength(1);
+    const contentIndex = contentIndexes[0] ?? -1;
+    expect(replayed[contentIndex]?.clientContent?.turnComplete).toBe(true);
     expect(
-      replayed.filter((message) => message.clientContent).at(-1)?.clientContent
-        ?.turnComplete,
-    ).toBe(true);
+      replayed.slice(contentIndex).some((message) => message.realtimeInput),
+    ).toBe(false);
     expect(warn).toHaveBeenCalledWith(
       expect.objectContaining({ reason: 'connection-lost', closeCode: 1011 }),
       'Gemini live connection lost, reconnecting',
@@ -393,9 +399,12 @@ describe('Gemini live session durability', () => {
     third.open();
     expect(third.setup.sessionResumption).toEqual({});
     third.message({ setupComplete: {} });
-    const seed = third.sent[1]?.clientContent;
-    expect(seed?.turnComplete).toBe(false);
-    expect(seed?.turns).toEqual([
+    const seed = third.after(1).filter((message) => message.clientContent);
+    expect(seed.map((message) => message.clientContent?.turnComplete)).toEqual([
+      false,
+      false,
+    ]);
+    expect(seed.flatMap((message) => message.clientContent?.turns)).toEqual([
       { role: 'user', parts: [{ text: 'Earlier canonical message' }] },
       { role: 'user', parts: [{ text: 'What is the weather?' }] },
       { role: 'model', parts: [{ text: 'Sunny in Berlin.' }] },

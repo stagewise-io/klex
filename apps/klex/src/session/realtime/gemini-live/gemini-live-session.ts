@@ -152,12 +152,17 @@ const COMPRESSION_TRIGGER_RATIO = 0.75;
 const COMPRESSION_TARGET_RATIO = 0.5;
 /** One second of 20 ms input frames. */
 const MAX_BUFFERED_AUDIO_CHUNKS = 50;
+/** Five seconds of input sent after the latest handle, replayed on resume. */
+const MAX_REPLAYED_AUDIO_CHUNKS = 250;
 const MAX_UNCONFIRMED_ITEMS = 256;
 const MAX_CALL_LOG_ENTRIES = 400;
 const MAX_CALL_LOG_CHARS = 120_000;
 const MAX_RESUME_FAILURES = 2;
 const REJECTED_HANDLE_CLOSE_CODES = new Set([1007, 1008]);
 const REJECTED_HANDLE_PATTERN = /handle|resum/i;
+
+/** Node clamps longer delays to 1 ms. */
+const MAX_TIMER_MS = 2_147_483_647;
 
 const tracer = trace.getTracer('klex');
 
@@ -225,6 +230,7 @@ export class GeminiLiveSession implements RealtimeModelSession {
   private goAwayTimer: ReturnType<typeof setTimeout> | undefined;
   private debugTimers: ReturnType<typeof setTimeout>[] = [];
   private audioBacklog: string[] = [];
+  private audioSinceHandle: string[] = [];
   private droppedAudioChunks = 0;
   private modelTurnActive = false;
   private awaitingResponse = false;
@@ -349,6 +355,9 @@ export class GeminiLiveSession implements RealtimeModelSession {
     const data = Buffer.from(this.inputResampler.process(frame.data)).toString(
       'base64',
     );
+    this.audioSinceHandle.push(data);
+    if (this.audioSinceHandle.length > MAX_REPLAYED_AUDIO_CHUNKS)
+      this.audioSinceHandle.shift();
     if (!this.outage && this.sendLive(audioMessage(data))) return;
     this.audioBacklog.push(data);
     if (this.audioBacklog.length > MAX_BUFFERED_AUDIO_CHUNKS) {
@@ -610,6 +619,7 @@ export class GeminiLiveSession implements RealtimeModelSession {
             this.resumptionHandle = event.newHandle;
             this.handleCurrent = true;
             this.unconfirmed = [];
+            this.audioSinceHandle = [];
             this.maybeReconnectForGoAway();
           }
           break;
@@ -651,7 +661,7 @@ export class GeminiLiveSession implements RealtimeModelSession {
     const replayedItems = resumed
       ? this.replayUnconfirmed(token)
       : this.seedFreshSession(token);
-    const bufferedAudioChunks = this.flushAudioBacklog(token);
+    const bufferedAudioChunks = this.flushAudioBacklog(token, resumed);
     const durationMs = Date.now() - outage.startedAt;
     const outcome = resumed ? 'resumed' : 'fresh';
     const metric = reconnectInstruments();
@@ -706,6 +716,7 @@ export class GeminiLiveSession implements RealtimeModelSession {
   /** Rebuilds a new provider session from canonical history plus this call. */
   private seedFreshSession(token: number): number {
     this.unconfirmed = [];
+    this.audioSinceHandle = [];
     const turns: GeminiContentTurn[] = [
       ...toGeminiContentTurns(this.context?.messages ?? []),
       ...this.callLog.map((entry) => ({
@@ -720,11 +731,16 @@ export class GeminiLiveSession implements RealtimeModelSession {
     return turns.length;
   }
 
-  private flushAudioBacklog(token: number): number {
-    const backlog = this.audioBacklog;
+  /**
+   * Sends input captured during the outage. A resumed state predates
+   * everything since its handle, so that audio is replayed too; the gap
+   * backlog is its tail and is not sent twice.
+   */
+  private flushAudioBacklog(token: number, resumed: boolean): number {
+    const audio = resumed ? this.audioSinceHandle : this.audioBacklog;
     this.audioBacklog = [];
-    for (const data of backlog) this.sendOn(token, audioMessage(data));
-    return backlog.length;
+    for (const data of audio) this.sendOn(token, audioMessage(data));
+    return audio.length;
   }
 
   private handleGoAway(
@@ -973,6 +989,11 @@ export class GeminiLiveSession implements RealtimeModelSession {
       last.text += text;
     else this.callLog.push({ role, kind, text });
     this.callLogChars += text.length;
+    const newest = this.callLog.at(-1);
+    if (newest && newest.text.length > MAX_CALL_LOG_CHARS) {
+      this.callLogChars -= newest.text.length - MAX_CALL_LOG_CHARS;
+      newest.text = newest.text.slice(-MAX_CALL_LOG_CHARS);
+    }
     while (
       this.callLog.length > 1 &&
       (this.callLog.length > MAX_CALL_LOG_ENTRIES ||
@@ -1088,6 +1109,7 @@ export class GeminiLiveSession implements RealtimeModelSession {
       );
     }
     this.audioBacklog = [];
+    this.audioSinceHandle = [];
     this.signal.removeEventListener('abort', this.handleAbort);
     if (!this.readySettled) {
       this.readySettled = true;
@@ -1234,7 +1256,9 @@ export function geminiLiveDebugOptionsFromEnv(
 function positiveMs(value: string | undefined): number | undefined {
   if (value === undefined || !/^\d+$/.test(value.trim())) return undefined;
   const parsed = Number(value);
-  return parsed > 0 ? parsed : undefined;
+  return Number.isSafeInteger(parsed) && parsed > 0 && parsed <= MAX_TIMER_MS
+    ? parsed
+    : undefined;
 }
 
 export function contextWindowCompression(contextSize: number | undefined): {

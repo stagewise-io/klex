@@ -262,7 +262,10 @@ describe('Gemini live session durability', () => {
       'Gemini live session resumed',
     );
     await expect(
-      Promise.race([processor.closed, Promise.resolve('open')]),
+      Promise.race([
+        processor.closed,
+        new Promise((resolve) => setTimeout(() => resolve('open'), 50)),
+      ]),
     ).resolves.toBe('open');
   });
 
@@ -305,11 +308,18 @@ describe('Gemini live session durability', () => {
   });
 
   it('survives a mid-call drop and replays input the resumed state may lack', async () => {
-    const { sockets, processor } = await start();
+    const { sockets, processor, input } = await start();
     processorUnderTest = processor;
     const events = processor.events[Symbol.asyncIterator]();
     const first = sockets[0] as FakeGeminiSocket;
     first.message(handleUpdate('handle-1'));
+    await input.push(frame());
+    await vi.waitFor(() =>
+      expect(first.sent.some((message) => message.realtimeInput)).toBe(true),
+    );
+    const sentAfterHandle = first.sent.filter(
+      (message) => message.realtimeInput,
+    ).length;
     await processor.sendUpdate(update('Sent after the handle'));
     first.message({
       toolCall: {
@@ -332,6 +342,10 @@ describe('Gemini live session durability', () => {
     await Promise.all([pendingUpdate, pendingResult]);
 
     const replayed = second.after(1);
+    // Audio the lost connection received after the handle is resent.
+    expect(
+      replayed.filter((message) => message.realtimeInput).length,
+    ).toBeGreaterThanOrEqual(sentAfterHandle);
     expect(texts(replayed)).toEqual([
       expect.stringContaining('Sent after the handle'),
       expect.stringContaining('Sent during the gap'),
@@ -339,7 +353,10 @@ describe('Gemini live session durability', () => {
     ]);
     // The call belongs to the lost connection, so no raw toolResponse.
     expect(replayed.some((message) => message.toolResponse)).toBe(false);
-    expect(replayed.at(-1)?.clientContent?.turnComplete).toBe(true);
+    expect(
+      replayed.filter((message) => message.clientContent).at(-1)?.clientContent
+        ?.turnComplete,
+    ).toBe(true);
     expect(warn).toHaveBeenCalledWith(
       expect.objectContaining({ reason: 'connection-lost', closeCode: 1011 }),
       'Gemini live connection lost, reconnecting',
@@ -391,6 +408,20 @@ describe('Gemini live session durability', () => {
       expect.objectContaining({ outcome: 'fresh' }),
       'Gemini live session restarted without resumption',
     );
+  });
+
+  it('bounds a single oversized entry in the fresh-session seed', async () => {
+    const { sockets, processor } = await start();
+    processorUnderTest = processor;
+    await processor.sendUpdate(update(`start${'x'.repeat(200_000)}end`));
+    sockets[0]?.drop();
+    const second = await nextSocket(sockets, 1);
+    second.open();
+    second.message({ setupComplete: {} });
+    const seeded = texts(second.after(1));
+    expect(seeded.at(-1)?.length).toBe(120_000);
+    expect(seeded.at(-1)).toContain('end');
+    expect(seeded.at(-1)).not.toContain('start');
   });
 
   it('treats a provider error answering a resumed setup as a rejected handle', async () => {
@@ -462,6 +493,10 @@ describe('Gemini live durability wire events and debug flags', () => {
         JSON.stringify({ goAway: { timeLeft: { seconds: '3', nanos: 5e8 } } }),
       ),
     ).toEqual([{ type: 'go-away', timeLeftMs: 3_500 }]);
+    for (const timeLeft of [`${'9'.repeat(400)}s`, { seconds: null }])
+      expect(
+        parseGeminiLiveServerEvents(JSON.stringify({ goAway: { timeLeft } })),
+      ).toEqual([{ type: 'go-away' }]);
     expect(parseGeminiLiveServerEvents(JSON.stringify({ goAway: {} }))).toEqual(
       [{ type: 'go-away' }],
     );
@@ -488,6 +523,11 @@ describe('Gemini live durability wire events and debug flags', () => {
         KLEX_DEBUG_GEMINI_LIVE_DROP_AFTER_MS: 'soon',
       }),
     ).toEqual({ goAwayAfterMs: 60_000 });
+    expect(
+      geminiLiveDebugOptionsFromEnv({
+        KLEX_DEBUG_GEMINI_LIVE_GOAWAY_AFTER_MS: '9'.repeat(30),
+      }),
+    ).toEqual({});
     expect(geminiLiveDebugOptionsFromEnv({})).toEqual({});
   });
 });

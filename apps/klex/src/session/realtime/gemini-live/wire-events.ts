@@ -236,14 +236,30 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 export function parseDurationMs(value: unknown): number | undefined {
   if (typeof value === 'string') {
     const match = /^(\d+(?:\.\d+)?)s$/.exec(value.trim());
-    return match ? Math.round(Number(match[1]) * 1_000) : undefined;
+    return match ? finiteMs(Number(match[1]) * 1_000) : undefined;
   }
   const record = asRecord(value);
   if (!record) return undefined;
-  const seconds = Number(record.seconds ?? 0);
-  const nanos = Number(record.nanos ?? 0);
-  if (!Number.isFinite(seconds) || !Number.isFinite(nanos)) return undefined;
-  return Math.max(0, Math.round(seconds * 1_000 + nanos / 1_000_000));
+  const seconds = durationField(record.seconds);
+  const nanos = durationField(record.nanos);
+  if (seconds === undefined || nanos === undefined) return undefined;
+  return finiteMs(seconds * 1_000 + nanos / 1_000_000);
+}
+
+/** An absent field is zero; anything but a non-negative number is malformed. */
+function durationField(value: unknown): number | undefined {
+  if (value === undefined) return 0;
+  const parsed =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string' && /^\d+$/.test(value)
+        ? Number(value)
+        : Number.NaN;
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+function finiteMs(value: number): number | undefined {
+  return Number.isFinite(value) ? Math.round(value) : undefined;
 }
 
 function optionalString(value: unknown): string | undefined {

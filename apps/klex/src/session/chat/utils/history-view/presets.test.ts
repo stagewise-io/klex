@@ -2,12 +2,11 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createDataPart } from '@/session/chat/extensions/extension-api';
 import type { ExtendedUIMessage } from '@/session/chat/message-types';
-import {
-  RECORD_SEPARATOR,
-  renderFittedMessage,
-} from '@/session/chat/utils/history-view';
 
-import { collectActivityHistory } from './history-projection';
+import { RECORD_SEPARATOR, renderFittedMessage } from './lines';
+import { createActivityHistoryView } from './presets';
+
+const activityView = createActivityHistoryView();
 
 vi.mock('@/session/chat/extensions/time/system-prompt.md', () => ({
   default: 'Time.',
@@ -71,20 +70,20 @@ function toolMessage(id: string, toolName = 'doWork'): ExtendedUIMessage {
 
 /** Line texts of the episode records collected after `cursor`. */
 function collectTexts(history: ExtendedUIMessage[], cursor: string | null) {
-  const result = collectActivityHistory(history, cursor);
+  const result = activityView.fit(history, { kind: 'after-cursor', cursor });
   const texts = result.messages.map(
     (message) => renderFittedMessage(message).text,
   );
   return { texts, cursor: result.cursor };
 }
 
-describe('collectActivityHistory', () => {
+describe('activity history preset', () => {
   it('returns records and advances the cursor', () => {
     const history = [
       textMessage('user', 'ignored', 'u1'),
       textMessage('assistant', 'answer', 'a1'),
     ];
-    expect(collectActivityHistory(history, null)).toEqual({
+    expect(activityView.fit(history)).toEqual({
       messages: [
         {
           id: 'a1',
@@ -106,19 +105,17 @@ describe('collectActivityHistory', () => {
         text: `${index}-${'x'.repeat(500)}`,
       })),
     };
-    const [message] = collectActivityHistory([longParts], null).messages;
-    expect(message?.omittedRecords).toBeGreaterThan(0);
-    expect(renderFittedMessage(message!).text).toMatch(/more parts/);
+    const [message] = activityView.fit([longParts]).messages;
+    if (!message) throw new Error('Missing fitted message');
+    expect(message.omittedRecords).toBeGreaterThan(0);
+    expect(renderFittedMessage(message).text).toMatch(/more parts/);
     expect(collectTexts([longParts], null).texts.join(RECORD_SEPARATOR)).toBe(
-      renderFittedMessage(message!).text,
+      renderFittedMessage(message).text,
     );
   });
 
   it('uses placeholders for media', () => {
-    const [message] = collectActivityHistory(
-      [contextMessage('ctx')],
-      null,
-    ).messages;
+    const [message] = activityView.fit([contextMessage('ctx')]).messages;
     expect(JSON.stringify(message)).not.toContain('binary');
     expect(collectTexts([contextMessage('ctx')], null).texts[0]).toContain(
       'image png',
@@ -138,7 +135,7 @@ describe('collectActivityHistory', () => {
     const result = collectTexts(
       [
         toolMessage('recall', 'recall'),
-        textMessage('user', '<memory>secret</memory>', 'memory'),
+        textMessage('user', '<memory>\nsecret\n</memory>', 'memory'),
       ],
       null,
     );

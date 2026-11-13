@@ -283,6 +283,8 @@ export interface ChildSessionOptions {
   extensions: ExtensionFactory[];
   /** Configured model list this child session uses. Defaults to `chat`. */
   modelPurpose?: ModelPurpose;
+  /** Additional configured model lists tried after the primary list is unavailable. */
+  fallbackModelPurposes?: readonly ModelPurpose[];
   /**
    * Base system prompt for the child session. Every child session must
    * explicitly declare its base prompt. Pass an empty string to suppress
@@ -324,6 +326,8 @@ export interface SessionFactoryParams {
   hooks?: SessionHooks;
   /** Configured model list this session uses. Defaults to `chat`. */
   modelPurpose?: ModelPurpose;
+  /** Additional configured model lists tried after the primary list is unavailable. */
+  fallbackModelPurposes?: readonly ModelPurpose[];
   /** Base system prompt for this session. */
   basePrompt: string;
   /**

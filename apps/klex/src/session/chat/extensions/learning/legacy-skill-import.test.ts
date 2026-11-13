@@ -15,23 +15,24 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createLogger, type ModuleLogger } from '@stagewise/logger';
 
-import type { ActivityHistory } from '@/activity-history';
 import { createLocalData } from '@/local-data';
 import { KLEX_VERSION } from '@/release';
-import { DEFAULT_SESSION_ID } from '@/session/types';
 import {
   createSkillRegistry,
   SKILL_REGISTRY_STORE_DEFINITION,
   type Skill,
 } from '@/skills';
 
-import type { ExtensionDeps } from '../extension-api';
-import { createLearningExt, LEARNING_EXTENSION_ID } from './learning';
-import { LEARNING_SKILL_NAMESPACE } from './learning-config';
-import { LEARNING_STATE_STORE_DEFINITION } from './learning-state';
+import {
+  createLearningState,
+  LEARNING_STATE_STORE_DEFINITION,
+} from './learning-state';
+import {
+  importLegacySkills,
+  LEARNING_SKILL_NAMESPACE,
+} from './legacy-skill-import';
 
-vi.mock('./extraction-prompt.md', () => ({ default: 'Extract.' }));
-vi.mock('./consolidation-prompt.md', () => ({ default: 'Consolidate.' }));
+const LEARNING_EXTENSION_ID = 'io.stagewise/learning';
 
 /** Injects a crash between the registry write and the legacy folder removal, or a failing bookkeeping save. */
 const injected = vi.hoisted(() => ({
@@ -129,30 +130,9 @@ async function seededAgent({
   return agentDir;
 }
 
-function activitySource(): ActivityHistory {
-  return {
-    isAvailable: () => false,
-    subscribe: () => () => undefined,
-    listNeighbors: async () => [],
-    resolveBoundary: async () => null,
-    readRange: async () => null,
-    readPage: async () => null,
-    search: async () => ({
-      matches: [],
-      nextOffset: null,
-      scannedBytes: 0,
-      truncated: false,
-    }),
-    manifest: async () => [],
-    latest: async () => [],
-    readPending: async () => null,
-    compareIds: (left, right) => left.localeCompare(right),
-  };
-}
-
 /**
  * One agent start: registered local-data startup, then the registry and the
- * default-session learning extension, then shutdown. Returns the skills the
+ * legacy skill import, then shutdown. Returns the skills the
  * registry exposed while running.
  */
 async function startAgent(agentDir: string): Promise<readonly Skill[]> {
@@ -167,25 +147,27 @@ async function startAgent(agentDir: string): Promise<readonly Skill[]> {
   try {
     await registry.start();
     registry.claimNamespace(LEARNING_EXTENSION_ID, LEARNING_SKILL_NAMESPACE);
-    const extension = createLearningExt({
-      getSoul: () => null,
-      activities: activitySource(),
-    }).create({
-      sessionId: DEFAULT_SESSION_ID,
-      getDataDir: () => extensionDir(agentDir),
-      logger,
-      logging: { child: () => logger },
-      config: {
-        get: () => ({ officialName: 'Atlas' }),
-        getModelSelection: () => ['test/model'],
-      },
-      createChildSession: vi.fn(),
-      skills: registry.forNamespace(LEARNING_SKILL_NAMESPACE),
-    } as unknown as ExtensionDeps);
-    await extension.onStart?.();
-    const skills = registry.list();
-    await extension.onClose?.();
-    return skills;
+    const state = createLearningState(extensionDir(agentDir));
+    await state.start();
+    try {
+      const { failed } = await importLegacySkills({
+        legacyRoot: legacyRoot(agentDir),
+        state,
+        skills: registry.forNamespace(LEARNING_SKILL_NAMESPACE),
+        logger,
+      });
+      if (failed)
+        logger.error(
+          { failed },
+          'Some legacy skills were not imported; learning paused until next start',
+        );
+    } catch (error) {
+      logger.error(
+        { error },
+        'Importing legacy skills failed; learning paused until next start',
+      );
+    }
+    return registry.list();
   } finally {
     await registry.close();
     await localData.close();

@@ -2,6 +2,26 @@
 
 All notable Klex changes are documented here.
 
+## 0.33.0 (2026-11-13)
+
+### Features
+
+- add dynamic effort policy and shadow traces (16c4685)
+
+### Bug Fixes
+
+- keep flat GPT-Live error fields (25d3be9)
+- parse any GPT-Live error event shape and log call failures (4e5fecc)
+- address dynamic effort review findings (647f5db)
+- skip consolidation after shutdown (2ef43f6)
+- address learning review comments (bfd12de)
+
+### Other Changes
+
+- cover range reads, consolidation cadence and shutdown (9e0c8c0)
+- queue one learning job per compaction (a0ab23c)
+- run learning on context compaction (66b6484)
+
 ## 0.32.0 (2026-11-12)
 
 ### Features

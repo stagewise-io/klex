@@ -36,6 +36,7 @@ const cases = [
   'v7',
   'v8',
   'v9',
+  'v10-effort',
 ];
 
 async function snapshot(
@@ -91,6 +92,12 @@ describe('frozen persisted config upgrades', () => {
       const expected = JSON.parse(
         await readFile(new URL('config-expected-v7.json', fixtures), 'utf8'),
       );
+      if (version === 'v10-effort')
+        expected.effort = {
+          mode: 'automatic',
+          floor: 'medium',
+          ceiling: 'high',
+        };
       const { _klex: metadata, ...payload } = original;
       expect(metadata.schemaVersion).toBe(Number(/^v(\d+)/.exec(version)?.[1]));
       const historicalVersion = CONFIG_STORE_DEFINITION.versions.find(
@@ -451,7 +458,7 @@ describe('frozen persisted config upgrades', () => {
     );
     if (!migration) throw new Error('Missing 10→11 migration');
     const { _klex: _metadata, ...input } = JSON.parse(
-      await readFile(new URL('config-v9.json', fixtures), 'utf8'),
+      await readFile(new URL('config-v10-effort.json', fixtures), 'utf8'),
     );
     const output = await migration.up(structuredClone(input));
     expect(output).toEqual(input);

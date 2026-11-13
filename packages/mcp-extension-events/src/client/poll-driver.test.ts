@@ -42,6 +42,44 @@ function harness(results: Array<EventsPollResult | Error>) {
 }
 
 describe('runPollLoop', () => {
+  it('rate limits same-cursor hasMore responses, including duplicates', async () => {
+    const h = harness([
+      { events: [], cursor: 'c', hasMore: true },
+      { events: [], cursor: 'c', hasMore: true },
+      { events: [occurrence('1')], cursor: 'c', hasMore: true },
+    ]);
+    await runPollLoop(h.base);
+    expect(h.sleeps).toEqual([1000, 1000]);
+  });
+
+  it('yields during an indefinitely advancing backlog', async () => {
+    const h = harness(
+      Array.from({ length: 70 }, (_, index) => ({
+        events: [],
+        cursor: String(index),
+        hasMore: true,
+      })),
+    );
+    await runPollLoop(h.base);
+    expect(h.sleeps).toEqual([1000, 1000]);
+  });
+
+  it('forwards abort to in-flight polls and does not deliver after cancellation', async () => {
+    const h = harness([]);
+    const poll = vi.fn(
+      async (_params, options) =>
+        new Promise<EventsPollResult>((resolve) => {
+          const signal = options.request.signal;
+          signal.addEventListener('abort', () =>
+            resolve({ events: [occurrence('1')] }),
+          );
+          h.controller.abort();
+        }),
+    );
+    await runPollLoop({ ...h.base, client: { poll } });
+    expect(h.batches).toEqual([]);
+    expect(poll.mock.calls[0]?.[1].request.signal).toBe(h.controller.signal);
+  });
   it('threads the cursor and sends null on first poll', async () => {
     const h = harness([
       { events: [occurrence('1')], cursor: 'c1' },

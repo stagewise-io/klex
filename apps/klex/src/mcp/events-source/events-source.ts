@@ -51,10 +51,20 @@ class EventsSourceModule implements EventsSource {
   private readonly pending = new Set<() => void>();
   private readonly delivered = new Set<string>();
   private readonly states = new Map<string, EventSubscriptionStatus>();
+  private readonly loops = new Map<string, AbortController>();
   private readonly payloadValidators = new Map<string, z.ZodType>();
   private started = false;
+  private starting?: Promise<void>;
+  private retryTimer?: ReturnType<typeof setTimeout>;
+  private failures = 0;
+  private refreshTimer?: ReturnType<typeof setTimeout>;
 
-  constructor(private readonly deps: Dependencies) {}
+  constructor(private readonly deps: Dependencies) {
+    if (deps.subscriptions.length > 32)
+      throw new Error(
+        'At most 32 MCP Events subscriptions are supported per server',
+      );
+  }
 
   statuses(): EventSubscriptionStatus[] {
     return [...this.states.values()].map((state) => ({ ...state }));
@@ -75,6 +85,8 @@ class EventsSourceModule implements EventsSource {
 
   close(): void {
     this.controller.abort();
+    clearTimeout(this.retryTimer);
+    clearTimeout(this.refreshTimer);
     // Resolves waiters without allowing drivers to issue another request.
     for (const settle of [...this.pending]) settle();
     for (const state of this.states.values()) state.status = 'paused';
@@ -90,21 +102,60 @@ class EventsSourceModule implements EventsSource {
   }
 
   async start(): Promise<void> {
-    if (this.started || this.controller.signal.aborted) return;
-    this.started = true;
+    if (this.controller.signal.aborted) return;
+    if (this.starting) return this.starting;
+    if (this.started) return;
+    clearTimeout(this.retryTimer);
+    this.starting = this.reconcile()
+      .then(() => {
+        this.started = true;
+        this.failures = 0;
+        clearTimeout(this.refreshTimer);
+        if (!this.controller.signal.aborted) {
+          // Independent fallback for Events-only servers and missed catalogue
+          // notifications. Reconciliation preserves running loops and cursors.
+          this.refreshTimer = setTimeout(
+            () => void this.refresh().catch(() => undefined),
+            60_000,
+          );
+          this.refreshTimer.unref?.();
+        }
+      })
+      .catch((error: unknown) => {
+        this.started = false;
+        if (!this.controller.signal.aborted) {
+          const delay = Math.min(
+            1000 * 2 ** Math.min(this.failures++, 6),
+            60_000,
+          );
+          this.retryTimer = setTimeout(
+            () => void this.start().catch(() => undefined),
+            delay,
+          );
+          this.retryTimer.unref?.();
+        }
+        throw error;
+      })
+      .finally(() => {
+        this.starting = undefined;
+      });
+    return this.starting;
+  }
+
+  private async reconcile(): Promise<void> {
     const { connection } = this.deps;
     if (!connection.supportsEvents || !connection.events) return;
     const descriptors = await connection.events.listEvents({
       request: { signal: this.controller.signal },
     });
     if (this.controller.signal.aborted) return;
-    for (const subscription of this.deps.subscriptions.slice(0, 32)) {
+    for (const subscription of this.deps.subscriptions) {
       const sourceKey = canonicalConfigSignature({
         name: subscription.name,
         arguments: subscription.arguments ?? {},
       });
-      if (this.states.has(sourceKey)) continue;
-      const state: EventSubscriptionStatus = {
+      const existing = this.states.get(sourceKey);
+      const state: EventSubscriptionStatus = existing ?? {
         name: subscription.name,
         sourceKey,
         status: 'starting',
@@ -116,6 +167,8 @@ class EventsSourceModule implements EventsSource {
       );
       if (!descriptor) {
         state.status = 'terminated';
+        this.loops.get(sourceKey)?.abort();
+        this.loops.delete(sourceKey);
         continue;
       }
       let delivery: 'push' | 'poll';
@@ -130,6 +183,8 @@ class EventsSourceModule implements EventsSource {
             sourceKey,
             z.fromJSONSchema(descriptor.payloadSchema),
           );
+        } else {
+          this.payloadValidators.delete(sourceKey);
         }
         delivery = selectDeliveryMode(
           descriptor,
@@ -138,15 +193,26 @@ class EventsSourceModule implements EventsSource {
         ) as 'push' | 'poll';
       } catch {
         state.status = 'terminated';
+        this.loops.get(sourceKey)?.abort();
+        this.loops.delete(sourceKey);
         continue;
       }
+      // Refresh active validators without starting a second loop or resetting
+      // its cursor. Delivery changes apply on the next subscription start.
+      if (existing && existing.status !== 'terminated') continue;
       state.delivery = delivery;
+      const loopController = new AbortController();
+      this.loops.set(sourceKey, loopController);
+      const loopSignal = AbortSignal.any([
+        this.controller.signal,
+        loopController.signal,
+      ]);
       const options = {
         name: subscription.name,
         arguments: subscription.arguments,
         cursor: null,
-        signal: this.controller.signal,
-        onBatch: (batch: PollBatch) => this.ingest(state, batch),
+        signal: loopSignal,
+        onBatch: (batch: PollBatch) => this.ingest(state, batch, loopSignal),
         onTerminated: () => {
           state.status = 'terminated';
         },
@@ -166,7 +232,8 @@ class EventsSourceModule implements EventsSource {
               maxEvents: MAX_BATCH_EVENTS,
             });
       void loop.catch(() => {
-        state.status = 'terminated';
+        if (!loopSignal.aborted && this.states.get(sourceKey) === state)
+          state.status = 'terminated';
       });
     }
   }
@@ -174,13 +241,15 @@ class EventsSourceModule implements EventsSource {
   private async ingest(
     state: EventSubscriptionStatus,
     batch: PollBatch,
+    signal: AbortSignal,
   ): Promise<void> {
-    if (this.controller.signal.aborted) throw new Error('Events source closed');
+    if (signal.aborted) throw new Error('Events source closed');
     if (batch.events.length > MAX_BATCH_EVENTS)
       throw new Error('Events batch exceeds limit');
     state.status = 'active';
     state.gap ||= batch.truncated;
     for (const occurrence of batch.events) {
+      this.validateOccurrenceBounds(occurrence);
       this.payloadValidators.get(state.sourceKey)?.parse(occurrence.data);
       if (occurrence.name !== state.name)
         throw new Error('Event name mismatch');
@@ -198,16 +267,18 @@ class EventsSourceModule implements EventsSource {
           this.pending.delete(settle);
           resolve();
         };
-        this.pending.add(settle);
       });
       try {
         if (!(await this.deps.publish(event, occurrence)))
           throw new Error('No Events consumer');
+        if (signal.aborted) throw new Error('Events source closed');
+        signal.addEventListener('abort', settle, { once: true });
+        this.pending.add(settle);
         await handled;
-        if (this.controller.signal.aborted)
-          throw new Error('Events source closed');
+        if (signal.aborted) throw new Error('Events source closed');
         this.delivered.add(key);
       } finally {
+        signal.removeEventListener('abort', settle);
         settle();
       }
       // Bounded process-local duplicate history. An eviction may cause a repeat,
@@ -217,6 +288,36 @@ class EventsSourceModule implements EventsSource {
         if (oldest !== undefined) this.delivered.delete(oldest);
       }
     }
+  }
+
+  private validateOccurrenceBounds(occurrence: EventOccurrence): void {
+    // Bound traversal before schema conversion/JSON serialization. Include all
+    // semantic metadata and IDs, not just data, before it reaches a model.
+    const stack: Array<{ value: unknown; depth: number }> = [
+      { value: occurrence, depth: 0 },
+    ];
+    let nodes = 0;
+    let bytes = 0;
+    while (stack.length) {
+      const entry = stack.pop();
+      if (!entry) break;
+      const { value, depth } = entry;
+      if (++nodes > 8192 || depth > 32)
+        throw new Error('Events payload complexity exceeds limit');
+      if (typeof value === 'string') bytes += Buffer.byteLength(value);
+      else if (value && typeof value === 'object') {
+        for (const [key, child] of Object.entries(value)) {
+          bytes += Buffer.byteLength(key);
+          if (stack.length + nodes >= 8192 || bytes > MAX_PAYLOAD_BYTES)
+            throw new Error('Events payload complexity exceeds limit');
+          stack.push({ value: child, depth: depth + 1 });
+        }
+      }
+      if (bytes > MAX_PAYLOAD_BYTES)
+        throw new Error('Events payload exceeds limit');
+    }
+    if (Buffer.byteLength(JSON.stringify(occurrence)) > MAX_PAYLOAD_BYTES)
+      throw new Error('Events payload exceeds limit');
   }
 
   private envelope(

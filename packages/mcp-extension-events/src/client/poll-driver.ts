@@ -78,24 +78,29 @@ export async function runPollLoop(options: PollDriverOptions): Promise<void> {
   const maxBackoff = options.maxBackoffMs ?? 60_000;
   let cursor: string | null = options.cursor ?? null;
   let failures = 0;
+  let immediatePolls = 0;
 
   while (!options.signal.aborted) {
     let result: EventsPollResult;
     try {
-      result = await options.client.poll({
-        name: options.name,
-        ...(options.arguments === undefined
-          ? {}
-          : { arguments: options.arguments }),
-        cursor,
-        // maxAgeMs is ignored by servers for a null cursor, so always safe.
-        ...(options.maxAgeMs === undefined
-          ? {}
-          : { maxAgeMs: options.maxAgeMs }),
-        ...(options.maxEvents === undefined
-          ? {}
-          : { maxEvents: options.maxEvents }),
-      });
+      result = await options.client.poll(
+        {
+          name: options.name,
+          ...(options.arguments === undefined
+            ? {}
+            : { arguments: options.arguments }),
+          cursor,
+          // maxAgeMs is ignored by servers for a null cursor, so always safe.
+          ...(options.maxAgeMs === undefined
+            ? {}
+            : { maxAgeMs: options.maxAgeMs }),
+          ...(options.maxEvents === undefined
+            ? {}
+            : { maxEvents: options.maxEvents }),
+        },
+        { request: { signal: options.signal } },
+      );
+      if (options.signal.aborted) return;
     } catch (error) {
       if (options.signal.aborted) return;
       if (isTerminalEventsError(error)) {
@@ -124,8 +129,14 @@ export async function runPollLoop(options: PollDriverOptions): Promise<void> {
     }
 
     failures = 0;
+    const progressed = next !== cursor;
     cursor = next;
-    if (result.hasMore === true) continue;
+    if (options.signal.aborted) return;
+    // Bound even advancing backlog drains; duplicate/empty same-cursor pages
+    // must never bypass the rate floor.
+    if (result.hasMore === true && progressed && ++immediatePolls < 32)
+      continue;
+    immediatePolls = 0;
     // Floor protects against a server that induces a tight loop.
     await sleep(Math.max(result.nextPollMs ?? floor, floor), options.signal);
   }

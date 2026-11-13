@@ -25,7 +25,7 @@ include namespace, origin, subscription hash and upstream ID. Push retains its
 existing namespace-scoped inbox and ACK behavior. Both use the existing
 `onPushNotification()` compatibility envelope and session ingress.
 
-Events delivery registers an unsettled receipt before publishing. The driver
+Events delivery registers a settleable receipt only after successful publication. The driver
 waits for `acknowledgeDeliveredEvents()` before advancing its in-memory cursor.
 Pause aborts the source and releases waiters. **Cursors are not persisted and a
 new connection starts with null. Events during disconnection or process downtime
@@ -33,15 +33,20 @@ may be lost.** This does not weaken the durable Push Notification queue.
 
 Configured arguments and payloads are validated against descriptor JSON Schemas
 using Zod conversion; unsupported schema features fail closed. Limits are 32
-subscriptions per connection, 100 events per poll batch, 64 KiB per payload,
+subscriptions per connection (excess is rejected), 100 events per poll batch,
+64 KiB per complete occurrence, depth 32, 8192 visited values,
 4096 dedup entries and 128 queued stream messages. Slow consumers apply
 quiescence backpressure. JSON content is explicitly untrusted; arguments and
 upstream error details are excluded from source logs.
 
 Server status exposes `supportsEvents` and subscription mode/lifecycle/gap state.
 For servers also supporting Push Notifications, the shared listen request adds
-`eventsListChanged`; a change re-lists and retries terminated subscriptions.
-Events-only servers currently refresh discovery only on reconnection. Config
+`eventsListChanged`; a change re-lists, refreshes active payload validators,
+and retries terminated subscriptions. Failed initial discovery retries with bounded
+backoff. Streams require activation within 30 seconds; polling rate-limits
+non-advancing cursors and yields after bounded backlog drains.
+All Events sources also reconcile the catalogue every 60 seconds, including
+Events-only servers without a shared listen subscription. Config
 schema 10→11 adds the optional subscriptions without transforming existing data;
 released schemas and fixtures remain frozen.
 

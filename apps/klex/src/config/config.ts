@@ -679,14 +679,26 @@ function languageField(
     throw new ConfigValidationError(
       'Live languages must be a non-empty list of BCP-47 language tags',
     );
+  let canonical: string[];
   try {
-    return { languages: Intl.getCanonicalLocales(languages) };
+    canonical = Intl.getCanonicalLocales(languages);
   } catch {
     throw new ConfigValidationError(
       'Live languages must be a non-empty list of BCP-47 language tags',
     );
   }
+  if (
+    canonical.some((tag) =>
+      NON_SPOKEN_LANGUAGES.has(new Intl.Locale(tag).language),
+    )
+  )
+    throw new ConfigValidationError(
+      'Live languages must name spoken languages, not und, mul, mis or zxx',
+    );
+  return { languages: canonical };
 }
+
+const NON_SPOKEN_LANGUAGES = new Set(['und', 'mul', 'mis', 'zxx']);
 
 export function geminiLiveWebSocketUrl(
   endpointUrl: string,

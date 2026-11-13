@@ -2025,6 +2025,12 @@ describe('config v2', () => {
         'Live languages must be a non-empty list of BCP-47 language tags',
       );
     }
+    for (const languages of [['und'], ['en', 'zxx']]) {
+      await select('gemini-voice', 'gemini-3.8-live', { languages });
+      expect(() => config.resolveRealtimeProvider()).toThrow(
+        'Live languages must name spoken languages',
+      );
+    }
     await config.close();
   });
 

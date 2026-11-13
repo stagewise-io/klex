@@ -301,6 +301,8 @@ This is the body for `PATCH /v1/settings/model-selection`; the `voice` object co
 
 New voices are validated atomically against the compatible catalog; unchanged persisted triples can be retained offline. Config loading and new-call resolution do not discover voices over the network. Upstream rejection is an explicit error rather than a silent substitution. Existing selections without a voice keep their defaults: OpenAI Realtime and GPT-Live use `marin`; Gemini leaves its default to the provider. GPT-Live's explicit factory override takes precedence over persistence.
 
+Changes apply to new calls; active calls and reconnects retain their startup voice. The field was introduced in schema 5 with compatibility floor 7 and a minimum-version diagnostic of `0.16.0`. Current schema 7 retains `voiceId`, removes TTS/STT selections, and uses compatibility floor 8; older writers reject it before mutation.
+
 ## STS caller language
 
 Realtime providers detect the spoken language per turn unless told otherwise, so unclear audio can be transcribed or answered in an unrelated language. Set the languages the caller speaks, primary first, as BCP-47 tags in the STS entry's provider options. Gemini reads `providerOptions.google.live.languages`; OpenAI Realtime and GPT-Live read `providerOptions.openai.live.languages`:
@@ -319,9 +321,7 @@ Realtime providers detect the spoken language per turn unless told otherwise, so
 }
 ```
 
-Tags are canonicalized; an empty list, a non-list or an invalid tag fails resolution. Omitting the option keeps provider auto-detection. The option lives in the existing free-form `providerOptions` record, so it needs no schema change.
-
-Changes apply to new calls; active calls and reconnects retain their startup voice. The field was introduced in schema 5 with compatibility floor 7 and a minimum-version diagnostic of `0.16.0`. Current schema 7 retains `voiceId`, removes TTS/STT selections, and uses compatibility floor 8; older writers reject it before mutation.
+Tags are canonicalized; an empty list, a non-list, an invalid tag or a tag without a spoken language (`und`, `mul`, `mis`, `zxx`) fails resolution. Omitting the option keeps provider auto-detection. The option lives in the existing free-form `providerOptions` record, so it needs no schema change.
 
 ## Realtime media
 

@@ -321,6 +321,28 @@ describe('Gemini live session durability', () => {
     );
   });
 
+  it('skips the settle delay when the handle is dropped before the close', async () => {
+    const { sockets, processor } = await start();
+    processorUnderTest = processor;
+    const first = sockets[0] as FakeGeminiSocket;
+    first.holdClose = true;
+    first.message(handleUpdate('handle-1'));
+    first.message({ goAway: { timeLeft: '30s' } });
+    await vi.waitFor(() => expect(first.close).toHaveBeenCalled());
+    // Enough queued input during the outage invalidates the handle.
+    const pending = Array.from({ length: 257 }, (_, index) =>
+      processor.sendUpdate(update(`queued ${index}`)),
+    );
+    first.finishClose();
+    const closedAt = Date.now();
+    const second = await nextSocket(sockets, 1);
+    expect(Date.now() - closedAt).toBeLessThan(300);
+    second.open();
+    expect(second.setup.sessionResumption).toEqual({});
+    second.message({ setupComplete: {} });
+    await Promise.all(pending);
+  });
+
   it('terminates a previous socket that does not close in time', async () => {
     const { sockets, processor } = await start();
     processorUnderTest = processor;

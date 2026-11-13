@@ -136,6 +136,7 @@ class RealtimeModule implements Realtime {
         return createGeminiLiveProcessorFactory({
           logging: this.deps.logging,
           config: provider.config,
+          video: provider.model.inputCapabilities.image !== undefined,
         });
     }
   }
@@ -157,9 +158,13 @@ export function createRealtime(deps: RealtimeDependencies): Realtime {
   return new RealtimeModule(deps);
 }
 
+/**
+ * Advertises video because the harness can consume it; each call still uses
+ * it only when its model accepts image input.
+ */
 export const PRODUCTION_REALTIME_MEDIA_CAPABILITY = {
   transports: ['livekit-room'],
-  media: ['audio'],
+  media: ['audio', 'video'],
 } as const satisfies RealtimeMediaExtensionCapability;
 
 export function createProductionMediaTransportConnector(): LiveKitRoomMediaTransportConnector {

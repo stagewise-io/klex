@@ -15,6 +15,7 @@ function requiredElement<T extends Element>(selector: string): T {
 
 const startButton = requiredElement<HTMLButtonElement>('#start-call');
 const stopButton = requiredElement<HTMLButtonElement>('#stop-call');
+const shareButton = requiredElement<HTMLButtonElement>('#share-screen');
 const status = requiredElement<HTMLElement>('#call-status');
 const audio = requiredElement<HTMLElement>('#remote-audio');
 
@@ -23,6 +24,13 @@ let sessionId: string | undefined;
 
 function setStatus(message: string): void {
   status.textContent = message;
+}
+
+const LIVE_STATUS = 'Live — speak into your microphone; Klex should echo it';
+
+function setSharing(sharing: boolean): void {
+  shareButton.textContent = sharing ? 'Stop sharing' : 'Share screen';
+  shareButton.setAttribute('aria-pressed', String(sharing));
 }
 
 async function stop(): Promise<void> {
@@ -38,6 +46,8 @@ async function stop(): Promise<void> {
   }
   startButton.disabled = false;
   stopButton.disabled = true;
+  setSharing(false);
+  shareButton.disabled = true;
   setStatus('Idle');
 }
 
@@ -62,6 +72,11 @@ startButton.addEventListener('click', async () => {
       audio.append(element);
     });
     nextRoom.on(RoomEvent.TrackUnsubscribed, (track) => track.detach());
+    nextRoom.on(RoomEvent.LocalTrackUnpublished, (publication) => {
+      if (publication.source !== Track.Source.ScreenShare) return;
+      setSharing(false);
+      if (room === nextRoom) setStatus(LIVE_STATUS);
+    });
     nextRoom.on(RoomEvent.Disconnected, () => {
       if (room === nextRoom) void stop();
     });
@@ -69,7 +84,8 @@ startButton.addEventListener('click', async () => {
     await nextRoom.connect(url, token, { autoSubscribe: true });
     await nextRoom.localParticipant.setMicrophoneEnabled(true);
     stopButton.disabled = false;
-    setStatus('Live — speak into your microphone; Klex should echo it');
+    shareButton.disabled = false;
+    setStatus(LIVE_STATUS);
   } catch (error) {
     setStatus(error instanceof Error ? error.message : String(error));
     await stop();
@@ -77,4 +93,28 @@ startButton.addEventListener('click', async () => {
 });
 
 stopButton.addEventListener('click', () => void stop());
+shareButton.addEventListener('click', async () => {
+  const activeRoom = room;
+  if (!activeRoom) return;
+  const sharing = !activeRoom.localParticipant.isScreenShareEnabled;
+  shareButton.disabled = true;
+  try {
+    await activeRoom.localParticipant.setScreenShareEnabled(sharing, {
+      audio: false,
+    });
+    if (room !== activeRoom) return;
+    setSharing(sharing);
+    setStatus(
+      sharing
+        ? 'Live — Klex can see your shared screen (about one frame per second)'
+        : LIVE_STATUS,
+    );
+  } catch (error) {
+    // Cancelling the browser's picker rejects; the call itself is unaffected.
+    if (room === activeRoom)
+      setStatus(error instanceof Error ? error.message : String(error));
+  } finally {
+    if (room === activeRoom) shareButton.disabled = false;
+  }
+});
 window.addEventListener('pagehide', () => void room?.disconnect());

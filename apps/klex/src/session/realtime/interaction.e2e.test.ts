@@ -125,6 +125,7 @@ describe('realtime and default chat interaction', () => {
       supportsRealtimeMedia: true,
       realtimeMedia: {
         listen: vi.fn(async () => ({ closed: subscriptionClosed.promise })),
+        serverCapability: () => undefined,
         accept: vi.fn(async () => ({
           transport: {
             kind: 'livekit-room' as const,

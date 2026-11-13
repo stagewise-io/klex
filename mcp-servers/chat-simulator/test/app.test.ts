@@ -221,6 +221,7 @@ describe('chat simulator', () => {
       await client.connect(transport);
       expect(client.getProtocolEra()).toBe('modern');
       expect(await realtime.serverSupportsRealtimeMedia()).toBe(true);
+      expect(realtime.serverCapability()?.media).toEqual(['audio', 'video']);
       const subscription = await realtime.listen();
       const closed = subscription.closed.catch(() => undefined);
 

@@ -72,7 +72,7 @@ describe('createRealtime', () => {
   it('composes the production LiveKit connector and capability', async () => {
     expect(PRODUCTION_REALTIME_MEDIA_CAPABILITY).toEqual({
       transports: ['livekit-room'],
-      media: ['audio'],
+      media: ['audio', 'video'],
     });
     const connector = createProductionMediaTransportConnector();
     await connector.close();

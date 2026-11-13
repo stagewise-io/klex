@@ -1,8 +1,8 @@
-# Realtime Media MCP Extension 0.1.0
+# Realtime Media MCP Extension 0.2.0
 
 ## Scope
 
-`io.stagewise/realtime-media` negotiates an ephemeral realtime audio session onto a dedicated media transport. It does not transport audio through JSON-RPC and does not provide durable events, replay, participants, tracks, transcripts, or model operations.
+`io.stagewise/realtime-media` negotiates an ephemeral realtime audio session, optionally with video, onto a dedicated media transport. It does not transport media through JSON-RPC and does not provide durable events, replay, participants, tracks, transcripts, or model operations.
 
 Normative terms **MUST**, **SHOULD**, and **MAY** are interpreted as in RFC 2119.
 
@@ -15,11 +15,20 @@ Both peers advertise the transport profiles they can use and their media kinds. 
   "extensions": {
     "io.stagewise/realtime-media": {
       "transports": ["livekit-room"],
-      "media": ["audio"]
+      "media": ["audio", "video"]
     }
   }
 }
 ```
+
+`media` is a list of media kind strings and MUST include `audio`. Defined kinds are:
+
+| Kind | Meaning |
+| --- | --- |
+| `audio` | The peer exchanges participant audio over the transport. Required. |
+| `video` | The peer can use video tracks (cameras and screen shares) over the transport. |
+
+Peers MUST ignore kinds they do not recognize. Video is in play for a session only when both peers advertise `video`. A client advertising `video` signals that its harness can consume video; whether a given session uses it can still depend on the client's configured model, so producers MUST NOT require the client to subscribe to any video track. Revision 0.1.0 peers advertise exactly `["audio"]`, which remains valid and means audio only.
 
 Every request MUST repeat this capability in `io.modelcontextprotocol/clientCapabilities` request metadata. A server MUST reject unsupported clients with JSON-RPC code `-32003` and the required capability in error data.
 
@@ -27,7 +36,7 @@ Every request MUST repeat this capability in `io.modelcontextprotocol/clientCapa
 
 Before receiving offers, a client opens `subscriptions/listen` with `notifications["io.stagewise/realtime-media"]` set to `{}`. The server acknowledges it using `notifications/subscriptions/acknowledged`. For stateless HTTP this request remains an SSE response.
 
-A server associates the stream with authenticated consumer identity, never an identity supplied in the body. One active subscription is retained per consumer. Replacement or loss of the stream terminates that consumer's pending and accepted sessions. Revision 0.1.0 has no resume or recovery operation.
+A server associates the stream with authenticated consumer identity, never an identity supplied in the body. One active subscription is retained per consumer. Replacement or loss of the stream terminates that consumer's pending and accepted sessions. Revision 0.2.0 has no resume or recovery operation.
 
 ## Messages
 

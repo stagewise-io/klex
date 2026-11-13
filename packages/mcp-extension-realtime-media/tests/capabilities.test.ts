@@ -4,6 +4,8 @@ import {
   hasPerRequestRealtimeMediaCapability,
   hasRealtimeMediaCapability,
   realtimeMediaCapabilities,
+  realtimeMediaExtensionCapability,
+  realtimeMediaVideoNegotiated,
   withRealtimeMediaClientCapability,
 } from '../src/index.js';
 
@@ -35,6 +37,36 @@ describe('Realtime Media capabilities', () => {
       hasRealtimeMediaCapability(remote, {
         transports: ['websocket-pcm', 'livekit-room'],
         media: ['audio'],
+      }),
+    ).toBe(true);
+  });
+
+  it('treats video as an optional kind next to required audio', () => {
+    const video = realtimeMediaExtensionCapability(['livekit-room'], {
+      video: true,
+    });
+    const audio = realtimeMediaExtensionCapability();
+    expect(video.media).toEqual(['audio', 'video']);
+    expect(
+      hasRealtimeMediaCapability(realtimeMediaCapabilities(video), audio),
+    ).toBe(true);
+    expect(
+      hasRealtimeMediaCapability(realtimeMediaCapabilities(audio), video),
+    ).toBe(true);
+    expect(
+      hasRealtimeMediaCapability(
+        realtimeMediaCapabilities({
+          transports: ['livekit-room'],
+          media: ['video'],
+        }),
+      ),
+    ).toBe(false);
+    expect(realtimeMediaVideoNegotiated(video, video)).toBe(true);
+    expect(realtimeMediaVideoNegotiated(video, audio)).toBe(false);
+    expect(
+      realtimeMediaVideoNegotiated(video, {
+        transports: ['livekit-room'],
+        media: ['audio', 'hologram', 'video'],
       }),
     ).toBe(true);
   });

@@ -136,10 +136,13 @@ export interface RealtimeMediaSubscriptionAcknowledgedNotifications {
   'io.stagewise/realtime-media'?: RealtimeMediaSubscription;
 }
 
-/** Realtime transport profiles and media kinds supported by one peer. */
+/**
+ * Realtime transport profiles and media kinds supported by one peer. `media`
+ * must include `audio`; `video` is optional and unknown kinds are ignored.
+ */
 export interface RealtimeMediaExtensionCapability {
   transports: string[];
-  media: ['audio'];
+  media: string[];
 }
 
 export interface RealtimeMediaExtensionCapabilities {

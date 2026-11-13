@@ -35,7 +35,10 @@ interface WireMessage {
     }[];
     readonly turnComplete: boolean;
   };
-  readonly realtimeInput?: { readonly audio: { readonly mimeType: string } };
+  readonly realtimeInput?: {
+    readonly audio?: { readonly mimeType: string };
+    readonly video?: { readonly data: string; readonly mimeType: string };
+  };
   readonly toolResponse?: unknown;
 }
 
@@ -146,7 +149,9 @@ const handleUpdate = (newHandle: string) => ({
   sessionResumptionUpdate: { newHandle, resumable: true },
 });
 
-async function start(options: { debug?: GeminiLiveDebugOptions } = {}) {
+async function start(
+  options: { debug?: GeminiLiveDebugOptions; video?: boolean } = {},
+) {
   const sockets: FakeGeminiSocket[] = [];
   const factory = createGeminiLiveProcessorFactory({
     logging,
@@ -162,6 +167,7 @@ async function start(options: { debug?: GeminiLiveDebugOptions } = {}) {
     },
     reconnectPolicy: policy,
     debug: options.debug ?? {},
+    video: options.video ?? false,
   });
   const promise = factory.create({
     namespace: 'test',
@@ -212,6 +218,100 @@ afterEach(async () => {
   debug.mockClear();
 });
 
+const still = {
+  mimeType: 'image/jpeg' as const,
+  width: 2,
+  height: 2,
+  timestampUs: 0,
+  detail: 'high' as const,
+  data: new Uint8Array([1]),
+};
+
+function videoFrames(messages: WireMessage[]): WireMessage[] {
+  return messages.filter((message) => message.realtimeInput?.video);
+}
+
+describe('Gemini live video across reconnects', () => {
+  it('resends the latest frame and gap notes once a resumed setup completes', async () => {
+    const { sockets, processor } = await start({ video: true });
+    processorUnderTest = processor;
+    const video = processor.videoInput;
+    if (!video) throw new Error('Expected a video lane');
+    const first = sockets[0] as FakeGeminiSocket;
+    first.message(handleUpdate('handle-1'));
+    await video.write(still);
+    expect(videoFrames(first.sent)).toHaveLength(1);
+
+    first.drop(1011, 'Internal error');
+    const second = await nextSocket(sockets, 1);
+    await video.describe('[Video] Dana started sharing their screen.');
+    second.open();
+    expect(videoFrames(second.sent)).toHaveLength(0);
+    second.message({ setupComplete: {} });
+
+    const resumed = second.after(1);
+    expect(videoFrames(resumed)).toEqual([
+      {
+        realtimeInput: {
+          video: { data: 'AQ==', mimeType: 'image/jpeg' },
+          mediaResolution: 'MEDIA_RESOLUTION_HIGH',
+        },
+      },
+    ]);
+    expect(texts(resumed)).toEqual([
+      '[Video] Dana started sharing their screen.',
+    ]);
+  });
+
+  it('reseeds video notes into a fresh session when the handle is rejected', async () => {
+    const { sockets, processor } = await start({ video: true });
+    processorUnderTest = processor;
+    const video = processor.videoInput;
+    if (!video) throw new Error('Expected a video lane');
+    const first = sockets[0] as FakeGeminiSocket;
+    first.message(handleUpdate('expired-handle'));
+    await video.describe('[Video] Dana started sharing their screen.');
+    await video.write(still);
+    expect(texts(first.after(1))).toContain(
+      '[Video] Dana started sharing their screen.',
+    );
+    first.drop();
+
+    const second = await nextSocket(sockets, 1);
+    second.open();
+    second.drop(1008, 'Invalid session resumption handle');
+    const third = await nextSocket(sockets, 2);
+    third.open();
+    third.message({ setupComplete: {} });
+    const seeded = third.after(1);
+    expect(texts(seeded)).toContain(
+      '[Video] Dana started sharing their screen.',
+    );
+    expect(videoFrames(seeded)).toHaveLength(1);
+  });
+
+  it('holds notes while a response is owed and sends them after the turn', async () => {
+    const { sockets, processor } = await start({ video: true });
+    processorUnderTest = processor;
+    const video = processor.videoInput;
+    if (!video) throw new Error('Expected a video lane');
+    const first = sockets[0] as FakeGeminiSocket;
+    await processor.sendUpdate(update('Please answer this', true));
+    const before = first.sent.length;
+    await video.describe('[Video] Dana stopped sharing their screen.');
+    expect(first.sent).toHaveLength(before);
+    first.message({
+      serverContent: {
+        outputTranscription: { text: 'Done.' },
+        turnComplete: true,
+      },
+    });
+    expect(texts(first.after(before))).toEqual([
+      '[Video] Dana stopped sharing their screen.',
+    ]);
+  });
+});
+
 describe('Gemini live session durability', () => {
   it('configures sliding-window compression and session resumption', async () => {
     const { sockets, processor } = await start();
@@ -252,7 +352,7 @@ describe('Gemini live session durability', () => {
     // Resumed state already holds canonical history: nothing is reseeded,
     // and audio captured during the switch is flushed.
     expect(texts(second.after(1))).toEqual([]);
-    expect(second.sent.at(-1)?.realtimeInput?.audio.mimeType).toBe(
+    expect(second.sent.at(-1)?.realtimeInput?.audio?.mimeType).toBe(
       'audio/pcm;rate=24000',
     );
     const flushed = second.sent.filter((message) => message.realtimeInput);

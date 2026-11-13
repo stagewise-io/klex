@@ -190,13 +190,12 @@
                               }
                             },
                             "media": {
+                              "minItems": 1,
                               "type": "array",
-                              "prefixItems": [
-                                {
-                                  "type": "string",
-                                  "const": "audio"
-                                }
-                              ]
+                              "items": {
+                                "type": "string",
+                                "minLength": 1
+                              }
                             }
                           },
                           "required": ["transports", "media"]
@@ -249,13 +248,12 @@
                           }
                         },
                         "media": {
+                          "minItems": 1,
                           "type": "array",
-                          "prefixItems": [
-                            {
-                              "type": "string",
-                              "const": "audio"
-                            }
-                          ]
+                          "items": {
+                            "type": "string",
+                            "minLength": 1
+                          }
                         }
                       },
                       "required": ["transports", "media"]
@@ -317,13 +315,12 @@
                                   }
                                 },
                                 "media": {
+                                  "minItems": 1,
                                   "type": "array",
-                                  "prefixItems": [
-                                    {
-                                      "type": "string",
-                                      "const": "audio"
-                                    }
-                                  ]
+                                  "items": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  }
                                 }
                               },
                               "required": ["transports", "media"]
@@ -401,13 +398,12 @@
                   }
                 },
                 "media": {
+                  "minItems": 1,
                   "type": "array",
-                  "prefixItems": [
-                    {
-                      "type": "string",
-                      "const": "audio"
-                    }
-                  ]
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
                 }
               },
               "required": ["transports", "media"]
@@ -429,13 +425,12 @@
           }
         },
         "media": {
+          "minItems": 1,
           "type": "array",
-          "prefixItems": [
-            {
-              "type": "string",
-              "const": "audio"
-            }
-          ]
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       },
       "required": ["transports", "media"]
@@ -1157,13 +1152,12 @@
                                   }
                                 },
                                 "media": {
+                                  "minItems": 1,
                                   "type": "array",
-                                  "prefixItems": [
-                                    {
-                                      "type": "string",
-                                      "const": "audio"
-                                    }
-                                  ]
+                                  "items": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  }
                                 }
                               },
                               "required": ["transports", "media"]

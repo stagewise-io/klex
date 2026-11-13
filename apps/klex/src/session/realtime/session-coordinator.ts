@@ -36,6 +36,7 @@ import type {
   RealtimeModelSession,
   RealtimeModelSessionFactory,
 } from './model-session';
+import { createRealtimeVisionForCall, type RealtimeVision } from './vision';
 
 export interface RealtimeSessionCoordinator {
   start(): Promise<void>;
@@ -60,6 +61,8 @@ export interface RealtimeSessionCoordinatorDependencies {
   /** @deprecated Static model compatibility for tests/callers. */
   model?: InteractionModelMetadata;
   now?: () => number;
+  /** Builds the per-call video lane; undefined disables video for that call. */
+  createVision?: typeof createRealtimeVisionForCall;
 }
 
 const TEARDOWN_PHASE_TIMEOUT_MS = 5_000;
@@ -76,6 +79,7 @@ interface ActiveRealtimeSession {
   endReason?: string;
   transport?: MediaTransport;
   processor?: RealtimeModelSession;
+  vision?: RealtimeVision;
   lease?: InteractionLease;
   contextHandle?: PreparedInferenceContextHandle;
   callConfiguration?: {
@@ -110,6 +114,7 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
         processorFactory: RealtimeModelSessionFactory;
       };
       now: () => number;
+      createVision: typeof createRealtimeVisionForCall;
     },
   ) {}
 
@@ -334,6 +339,17 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
       this.monitorTransport(session, transport),
       this.monitorProcessor(session, processor),
     );
+    const vision = this.deps.mcp.realtimeMediaVideoNegotiated(session.namespace)
+      ? this.deps.createVision({
+          logger: this.deps.logger,
+          sources: transport.videoSources,
+          input: processor.videoInput,
+        })
+      : undefined;
+    if (vision) {
+      session.vision = vision;
+      session.tasks.push(vision.run());
+    }
     await processor.sendUpdate({
       sequence: 0,
       eventId: startedEventId,
@@ -712,7 +728,11 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
         session.controller.abort('realtime-session-ended');
       }
       const endpointsClosed = await waitForSettlement(
-        [session.processor?.close(), session.transport?.close()],
+        [
+          session.vision?.close(),
+          session.processor?.close(),
+          session.transport?.close(),
+        ],
         TEARDOWN_PHASE_TIMEOUT_MS,
       );
       if (!endpointsClosed) {
@@ -819,6 +839,7 @@ export function createRealtimeSessionCoordinator(
         };
       }),
     now: deps.now ?? Date.now,
+    createVision: deps.createVision ?? createRealtimeVisionForCall,
   });
 }
 

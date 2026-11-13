@@ -13,7 +13,12 @@ import type {
   AudioSourceMetadata,
   MediaTransport,
   MediaTransportConnector,
+  RawVideoFrame,
   RealtimeEndpointClosure,
+  VideoSource,
+  VideoSourceDescriptor,
+  VideoSourceKind,
+  VideoSourceMetadata,
 } from '../media-transport';
 
 const SAMPLE_RATE_HZ = 48_000;
@@ -21,6 +26,7 @@ const CHANNELS = 1;
 const FRAME_SIZE_MS = 20;
 const INCOMING_QUEUE_CAPACITY = 10;
 const OUTGOING_QUEUE_MS = 200;
+const VIDEO_DESCRIPTOR_QUEUE_CAPACITY = 32;
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -62,6 +68,29 @@ export interface LiveKitSdkAudioPublisher {
   close(): Promise<void>;
 }
 
+/** A decoded RGBA frame; `rotation` is clockwise degrees to display upright. */
+export interface LiveKitSdkVideoFrame {
+  readonly data: Uint8Array;
+  readonly width: number;
+  readonly height: number;
+  readonly rotation: 0 | 90 | 180 | 270;
+}
+
+export interface LiveKitSdkVideoStream
+  extends AsyncIterable<LiveKitSdkVideoFrame> {
+  close(): Promise<void>;
+}
+
+/** A remote camera or screen-share publication, unsubscribed until opened. */
+export interface LiveKitSdkRemoteVideoPublication {
+  readonly id: string;
+  readonly participantId: string;
+  readonly participantName?: string;
+  readonly kind: VideoSourceKind;
+  /** Subscribes and decodes at most `maxFps` frames per second until closed. */
+  openStream(options: { maxFps: number }): LiveKitSdkVideoStream;
+}
+
 export interface LiveKitSdkRoom {
   connect(url: string, token: string): Promise<void>;
   publishAudio(options: {
@@ -74,6 +103,13 @@ export interface LiveKitSdkRoom {
   ): () => void;
   onAudioTrackUnsubscribed(
     listener: (track: LiveKitSdkRemoteAudioTrack) => void,
+  ): () => void;
+  /** Omitted by audio-only rooms; such transports expose no video sources. */
+  onVideoTrackPublished?(
+    listener: (publication: LiveKitSdkRemoteVideoPublication) => void,
+  ): () => void;
+  onVideoTrackUnpublished?(
+    listener: (publication: LiveKitSdkRemoteVideoPublication) => void,
   ): () => void;
   onDisconnected(listener: (reason: string) => void): () => void;
   disconnect(): Promise<void>;
@@ -175,8 +211,129 @@ class LiveKitAudioSourceModule implements AudioSource {
   }
 }
 
+class LiveKitVideoSourceModule implements VideoSource {
+  // Video is sampled, not streamed: only the newest frame matters.
+  private readonly queue = new BoundedAsyncQueue<RawVideoFrame>(1, {
+    overflow: 'drop-oldest',
+  });
+  private readonly closure = deferred<RealtimeEndpointClosure>();
+  private sequence = 0;
+  private settled = false;
+
+  readonly readable: AsyncIterable<RawVideoFrame> = this.queue;
+  readonly closed = this.closure.promise;
+
+  constructor(
+    readonly id: string,
+    readonly metadata: VideoSourceMetadata,
+    private readonly stream: LiveKitSdkVideoStream,
+  ) {
+    void this.pump();
+  }
+
+  close(reason = 'local-close'): Promise<void> {
+    return this.settle({ type: 'closed', reason });
+  }
+
+  get active(): boolean {
+    return !this.settled;
+  }
+
+  private async pump(): Promise<void> {
+    try {
+      for await (const frame of this.stream) {
+        if (this.settled) return;
+        await this.queue.push({
+          encoding: 'rgba',
+          width: frame.width,
+          height: frame.height,
+          rotation: frame.rotation,
+          sequence: this.sequence++,
+          timestampUs: Number(process.hrtime.bigint() / 1_000n),
+          data: frame.data,
+        });
+      }
+      await this.settle({ type: 'closed', reason: 'track-ended' });
+    } catch (error) {
+      await this.settle({ type: 'failed', error }, error).catch(
+        () => undefined,
+      );
+    }
+  }
+
+  private async settle(
+    closure: RealtimeEndpointClosure,
+    error?: unknown,
+  ): Promise<void> {
+    if (this.settled) return;
+    this.settled = true;
+    this.queue.close(error);
+    try {
+      await this.stream.close();
+      this.closure.resolve(closure);
+    } catch (streamError) {
+      this.closure.resolve({ type: 'failed', error: streamError });
+    }
+  }
+}
+
+class LiveKitVideoSourceDescriptorModule implements VideoSourceDescriptor {
+  private readonly closure = deferred<RealtimeEndpointClosure>();
+  private current: LiveKitVideoSourceModule | undefined;
+  private ended = false;
+
+  readonly id: string;
+  readonly metadata: VideoSourceMetadata;
+  readonly closed = this.closure.promise;
+
+  constructor(private readonly publication: LiveKitSdkRemoteVideoPublication) {
+    this.id = publication.id;
+    this.metadata = Object.freeze({
+      participantId: publication.participantId,
+      ...(publication.participantName && {
+        displayName: publication.participantName,
+      }),
+      trackId: publication.id,
+      kind: publication.kind,
+    });
+  }
+
+  open(options: { maxFps: number }): VideoSource {
+    if (this.ended) throw new Error('LiveKit video track is unpublished');
+    if (this.current?.active)
+      throw new Error('LiveKit video source is already open');
+    if (!(options.maxFps > 0))
+      throw new Error('LiveKit video maxFps must be positive');
+    this.current = new LiveKitVideoSourceModule(
+      this.id,
+      this.metadata,
+      this.publication.openStream({ maxFps: options.maxFps }),
+    );
+    return this.current;
+  }
+
+  async end(closure: RealtimeEndpointClosure): Promise<void> {
+    if (this.ended) return;
+    this.ended = true;
+    await this.current?.close(
+      closure.type === 'closed' ? closure.reason : 'transport-failed',
+    );
+    this.closure.resolve(closure);
+  }
+}
+
 class LiveKitRoomMediaTransportModule implements MediaTransport {
   private readonly sourceQueue = new BoundedAsyncQueue<AudioSource>(32);
+  // Consumers that ignore video must not stall discovery.
+  private readonly videoQueue =
+    new BoundedAsyncQueue<LiveKitVideoSourceDescriptorModule>(
+      VIDEO_DESCRIPTOR_QUEUE_CAPACITY,
+      { overflow: 'drop-oldest' },
+    );
+  private readonly videoDescriptors = new Map<
+    string,
+    LiveKitVideoSourceDescriptorModule
+  >();
   private readonly closure = deferred<RealtimeEndpointClosure>();
   private readonly unsubscribe: Array<() => void> = [];
   private readonly activeSources = new Map<string, LiveKitAudioSourceModule>();
@@ -188,13 +345,18 @@ class LiveKitRoomMediaTransportModule implements MediaTransport {
   readonly audioOutput = {
     write: (frame: AudioFrame) => this.writeAudio(frame),
   };
+  readonly videoSources: AsyncIterable<VideoSourceDescriptor> | undefined;
   readonly closed = this.closure.promise;
 
   constructor(
     private readonly room: LiveKitSdkRoom,
     private readonly signal: AbortSignal,
     private readonly onSettled: () => void,
-  ) {}
+  ) {
+    this.videoSources = room.onVideoTrackPublished
+      ? this.videoQueue
+      : undefined;
+  }
 
   async start(url: string, token: string): Promise<void> {
     this.unsubscribe.push(
@@ -202,6 +364,20 @@ class LiveKitRoomMediaTransportModule implements MediaTransport {
       this.room.onAudioTrackUnsubscribed((track) =>
         this.handleTrackUnsubscribed(track),
       ),
+      ...(this.room.onVideoTrackPublished
+        ? [
+            this.room.onVideoTrackPublished((publication) =>
+              this.handleVideoPublished(publication),
+            ),
+          ]
+        : []),
+      ...(this.room.onVideoTrackUnpublished
+        ? [
+            this.room.onVideoTrackUnpublished((publication) =>
+              this.handleVideoUnpublished(publication),
+            ),
+          ]
+        : []),
       this.room.onDisconnected((reason) => {
         if (!this.closing)
           void this.finish(
@@ -290,6 +466,24 @@ class LiveKitRoomMediaTransportModule implements MediaTransport {
     });
   }
 
+  private handleVideoPublished(
+    publication: LiveKitSdkRemoteVideoPublication,
+  ): void {
+    if (this.closing || this.videoDescriptors.has(publication.id)) return;
+    const descriptor = new LiveKitVideoSourceDescriptorModule(publication);
+    this.videoDescriptors.set(publication.id, descriptor);
+    void this.videoQueue.push(descriptor).catch(() => undefined);
+  }
+
+  private handleVideoUnpublished(
+    publication: LiveKitSdkRemoteVideoPublication,
+  ): void {
+    const descriptor = this.videoDescriptors.get(publication.id);
+    if (!descriptor) return;
+    this.videoDescriptors.delete(publication.id);
+    void descriptor.end({ type: 'closed', reason: 'track-unpublished' });
+  }
+
   private finish(
     closure: RealtimeEndpointClosure,
     error?: unknown,
@@ -300,14 +494,18 @@ class LiveKitRoomMediaTransportModule implements MediaTransport {
       this.signal.removeEventListener('abort', this.handleAbort);
       for (const remove of this.unsubscribe.splice(0)) remove();
       this.sourceQueue.close(error);
+      this.videoQueue.close();
       const sources = [...this.activeSources.values()];
       this.activeSources.clear();
+      const videoDescriptors = [...this.videoDescriptors.values()];
+      this.videoDescriptors.clear();
       await Promise.allSettled([
         ...sources.map((source) =>
           closure.type === 'failed'
             ? source.fail(closure.error)
             : source.close(closure.reason),
         ),
+        ...videoDescriptors.map((descriptor) => descriptor.end(closure)),
         this.publisher?.close(),
         this.room.disconnect(),
       ]);

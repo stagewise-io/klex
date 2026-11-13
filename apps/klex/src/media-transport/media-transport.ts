@@ -53,12 +53,56 @@ export type AudioSource = RealtimeSource<AudioFrame, AudioSourceMetadata>;
 export type AudioSink = RealtimeSink<AudioFrame>;
 
 /**
+ * A decoded, unrotated RGBA video frame. `rotation` is the clockwise rotation
+ * a viewer must apply to display it upright.
+ */
+export interface RawVideoFrame {
+  readonly encoding: 'rgba';
+  readonly width: number;
+  readonly height: number;
+  readonly rotation: 0 | 90 | 180 | 270;
+  readonly sequence: number;
+  readonly timestampUs: number;
+  readonly data: Uint8Array;
+}
+
+export type VideoSourceKind = 'camera' | 'screenshare';
+
+export interface VideoSourceMetadata {
+  readonly participantId: string;
+  readonly displayName?: string;
+  readonly trackId: string;
+  readonly kind: VideoSourceKind;
+}
+
+/** An opened video source. Closing it stops receiving and decoding. */
+export interface VideoSource
+  extends RealtimeSource<RawVideoFrame, VideoSourceMetadata> {
+  close(): Promise<void>;
+}
+
+/**
+ * A discovered video track that costs nothing until opened. At most one
+ * source is open per descriptor; reopening after close is allowed.
+ * `closed` settles when the track goes away, which also ends any open source.
+ */
+export interface VideoSourceDescriptor {
+  readonly id: string;
+  readonly metadata: VideoSourceMetadata;
+  readonly closed: Promise<RealtimeEndpointClosure>;
+  /** Delivers at most `maxFps` frames per second, dropping stale frames. */
+  open(options: { maxFps: number }): VideoSource;
+}
+
+/**
  * A connected external media plane. `audioSources` discovers current and
  * future inputs until transport closure; source IDs are unique while active.
+ * `videoSources`, when present, discovers video tracks the same way.
  */
 export interface MediaTransport extends RealtimeEndpoint {
   readonly audioSources: AsyncIterable<AudioSource>;
   readonly audioOutput: AudioSink;
+  readonly videoSources?: AsyncIterable<VideoSourceDescriptor>;
 }
 
 /** Connects an accepted MCP descriptor to a media plane. */

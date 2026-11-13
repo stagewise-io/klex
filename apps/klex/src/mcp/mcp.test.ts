@@ -1356,6 +1356,10 @@ describe('MCP namespace isolation', () => {
         accept,
         reject,
         end,
+        serverCapability: () => ({
+          transports: ['livekit-room'],
+          media: ['audio', 'video'],
+        }),
       },
     } as unknown as McpConnection;
     const connect = vi.fn(async (input: ConnectMcpServerOptions) => {
@@ -1385,6 +1389,8 @@ describe('MCP namespace isolation', () => {
     ).resolves.toMatchObject({ transport: { profile: 'livekit-room' } });
     await mcp.rejectRealtimeMediaSession('voice', 'session-2');
     await mcp.endRealtimeMediaSession('voice', 'session-1');
+    // Klex is configured audio-only here, so the server's video offer is moot.
+    expect(mcp.realtimeMediaVideoNegotiated('voice')).toBe(false);
     expect(accept).toHaveBeenCalledWith('session-1');
     expect(reject).toHaveBeenCalledWith('session-2');
     expect(end).toHaveBeenCalledWith('session-1');

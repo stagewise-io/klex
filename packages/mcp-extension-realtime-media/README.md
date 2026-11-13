@@ -4,7 +4,7 @@ Typed schemas and client/server facades for negotiating ephemeral realtime media
 
 **Extension identifier:** `io.stagewise/realtime-media`
 
-This package is the control plane only. Audio flows through the accepted transport descriptor, initially a LiveKit room.
+This package is the control plane only. Audio, and optionally video, flows through the accepted transport descriptor, initially a LiveKit room.
 
 ## Lifecycle
 
@@ -18,7 +18,7 @@ The extension's methods are directional:
 | `end` | Request | Client → server |
 | `session-ended` | Notification | Server → client |
 
-1. Client and server advertise audio and their supported transport profiles; support requires at least one shared profile.
+1. Client and server advertise their media kinds and supported transport profiles; support requires `audio` and at least one shared profile. Video is in use only when both advertise `video` (`realtimeMediaVideoNegotiated()`; a client reads the server's side with `serverCapability()`).
 2. The client opens `subscriptions/listen` with the realtime-media filter.
 3. The server emits `session-offered` with an opaque ID and expiration time.
 4. The client calls `accept` or `reject`.

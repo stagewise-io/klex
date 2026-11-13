@@ -9,7 +9,10 @@ import {
   type LiveKitSdkAudioPublisher,
   type LiveKitSdkAudioStream,
   type LiveKitSdkRemoteAudioTrack,
+  type LiveKitSdkRemoteVideoPublication,
   type LiveKitSdkRoom,
+  type LiveKitSdkVideoFrame,
+  type LiveKitSdkVideoStream,
 } from './livekit-room';
 
 const descriptor = {
@@ -351,5 +354,150 @@ describe('LiveKitRoomMediaTransportConnector', () => {
     await expect(
       connector.connect(descriptor, { signal: new AbortController().signal }),
     ).rejects.toThrow('LiveKit connector is closed');
+  });
+});
+
+class FakeVideoStream implements LiveKitSdkVideoStream {
+  readonly queue = new BoundedAsyncQueue<LiveKitSdkVideoFrame>(8);
+  close = vi.fn(async () => this.queue.close());
+  [Symbol.asyncIterator]() {
+    return this.queue[Symbol.asyncIterator]();
+  }
+}
+
+class FakeVideoPublication implements LiveKitSdkRemoteVideoPublication {
+  readonly participantId = 'presenter';
+  readonly participantName = 'Dana';
+  readonly kind = 'screenshare' as const;
+  readonly streams: FakeVideoStream[] = [];
+  openStream = vi.fn(() => {
+    const stream = new FakeVideoStream();
+    this.streams.push(stream);
+    return stream;
+  });
+  constructor(readonly id: string) {}
+}
+
+class FakeVideoRoom extends FakeRoom {
+  readonly published = new Set<
+    (publication: LiveKitSdkRemoteVideoPublication) => void
+  >();
+  readonly unpublished = new Set<
+    (publication: LiveKitSdkRemoteVideoPublication) => void
+  >();
+  onVideoTrackPublished(
+    listener: (publication: LiveKitSdkRemoteVideoPublication) => void,
+  ) {
+    this.published.add(listener);
+    return () => this.published.delete(listener);
+  }
+  onVideoTrackUnpublished(
+    listener: (publication: LiveKitSdkRemoteVideoPublication) => void,
+  ) {
+    this.unpublished.add(listener);
+    return () => this.unpublished.delete(listener);
+  }
+  publish(publication: LiveKitSdkRemoteVideoPublication): void {
+    for (const listener of this.published) listener(publication);
+  }
+  unpublish(publication: LiveKitSdkRemoteVideoPublication): void {
+    for (const listener of this.unpublished) listener(publication);
+  }
+}
+
+describe('LiveKit video discovery', () => {
+  async function connectVideo() {
+    const room = new FakeVideoRoom();
+    const { connector } = setup(room);
+    const transport = await connector.connect(descriptor, {
+      signal: new AbortController().signal,
+    });
+    const videoSources = transport.videoSources;
+    if (!videoSources) throw new Error('Expected video discovery');
+    return {
+      room,
+      connector,
+      transport,
+      discovery: videoSources[Symbol.asyncIterator](),
+    };
+  }
+
+  it('omits video discovery when the room cannot report video', async () => {
+    const { connector } = setup();
+    const transport = await connector.connect(descriptor, {
+      signal: new AbortController().signal,
+    });
+    expect(transport.videoSources).toBeUndefined();
+    await connector.close();
+  });
+
+  it('describes publications without subscribing until opened', async () => {
+    const { room, connector, discovery } = await connectVideo();
+    const publication = new FakeVideoPublication('screen-1');
+    room.publish(publication);
+    const next = await discovery.next();
+    if (next.done) throw new Error('Expected a descriptor');
+    const video = next.value;
+    expect(video.metadata).toEqual({
+      participantId: 'presenter',
+      displayName: 'Dana',
+      trackId: 'screen-1',
+      kind: 'screenshare',
+    });
+    expect(publication.openStream).not.toHaveBeenCalled();
+
+    expect(() => video.open({ maxFps: 0 })).toThrow('maxFps');
+    const source = video.open({ maxFps: 2 });
+    expect(publication.openStream).toHaveBeenCalledWith({ maxFps: 2 });
+    expect(() => video.open({ maxFps: 2 })).toThrow('already open');
+    await publication.streams[0]?.queue.push({
+      data: new Uint8Array(16),
+      width: 2,
+      height: 2,
+      rotation: 90,
+    });
+    const frame = await source.readable[Symbol.asyncIterator]().next();
+    expect(frame.value).toMatchObject({
+      encoding: 'rgba',
+      width: 2,
+      height: 2,
+      rotation: 90,
+      sequence: 0,
+    });
+    await source.close();
+    expect(publication.streams[0]?.close).toHaveBeenCalled();
+    video.open({ maxFps: 2 });
+    expect(publication.streams).toHaveLength(2);
+    await connector.close();
+  });
+
+  it('ends descriptors and open sources when a track is unpublished', async () => {
+    const { room, connector, discovery } = await connectVideo();
+    const publication = new FakeVideoPublication('screen-1');
+    room.publish(publication);
+    const next = await discovery.next();
+    if (next.done) throw new Error('Expected a descriptor');
+    const source = next.value.open({ maxFps: 1 });
+    room.unpublish(publication);
+    await expect(next.value.closed).resolves.toEqual({
+      type: 'closed',
+      reason: 'track-unpublished',
+    });
+    expect(publication.streams[0]?.close).toHaveBeenCalled();
+    await expect(source.closed).resolves.toMatchObject({ type: 'closed' });
+    expect(() => next.value.open({ maxFps: 1 })).toThrow('unpublished');
+    await connector.close();
+  });
+
+  it('ends discovery and descriptors when the transport closes', async () => {
+    const { room, connector, transport, discovery } = await connectVideo();
+    const publication = new FakeVideoPublication('screen-1');
+    room.publish(publication);
+    const next = await discovery.next();
+    if (next.done) throw new Error('Expected a descriptor');
+    await transport.close();
+    await expect(next.value.closed).resolves.toMatchObject({ type: 'closed' });
+    await expect(discovery.next()).resolves.toMatchObject({ done: true });
+    await connector.close();
   });
 });

@@ -17,12 +17,28 @@ export const DEFAULT_REALTIME_MEDIA_CAPABILITY = {
   media: ['audio'],
 } satisfies RealtimeMediaExtensionCapability;
 
+export type RealtimeMediaKind = 'audio' | 'video';
+
 export const realtimeMediaExtensionCapability = (
   transports: readonly string[] = DEFAULT_REALTIME_MEDIA_CAPABILITY.transports,
+  options: { video?: boolean } = {},
 ): RealtimeMediaExtensionCapability => ({
   transports: [...transports],
-  media: ['audio'],
+  media: options.video ? ['audio', 'video'] : ['audio'],
 });
+
+/** True when both capabilities include video; unknown kinds are ignored. */
+export function realtimeMediaVideoNegotiated(
+  local: RealtimeMediaExtensionCapability | null | undefined,
+  remote: RealtimeMediaExtensionCapability | null | undefined,
+): boolean {
+  return (
+    Array.isArray(local?.media) &&
+    local.media.includes('video') &&
+    Array.isArray(remote?.media) &&
+    remote.media.includes('video')
+  );
+}
 
 export const realtimeMediaCapabilities = (
   capability: RealtimeMediaExtensionCapability = DEFAULT_REALTIME_MEDIA_CAPABILITY,

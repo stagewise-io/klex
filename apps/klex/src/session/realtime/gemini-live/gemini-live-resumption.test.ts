@@ -292,6 +292,35 @@ describe('Gemini live session durability', () => {
     expect(first.terminate).not.toHaveBeenCalled();
   });
 
+  it('lets Google release the session before the first resume attempt', async () => {
+    const { sockets, processor } = await start();
+    processorUnderTest = processor;
+    const first = sockets[0] as FakeGeminiSocket;
+    first.message(handleUpdate('handle-1'));
+    first.drop();
+    const closedAt = Date.now();
+
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(sockets).toHaveLength(1);
+    const second = await nextSocket(sockets, 1);
+    expect(Date.now() - closedAt).toBeGreaterThanOrEqual(390);
+    expect(info).toHaveBeenCalledWith(
+      expect.objectContaining({ attempt: 1, settleMs: 400, resume: true }),
+      'Gemini live reconnect attempt scheduled',
+    );
+
+    // Later attempts already back off, so they skip the settle delay.
+    second.open();
+    second.drop(1011, 'Internal error');
+    const retriedAt = Date.now();
+    await nextSocket(sockets, 2);
+    expect(Date.now() - retriedAt).toBeLessThan(300);
+    expect(info).toHaveBeenCalledWith(
+      expect.objectContaining({ attempt: 2, settleMs: 0 }),
+      'Gemini live reconnect attempt scheduled',
+    );
+  });
+
   it('terminates a previous socket that does not close in time', async () => {
     const { sockets, processor } = await start();
     processorUnderTest = processor;
@@ -312,8 +341,9 @@ describe('Gemini live session durability', () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(sockets).toHaveLength(1);
     first.finishClose(1006);
-    // Opened by the close event, well before the second timeout would fire.
-    await vi.waitFor(() => expect(sockets).toHaveLength(2), { timeout: 200 });
+    // Opened by the close event plus the settle delay, well before the
+    // second timeout would fire.
+    await vi.waitFor(() => expect(sockets).toHaveLength(2), { timeout: 700 });
     const second = sockets[1] as FakeGeminiSocket;
     expect(warn).toHaveBeenCalledWith(
       expect.objectContaining({ timeoutMs: 1_000 }),

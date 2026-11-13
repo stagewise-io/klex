@@ -299,8 +299,9 @@ describe('Gemini live session durability', () => {
     first.holdClose = true;
     first.message(handleUpdate('handle-1'));
     first.message({ goAway: { timeLeft: '30s' } });
+    // The forced close is reported later, as `ws` does on the next tick.
     first.terminate.mockImplementation(() => {
-      first.readyState = 3;
+      first.readyState = 2;
     });
     await new Promise((resolve) => setTimeout(resolve, 500));
     expect(sockets).toHaveLength(1);
@@ -311,7 +312,9 @@ describe('Gemini live session durability', () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(sockets).toHaveLength(1);
     first.finishClose(1006);
-    const second = await nextSocket(sockets, 1);
+    // Opened by the close event, well before the second timeout would fire.
+    await vi.waitFor(() => expect(sockets).toHaveLength(2), { timeout: 200 });
+    const second = sockets[1] as FakeGeminiSocket;
     expect(warn).toHaveBeenCalledWith(
       expect.objectContaining({ timeoutMs: 1_000 }),
       'Gemini live previous connection did not close in time, terminating it',

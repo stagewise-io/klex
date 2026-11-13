@@ -400,8 +400,8 @@ describe('Gemini live session durability', () => {
     expect(third.setup.sessionResumption).toEqual({});
     third.message({ setupComplete: {} });
     const seed = third.after(1).filter((message) => message.clientContent);
+    // Nothing is owed, so the whole history goes out without completing a turn.
     expect(seed.map((message) => message.clientContent?.turnComplete)).toEqual([
-      false,
       false,
     ]);
     expect(seed.flatMap((message) => message.clientContent?.turns)).toEqual([
@@ -417,6 +417,50 @@ describe('Gemini live session durability', () => {
       expect.objectContaining({ outcome: 'fresh' }),
       'Gemini live session restarted without resumption',
     );
+  });
+
+  it('completes a pending request after gap audio when starting fresh', async () => {
+    const { sockets, processor, input } = await start();
+    processorUnderTest = processor;
+    const first = sockets[0] as FakeGeminiSocket;
+    first.message({
+      serverContent: {
+        outputTranscription: { text: 'Earlier answer.' },
+        turnComplete: true,
+      },
+    });
+    await processor.sendUpdate(update('Please answer this', true));
+    first.drop();
+    const second = await nextSocket(sockets, 1);
+    await input.push(frame());
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    second.open();
+    second.message({ setupComplete: {} });
+
+    const seeded = second.after(1);
+    const contentIndexes = seeded.flatMap((message, index) =>
+      message.clientContent ? [index] : [],
+    );
+    expect(
+      contentIndexes.map((index) => seeded[index]?.clientContent?.turnComplete),
+    ).toEqual([false, true]);
+    const [historyIndex = -1, pendingIndex = -1] = contentIndexes;
+    expect(seeded[historyIndex]?.clientContent?.turns.at(-1)).toEqual({
+      role: 'model',
+      parts: [{ text: 'Earlier answer.' }],
+    });
+    expect(texts([seeded[pendingIndex] as WireMessage])).toEqual([
+      expect.stringContaining('Please answer this'),
+    ]);
+    const audioIndexes = seeded.flatMap((message, index) =>
+      message.realtimeInput ? [index] : [],
+    );
+    expect(audioIndexes.length).toBeGreaterThan(0);
+    expect(
+      audioIndexes.every(
+        (index) => index > historyIndex && index < pendingIndex,
+      ),
+    ).toBe(true);
   });
 
   it('bounds a single oversized entry in the fresh-session seed', async () => {

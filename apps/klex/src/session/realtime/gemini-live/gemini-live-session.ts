@@ -672,14 +672,11 @@ export class GeminiLiveSession implements RealtimeModelSession {
           clientContent: { turns: seed.history, turnComplete: false },
         });
       bufferedAudioChunks = this.flushAudioBacklog(token, false);
-      if (seed.last)
+      if (seed.pending.length > 0)
         this.sendOn(token, {
-          clientContent: {
-            turns: [seed.last],
-            turnComplete: this.awaitingResponse,
-          },
+          clientContent: { turns: seed.pending, turnComplete: true },
         });
-      replayedItems = seed.history.length + (seed.last ? 1 : 0);
+      replayedItems = seed.history.length + seed.pending.length;
     }
     const durationMs = Date.now() - outage.startedAt;
     const outcome = resumed ? 'resumed' : 'fresh';
@@ -738,12 +735,12 @@ export class GeminiLiveSession implements RealtimeModelSession {
 
   /**
    * Rebuilds a new provider session from canonical history plus this call.
-   * The newest call entry is split off so it can complete the turn after
-   * the gap audio.
+   * When a response is still owed, the user input since the last model turn
+   * is split off so it can complete the turn after the gap audio.
    */
   private freshSessionSeed(): {
     history: GeminiContentTurn[];
-    last?: GeminiContentTurn;
+    pending: GeminiContentTurn[];
   } {
     this.unconfirmed = [];
     this.audioSinceHandle = [];
@@ -751,13 +748,15 @@ export class GeminiLiveSession implements RealtimeModelSession {
       role: entry.role,
       parts: [{ text: entry.text }],
     }));
-    const last = callTurns.pop();
+    let split = callTurns.length;
+    if (this.awaitingResponse)
+      while (split > 0 && callTurns[split - 1]?.role === 'user') split -= 1;
     return {
       history: [
         ...toGeminiContentTurns(this.context?.messages ?? []),
-        ...callTurns,
+        ...callTurns.slice(0, split),
       ],
-      ...(last && { last }),
+      pending: callTurns.slice(split),
     };
   }
 

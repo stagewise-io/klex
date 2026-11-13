@@ -980,7 +980,7 @@ export class GeminiLiveSession implements RealtimeModelSession {
     );
     const scheduledToken = this.connectionToken;
     const closeWait = this.waitForClose(previous, previousClosed).then(() =>
-      settleMs > 0
+      settleMs > 0 && this.resumptionHandle !== undefined
         ? new Promise<void>((resolve) => setTimeout(resolve, settleMs))
         : undefined,
     );

@@ -482,7 +482,7 @@ describe('Gemini live processor', () => {
     expect(JSON.parse(socket.sent.at(-1) ?? '{}')).toEqual({
       realtimeInput: {
         video: { data: 'AQ==', mimeType: 'image/jpeg' },
-        mediaResolution: 'MEDIA_RESOLUTION_HIGH',
+        mediaResolution: { level: 'MEDIA_RESOLUTION_HIGH' },
       },
     });
     await processor.close();

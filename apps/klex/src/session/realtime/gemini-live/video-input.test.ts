@@ -41,13 +41,13 @@ describe('GeminiLiveVideoInput', () => {
       {
         realtimeInput: {
           video: { data: '/9j/', mimeType: 'image/jpeg' },
-          mediaResolution: 'MEDIA_RESOLUTION_HIGH',
+          mediaResolution: { level: 'MEDIA_RESOLUTION_HIGH' },
         },
       },
       {
         realtimeInput: {
           video: { data: '/9j/', mimeType: 'image/jpeg' },
-          mediaResolution: 'MEDIA_RESOLUTION_LOW',
+          mediaResolution: { level: 'MEDIA_RESOLUTION_LOW' },
         },
       },
     ]);

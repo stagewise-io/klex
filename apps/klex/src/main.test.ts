@@ -49,8 +49,8 @@ const mocks = vi.hoisted(() => {
     },
     logger,
     selectedDirectory: 'agents/selected agent',
-    createLearningExt:
-      vi.fn<(options: { getSoul: () => string | null }) => void>(),
+    createMemoryWriterExt:
+      vi.fn<(options: { legacyLearningDirectory: string }) => void>(),
     readSoul: vi.fn((_directory: string) => 'Current soul'),
     removeDirectory: vi.fn(async () => {
       await resource.release();
@@ -162,9 +162,6 @@ vi.mock('@/session/chat/extensions/image-input-optimizer', () => ({
 vi.mock('@/session/chat/extensions/js-repl-sandbox', () => ({
   createJsReplSandboxExt: vi.fn(),
 }));
-vi.mock('@/session/chat/extensions/learning', () => ({
-  createLearningExt: mocks.createLearningExt,
-}));
 vi.mock('@/session/chat/extensions/skills', () => ({
   createSkillsExt: vi.fn(),
 }));
@@ -173,6 +170,7 @@ vi.mock('@/session/chat/extensions/mcp-ingress', () => ({
 }));
 vi.mock('@/session/chat/extensions/memory', () => ({
   createMemoryExt: vi.fn(),
+  createMemoryWriterExt: mocks.createMemoryWriterExt,
 }));
 vi.mock('@/session/chat/extensions/name-loader', () => ({
   createNameLoaderExt: vi.fn(),
@@ -569,14 +567,11 @@ describe('managed-update agent continuity', () => {
     },
   );
 
-  it('wires a lazy soul reader for the selected agent into learning', async () => {
+  it('wires the memory writer with the selected agent legacy import directory', async () => {
     await launch();
-    const options = mocks.createLearningExt.mock.calls[0]?.[0];
-    expect(options).toBeDefined();
-    expect(mocks.readSoul).not.toHaveBeenCalled();
-    expect(options?.getSoul()).toBe('Current soul');
-    expect(mocks.readSoul).toHaveBeenCalledWith(
-      join(mocks.selectedDirectory, 'extensions', 'io.stagewise/soul'),
+    const options = mocks.createMemoryWriterExt.mock.calls[0]?.[0];
+    expect(options?.legacyLearningDirectory).toBe(
+      join(mocks.selectedDirectory, 'extensions', 'io.stagewise/learning'),
     );
   });
 

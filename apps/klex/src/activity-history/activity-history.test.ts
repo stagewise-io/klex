@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ExtendedUIMessage } from '@/session/chat/message-types';
 
-import { activityOrdinal } from './activity-history';
+import { activityMessageId, activityOrdinal } from './activity-history';
 import { createActivityFixture, TEST_ACTIVITY_LIMITS } from './test-support';
 
 const fixtures: Awaited<ReturnType<typeof createActivityFixture>>[] = [];
@@ -35,6 +35,18 @@ describe('canonical activity view', () => {
       )?.text,
     ).toBe('');
     const source = await append('keep the deployment command');
+    const messageId = activityMessageId(source.id);
+    if (!messageId) throw new Error('Missing SQLite message ID');
+    expect(
+      await activities.readPage(messageId, {
+        offset: 0,
+        limit: 1000,
+        maxBytes: 10000,
+      }),
+    ).toMatchObject({
+      id: source.id,
+      text: expect.stringContaining('keep the deployment command'),
+    });
     const batch = await activities.readPending(null, ready(now() + 600_000));
     expect(batch?.id).toBe(source.id);
     expect(batch?.text).toContain('keep the deployment command');
@@ -129,6 +141,17 @@ describe('canonical activity view', () => {
     expect(batch?.text.length).toBeLessThanOrEqual(50);
     expect(batch?.text).toContain('TAIL');
     expect(batch?.text).not.toContain('HEAD');
+  });
+
+  it('labels writer evidence including bounded oversized tails', async () => {
+    const { activities, append } = await setup();
+    const source = await append(`HEAD${'x'.repeat(2000)}TAIL`);
+    const batch = await activities.readRange(null, source.id, 500, true);
+    expect(batch?.text).toContain(`Source ${source.id}`);
+    expect(batch?.text).toContain('TAIL');
+    expect(batch?.text.length).toBeLessThanOrEqual(500);
+    expect(batch?.sourceIds).toEqual([source.id]);
+    expect(batch?.truncated).toBe(true);
   });
 
   it('resolves the newest history entry for the given message ids', async () => {

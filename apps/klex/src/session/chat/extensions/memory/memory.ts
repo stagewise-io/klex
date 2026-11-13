@@ -1,3 +1,5 @@
+import { dirname, join } from 'node:path';
+
 import { type ToolSet, tool } from 'ai';
 
 import type { ActivityHistory } from '@/activity-history';
@@ -166,8 +168,17 @@ class MemoryExt implements Extension {
 /** Retrieves retained activity and observes the live default session. */
 export function createMemoryExt(options: MemoryExtOptions): ExtensionFactory {
   return {
-    identifier: 'io.stagewise/memory',
-    displayName: 'Memory',
-    create: (deps) => new MemoryExt(deps, options),
+    identifier: 'io.stagewise/old-memory-recall',
+    displayName: 'Old memory recall',
+    create: (deps) =>
+      new MemoryExt(
+        {
+          ...deps,
+          // Retain the released search-cache location after the extension rename.
+          getDataDir: (global) =>
+            join(dirname(deps.getDataDir(global)), 'memory'),
+        },
+        options,
+      ),
   };
 }

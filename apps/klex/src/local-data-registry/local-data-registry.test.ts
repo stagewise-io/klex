@@ -41,15 +41,6 @@ vi.mock(
   '@/session/chat/extensions/context-compaction/compaction-prompt.md',
   () => ({ default: '' }),
 );
-vi.mock('@/session/chat/extensions/learning/system-prompt-part.md', () => ({
-  default: '',
-}));
-vi.mock('@/session/chat/extensions/learning/extraction-prompt.md', () => ({
-  default: '',
-}));
-vi.mock('@/session/chat/extensions/learning/consolidation-prompt.md', () => ({
-  default: '',
-}));
 vi.mock('@/session/chat/extensions/episode-summary/summary-prompt.md', () => ({
   default: '',
 }));
@@ -74,6 +65,7 @@ describe('Klex local-data registry', () => {
       'episode-summaries',
       'sessions',
       'skill-registry',
+      'memory-writer-state',
     ]);
   });
 

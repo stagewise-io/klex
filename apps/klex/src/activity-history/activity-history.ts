@@ -1,4 +1,6 @@
 import {
+  createActivityHistoryView,
+  type FittedHistory,
   RECORD_SEPARATOR,
   renderRecordText,
 } from '@/session/chat/utils/history-view';
@@ -8,7 +10,12 @@ import type {
   SessionHistory,
 } from '@/session-history';
 
-import { collectActivityHistory } from './history-projection';
+const activityView = createActivityHistoryView();
+
+/** A caller-configured history-view fit operation; storage does not own its policy. */
+export type ActivityView = (
+  messages: readonly NonNullable<ActivityMessage['message']>[],
+) => FittedHistory;
 
 export interface ActivityPage {
   id: string;
@@ -19,6 +26,8 @@ export interface ActivityPage {
   startedAt: string | null;
   endedAt: string | null;
   text: string;
+  /** Source environments, derived from canonical context parts. */
+  platforms?: string[];
   offset: number;
   nextOffset: number | null;
   scannedBytes: number;
@@ -71,6 +80,8 @@ export interface ActivityHistory {
     after: string | null,
     through: string,
     maxCharacters: number,
+    includeSourceIds?: boolean,
+    view?: ActivityView,
   ): Promise<ActivityBatch | null>;
   readPage(
     id: string,
@@ -80,6 +91,7 @@ export interface ActivityHistory {
       maxBytes: number;
       tail?: boolean;
       firstSourceId?: string;
+      view?: ActivityView;
     },
   ): Promise<ActivityPage | null>;
   listNeighbors(id: string, count: number): Promise<ActivitySource[]>;
@@ -112,7 +124,7 @@ export function activityOrdinal(id: string | null): number | null {
   }
 }
 
-function activityMessageId(id: string): string | null {
+export function activityMessageId(id: string): string | null {
   if (activityOrdinal(id) === null) return null;
   try {
     const value: unknown = JSON.parse(
@@ -126,17 +138,21 @@ function activityMessageId(id: string): string | null {
   }
 }
 
-function renderActivityRecords(source: ActivityMessage): string[] {
+function renderActivityRecords(
+  source: ActivityMessage,
+  view?: ActivityView,
+): string[] {
   if (!source.message) return [];
-  return collectActivityHistory([source.message], null).messages.flatMap(
-    (message) =>
-      message.records.map((record, index) =>
-        renderRecordText(
-          record,
-          message.role,
-          index === message.records.length - 1 ? message.omittedRecords : 0,
-        ),
+  return (
+    view ? view([source.message]) : activityView.fit([source.message])
+  ).messages.flatMap((message) =>
+    message.records.map((record, index) =>
+      renderRecordText(
+        record,
+        message.role,
+        index === message.records.length - 1 ? message.omittedRecords : 0,
       ),
+    ),
   );
 }
 
@@ -179,6 +195,8 @@ class ActivityHistoryModule implements ActivityHistory {
     after: string | null,
     through: string,
     maxCharacters: number,
+    includeSourceIds = false,
+    view?: ActivityView,
   ): Promise<ActivityBatch | null> {
     if (!this.isAvailable()) return null;
     const ordinal = activityOrdinal(after);
@@ -195,10 +213,14 @@ class ActivityHistoryModule implements ActivityHistory {
     let count = 0;
     let truncated = false;
     for (const row of rows) {
-      const records = renderActivityRecords(row);
-      const text = records
+      const records = renderActivityRecords(row, view);
+      const rendered = records
         .map((record) => `${row.persistedAt.slice(11, 16)} ${record}`)
         .join(RECORD_SEPARATOR);
+      const text =
+        includeSourceIds && rendered
+          ? `Source ${row.id} (${row.persistedAt})\n${rendered}`
+          : rendered;
       const separatorSize = text && blocks.length ? RECORD_SEPARATOR.length : 0;
       if (selected.length && size + separatorSize + text.length > maxCharacters)
         break;
@@ -207,7 +229,19 @@ class ActivityHistoryModule implements ActivityHistory {
         // An oversized message keeps its tail: outcomes sit at the end, and
         // the cursor moves past this message afterwards.
         const allowed = Math.max(0, maxCharacters - size - separatorSize);
-        const bounded = allowed >= text.length ? text : text.slice(-allowed);
+        const header = includeSourceIds
+          ? `Source ${row.id} (${row.persistedAt})\n`
+          : '';
+        const tailBudget = Math.max(0, allowed - header.length);
+        const bounded =
+          allowed >= text.length
+            ? text
+            : includeSourceIds
+              ? header.slice(0, allowed) +
+                (tailBudget > 0 ? rendered.slice(-tailBudget) : '')
+              : allowed > 0
+                ? text.slice(-allowed)
+                : '';
         blocks.push(bounded);
         size += bounded.length + separatorSize;
         truncated ||= bounded.length < text.length;
@@ -220,9 +254,9 @@ class ActivityHistoryModule implements ActivityHistory {
       id: end.id,
       firstSourceId: first.id,
       sourceIds: selected
-        .filter((row) => renderActivityRecords(row).length > 0)
+        .filter((row) => renderActivityRecords(row, view).length > 0)
         .map((row) => row.id)
-        .slice(-6),
+        .slice(includeSourceIds ? 0 : -6),
       startedAt: first.persistedAt,
       endedAt: end.persistedAt,
       recordCount: count,
@@ -333,8 +367,14 @@ class ActivityHistoryModule implements ActivityHistory {
       maxBytes: number;
       tail?: boolean;
       firstSourceId?: string;
+      view?: ActivityView;
     },
   ): Promise<ActivityPage | null> {
+    if (activityOrdinal(id) === null) {
+      const resolved = await this.resolveBoundary([id]);
+      if (!resolved) return null;
+      id = resolved;
+    }
     const ordinal = activityOrdinal(id);
     if (ordinal === null) return null;
     const firstOrdinal =
@@ -352,7 +392,7 @@ class ActivityHistoryModule implements ActivityHistory {
     if (!row || row.id !== id) return null;
     const rendered = rows.map((source) => ({
       source,
-      text: renderActivityRecords(source)
+      text: renderActivityRecords(source, options.view)
         .map((record) => `${source.persistedAt.slice(11, 16)} ${record}`)
         .join(RECORD_SEPARATOR),
     }));
@@ -375,6 +415,16 @@ class ActivityHistoryModule implements ActivityHistory {
               .map((item) => item.source.id)
               .slice(-6),
           }),
+      platforms: [
+        ...new Set(
+          rows.flatMap(
+            (source) =>
+              source.message?.parts.flatMap((part) =>
+                part.type === 'data-context' ? [part.data.sourceEnv] : [],
+              ) ?? [],
+          ),
+        ),
+      ],
       startedAt: rows[0]?.persistedAt ?? row.persistedAt,
       endedAt: row.persistedAt,
       text: text.slice(offset, offset + limit),

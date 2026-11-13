@@ -386,6 +386,7 @@ describe('ChatSession lifecycle', () => {
         extensions: [childExtension],
         basePrompt: 'You are a child.',
         modelPurpose: 'memory',
+        fallbackModelPurposes: ['chat'],
       })
       .then((result) => {
         resolved = true;
@@ -404,6 +405,7 @@ describe('ChatSession lifecycle', () => {
     ]);
     expect(childParams?.extensionFactories).toEqual([childExtension]);
     expect(childParams?.modelPurpose).toBe('memory');
+    expect(childParams?.fallbackModelPurposes).toEqual(['chat']);
 
     startup.resolve();
     await expect(creation).resolves.toBe(child);

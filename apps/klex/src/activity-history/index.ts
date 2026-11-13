@@ -4,5 +4,10 @@ export type {
   ActivityLimits,
   ActivityPage,
   ActivitySearchResult,
+  ActivityView,
 } from './activity-history';
-export { activityOrdinal, createActivityHistory } from './activity-history';
+export {
+  activityMessageId,
+  activityOrdinal,
+  createActivityHistory,
+} from './activity-history';

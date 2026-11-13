@@ -127,6 +127,8 @@ export interface ChatSessionDependencies {
   sessionContext: SessionContext;
   /** Configured model list this session uses. Defaults to `chat`. */
   modelPurpose?: ModelPurpose;
+  /** Additional configured lists appended to this session's model fallback chain. */
+  fallbackModelPurposes?: readonly ModelPurpose[];
   /**
    * Factory for creating child sessions. Absent if child session creation
    * is disabled for this session.
@@ -345,6 +347,7 @@ class ChatSessionModule implements AgentSession {
       sessionContext: SessionContext;
       sessionFactory?: SessionFactory;
       modelPurpose?: ModelPurpose;
+      fallbackModelPurposes?: readonly ModelPurpose[];
       /** Base system prompt; required for every session. */
       basePrompt: string;
       telemetryMetrics?: TelemetryMetrics;
@@ -452,8 +455,14 @@ class ChatSessionModule implements AgentSession {
       logger: this.deps.logger,
       span: this.sessionSpan,
       sessionId: this.sessionId,
-      getChatModels: () =>
-        this.deps.config.get().modelSelection[this.deps.modelPurpose ?? 'chat'],
+      getChatModels: () => {
+        const { modelSelection } = this.deps.config.get();
+        const purposes = new Set([
+          this.deps.modelPurpose ?? 'chat',
+          ...(this.deps.fallbackModelPurposes ?? []),
+        ]);
+        return [...purposes].flatMap((purpose) => modelSelection[purpose]);
+      },
     });
 
     this.backoffManager = new BackoffManager({
@@ -2166,6 +2175,7 @@ class ChatSessionModule implements AgentSession {
       introspectionScope: this.childSessionsScope,
       basePrompt: options.basePrompt,
       modelPurpose: options.modelPurpose,
+      fallbackModelPurposes: options.fallbackModelPurposes,
       hooks: options.hooks,
       parentSpanContext: spawningSpan.spanContext(),
     });
@@ -2245,6 +2255,7 @@ export function createChatSession(
     telemetryMetrics: deps.telemetryMetrics,
     productAnalytics: deps.productAnalytics,
     modelPurpose: deps.modelPurpose,
+    fallbackModelPurposes: deps.fallbackModelPurposes,
     basePrompt: deps.basePrompt,
     parentSpanContext: deps.parentSpanContext,
     sessionHistory: deps.sessionHistory,

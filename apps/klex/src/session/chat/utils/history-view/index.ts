@@ -6,7 +6,9 @@ export {
   renderRecordText,
 } from './lines';
 export {
+  ACTIVITY_HISTORY_FILTER,
   CONTEXT_SUMMARY_KEY,
+  createActivityHistoryView,
   createInstinctHistoryView,
   createTranscriptHistoryView,
 } from './presets';

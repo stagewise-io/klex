@@ -66,9 +66,11 @@ import {
 } from '@/session/chat/extensions/god-messages';
 import { createImageInputOptimizerExt } from '@/session/chat/extensions/image-input-optimizer';
 import { createJsReplSandboxExt } from '@/session/chat/extensions/js-repl-sandbox';
-import { createLearningExt } from '@/session/chat/extensions/learning';
 import { createMcpIngressExt } from '@/session/chat/extensions/mcp-ingress';
-import { createMemoryExt } from '@/session/chat/extensions/memory';
+import {
+  createMemoryExt,
+  createMemoryWriterExt,
+} from '@/session/chat/extensions/memory';
 import { createNameLoaderExt } from '@/session/chat/extensions/name-loader';
 import { createReadAttachmentExt } from '@/session/chat/extensions/read-attachment/read-attachment';
 import { createSkillsExt } from '@/session/chat/extensions/skills';
@@ -689,6 +691,7 @@ class ApplicationModule implements Application {
           hooks: params.hooks,
           sessionFactory: makeSessionFactory([]),
           modelPurpose: params.modelPurpose,
+          fallbackModelPurposes: params.fallbackModelPurposes,
           basePrompt: params.basePrompt,
           parentSpanContext: params.parentSpanContext,
         });
@@ -726,10 +729,13 @@ class ApplicationModule implements Application {
           providerRegistry.resolveRealtimeProvider() !== undefined,
       }),
       createMemoryExt({ activities }),
-      createLearningExt({
+      createMemoryWriterExt({
         activities,
-        getSoul: () =>
-          readSoul(join(dataDirectory, 'extensions', createSoulExt.identifier)),
+        legacyLearningDirectory: join(
+          dataDirectory,
+          'extensions',
+          'io.stagewise/learning',
+        ),
       }),
       createEpisodeSummaryExt({
         activities,

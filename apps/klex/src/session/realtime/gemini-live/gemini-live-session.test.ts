@@ -447,6 +447,47 @@ describe('Gemini live processor', () => {
     await expect(harness.promise).rejects.toThrow('Invalid model parameter');
   });
 
+  it('has no video lane unless video is enabled', async () => {
+    const { processor } = await activate();
+    expect(processor.videoInput).toBeUndefined();
+    await processor.close();
+  });
+
+  it('sends video once setup completes', async () => {
+    const socket = new FakeSocket();
+    const factory = createGeminiLiveProcessorFactory({
+      logging,
+      config,
+      video: true,
+      connect: () => socket,
+    });
+    const promise = factory.create({
+      namespace: 'test',
+      sessionId: 'session',
+      signal: new AbortController().signal,
+    });
+    socket.open();
+    socket.message({ setupComplete: {} });
+    const processor = await promise;
+    const input = processor.videoInput;
+    expect(input?.maxFps).toBe(1);
+    await input?.write({
+      mimeType: 'image/jpeg',
+      width: 2,
+      height: 2,
+      timestampUs: 0,
+      detail: 'high',
+      data: new Uint8Array([1]),
+    });
+    expect(JSON.parse(socket.sent.at(-1) ?? '{}')).toEqual({
+      realtimeInput: {
+        video: { data: 'AQ==', mimeType: 'image/jpeg' },
+        mediaResolution: 'MEDIA_RESOLUTION_HIGH',
+      },
+    });
+    await processor.close();
+  });
+
   it('handles abort signal and closes socket cleanly', async () => {
     const { controller, socket, processor } = await activate();
     controller.abort();

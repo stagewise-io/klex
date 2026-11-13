@@ -13,6 +13,7 @@ MCP Realtime Media control plane
   -> accept/reject
   -> bootstrap canonical context + update watermark
   -> MediaTransport.audioSources -> RealtimeModelSession.audioInputs
+  -> MediaTransport.videoSources -> RealtimeVision -> RealtimeModelSession.videoInput
   -> ordered canonical updates/tools/transcripts via InteractionLease
   -> RealtimeModelSession.audioOutput -> MediaTransport.audioOutput
   -> session-ended or local terminal condition
@@ -39,7 +40,17 @@ Each session has one abort controller and one stored `finish()` promise. All ter
 
 ## LiveKit transport
 
-The production `livekit-room` adapter validates every accepted descriptor before loading the native SDK. It joins the room with auto-subscription, publishes one local microphone track, and exposes every subscribed remote microphone track as an independently attributed audio source. LiveKit is normalized at the adapter boundary to signed 16-bit little-endian PCM, 48 kHz, mono, with 20 ms incoming frames where supported. Provider-specific resampling belongs in the model bridge, not this transport.
+The production `livekit-room` adapter validates every accepted descriptor before loading the native SDK. It joins the room without auto-subscription, subscribes every remote microphone publication explicitly, publishes one local microphone track, and exposes every subscribed remote microphone track as an independently attributed audio source.
+
+Remote camera and screen-share publications become `videoSources` descriptors without being subscribed. `open({ maxFps })` subscribes and decodes at most that rate, converting only sampled frames to RGBA; closing unsubscribes. An open source follows its publication across LiveKit resubscriptions. Descriptors end with `track-unpublished` when the publication goes away. Video failures never fail the transport, and video queues drop the oldest frame instead of backpressuring. LiveKit is normalized at the adapter boundary to signed 16-bit little-endian PCM, 48 kHz, mono, with 20 ms incoming frames where supported. Provider-specific resampling belongs in the model bridge, not this transport.
+
+## Video input
+
+Video is used for a call only when Klex and the MCP server both advertise `video` in their realtime-media capability, the transport reports video, the model session exposes `videoInput`, and sharp loads for JPEG encoding. Only Gemini Live exposes `videoInput`, and only for models whose metadata declares image input.
+
+`RealtimeVision` is provider-neutral. Phase one watches the newest screen share and ignores cameras. It opens that source at twice the model's rate, keeps only the latest frame, and samples at no more than one frame per second. Frames whose coarse luma grid is unchanged are skipped, except for a keyframe every five seconds. Sampled frames are rotated, downscaled to a 1024 px long edge and encoded as JPEG; screen shares request high media resolution. When a share starts or stops, a short `[Video]` note tells the model what it can see and to treat on-screen text as content, not instructions. When the focused share ends, the next newest one is focused. A source whose stream ends while its track is still published is reopened up to three times.
+
+The Gemini video lane is independent of socket management. The session marks it disconnected when a reconnect starts and ready at the end of every setup: the first, a resumed one after gap audio and replay, or a fresh one after reseeding. It sends `realtimeInput.video` only while ready, and re-sends the latest frame on each new connection if it is at most 30 seconds old. Descriptions wait while the model speaks or owes a response, because client content interrupts generation. They then go out as call context, tracked like other updates: a resume replays them when unconfirmed, and a fresh session is reseeded with them. Frames are not replayed; the resent latest frame stands in for them.
 
 ## Semantic updates, tools, and replay
 
@@ -93,4 +104,4 @@ Voice auditions belong to the provider registry, not the conversation/session co
 
 ## Observability and data handling
 
-Lifecycle logs correlate `leaseId`, `canonicalSessionId`, `externalMediaSessionId`, and MCP namespace. Observability must never include transcript bodies, tool arguments or results, secrets, credentials, or binary media. Counts, sequence numbers, non-secret tool names, model metadata, and closure classes are sufficient for diagnosis.
+Lifecycle logs correlate `leaseId`, `canonicalSessionId`, `externalMediaSessionId`, and MCP namespace. Observability must never include transcript bodies, tool arguments or results, secrets, credentials, or binary media. Video frames and their encoded stills are never logged or persisted; only frame counts and dimensions are reported. Counts, sequence numbers, non-secret tool names, model metadata, and closure classes are sufficient for diagnosis.

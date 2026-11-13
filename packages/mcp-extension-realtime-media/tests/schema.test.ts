@@ -84,6 +84,25 @@ describe('Realtime Media schemas', () => {
     ).toBe(false);
   });
 
+  it('accepts video and future media kinds', () => {
+    for (const media of [
+      ['audio', 'video'],
+      ['audio', 'video', 'future-kind'],
+    ])
+      expect(
+        RealtimeMediaExtensionCapabilitySchema.safeParse({
+          transports: ['livekit-room'],
+          media,
+        }).success,
+      ).toBe(true);
+    expect(
+      RealtimeMediaExtensionCapabilitySchema.safeParse({
+        transports: ['livekit-room'],
+        media: [],
+      }).success,
+    ).toBe(false);
+  });
+
   it('accepts an offer without transport credentials', () => {
     const notification = {
       jsonrpc: '2.0',

@@ -12,10 +12,11 @@ import type {
   PushNotification,
   PushNotificationNotification,
 } from '@stagewise/mcp-extension-push-notifications';
-import type {
-  RealtimeMediaClientAcceptResult,
-  RealtimeMediaExtensionCapability,
-  RealtimeMediaNotification,
+import {
+  type RealtimeMediaClientAcceptResult,
+  type RealtimeMediaExtensionCapability,
+  type RealtimeMediaNotification,
+  realtimeMediaVideoNegotiated,
 } from '@stagewise/mcp-extension-realtime-media';
 
 import type { CloudConnectivity } from '@/cloud-connectivity';
@@ -275,6 +276,8 @@ export interface Mcp extends ToolProvider {
     namespace: string,
     sessionId: string,
   ): Promise<RealtimeMediaClientAcceptResult>;
+  /** True when both Klex and the server advertise realtime video. */
+  realtimeMediaVideoNegotiated(namespace: string): boolean;
   rejectRealtimeMediaSession(
     namespace: string,
     sessionId: string,
@@ -745,6 +748,15 @@ class McpModule implements Mcp {
   ): Promise<RealtimeMediaClientAcceptResult> {
     return this.requireRealtimeConnection(namespace).realtimeMedia.accept(
       sessionId,
+    );
+  }
+
+  realtimeMediaVideoNegotiated(namespace: string): boolean {
+    return realtimeMediaVideoNegotiated(
+      this.deps.realtimeMediaCapability,
+      this.requireRealtimeConnection(
+        namespace,
+      ).realtimeMedia.serverCapability(),
     );
   }
 

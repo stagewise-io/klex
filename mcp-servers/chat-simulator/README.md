@@ -108,6 +108,13 @@ simulator mints short-lived browser and Klex participant tokens for one room.
 Use **Start realtime call** in the browser UI to publish the microphone and play
 Klex's returned audio track. Use headphones to avoid acoustic feedback.
 
+The simulator advertises `media: ["audio", "video"]`. During a call, **Share
+screen** publishes a LiveKit screen-share track. Klex watches it when its
+selected realtime model accepts image input (Gemini Live models with image
+input). The status line says when Klex can see the screen, and **Stop sharing**
+or the browser's own stop control ends the share. Klex should then be able to
+answer questions about what is on screen.
+
 ## E2E check
 
 1. Start the simulator and the agent.

@@ -46,6 +46,16 @@ export type GeminiLiveServerEvent =
       readonly type: 'tool-call-cancellation';
       readonly ids: readonly string[];
     }
+  | {
+      readonly type: 'session-resumption-update';
+      readonly resumable: boolean;
+      readonly newHandle?: string;
+    }
+  | {
+      readonly type: 'go-away';
+      /** Absent when the server omitted or malformed `timeLeft`. */
+      readonly timeLeftMs?: number;
+    }
   | { readonly type: 'ignored'; readonly rawType?: string };
 
 export class GeminiLiveWireEventError extends Error {
@@ -184,6 +194,28 @@ export function parseGeminiLiveServerEvents(
     }
   }
 
+  if (root.sessionResumptionUpdate !== undefined) {
+    const update = asRecord(root.sessionResumptionUpdate) ?? {};
+    const newHandle =
+      typeof update.newHandle === 'string' && update.newHandle.length > 0
+        ? update.newHandle
+        : undefined;
+    events.push({
+      type: 'session-resumption-update',
+      resumable: update.resumable === true && newHandle !== undefined,
+      ...(newHandle !== undefined && { newHandle }),
+    });
+  }
+
+  if (root.goAway !== undefined) {
+    const goAway = asRecord(root.goAway) ?? {};
+    const timeLeftMs = parseDurationMs(goAway.timeLeft);
+    events.push({
+      type: 'go-away',
+      ...(timeLeftMs !== undefined && { timeLeftMs }),
+    });
+  }
+
   if (events.length === 0) {
     return [{ type: 'ignored' }];
   }
@@ -195,6 +227,23 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
+}
+
+/**
+ * Reads a protobuf `Duration`: the JSON mapping is a decimal-seconds string
+ * such as `"12.5s"`, but some encoders emit `{ seconds, nanos }`.
+ */
+export function parseDurationMs(value: unknown): number | undefined {
+  if (typeof value === 'string') {
+    const match = /^(\d+(?:\.\d+)?)s$/.exec(value.trim());
+    return match ? Math.round(Number(match[1]) * 1_000) : undefined;
+  }
+  const record = asRecord(value);
+  if (!record) return undefined;
+  const seconds = Number(record.seconds ?? 0);
+  const nanos = Number(record.nanos ?? 0);
+  if (!Number.isFinite(seconds) || !Number.isFinite(nanos)) return undefined;
+  return Math.max(0, Math.round(seconds * 1_000 + nanos / 1_000_000));
 }
 
 function optionalString(value: unknown): string | undefined {

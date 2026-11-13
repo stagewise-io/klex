@@ -73,6 +73,18 @@ GPT-Live transcript deltas have timeline intervals but no authoritative turn bou
 
 Usage snapshots are cumulative. One replacement connection is permitted only when no delegated operation is ambiguous; a loss during tool work, a second loss, or an exhausted timeout fails closed without replaying side effects.
 
+## Gemini Live model session
+
+`gemini-live` speaks `BidiGenerateContent` over one raw WebSocket per connection. Google resets Live connections roughly every ten minutes, and without compression ends audio sessions after 15 minutes and audio-video sessions after 2. The adapter therefore carries one provider session across many connections, behind the unchanged `RealtimeModelSession` contract.
+
+Every setup sends `contextWindowCompression` as a sliding window that triggers at 75% of the model's context size and trims to 50%. The system instruction always survives compression; seeded history and early turns may not. Every setup also sends `sessionResumption`, and the adapter keeps the newest handle from each resumable `sessionResumptionUpdate`. Client input sent after that handle is kept as unconfirmed, because the resumed state may not include it.
+
+A `goAway` schedules a switch. The adapter reconnects at the first resumable point (no model turn or tool call in flight and a handle newer than the last exchanged content) or, at the latest, `goAwayMarginMs` before `timeLeft` runs out. An unexpected close or socket error after startup reconnects the same way, with exponential backoff, a per-outage attempt cap and a grace window. The budget restarts after each successful reconnect. Startup failures still fail the call.
+
+During an outage, mixed input audio is buffered for up to one second (older chunks are dropped), and updates and tool results wait. A resumed connection gets the same setup, including tools and voice. It is not reseeded: unconfirmed input is replayed, and tool results whose call belonged to the lost connection are sent as context text instead of a dangling `toolResponse`. If a resumed setup is refused with close code 1007 or 1008, or with an error that mentions the handle, or fails twice, the handle is dropped. The next connection is a fresh provider session, seeded with the prepared canonical history plus a bounded log of this call's transcripts, updates and tool exchanges. Audio already received keeps playing across a switch, and an assistant turn cut by a drop is committed as interrupted.
+
+Reconnects emit `klex.realtime.gemini_live.reconnects` (by `reason` and `outcome`: `resumed`, `fresh` or `failed`), `klex.realtime.gemini_live.reconnect.duration` and `klex.realtime.gemini_live.go_aways`, plus `gemini_live.*` span events and `gemini-live` log lines. For manual testing, `KLEX_DEBUG_GEMINI_LIVE_GOAWAY_AFTER_MS` synthesizes a goAway, and `KLEX_DEBUG_GEMINI_LIVE_DROP_AFTER_MS` drops the socket, that many milliseconds after each connection becomes ready.
+
 ## Voice selection and auditions
 
 STS references carry optional `voiceId` through resolved provider configuration. A new call resolves the current selection; active model sessions snapshot it, including reconnect setup. OpenAI Realtime emits the selected `audio.output.voice` or its existing `marin` default. Gemini emits `generationConfig.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName` only for an explicit selection. GPT-Live precedence is explicit factory override, persisted voice, then `marin`.

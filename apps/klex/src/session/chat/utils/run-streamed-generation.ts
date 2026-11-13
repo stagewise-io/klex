@@ -22,6 +22,8 @@ import type { ExtendedUIMessage } from '../message-types';
 import type { AgentTools } from '../tools';
 import { toolsWithoutExecute } from './tools-without-execute';
 
+export const DEFAULT_INITIAL_PROGRESS_TIMEOUT_MS = 90_000;
+
 export type StreamedGenerationOutput = {
   message: ExtendedUIMessage;
   finishReason: FinishReason;
@@ -36,6 +38,7 @@ export interface RunStreamedGenerationParams {
   tools: AgentTools;
   onUpdate: (msg: ExtendedUIMessage) => void;
   abortSignal: AbortSignal;
+  initialProgressTimeoutMs?: number;
   logger: ModuleLogger;
   modelContext: {
     providerType: string;
@@ -98,86 +101,131 @@ export async function runStreamedGeneration(
   // Capture the original so the classifier sees the real APICallError.
   let streamError: unknown;
 
-  const result = streamText({
-    model: params.model,
-    tools: toolsWithoutExecute(params.tools),
-    instructions: {
-      role: 'system',
-      content: assembleInferenceInstructions(
-        params.basePrompt,
-        params.extensionSystemPromptParts ?? [],
-      ),
-    },
-    telemetry: {
-      isEnabled: true,
-      functionId: 'chat-session',
-      // The AI SDK's restricted telemetry dispatcher strips runtime
-      // context keys unless they are explicitly allow-listed here.
-      includeRuntimeContext: {
-        'conversation.id': true,
-        'conversation.compacted': true,
-        'conversation.providerType': true,
-        'conversation.providerId': true,
-        'conversation.modelId': true,
-      },
-    },
-    runtimeContext: {
-      'conversation.id': params.sessionId,
-      'conversation.compacted': params.compacted,
-      'conversation.providerType': params.modelContext.providerType,
-      'conversation.providerId': params.modelContext.providerId,
-      'conversation.modelId': params.modelContext.modelId,
-    },
-    abortSignal: params.abortSignal,
-    onError: ({ error }) => {
-      streamError ??= error;
-    },
-    maxRetries: 0,
-    ...(params.reasoning !== undefined && { reasoning: params.reasoning }),
-    messages: params.modelMessages,
-    ...(params.providerOptions !== undefined && {
-      providerOptions: params.providerOptions,
-    }),
+  const attemptAbortController = new AbortController();
+  const timeoutMs =
+    params.initialProgressTimeoutMs ?? DEFAULT_INITIAL_PROGRESS_TIMEOUT_MS;
+  let initialProgressTimer: ReturnType<typeof setTimeout> | undefined;
+  let timeoutError: Error | undefined;
+  let hasVisibleProgress = false;
+  let iterator: AsyncIterator<ExtendedUIMessage> | undefined;
+  let iteratorDone = false;
+  const forwardAbort = () => {
+    clearTimeout(initialProgressTimer);
+    attemptAbortController.abort(params.abortSignal.reason);
+  };
+  if (params.abortSignal.aborted) {
+    forwardAbort();
+  } else {
+    params.abortSignal.addEventListener('abort', forwardAbort, { once: true });
+  }
+  const initialProgressTimeout = new Promise<never>((_, reject) => {
+    if (timeoutMs > 0 && !params.abortSignal.aborted) {
+      initialProgressTimer = setTimeout(() => {
+        timeoutError = new Error(
+          `Initial generation progress timeout after ${timeoutMs}ms.`,
+        );
+        reject(timeoutError);
+        attemptAbortController.abort(timeoutError);
+      }, timeoutMs);
+    }
   });
+  const waitForProgress = <T>(pending: PromiseLike<T>): Promise<T> =>
+    hasVisibleProgress
+      ? Promise.resolve(pending)
+      : Promise.race([pending, initialProgressTimeout]);
 
-  const toolInputErrors = new Map<string, string>();
-  const uiMsgChunkStream = toUIMessageStream<AgentTools, ExtendedUIMessage>({
-    stream: result.stream,
-    generateMessageId: randomUUID,
-    tools: params.tools,
-    // This stream also becomes model history. Keep argument feedback so the
-    // model can correct its call, without exposing unrelated server errors.
-    onError: (error) => {
-      if (InvalidToolInputError.isInstance(error)) {
-        // The SDK emits the typed error first, then a tool-error containing
-        // error.toString(). Preserve both, or the second chunk hides the first.
-        toolInputErrors.set(error.toString(), error.message);
-        return error.message;
-      }
-      return (
-        (typeof error === 'string' ? toolInputErrors.get(error) : undefined) ??
-        'An error occurred.'
-      );
-    },
-  });
-  const uiMsgUpdateStream = readUIMessageStream<ExtendedUIMessage>({
-    stream: uiMsgChunkStream,
-    message: message,
-  });
-
-  let finishReason: FinishReason;
-  let rawFinishReason: unknown;
-  let usage: LanguageModelUsage;
   try {
-    for await (const uiMessage of uiMsgUpdateStream) {
+    const result = streamText({
+      model: params.model,
+      tools: toolsWithoutExecute(params.tools),
+      instructions: {
+        role: 'system',
+        content: assembleInferenceInstructions(
+          params.basePrompt,
+          params.extensionSystemPromptParts ?? [],
+        ),
+      },
+      telemetry: {
+        isEnabled: true,
+        functionId: 'chat-session',
+        // The AI SDK's restricted telemetry dispatcher strips runtime
+        // context keys unless they are explicitly allow-listed here.
+        includeRuntimeContext: {
+          'conversation.id': true,
+          'conversation.compacted': true,
+          'conversation.providerType': true,
+          'conversation.providerId': true,
+          'conversation.modelId': true,
+        },
+      },
+      runtimeContext: {
+        'conversation.id': params.sessionId,
+        'conversation.compacted': params.compacted,
+        'conversation.providerType': params.modelContext.providerType,
+        'conversation.providerId': params.modelContext.providerId,
+        'conversation.modelId': params.modelContext.modelId,
+      },
+      abortSignal: attemptAbortController.signal,
+      onError: ({ error }) => {
+        streamError ??= error;
+      },
+      maxRetries: 0,
+      ...(params.reasoning !== undefined && { reasoning: params.reasoning }),
+      messages: params.modelMessages,
+      ...(params.providerOptions !== undefined && {
+        providerOptions: params.providerOptions,
+      }),
+    });
+
+    const toolInputErrors = new Map<string, string>();
+    const uiMsgChunkStream = toUIMessageStream<AgentTools, ExtendedUIMessage>({
+      stream: result.stream,
+      generateMessageId: randomUUID,
+      tools: params.tools,
+      // This stream also becomes model history. Keep argument feedback so the
+      // model can correct its call, without exposing unrelated server errors.
+      onError: (error) => {
+        if (InvalidToolInputError.isInstance(error)) {
+          // The SDK emits the typed error first, then a tool-error containing
+          // error.toString(). Preserve both, or the second chunk hides the first.
+          toolInputErrors.set(error.toString(), error.message);
+          return error.message;
+        }
+        return (
+          (typeof error === 'string'
+            ? toolInputErrors.get(error)
+            : undefined) ?? 'An error occurred.'
+        );
+      },
+    });
+    const uiMsgUpdateStream = readUIMessageStream<ExtendedUIMessage>({
+      stream: uiMsgChunkStream,
+      message: message,
+    });
+
+    let finishReason: FinishReason;
+    let rawFinishReason: unknown;
+    let usage: LanguageModelUsage;
+    iterator = uiMsgUpdateStream[Symbol.asyncIterator]();
+    while (true) {
+      const next = await waitForProgress(iterator.next());
+      if (next.done) {
+        iteratorDone = true;
+        break;
+      }
+      const uiMessage = next.value;
+      if (uiMessage.parts.length > 0) {
+        hasVisibleProgress = true;
+        clearTimeout(initialProgressTimer);
+      }
       message = uiMessage;
       params.onUpdate?.(uiMessage);
     }
 
-    finishReason = await result.finishReason;
-    rawFinishReason = await result.rawFinishReason;
-    usage = await result.usage;
-    const warnings = await result.warnings;
+    finishReason = await waitForProgress(result.finishReason);
+    rawFinishReason = await waitForProgress(result.rawFinishReason);
+    usage = await waitForProgress(result.usage);
+    const warnings = await waitForProgress(result.warnings);
     for (const warning of warnings ?? []) {
       if (warning.type === 'unsupported' || warning.type === 'compatibility') {
         params.logger.warn(
@@ -186,38 +234,52 @@ export async function runStreamedGeneration(
         );
       }
     }
+
+    if (
+      message.parts.length === 0 &&
+      !(params.allowEmptyStop && finishReason === 'stop')
+    ) {
+      throw new EmptyResponseBodyError({
+        message: 'No content received during generation.',
+      });
+    }
+
+    const response: StreamedGenerationOutput = {
+      message: message,
+      finishReason: finishReason,
+      error: finishReason === 'error' ? rawFinishReason : undefined,
+      usage: usage,
+    };
+
+    params.logger.trace(
+      {
+        'event.name': 'generation.finished',
+        generationId: id,
+        sessionId: params.sessionId,
+        finishReason,
+        partCount: message.parts.length,
+        hasError: response.error !== undefined,
+      },
+      'Generation finished',
+    );
+    return response;
   } catch (e) {
+    if (timeoutError) {
+      params.abortSignal.throwIfAborted();
+      throw timeoutError;
+    }
     throw attachStreamError(e, streamError);
+  } finally {
+    clearTimeout(initialProgressTimer);
+    params.abortSignal.removeEventListener('abort', forwardAbort);
+    if (iterator && !iteratorDone) {
+      // An abort-ignoring iterator can also stall in return(). Request cleanup
+      // without delaying fallback or letting cleanup mask the original error.
+      try {
+        void Promise.resolve(iterator.return?.()).catch(() => {});
+      } catch {}
+    }
   }
-
-  if (
-    message.parts.length === 0 &&
-    !(params.allowEmptyStop && finishReason === 'stop')
-  ) {
-    throw new EmptyResponseBodyError({
-      message: 'No content received during generation.',
-    });
-  }
-
-  const response: StreamedGenerationOutput = {
-    message: message,
-    finishReason: finishReason,
-    error: finishReason === 'error' ? rawFinishReason : undefined,
-    usage: usage,
-  };
-
-  params.logger.trace(
-    {
-      'event.name': 'generation.finished',
-      generationId: id,
-      sessionId: params.sessionId,
-      finishReason,
-      partCount: message.parts.length,
-      hasError: response.error !== undefined,
-    },
-    'Generation finished',
-  );
-  return response;
 }
 
 /**

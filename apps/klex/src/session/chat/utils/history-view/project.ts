@@ -198,6 +198,20 @@ function projectContext(
     const metadata = serializeValue(data.metadata, options.metadata);
     if (metadata !== null && metadata !== '{}') record.metadata = metadata;
   }
+  // Events carry their semantic body in metadata rather than MCP content
+  // blocks. Transcript presets omit general metadata, but must retain Events
+  // for compaction, consult and the classifier under the context text budget.
+  if (!options.metadata && data.metadata.origin === 'events') {
+    const { data: payload, _meta, type, ...envelope } = data.metadata;
+    const event = serializeValue(
+      { type, data: payload, ...envelope, ...(_meta ? { _meta } : {}) },
+      {
+        ...options.text,
+        json: 'compact',
+      },
+    );
+    if (event !== null) record.items.push({ kind: 'text', text: event });
+  }
   for (const item of data.content) {
     const projected = projectContextItem(item, options);
     if (projected) record.items.push(projected);

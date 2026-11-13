@@ -3,7 +3,42 @@ import { describe, expect, it } from 'vitest';
 import type { ExtendedUIMessage } from '@/session/chat/message-types';
 
 import { createHistoryView } from './history-view';
+import {
+  createInstinctHistoryView,
+  createTranscriptHistoryView,
+} from './presets';
 import type { HistoryFilterOptions } from './types';
+
+it('retains semantic Events in transcript and instinct views without general metadata', () => {
+  const history: ExtendedUIMessage[] = [
+    {
+      id: 'event',
+      role: 'user',
+      parts: [
+        {
+          type: 'data-context',
+          data: {
+            sourceEnv: 'monitoring',
+            metadata: {
+              origin: 'events',
+              type: 'incident.opened',
+              data: { incidentId: 'inc-42' },
+            },
+            content: [],
+          },
+        },
+      ],
+    },
+  ];
+  for (const view of [
+    createTranscriptHistoryView(),
+    createInstinctHistoryView({ data: {} }),
+  ]) {
+    const result = view.render(history);
+    expect(result.text).toContain('incident.opened');
+    expect(result.text).toContain('inc-42');
+  }
+});
 
 const LIMIT = { max: 50, truncate: 'middle' } as const;
 

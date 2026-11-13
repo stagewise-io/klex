@@ -52,6 +52,20 @@ function harness(scripts: Script[]) {
 afterEach(() => vi.useRealTimers());
 
 describe('runStreamLoop', () => {
+  it('reconnects when the server never activates the stream', async () => {
+    vi.useFakeTimers();
+    const h = harness([
+      (_p, _s, signal) =>
+        new Promise<void>((resolve) => {
+          signal.addEventListener('abort', () => resolve(), { once: true });
+        }),
+    ]);
+    const done = runStreamLoop({ ...h.base, activationTimeoutMs: 100 });
+    await vi.advanceTimersByTimeAsync(101);
+    await done;
+    expect(h.opens).toHaveLength(2);
+    expect(h.opens[1]?.cursor).toBeNull();
+  });
   it('delivers active/event/heartbeat and reconnects from the last cursor', async () => {
     const h = harness([
       (_p, s) => {

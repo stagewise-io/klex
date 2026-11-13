@@ -299,10 +299,19 @@ describe('Gemini live session durability', () => {
     first.holdClose = true;
     first.message(handleUpdate('handle-1'));
     first.message({ goAway: { timeLeft: '30s' } });
+    first.terminate.mockImplementation(() => {
+      first.readyState = 3;
+    });
     await new Promise((resolve) => setTimeout(resolve, 500));
     expect(sockets).toHaveLength(1);
+    await vi.waitFor(() => expect(first.terminate).toHaveBeenCalled(), {
+      timeout: 2_000,
+    });
+    // A forced close is also awaited before the replacement opens.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(sockets).toHaveLength(1);
+    first.finishClose(1006);
     const second = await nextSocket(sockets, 1);
-    expect(first.terminate).toHaveBeenCalled();
     expect(warn).toHaveBeenCalledWith(
       expect.objectContaining({ timeoutMs: 1_000 }),
       'Gemini live previous connection did not close in time, terminating it',

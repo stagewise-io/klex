@@ -985,18 +985,7 @@ export class GeminiLiveSession implements RealtimeModelSession {
     closed: Promise<void>,
   ): Promise<void> {
     if (!socket) return;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const timedOut = await Promise.race([
-      closed.then(() => false),
-      new Promise<boolean>((resolve) => {
-        timer = setTimeout(
-          () => resolve(true),
-          PREVIOUS_SOCKET_CLOSE_TIMEOUT_MS,
-        );
-      }),
-    ]);
-    clearTimeout(timer);
-    if (!timedOut) return;
+    if (await closesWithin(closed, PREVIOUS_SOCKET_CLOSE_TIMEOUT_MS)) return;
     this.logger.warn(
       { timeoutMs: PREVIOUS_SOCKET_CLOSE_TIMEOUT_MS },
       'Gemini live previous connection did not close in time, terminating it',
@@ -1006,6 +995,7 @@ export class GeminiLiveSession implements RealtimeModelSession {
     } catch {
       // A socket that fails to terminate is already unusable.
     }
+    await closesWithin(closed, PREVIOUS_SOCKET_CLOSE_TIMEOUT_MS);
   }
 
   private failReconnect(error: Error): void {
@@ -1372,6 +1362,21 @@ function rejectsHandle(details: CloseDetails): boolean {
     (details.closeReason !== undefined &&
       REJECTED_HANDLE_PATTERN.test(details.closeReason))
   );
+}
+
+async function closesWithin(
+  closed: Promise<void>,
+  timeoutMs: number,
+): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const result = await Promise.race([
+    closed.then(() => true),
+    new Promise<boolean>((resolve) => {
+      timer = setTimeout(() => resolve(false), timeoutMs);
+    }),
+  ]);
+  clearTimeout(timer);
+  return result;
 }
 
 function resumeConflict(details: CloseDetails): boolean {

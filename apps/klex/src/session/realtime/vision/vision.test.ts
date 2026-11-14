@@ -461,6 +461,29 @@ describe('RealtimeVision', () => {
     await harness.vision.close();
   });
 
+  it('sends the first frame of a returning track even if it matches the last composite', async () => {
+    const harness = setup();
+    const camera = new FakeDescriptor('camera', 'camera', 'Lee');
+    await harness.add(camera);
+    camera.current?.push(rawFrame(1, 100));
+    await harness.tick();
+    expect(harness.frames).toHaveLength(1);
+
+    await camera.unpublish();
+    await harness.tick();
+    const returning = new FakeDescriptor('camera', 'camera', 'Lee');
+    await harness.add(returning);
+    // Same id, layout, sequence and picture as the composite sent before.
+    returning.current?.push(rawFrame(1, 100));
+    await harness.tick();
+    expect(harness.frames).toHaveLength(2);
+    expect(harness.descriptions.slice(-2)).toEqual([
+      '[Video] No video is shared anymore. You can no longer see anything.',
+      expect.stringContaining("You now see Lee's camera"),
+    ]);
+    await harness.vision.close();
+  });
+
   it('opens a returning track even before its earlier descriptor closes', async () => {
     const harness = setup();
     const first = new FakeDescriptor('camera', 'camera', 'Lee');

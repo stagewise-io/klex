@@ -36,6 +36,7 @@ const cases = [
   'v7',
   'v8',
   'v9',
+  'v10-effort',
 ];
 
 async function snapshot(
@@ -91,8 +92,14 @@ describe('frozen persisted config upgrades', () => {
       const expected = JSON.parse(
         await readFile(new URL('config-expected-v7.json', fixtures), 'utf8'),
       );
+      if (version === 'v10-effort')
+        expected.effort = {
+          mode: 'automatic',
+          floor: 'medium',
+          ceiling: 'high',
+        };
       const { _klex: metadata, ...payload } = original;
-      expect(metadata.schemaVersion).toBe(Number(version[1]));
+      expect(metadata.schemaVersion).toBe(Number(/^v(\d+)/.exec(version)?.[1]));
       const historicalVersion = CONFIG_STORE_DEFINITION.versions.find(
         (item) => item.version === metadata.schemaVersion,
       );
@@ -129,9 +136,9 @@ describe('frozen persisted config upgrades', () => {
         ...expected,
         _klex: {
           store: 'config',
-          schemaVersion: 10,
+          schemaVersion: 11,
           compatibilityVersion: 8,
-          minimumKlexVersion: '0.31.1',
+          minimumKlexVersion: '0.33.0',
           writtenByKlexVersion: KLEX_VERSION,
         },
       });
@@ -149,7 +156,7 @@ describe('frozen persisted config upgrades', () => {
       await readFile(new URL('config-expected-v7.json', fixtures), 'utf8'),
     );
     const { _klex } = JSON.parse(
-      await readFile(new URL('config-v9.json', fixtures), 'utf8'),
+      await readFile(new URL('config-v11.json', fixtures), 'utf8'),
     );
     const { instincts, ...selections } = expected.modelSelection;
     // v0.27.1 inherited these positions from v5, then appended instinct.
@@ -170,7 +177,7 @@ describe('frozen persisted config upgrades', () => {
       JSON.stringify(
         {
           ...payload,
-          _klex: { ..._klex, schemaVersion: 10, minimumKlexVersion: '0.31.1' },
+          _klex: { ..._klex, schemaVersion: 11, minimumKlexVersion: '0.31.1' },
         },
         null,
         2,
@@ -324,11 +331,11 @@ describe('frozen persisted config upgrades', () => {
       expect(schema(9).safeParse(payload(invalid)).success).toBe(false);
   });
 
-  it('loads a v9 provider display name through registered startup and blocks older binaries', async () => {
+  it('loads a provider display name through registered startup and blocks older binaries', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'klex-display-name-'));
     directories.push(directory);
     const fixture = JSON.parse(
-      await readFile(new URL('config-v9.json', fixtures), 'utf8'),
+      await readFile(new URL('config-v11.json', fixtures), 'utf8'),
     );
     const original = {
       ...fixture,
@@ -365,8 +372,8 @@ describe('frozen persisted config upgrades', () => {
     const { _klex: _originalMetadata, ...originalPayload } = original;
     expect(persisted).toEqual(originalPayload);
     expect(_klex).toMatchObject({
-      schemaVersion: 10,
-      minimumKlexVersion: '0.31.1',
+      schemaVersion: 11,
+      minimumKlexVersion: '0.33.0',
     });
     const beforeStartup = await snapshot(directory);
     await start();
@@ -440,9 +447,92 @@ describe('frozen persisted config upgrades', () => {
     );
     expect(migrated).toEqual(payload);
     expect(_klex).toMatchObject({
-      schemaVersion: 10,
-      minimumKlexVersion: '0.31.1',
+      schemaVersion: 11,
+      minimumKlexVersion: '0.33.0',
     });
+  });
+
+  it('migrates v10 MCP servers to v11 without rewriting them', async () => {
+    const migration = CONFIG_STORE_DEFINITION.migrations.find(
+      (step) => step.from === 10,
+    );
+    if (!migration) throw new Error('Missing 10→11 migration');
+    const { _klex: _metadata, ...input } = JSON.parse(
+      await readFile(new URL('config-v10-effort.json', fixtures), 'utf8'),
+    );
+    const output = await migration.up(structuredClone(input));
+    expect(output).toEqual(input);
+    expect(Object.keys(output)).toEqual(Object.keys(input));
+  });
+
+  it('accepts MCP event subscriptions only from schema 11', () => {
+    const payload = (events: unknown) => ({
+      configVersion: 2,
+      mcpServers: { chat: { command: 'chat-mcp', events } },
+    });
+    const schema = (version: number) => {
+      const found = CONFIG_STORE_DEFINITION.versions.find(
+        (item) => item.version === version,
+      );
+      if (!found) throw new Error(`Missing schema ${version}`);
+      return found.schema;
+    };
+    const valid = [
+      { name: 'incident.opened', arguments: { service: 'api' } },
+      { name: 'deploy.finished', delivery: 'poll' },
+    ];
+    expect(schema(10).safeParse(payload(valid)).success).toBe(false);
+    expect(schema(11).safeParse(payload(valid)).success).toBe(true);
+    expect(schema(11).safeParse(payload([])).success).toBe(true);
+    for (const invalid of [
+      [{ name: '' }],
+      [{ name: 'x', delivery: 'webhook' }],
+      [{ name: 'x', extra: true }],
+      'incident.opened',
+    ])
+      expect(schema(11).safeParse(payload(invalid)).success).toBe(false);
+  });
+
+  it('preserves a v11 config with event subscriptions on restart', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'klex-v10-events-'));
+    directories.push(directory);
+    const original = await readFile(
+      new URL('config-v11.json', fixtures),
+      'utf8',
+    );
+    const configPath = join(directory, 'config.json');
+    await writeFile(configPath, original);
+    const start = async () => {
+      const localData = createLocalData({
+        logging,
+        dataDirectory: directory,
+        klexVersion: KLEX_VERSION,
+        stores: [CONFIG_STORE_DEFINITION],
+      });
+      await localData.start();
+      const config = createConfig({
+        logging,
+        dataDirectory: directory,
+        env: { PRIMARY_API_KEY: 'fixture-key' },
+      });
+      await config.start();
+      expect(config.getMcpServers()['workspace']).toMatchObject({
+        events: JSON.parse(original).mcpServers.workspace.events,
+      });
+      await config.close();
+      await localData.close();
+    };
+    await start();
+    const beforeRestart = await snapshot(directory);
+    await start();
+    expect(await snapshot(directory)).toEqual(beforeRestart);
+    // Startup restamps only `_klex`; the payload, including events, is intact.
+    const { _klex: _before, ...expectedPayload } = JSON.parse(original);
+    const { _klex, ...persistedPayload } = JSON.parse(
+      await readFile(configPath, 'utf8'),
+    );
+    expect(persistedPayload).toEqual(expectedPayload);
+    expect(_klex).toMatchObject({ schemaVersion: 11 });
   });
 
   it('keeps the released 5→6 output voice lists; only 6→7 removes them', async () => {

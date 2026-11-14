@@ -8,6 +8,7 @@ import type {
 } from '@modelcontextprotocol/client';
 
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
+import type { EventOccurrence } from '@stagewise/mcp-extension-events';
 import type {
   PushNotification,
   PushNotificationNotification,
@@ -24,6 +25,11 @@ import {
   ConfigValidationError,
   type McpServerConfig,
 } from '@/config';
+import {
+  createInboundEventSourceRegistry,
+  type InboundEvent,
+  type InboundEventSourceRegistry,
+} from '@/mcp/inbound-event';
 import {
   createInMemoryPushNotificationInbox,
   type PushNotificationInbox,
@@ -50,6 +56,11 @@ import {
   type McpServerMetadata,
   shouldUseAutomaticOAuth,
 } from './connection';
+import {
+  createEventsSource,
+  type EventSubscriptionStatus,
+  type EventsSource,
+} from './events-source';
 import type { OAuthAuthorizationSessionFactory } from './oauth/callback';
 import {
   cloudCallbackUrl,
@@ -96,6 +107,8 @@ const AUTHORIZATION_MATERIALIZE_TIMEOUT_MS = 15_000;
 export interface McpPushNotification {
   namespace: string;
   event: PushNotification;
+  /** Original semantic event, excluding delivery bookkeeping at rendering time. */
+  occurrence?: EventOccurrence;
 }
 
 export type McpPushNotificationListener = (
@@ -160,6 +173,8 @@ export interface McpServerInfo extends McpServerMetadata {
   resourceCount: number;
   /** Whether the server supports Push Notifications. */
   supportsPushNotifications: boolean;
+  supportsEvents?: boolean;
+  eventSubscriptions?: EventSubscriptionStatus[];
   /** Whether the server supports Realtime Media. */
   supportsRealtimeMedia: boolean;
   /** Whether the server supports resource subscriptions. */
@@ -413,6 +428,10 @@ interface McpServerRuntime {
 class McpModule implements Mcp {
   private readonly servers = new Map<string, McpServerRuntime>();
   private readonly removals = new Map<string, Promise<void>>();
+  private readonly eventsSources = new Map<
+    string,
+    { source: EventsSource; unregister: () => void }
+  >();
   private readonly eventWorkers = new Map<string, PushNotificationWorker>();
   /** Serializes deduplication and delivery across worker replacement. */
   private readonly eventCommitQueues = new Map<string, Promise<void>>();
@@ -420,6 +439,12 @@ class McpModule implements Mcp {
   /** Per namespace: event ids delivered to listeners but not acknowledged. */
   private readonly deliveredUnacked = new Map<string, Set<string>>();
   private pushDeliveryPaused = false;
+  /**
+   * Every inbound event source (Push Notifications today) registers here, so
+   * quiescence flushing and pausing treat all origins equally.
+   */
+  private readonly inboundSources: InboundEventSourceRegistry =
+    createInboundEventSourceRegistry();
   private readonly realtimeWorkers = new Map<string, RealtimeMediaWorker>();
   private readonly realtimeListeners =
     new Set<McpRealtimeMediaNotificationListener>();
@@ -467,7 +492,14 @@ class McpModule implements Mcp {
         signal: AbortSignal,
       ) => Promise<void>;
     },
-  ) {}
+  ) {
+    this.inboundSources.register({
+      origin: 'push-notifications',
+      hasUnsettled: () => this.hasUnacknowledgedPushEvents(),
+      settleDelivered: () => this.acknowledgeDeliveredPushEvents(),
+      pause: () => this.pausePushSource(),
+    });
+  }
 
   async start(): Promise<void> {
     if (this.started) return;
@@ -538,6 +570,18 @@ class McpModule implements Mcp {
   }
 
   hasUnacknowledgedEvents(): boolean {
+    return this.inboundSources.hasUnsettled();
+  }
+
+  acknowledgeDeliveredEvents(): Promise<void> {
+    return this.inboundSources.settleAll();
+  }
+
+  pausePushDelivery(): void {
+    this.inboundSources.pauseAll();
+  }
+
+  private hasUnacknowledgedPushEvents(): boolean {
     for (const [namespace, ids] of this.deliveredUnacked) {
       // A removed server can never receive the ACK; it must not block.
       if (ids.size > 0 && this.servers.has(namespace)) return true;
@@ -545,7 +589,7 @@ class McpModule implements Mcp {
     return false;
   }
 
-  async acknowledgeDeliveredEvents(): Promise<void> {
+  private async acknowledgeDeliveredPushEvents(): Promise<void> {
     const flushes: Promise<void>[] = [];
     for (const [namespace, ids] of this.deliveredUnacked) {
       if (ids.size === 0) continue;
@@ -620,7 +664,7 @@ class McpModule implements Mcp {
       .catch(() => undefined);
   }
 
-  pausePushDelivery(): void {
+  private pausePushSource(): void {
     if (this.pushDeliveryPaused) return;
     this.pushDeliveryPaused = true;
     for (const worker of this.eventWorkers.values()) {
@@ -980,6 +1024,13 @@ class McpModule implements Mcp {
             'MCP server tools updated',
           );
         },
+        onEventsChanged: (changed) => {
+          if (!this.isCurrentConnection(runtime, changed)) return;
+          void this.eventsSources
+            .get(changed.namespace)
+            ?.source.refresh()
+            .catch(() => undefined);
+        },
         onPushNotification: (changed, notification) =>
           this.enqueuePushNotification(changed, notification),
         onRealtimeMediaNotification: (changed, notification) =>
@@ -1027,6 +1078,53 @@ class McpModule implements Mcp {
         this.publishRegistry();
         if (connection.supportsPushNotifications)
           this.startEventWorker(connection);
+        if (connection.supportsEvents && runtime.config.events?.length) {
+          const source = createEventsSource({
+            connection,
+            subscriptions: runtime.config.events,
+            logger: this.deps.logger,
+            publish: async (event, occurrence) => {
+              if (
+                this.servers.get(connection.namespace)?.connection !==
+                  connection ||
+                this.pushDeliveryPaused
+              )
+                return false;
+              const listeners = [...this.eventListeners];
+              if (listeners.length === 0) return false;
+              const results = await Promise.all(
+                listeners.map(async (listener) => {
+                  try {
+                    await listener({
+                      namespace: connection.namespace,
+                      event: structuredClone(event),
+                      occurrence: structuredClone(occurrence),
+                    });
+                    return true;
+                  } catch {
+                    // Listener errors may contain untrusted payloads or secrets.
+                    this.deps.logger.warn(
+                      { namespace: connection.namespace },
+                      'MCP Events listener failed',
+                    );
+                    return false;
+                  }
+                }),
+              );
+              return results.every(Boolean);
+            },
+          });
+          const unregister = this.inboundSources.register(source);
+          this.eventsSources.set(connection.namespace, { source, unregister });
+          void source
+            .start()
+            .catch(() =>
+              this.deps.logger.warn(
+                { namespace: connection.namespace },
+                'MCP Events source could not start',
+              ),
+            );
+        }
         if (connection.supportsRealtimeMedia)
           this.startRealtimeWorker(connection);
         this.deps.logger.info(
@@ -1365,13 +1463,25 @@ class McpModule implements Mcp {
     event: PushNotification,
   ): Promise<boolean> {
     if (!this.isCurrentWorker(worker)) return false;
+    const inbound: InboundEvent = {
+      namespace: worker.connection.namespace,
+      origin: 'push-notifications',
+      sourceKey: 'identity-queue',
+      eventId: event.eventId,
+      type: event.type,
+      content: event.content,
+      data: event.data,
+      receipt: {
+        settle: () => this.acknowledgeEvents(worker, [event.eventId]),
+      },
+    };
     const listeners = [...this.eventListeners];
     if (listeners.length === 0) return false;
     const results = await Promise.all(
       listeners.map(async (listener) => {
         try {
           await listener({
-            namespace: worker.connection.namespace,
+            namespace: inbound.namespace,
             event: structuredClone(event),
           });
           return true;
@@ -1406,6 +1516,12 @@ class McpModule implements Mcp {
   }
 
   private stopEventWorker(namespace: string): void {
+    const events = this.eventsSources.get(namespace);
+    if (events) {
+      events.source.close();
+      events.unregister();
+      this.eventsSources.delete(namespace);
+    }
     const worker = this.eventWorkers.get(namespace);
     if (!worker) return;
     this.eventWorkers.delete(namespace);
@@ -1635,6 +1751,9 @@ class McpModule implements Mcp {
         resourceCount: runtime?.resourceCount ?? 0,
         supportsPushNotifications:
           connection?.supportsPushNotifications ?? false,
+        supportsEvents: connection?.supportsEvents ?? false,
+        eventSubscriptions:
+          this.eventsSources.get(name)?.source.statuses() ?? [],
         supportsRealtimeMedia: connection?.supportsRealtimeMedia ?? false,
         supportsResourceSubscription:
           connection?.supportsResourceSubscription ?? false,

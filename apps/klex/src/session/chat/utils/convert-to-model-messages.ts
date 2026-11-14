@@ -5,11 +5,13 @@ import {
   isToolUIPart,
   type TextPart,
 } from 'ai';
+import { stringify } from 'yaml';
 
 import type { ContextDataUIPart } from '@/session/inbox';
 
 import type { DataPartTransformers } from '../extensions/extension-api';
 import type { ExtendedUIMessage, GodMessageDataUIPart } from '../message-types';
+import { quote } from './history-view/lines';
 
 /**
  * Converts UI messages into the format expected by the model.
@@ -247,15 +249,82 @@ function materializeGodMessagePart(
 function materializeContextPart(
   data: ContextDataUIPart,
 ): ExtendedUIMessage['parts'] {
-  const metadata = escapeXmlText(JSON.stringify(data.metadata));
-  return [
+  // YAML is presentation only: never parse strings as JSON/YAML, and never
+  // wrap long strings. Native media stays in order between the text parts.
+  const yaml = (value: unknown): string =>
+    quote(
+      stringify(value, { lineWidth: 0, aliasDuplicateObjects: false }).replace(
+        /\n$/,
+        '',
+      ),
+    ).join('\n');
+  const source = JSON.stringify(data.sourceEnv).replace(
+    /[\u0085\u2028\u2029]/g,
+    (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`,
+  );
+  const { origin, data: payload, ...envelope } = data.metadata;
+  const isMcp = origin === 'events' || origin === 'push-notifications';
+  const kind = origin === 'events' ? 'event' : 'push-notification';
+  const fields = isMcp ? envelope : {};
+  const hasPayload = Object.hasOwn(data.metadata, 'data');
+  const body =
+    origin === 'events'
+      ? hasPayload
+        ? `${yaml(payload)}\n`
+        : ''
+      : isMcp
+        ? hasPayload
+          ? `${yaml({ metadata: payload })}\n`
+          : ''
+        : Object.keys(data.metadata).length
+          ? `${yaml({ metadata: data.metadata })}\n`
+          : '';
+  const isPush = origin === 'push-notifications';
+  const contentText = (text: string): string =>
+    quote(text)
+      .map((line) => (isPush ? `¦  ${line.slice(1)}` : line))
+      .join('\n');
+  const parts: ExtendedUIMessage['parts'] = [
     {
       type: 'text',
-      text: `<context source-env="${escapeXmlAttr(data.sourceEnv)}"><metadata>${metadata}</metadata><content>`,
+      text: `input ${source}${isMcp ? ` ${kind}` : ''}\n${Object.keys(fields).length ? `${yaml(fields)}\n` : ''}data\n${body}${isPush ? (data.content.length ? '¦content:\n' : '¦content: ""\n') : ''}`,
     },
-    ...materializeContentBlocks(data.content),
-    { type: 'text', text: '</content></context>' },
   ];
+  for (const block of data.content) {
+    if (block.type === 'image' || block.type === 'audio') {
+      const mimeType = block.mimeType.toLowerCase();
+      parts.push({
+        type: 'file',
+        mediaType: mimeType,
+        url: `data:${mimeType};base64,${block.data}`,
+      });
+    } else if (
+      block.type === 'resource' &&
+      block.resource.blob !== undefined &&
+      block.resource.mimeType?.trim()
+    ) {
+      const { blob, ...resource } = block.resource;
+      parts.push({
+        type: 'text',
+        text: `${isPush ? contentText(stringify({ resource }, { lineWidth: 0 }).replace(/\n$/, '')) : yaml({ resource })}\n`,
+      });
+      const mimeType =
+        resource.mimeType?.split(';', 1)[0]?.trim().toLowerCase() ||
+        'application/octet-stream';
+      parts.push({
+        type: 'file',
+        mediaType: mimeType,
+        url: `data:${mimeType};base64,${blob.replaceAll(/\s/g, '')}`,
+      });
+    } else {
+      parts.push({
+        type: 'text',
+        text: `${block.type === 'text' ? contentText(block.text) : isPush ? contentText(stringify(block, { lineWidth: 0 }).replace(/\n$/, '')) : yaml(block)}\n`,
+      });
+    }
+  }
+  parts.push({ type: 'text', text: '\n' });
+  return parts;
 }
 
 function escapeXmlText(value: string): string {

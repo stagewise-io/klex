@@ -1,4 +1,5 @@
 export * from './connection';
+export * from './inbound-event';
 export * from './mcp';
 export type {
   PendingAuthorization,

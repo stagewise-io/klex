@@ -1,2 +1,2 @@
-export * from './frame-encoder';
+export * from './composite-encoder';
 export * from './vision';

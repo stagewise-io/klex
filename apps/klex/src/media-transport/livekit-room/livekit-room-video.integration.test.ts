@@ -185,7 +185,7 @@ describe('LiveKitRoomMediaTransport real room video', () => {
         if (!vision) throw new Error('Expected sharp-backed vision');
         void vision.run();
         await timeout(firstStill, 10_000).finally(() => vision.close());
-        expect(descriptions[0]).toContain('Dana started sharing');
+        expect(descriptions[0]).toContain("You now see Dana's screen");
         expect(stills[0]).toMatchObject({
           mimeType: 'image/jpeg',
           width: 320,

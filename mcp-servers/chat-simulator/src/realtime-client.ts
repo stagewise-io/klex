@@ -16,6 +16,7 @@ function requiredElement<T extends Element>(selector: string): T {
 const startButton = requiredElement<HTMLButtonElement>('#start-call');
 const stopButton = requiredElement<HTMLButtonElement>('#stop-call');
 const shareButton = requiredElement<HTMLButtonElement>('#share-screen');
+const cameraButton = requiredElement<HTMLButtonElement>('#camera');
 const status = requiredElement<HTMLElement>('#call-status');
 const audio = requiredElement<HTMLElement>('#remote-audio');
 
@@ -33,6 +34,23 @@ function setSharing(sharing: boolean): void {
   shareButton.setAttribute('aria-pressed', String(sharing));
 }
 
+function setCamera(on: boolean): void {
+  cameraButton.textContent = on ? 'Stop camera' : 'Camera';
+  cameraButton.setAttribute('aria-pressed', String(on));
+}
+
+/** Describes what Klex can currently see; both tracks may be live at once. */
+function liveStatus(activeRoom: Room): string {
+  const { localParticipant } = activeRoom;
+  const visible = [
+    localParticipant.isScreenShareEnabled ? 'your shared screen' : undefined,
+    localParticipant.isCameraEnabled ? 'your camera' : undefined,
+  ].filter((entry) => entry !== undefined);
+  return visible.length === 0
+    ? LIVE_STATUS
+    : `Live — Klex can see ${visible.join(' and ')} (about one frame per second)`;
+}
+
 async function stop(): Promise<void> {
   const endingSessionId = sessionId;
   sessionId = undefined;
@@ -47,7 +65,9 @@ async function stop(): Promise<void> {
   startButton.disabled = false;
   stopButton.disabled = true;
   setSharing(false);
+  setCamera(false);
   shareButton.disabled = true;
+  cameraButton.disabled = true;
   setStatus('Idle');
 }
 
@@ -73,9 +93,10 @@ startButton.addEventListener('click', async () => {
     });
     nextRoom.on(RoomEvent.TrackUnsubscribed, (track) => track.detach());
     nextRoom.on(RoomEvent.LocalTrackUnpublished, (publication) => {
-      if (publication.source !== Track.Source.ScreenShare) return;
-      setSharing(false);
-      if (room === nextRoom) setStatus(LIVE_STATUS);
+      if (publication.source === Track.Source.ScreenShare) setSharing(false);
+      else if (publication.source === Track.Source.Camera) setCamera(false);
+      else return;
+      if (room === nextRoom) setStatus(liveStatus(nextRoom));
     });
     nextRoom.on(RoomEvent.Disconnected, () => {
       if (room === nextRoom) void stop();
@@ -85,6 +106,7 @@ startButton.addEventListener('click', async () => {
     await nextRoom.localParticipant.setMicrophoneEnabled(true);
     stopButton.disabled = false;
     shareButton.disabled = false;
+    cameraButton.disabled = false;
     setStatus(LIVE_STATUS);
   } catch (error) {
     setStatus(error instanceof Error ? error.message : String(error));
@@ -93,28 +115,51 @@ startButton.addEventListener('click', async () => {
 });
 
 stopButton.addEventListener('click', () => void stop());
-shareButton.addEventListener('click', async () => {
+/** Toggles one published video track; failures leave the call running. */
+async function toggleVideo(
+  button: HTMLButtonElement,
+  enabled: (activeRoom: Room) => boolean,
+  apply: (activeRoom: Room, on: boolean) => Promise<unknown>,
+  show: (on: boolean) => void,
+): Promise<void> {
   const activeRoom = room;
   if (!activeRoom) return;
-  const sharing = !activeRoom.localParticipant.isScreenShareEnabled;
-  shareButton.disabled = true;
+  const on = !enabled(activeRoom);
+  button.disabled = true;
   try {
-    await activeRoom.localParticipant.setScreenShareEnabled(sharing, {
-      audio: false,
-    });
+    await apply(activeRoom, on);
     if (room !== activeRoom) return;
-    setSharing(sharing);
-    setStatus(
-      sharing
-        ? 'Live — Klex can see your shared screen (about one frame per second)'
-        : LIVE_STATUS,
-    );
+    show(on);
+    setStatus(liveStatus(activeRoom));
   } catch (error) {
-    // Cancelling the browser's picker rejects; the call itself is unaffected.
+    // Cancelling a browser picker or permission prompt rejects; the call
+    // itself is unaffected.
     if (room === activeRoom)
       setStatus(error instanceof Error ? error.message : String(error));
   } finally {
-    if (room === activeRoom) shareButton.disabled = false;
+    if (room === activeRoom) button.disabled = false;
   }
-});
+}
+
+shareButton.addEventListener(
+  'click',
+  () =>
+    void toggleVideo(
+      shareButton,
+      (activeRoom) => activeRoom.localParticipant.isScreenShareEnabled,
+      (activeRoom, on) =>
+        activeRoom.localParticipant.setScreenShareEnabled(on, { audio: false }),
+      setSharing,
+    ),
+);
+cameraButton.addEventListener(
+  'click',
+  () =>
+    void toggleVideo(
+      cameraButton,
+      (activeRoom) => activeRoom.localParticipant.isCameraEnabled,
+      (activeRoom, on) => activeRoom.localParticipant.setCameraEnabled(on),
+      setCamera,
+    ),
+);
 window.addEventListener('pagehide', () => void room?.disconnect());

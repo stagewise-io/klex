@@ -730,11 +730,11 @@ describe('OpenAI realtime processor', () => {
     ]);
   });
 
-  it('pins the configured caller language for transcription and speech', async () => {
+  async function sessionUpdateFor(languages: string[]) {
     const socket = new FakeSocket();
     const factory = createOpenAIRealtimeProcessorFactory({
       logging,
-      config: { ...config, languages: ['de-DE', 'en-US'] },
+      config: { ...config, languages },
       connect: () => socket,
     });
     const created = factory.create({
@@ -745,16 +745,39 @@ describe('OpenAI realtime processor', () => {
     });
     socket.open();
     const update = JSON.parse(socket.sent[0] ?? '{}');
-    expect(update.session.audio.input.transcription).toEqual({
+    socket.message({ type: 'session.updated' });
+    await (await created).close();
+    return update.session;
+  }
+
+  it('starts in the primary caller language and follows the caller', async () => {
+    const session = await sessionUpdateFor(['de-DE', 'en-US']);
+    // One transcription language would mis-transcribe the other listed one.
+    expect(session.audio.input.transcription).toEqual({
+      model: 'gpt-4o-mini-transcribe',
+    });
+    expect(session.instructions).toBe(
+      [
+        preparedContext.instructions,
+        '',
+        '## Spoken language',
+        '',
+        '- Start in German. Reply in the language the caller is speaking, and switch when they switch.',
+        '- The caller usually speaks German or English.',
+      ].join('\n'),
+    );
+  });
+
+  it('pins transcription only when the caller languages share one language', async () => {
+    const session = await sessionUpdateFor(['de-DE', 'de-AT']);
+    expect(session.audio.input.transcription).toEqual({
       model: 'gpt-4o-mini-transcribe',
       language: 'de',
     });
-    expect(update.session.instructions).toContain(preparedContext.instructions);
-    expect(update.session.instructions).toContain(
-      '- speak German. start the call in German.',
+    expect(session.instructions).toContain(
+      '- Start in German. Reply in the language the caller is speaking, and switch when they switch.',
     );
-    socket.message({ type: 'session.updated' });
-    await (await created).close();
+    expect(session.instructions).not.toContain('usually speaks');
   });
 
   it('includes voice visibility rules without a prepared context', async () => {

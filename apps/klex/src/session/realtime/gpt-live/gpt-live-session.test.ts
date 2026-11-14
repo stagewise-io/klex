@@ -68,6 +68,7 @@ function setup(
   voice?: string,
   modelId = 'gpt-live-1',
   preparedContext = context,
+  languages?: string[],
 ) {
   const socket = new FakeSocket();
   let replacementSocket: FakeSocket | undefined;
@@ -83,6 +84,7 @@ function setup(
       apiKey: 'secret-test-key',
       baseUrl: 'https://example.test/v1',
       responsesModelId: 'gpt-5.2',
+      ...(languages !== undefined && { languages }),
     },
     connect: (url, options) => {
       connectedUrl = url;
@@ -269,6 +271,33 @@ describe('GPT-Live model session', () => {
       session: { id: 'live-1' },
     });
     await expect(setupResult.creating).resolves.toBeDefined();
+  });
+
+  it('starts in the primary caller language and follows the caller', async () => {
+    const harness = setup(undefined, undefined, undefined, context, [
+      'de-DE',
+      'en-US',
+    ]);
+    try {
+      harness.socket.open();
+      await Promise.resolve();
+      const { session } = JSON.parse(harness.socket.sent[0] ?? '{}');
+      expect(session.instructions).toBe(
+        [
+          'frontend voice policy',
+          '',
+          '## Spoken language',
+          '',
+          '- Start in German. Reply in the language the caller is speaking, and switch when they switch.',
+          '- The caller usually speaks German or English.',
+          '',
+          'backend policy',
+        ].join('\n'),
+      );
+    } finally {
+      harness.controller.abort();
+      await harness.creating.catch(() => undefined);
+    }
   });
 
   it('mixes and resamples attached 48 kHz PCM input to Live audio appends', async () => {

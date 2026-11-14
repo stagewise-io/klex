@@ -224,10 +224,15 @@ describe('Gemini live processor', () => {
     // Native audio models reject an explicit speech language code.
     expect(setup.generationConfig).not.toHaveProperty('speechConfig');
     const instruction = setup.systemInstruction.parts[0].text;
-    expect(instruction.startsWith(voiceSystemPrompt.trimEnd())).toBe(true);
-    expect(instruction).toContain('- speak German. start the call in German.');
-    expect(instruction).toContain(
-      '- the caller may also speak English. answer in whichever of German, English the caller last used.',
+    expect(instruction).toBe(
+      [
+        voiceSystemPrompt.trimEnd(),
+        '',
+        '## Spoken language',
+        '',
+        '- Start in German. Reply in the language the caller is speaking, and switch when they switch.',
+        '- The caller usually speaks German or English.',
+      ].join('\n'),
     );
     socket.message({ setupComplete: {} });
     await (await promise).close();

@@ -321,7 +321,7 @@ Realtime providers detect the spoken language per turn unless told otherwise, so
 }
 ```
 
-Tags are canonicalized; an empty list, a non-list, an invalid tag or a tag without a spoken language (`und`, `mul`, `mis`, `zxx`) fails resolution. Omitting the option keeps provider auto-detection. The option lives in the existing free-form `providerOptions` record, so it needs no schema change.
+Tags are canonicalized; an empty list, a non-list, an invalid tag or a tag without a spoken language (`und`, `mul`, `mis`, `zxx`) fails resolution. The call starts in the first language and follows the caller when they switch. Omitting the option keeps provider auto-detection. The option lives in the existing free-form `providerOptions` record, so it needs no schema change.
 
 ## Realtime media
 

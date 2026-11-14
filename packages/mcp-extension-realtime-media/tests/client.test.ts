@@ -53,6 +53,22 @@ function fakeClient(
 }
 
 describe('Realtime Media client', () => {
+  it('reports the capability the server advertised, not a notification guess', async () => {
+    const { client, handlers } = fakeClient();
+    const realtime = registerRealtimeMediaClient(client, {
+      capability: { transports: ['livekit-room'], media: ['audio', 'video'] },
+    });
+    await realtime.listen();
+    await handlers.get('io.stagewise/realtime-media/session-ended')?.({
+      sessionId: 'session',
+      reason: 'ended',
+    } as never);
+    expect(realtime.serverCapability()).toEqual({
+      transports: ['livekit-room'],
+      media: ['audio'],
+    });
+  });
+
   it('injects configured capability metadata and returns accepted credentials', async () => {
     const { client, requests } = fakeClient();
     const realtime = registerRealtimeMediaClient(client, {

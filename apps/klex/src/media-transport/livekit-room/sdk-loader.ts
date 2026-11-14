@@ -16,19 +16,26 @@ import type {
   LocalTrackPublication,
   RemoteAudioTrack,
   RemoteParticipant,
+  RemoteTrackPublication,
+  RemoteVideoTrack,
   Room,
   AudioFrame as RtcAudioFrame,
   AudioSource as RtcAudioSource,
   AudioStream as RtcAudioStream,
+  VideoFrameEvent,
 } from '@livekit/rtc-node';
 
+import type { VideoSourceKind } from '../media-transport';
 import type {
   LiveKitSdk,
   LiveKitSdkAudioFrame,
   LiveKitSdkAudioPublisher,
   LiveKitSdkAudioStream,
   LiveKitSdkRemoteAudioTrack,
+  LiveKitSdkRemoteVideoPublication,
   LiveKitSdkRoom,
+  LiveKitSdkVideoFrame,
+  LiveKitSdkVideoStream,
 } from './livekit-room';
 
 type RtcModule = typeof import('@livekit/rtc-node');
@@ -197,20 +204,297 @@ class RtcPublisherAdapter implements LiveKitSdkAudioPublisher {
   }
 }
 
-class RtcRoomAdapter implements LiveKitSdkRoom {
+const VIDEO_ROTATIONS = [0, 90, 180, 270] as const;
+
+interface SubscribedVideoTrack {
+  readonly track: RemoteVideoTrack;
+  readonly generation: number;
+}
+
+class RtcVideoStreamAdapter implements LiveKitSdkVideoStream {
+  private consumed = false;
+  private closedSignal = deferred<undefined>();
+  private reader: ReadableStreamDefaultReader<VideoFrameEvent> | undefined;
+  private closing = false;
+
+  constructor(
+    private readonly rtc: RtcModule,
+    private readonly nextTrack: (
+      afterGeneration: number,
+    ) => Promise<SubscribedVideoTrack | undefined>,
+    private readonly maxFps: number,
+    private readonly onClose: () => void,
+  ) {}
+
+  [Symbol.asyncIterator](): AsyncIterator<LiveKitSdkVideoFrame> {
+    if (this.consumed)
+      throw new Error('LiveKit video stream is already consumed');
+    this.consumed = true;
+    return this.frames();
+  }
+
+  private async *frames(): AsyncGenerator<LiveKitSdkVideoFrame> {
+    const intervalMs = 1_000 / this.maxFps;
+    let lastEmittedAt = Number.NEGATIVE_INFINITY;
+    let generation = 0;
+    // A resubscription replaces the remote track; follow it rather than end.
+    for (;;) {
+      const subscribed = await Promise.race([
+        this.nextTrack(generation),
+        this.closedSignal.promise,
+      ]);
+      if (!subscribed || this.closing) return;
+      generation = subscribed.generation;
+      const reader = new this.rtc.VideoStream(subscribed.track).getReader();
+      this.reader = reader;
+      if (this.closing) {
+        await reader.cancel().catch(() => undefined);
+        return;
+      }
+      for (;;) {
+        const next = await reader.read();
+        if (this.closing) return;
+        if (next.done) break;
+        const now = performance.now();
+        // Decoded frames arrive at the publisher's rate; converting only the
+        // sampled ones keeps colour conversion off the hot path.
+        if (now - lastEmittedAt < intervalMs) continue;
+        lastEmittedAt = now;
+        const rgba = next.value.frame.convert(this.rtc.VideoBufferType.RGBA);
+        yield {
+          data: rgba.data,
+          width: rgba.width,
+          height: rgba.height,
+          rotation: VIDEO_ROTATIONS[next.value.rotation] ?? 0,
+        };
+      }
+    }
+  }
+
+  /** Stops reading the current track and waits for its replacement. */
+  trackLost(): void {
+    void this.reader?.cancel().catch(() => undefined);
+  }
+
+  /** Ends the stream because the track went away; keeps the subscription. */
+  end(): void {
+    if (this.closing) return;
+    this.closing = true;
+    this.closedSignal.resolve(undefined);
+    void this.reader?.cancel().catch(() => undefined);
+  }
+
+  async close(): Promise<void> {
+    this.end();
+    this.onClose();
+  }
+}
+
+class RtcVideoPublicationAdapter implements LiveKitSdkRemoteVideoPublication {
+  readonly id: string;
+  readonly participantId: string;
+  readonly participantName?: string;
+  private track: SubscribedVideoTrack | undefined;
+  private generation = 0;
+  private unpublished = false;
+  private changed = deferred<undefined>();
+  private stream: RtcVideoStreamAdapter | undefined;
+
+  constructor(
+    private readonly rtc: RtcModule,
+    private readonly publication: RemoteTrackPublication,
+    participant: RemoteParticipant,
+    readonly kind: VideoSourceKind,
+    fallbackId: string,
+  ) {
+    this.id = publication.sid ?? fallbackId;
+    this.participantId = participant.identity;
+    if (participant.name) this.participantName = participant.name;
+  }
+
+  openStream(options: { maxFps: number }): LiveKitSdkVideoStream {
+    this.stream?.end();
+    const stream = new RtcVideoStreamAdapter(
+      this.rtc,
+      (afterGeneration) => this.nextTrack(afterGeneration),
+      options.maxFps,
+      () => {
+        if (this.stream !== stream) return;
+        this.stream = undefined;
+        this.publication.setSubscribed(false);
+      },
+    );
+    this.stream = stream;
+    this.publication.setSubscribed(true);
+    return stream;
+  }
+
+  attachTrack(track: RemoteVideoTrack): void {
+    this.generation += 1;
+    this.track = { track, generation: this.generation };
+    this.notify();
+  }
+
+  detachTrack(): void {
+    this.track = undefined;
+    this.stream?.trackLost();
+    this.notify();
+  }
+
+  unpublish(): void {
+    this.unpublished = true;
+    this.track = undefined;
+    this.stream?.end();
+    this.stream = undefined;
+    this.notify();
+  }
+
+  private async nextTrack(
+    afterGeneration: number,
+  ): Promise<SubscribedVideoTrack | undefined> {
+    for (;;) {
+      if (this.unpublished) return undefined;
+      if (this.track && this.track.generation > afterGeneration)
+        return this.track;
+      await this.changed.promise;
+    }
+  }
+
+  private notify(): void {
+    const changed = this.changed;
+    this.changed = deferred();
+    changed.resolve(undefined);
+  }
+}
+
+/** @internal Exported for tests. */
+export class RtcRoomAdapter implements LiveKitSdkRoom {
   private readonly room: Room;
   private readonly tracks = new Map<RemoteAudioTrack, RtcRemoteTrackAdapter>();
+  private readonly videoPublications = new Map<
+    string,
+    RtcVideoPublicationAdapter
+  >();
+  private readonly videoPublishedListeners = new Set<
+    (publication: LiveKitSdkRemoteVideoPublication) => void
+  >();
+  private readonly videoUnpublishedListeners = new Set<
+    (publication: LiveKitSdkRemoteVideoPublication) => void
+  >();
   private trackSequence = 0;
 
   constructor(private readonly rtc: RtcModule) {
     this.room = new rtc.Room();
+    const { RoomEvent } = rtc;
+    this.room.on(RoomEvent.TrackPublished, (publication, participant) =>
+      this.handlePublication(publication, participant),
+    );
+    this.room.on(RoomEvent.TrackUnpublished, (publication) =>
+      this.handleUnpublication(publication.sid),
+    );
+    this.room.on(RoomEvent.ParticipantDisconnected, (participant) => {
+      for (const sid of participant.trackPublications.keys())
+        this.handleUnpublication(sid);
+    });
+    // A muted video publication sends no frames, so it is treated as gone
+    // until it is unmuted; clients mute camera toggles instead of
+    // unpublishing.
+    this.room.on(RoomEvent.TrackMuted, (publication) => {
+      const sid = publication.sid;
+      if (!sid || !this.videoPublications.has(sid)) return;
+      this.handleUnpublication(sid);
+      if (publication instanceof rtc.RemoteTrackPublication)
+        publication.setSubscribed(false);
+    });
+    this.room.on(RoomEvent.TrackUnmuted, (publication, participant) => {
+      if (
+        publication instanceof rtc.RemoteTrackPublication &&
+        participant instanceof rtc.RemoteParticipant
+      )
+        this.handlePublication(publication, participant);
+    });
+    this.room.on(RoomEvent.TrackSubscribed, (track, publication) => {
+      if (!(track instanceof rtc.RemoteVideoTrack) || !publication.sid) return;
+      this.videoPublications.get(publication.sid)?.attachTrack(track);
+    });
+    this.room.on(RoomEvent.TrackUnsubscribed, (track, publication) => {
+      if (!(track instanceof rtc.RemoteVideoTrack) || !publication.sid) return;
+      this.videoPublications.get(publication.sid)?.detachTrack();
+    });
   }
 
-  connect(url: string, token: string): Promise<void> {
-    return this.room.connect(url, token, {
-      autoSubscribe: true,
+  // Subscriptions are explicit so video is received and decoded only while
+  // a consumer has the source open; microphones are always subscribed.
+  async connect(url: string, token: string): Promise<void> {
+    await this.room.connect(url, token, {
+      autoSubscribe: false,
       dynacast: false,
     });
+    for (const participant of this.room.remoteParticipants.values())
+      for (const publication of participant.trackPublications.values())
+        this.handlePublication(publication, participant);
+  }
+
+  onVideoTrackPublished(
+    listener: (publication: LiveKitSdkRemoteVideoPublication) => void,
+  ): () => void {
+    this.videoPublishedListeners.add(listener);
+    return () => this.videoPublishedListeners.delete(listener);
+  }
+
+  onVideoTrackUnpublished(
+    listener: (publication: LiveKitSdkRemoteVideoPublication) => void,
+  ): () => void {
+    this.videoUnpublishedListeners.add(listener);
+    return () => this.videoUnpublishedListeners.delete(listener);
+  }
+
+  private handlePublication(
+    publication: RemoteTrackPublication,
+    participant: RemoteParticipant | undefined,
+  ): void {
+    if (!participant) return;
+    const { TrackKind, TrackSource } = this.rtc;
+    if (publication.kind === TrackKind.KIND_AUDIO) {
+      if (
+        publication.source === TrackSource.SOURCE_MICROPHONE &&
+        !publication.subscribed
+      )
+        publication.setSubscribed(true);
+      return;
+    }
+    if (publication.kind !== TrackKind.KIND_VIDEO) return;
+    const kind =
+      publication.source === TrackSource.SOURCE_SCREENSHARE
+        ? 'screenshare'
+        : publication.source === TrackSource.SOURCE_CAMERA
+          ? 'camera'
+          : undefined;
+    if (
+      !kind ||
+      !publication.sid ||
+      publication.muted ||
+      this.videoPublications.has(publication.sid)
+    )
+      return;
+    const adapter = new RtcVideoPublicationAdapter(
+      this.rtc,
+      publication,
+      participant,
+      kind,
+      `remote-video-${this.trackSequence++}`,
+    );
+    this.videoPublications.set(publication.sid, adapter);
+    for (const listener of this.videoPublishedListeners) listener(adapter);
+  }
+
+  private handleUnpublication(sid: string | undefined): void {
+    if (!sid) return;
+    const adapter = this.videoPublications.get(sid);
+    if (!adapter) return;
+    this.videoPublications.delete(sid);
+    adapter.unpublish();
+    for (const listener of this.videoUnpublishedListeners) listener(adapter);
   }
 
   async publishAudio(options: {
@@ -310,6 +594,14 @@ class RtcSdkAdapter implements LiveKitSdk {
   async dispose(): Promise<void> {
     this.rtc.dispose();
   }
+}
+
+function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
 }
 
 export async function loadLiveKitSdk(): Promise<LiveKitSdk> {

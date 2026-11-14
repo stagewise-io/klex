@@ -191,12 +191,13 @@
                             },
                             "media": {
                               "type": "array",
-                              "prefixItems": [
-                                {
-                                  "type": "string",
-                                  "const": "audio"
-                                }
-                              ]
+                              "items": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "contains": {
+                                "const": "audio"
+                              }
                             }
                           },
                           "required": ["transports", "media"]
@@ -250,12 +251,13 @@
                         },
                         "media": {
                           "type": "array",
-                          "prefixItems": [
-                            {
-                              "type": "string",
-                              "const": "audio"
-                            }
-                          ]
+                          "items": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "contains": {
+                            "const": "audio"
+                          }
                         }
                       },
                       "required": ["transports", "media"]
@@ -318,12 +320,13 @@
                                 },
                                 "media": {
                                   "type": "array",
-                                  "prefixItems": [
-                                    {
-                                      "type": "string",
-                                      "const": "audio"
-                                    }
-                                  ]
+                                  "items": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  "contains": {
+                                    "const": "audio"
+                                  }
                                 }
                               },
                               "required": ["transports", "media"]
@@ -402,12 +405,13 @@
                 },
                 "media": {
                   "type": "array",
-                  "prefixItems": [
-                    {
-                      "type": "string",
-                      "const": "audio"
-                    }
-                  ]
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "contains": {
+                    "const": "audio"
+                  }
                 }
               },
               "required": ["transports", "media"]
@@ -430,12 +434,13 @@
         },
         "media": {
           "type": "array",
-          "prefixItems": [
-            {
-              "type": "string",
-              "const": "audio"
-            }
-          ]
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "contains": {
+            "const": "audio"
+          }
         }
       },
       "required": ["transports", "media"]
@@ -1158,12 +1163,13 @@
                                 },
                                 "media": {
                                   "type": "array",
-                                  "prefixItems": [
-                                    {
-                                      "type": "string",
-                                      "const": "audio"
-                                    }
-                                  ]
+                                  "items": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  "contains": {
+                                    "const": "audio"
+                                  }
                                 }
                               },
                               "required": ["transports", "media"]

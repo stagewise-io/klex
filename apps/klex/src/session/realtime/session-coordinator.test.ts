@@ -25,7 +25,10 @@ import {
   setTelemetryActivityEnabled,
 } from '@/telemetry-metrics';
 
-import { createRealtimeSessionCoordinator } from './session-coordinator';
+import {
+  createRealtimeSessionCoordinator,
+  type RealtimeSessionCoordinatorDependencies,
+} from './session-coordinator';
 import {
   createDeterministicConversationHost,
   createDeterministicEchoProcessorFactory,
@@ -76,6 +79,7 @@ function deferred<T>(): {
 function createMcpHarness(options?: {
   accept?: () => Promise<RealtimeMediaClientAcceptResult>;
   throwOnAvailabilitySubscription?: boolean;
+  video?: boolean;
 }) {
   const notificationListeners = new Set<McpRealtimeMediaNotificationListener>();
   const availabilityListeners = new Set<McpRealtimeMediaAvailabilityListener>();
@@ -111,6 +115,7 @@ function createMcpHarness(options?: {
     acceptRealtimeMediaSession,
     rejectRealtimeMediaSession,
     endRealtimeMediaSession,
+    realtimeMediaVideoNegotiated: () => options?.video ?? true,
   } as unknown as Mcp;
   return {
     mcp,
@@ -178,6 +183,7 @@ function setup(options?: {
   mcp?: ReturnType<typeof createMcpHarness>;
   host?: DeterministicConversationHost;
   now?: () => number;
+  createVision?: RealtimeSessionCoordinatorDependencies['createVision'];
 }) {
   const mcpHarness = options?.mcp ?? createMcpHarness();
   const connector = createDeterministicMediaTransportConnector();
@@ -191,6 +197,7 @@ function setup(options?: {
     conversationHost: host,
     model: DETERMINISTIC_REALTIME_MODEL,
     now: options?.now ?? (() => Date.parse('2026-08-01T18:00:00.000Z')),
+    createVision: options?.createVision,
   });
   return { coordinator, connector, mcpHarness, processorFactory, host };
 }
@@ -379,6 +386,54 @@ describe('realtime session coordinator', () => {
         }),
       ]),
     );
+    await coordinator.close();
+  });
+
+  it('runs the per-call vision lane and closes it with the call', async () => {
+    let stopRun!: () => void;
+    const vision = {
+      run: vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            stopRun = resolve;
+          }),
+      ),
+      close: vi.fn(async () => stopRun()),
+    };
+    const createVision = vi.fn(() => vision);
+    const { coordinator, mcpHarness, connector, processorFactory } = setup({
+      createVision,
+    });
+    await coordinator.start();
+    await mcpHarness.notify(offered());
+    const transport = await connector.nextTransport();
+    const processor = await processorFactory.nextProcessor();
+    await vi.waitFor(() => expect(vision.run).toHaveBeenCalledOnce());
+    expect(transport.videoSources).toBeDefined();
+    expect(processor.videoInput).toBeDefined();
+    expect(createVision).toHaveBeenCalledWith({
+      logger: expect.anything(),
+      sources: transport.videoSources,
+      input: processor.videoInput,
+    });
+    await mcpHarness.notify(ended());
+    await vi.waitFor(() => expect(coordinator.getActiveSessionCount()).toBe(0));
+    expect(vision.close).toHaveBeenCalledOnce();
+    await coordinator.close();
+  });
+
+  it('leaves video off when the server did not advertise it', async () => {
+    const createVision = vi.fn();
+    const { coordinator, mcpHarness, processorFactory } = setup({
+      mcp: createMcpHarness({ video: false }),
+      createVision,
+    });
+    await coordinator.start();
+    await mcpHarness.notify(offered());
+    await processorFactory.nextProcessor();
+    await mcpHarness.notify(ended());
+    await vi.waitFor(() => expect(coordinator.getActiveSessionCount()).toBe(0));
+    expect(createVision).not.toHaveBeenCalled();
     await coordinator.close();
   });
 

@@ -11,6 +11,7 @@ import {
 import {
   REALTIME_MEDIA_ACCEPT_METHOD,
   REALTIME_MEDIA_END_METHOD,
+  REALTIME_MEDIA_EXTENSION_ID,
   REALTIME_MEDIA_REJECT_METHOD,
   REALTIME_MEDIA_SESSION_ENDED_METHOD,
   REALTIME_MEDIA_SESSION_OFFERED_METHOD,
@@ -84,6 +85,11 @@ export interface RegisteredRealtimeMediaClient {
   serverSupportsRealtimeMedia(
     options?: RealtimeMediaRequestOptions,
   ): Promise<boolean>;
+  /**
+   * The capability the server advertised through discovery or
+   * initialization, if known. Use it to negotiate optional media kinds.
+   */
+  serverCapability(): RealtimeMediaExtensionCapability | undefined;
 }
 
 function paramsWithCapability<T extends Record<string, unknown>>(
@@ -107,6 +113,7 @@ export function registerRealtimeMediaClient(
   };
   client.registerCapabilities(withRealtimeMediaCapability({}, capability));
   let discoveryCapabilities: RealtimeMediaCapabilities | undefined;
+  let advertisedDiscoveryCapabilities: RealtimeMediaCapabilities | undefined;
   let discoveryRequest: Promise<ServerDiscoverResult> | undefined;
   let resolveAcknowledgement: (() => void) | undefined;
 
@@ -133,6 +140,7 @@ export function registerRealtimeMediaClient(
       )
       .then((result) => {
         discoveryCapabilities = result.capabilities;
+        advertisedDiscoveryCapabilities = result.capabilities;
         return result;
       });
     discoveryRequest.catch(() => {
@@ -309,5 +317,17 @@ export function registerRealtimeMediaClient(
       );
     },
     serverSupportsRealtimeMedia,
+    serverCapability() {
+      const capabilities =
+        advertisedDiscoveryCapabilities ??
+        (client.getServerCapabilities() as
+          | RealtimeMediaCapabilities
+          | undefined);
+      const advertised =
+        capabilities?.extensions?.[REALTIME_MEDIA_EXTENSION_ID];
+      return typeof advertised === 'object' && advertised !== null
+        ? (advertised as RealtimeMediaExtensionCapability)
+        : undefined;
+    },
   };
 }

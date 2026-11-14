@@ -79,6 +79,7 @@ describe('MCP to deterministic realtime session', () => {
           },
         ),
         accept,
+        serverCapability: () => undefined,
         reject: vi.fn(async () => undefined),
         end,
       },

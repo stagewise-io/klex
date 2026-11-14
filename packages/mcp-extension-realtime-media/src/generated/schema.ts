@@ -164,10 +164,16 @@ export const RealtimeMediaSubscriptionAcknowledgedNotificationsSchema =
     'io.stagewise/realtime-media': RealtimeMediaSubscriptionSchema.optional(),
   });
 
-/** Realtime transport profiles and media kinds supported by one peer. */
+/**
+ * Realtime transport profiles and media kinds supported by one peer. `media`
+ * must include `audio`; `video` is optional and unknown kinds are ignored.
+ */
 export const RealtimeMediaExtensionCapabilitySchema = z.object({
   transports: z.array(z.string().min(1)).min(1),
-  media: z.tuple([z.literal('audio')]),
+  media: z
+    .array(z.string().min(1))
+    .refine((media) => media.includes('audio'), 'media must include audio')
+    .meta({ contains: { const: 'audio' } }),
 });
 
 export const RealtimeMediaExtensionCapabilitiesSchema = z

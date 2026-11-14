@@ -41,6 +41,7 @@ import {
   type GeminiContentTurn,
   toGeminiContentTurns,
 } from './conversation-items';
+import { GeminiLiveVideoInput } from './video-input';
 import {
   type GeminiLiveServerEvent,
   parseGeminiLiveServerEvents,
@@ -132,6 +133,8 @@ interface CloseDetails {
 }
 
 const OPEN = 1;
+/** Bounds the wait for a closing socket's close event before declaring it lost. */
+const CLOSE_EVENT_TIMEOUT_MS = 2_000;
 const FRAME_BYTES = 960 * 2;
 const STARTUP_TIMEOUT_MS = 10_000;
 const DEFAULT_RECONNECT_POLICY: GeminiLiveReconnectPolicy = {
@@ -242,6 +245,7 @@ export class GeminiLiveSession implements RealtimeModelSession {
   private attemptTimer: ReturnType<typeof setTimeout> | undefined;
   private goAwayPending = false;
   private goAwayTimer: ReturnType<typeof setTimeout> | undefined;
+  private closeEventTimer: ReturnType<typeof setTimeout> | undefined;
   private debugTimers: ReturnType<typeof setTimeout>[] = [];
   private audioBacklog: string[] = [];
   private audioSinceHandle: string[] = [];
@@ -263,6 +267,7 @@ export class GeminiLiveSession implements RealtimeModelSession {
     attach: (source: AudioSource) => this.attachSource(source),
   };
   readonly audioOutput = this.outputQueue;
+  readonly videoInput: GeminiLiveVideoInput | undefined;
   readonly events = this.eventQueue;
   readonly closed = this.closure.promise;
 
@@ -276,7 +281,16 @@ export class GeminiLiveSession implements RealtimeModelSession {
     private readonly span: Span,
     private readonly reconnectPolicy: GeminiLiveReconnectPolicy = DEFAULT_RECONNECT_POLICY,
     private readonly debug: GeminiLiveDebugOptions = {},
+    video = false,
   ) {
+    this.videoInput = video
+      ? new GeminiLiveVideoInput({
+          sendFrame: (message) => this.sendLive(message),
+          sendDescription: (text) => this.sendVideoDescription(text),
+          isModelSpeaking: () => this.modelTurnActive,
+          isResponseOwed: () => this.awaitingResponse,
+        })
+      : undefined;
     this.startupTimer = setTimeout(
       () => this.fail(new Error('Gemini live setup timed out')),
       startupTimeoutMs,
@@ -400,6 +414,14 @@ export class GeminiLiveSession implements RealtimeModelSession {
       return;
     }
     this.sendLive(textContent(text, update.requestResponse));
+  }
+
+  /** Video notes are call context, so resumes replay and restarts reseed them. */
+  private sendVideoDescription(text: string): void {
+    if (this.settled) return;
+    this.appendCallLog('user', 'context', text);
+    this.trackUnconfirmed({ kind: 'content', text, turnComplete: false });
+    this.sendLive(textContent(text, false));
   }
 
   async sendToolResult(result: InteractionToolResult): Promise<void> {
@@ -565,6 +587,7 @@ export class GeminiLiveSession implements RealtimeModelSession {
         case 'interrupted':
           this.modelTurnActive = false;
           this.interrupt();
+          this.videoInput?.modelIdle();
           break;
         case 'input-transcript':
           this.handleCurrent = false;
@@ -581,7 +604,7 @@ export class GeminiLiveSession implements RealtimeModelSession {
             (this.activeTranscript ?? '') + event.transcript;
           break;
         case 'output-audio-delta': {
-          if (!this.connectionReady) this.handleSetupComplete(token);
+          if (!this.connectionReady) this.handleSetupComplete(token, true);
           this.markModelOutput();
           const generation = this.generation;
           let decoded: Uint8Array;
@@ -604,6 +627,7 @@ export class GeminiLiveSession implements RealtimeModelSession {
           this.modelTurnActive = false;
           this.awaitingResponse = false;
           this.finishAssistantTranscript(false);
+          this.videoInput?.modelIdle();
           break;
         case 'tool-call':
           this.markModelOutput();
@@ -655,8 +679,11 @@ export class GeminiLiveSession implements RealtimeModelSession {
     this.handleCurrent = false;
   }
 
-  /** Completes the handshake of the first or a replacement connection. */
-  private handleSetupComplete(token: number): void {
+  /**
+   * Completes the handshake of the first or a replacement connection.
+   * `modelSpeaking` marks setup implied by model audio arriving first.
+   */
+  private handleSetupComplete(token: number, modelSpeaking = false): void {
     if (this.connectionReady || token !== this.connectionToken) return;
     this.connectionReady = true;
     clearTimeout(this.attemptTimer);
@@ -669,6 +696,7 @@ export class GeminiLiveSession implements RealtimeModelSession {
       this.seedConversation(token);
       this.resolveReady();
       this.armDebugTimers(token);
+      this.videoInput?.connectionReady({ flushDescriptions: !modelSpeaking });
       return;
     }
     this.outage = undefined;
@@ -727,6 +755,8 @@ export class GeminiLiveSession implements RealtimeModelSession {
     );
     this.droppedAudioChunks = 0;
     this.armDebugTimers(token);
+    // After gap audio and replay, so the frame lands in the current turn.
+    this.videoInput?.connectionReady({ flushDescriptions: !modelSpeaking });
     outage.ready.resolve();
   }
 
@@ -898,9 +928,12 @@ export class GeminiLiveSession implements RealtimeModelSession {
     this.socket = undefined;
     this.connectionToken += 1;
     this.connectionReady = false;
+    this.videoInput?.connectionLost();
     this.goAwayPending = false;
     clearTimeout(this.goAwayTimer);
     clearTimeout(this.attemptTimer);
+    clearTimeout(this.closeEventTimer);
+    this.closeEventTimer = undefined;
     this.clearDebugTimers();
     closeSocket(previous);
     if (!this.outage) {
@@ -1161,6 +1194,10 @@ export class GeminiLiveSession implements RealtimeModelSession {
   private sendOn(token: number, event: object): boolean {
     if (token !== this.connectionToken || this.settled) return false;
     const socket = this.socket;
+    if (socket && socket.readyState > OPEN) {
+      this.awaitCloseEvent(token);
+      return false;
+    }
     if (socket?.readyState !== OPEN) {
       this.handleConnectionLoss(
         token,
@@ -1170,6 +1207,22 @@ export class GeminiLiveSession implements RealtimeModelSession {
     }
     socket.send(JSON.stringify(event));
     return true;
+  }
+
+  /**
+   * A provider close moves the socket to closing before its close event
+   * arrives. Writes in between are dropped so the provider's close code and
+   * reason, not a failed write, end the connection.
+   */
+  private awaitCloseEvent(token: number): void {
+    if (this.closeEventTimer !== undefined) return;
+    this.closeEventTimer = setTimeout(() => {
+      this.closeEventTimer = undefined;
+      this.handleConnectionLoss(
+        token,
+        new Error('Gemini live connection closed without a close event'),
+      );
+    }, CLOSE_EVENT_TIMEOUT_MS);
   }
 
   private resolveReady(): void {
@@ -1190,6 +1243,7 @@ export class GeminiLiveSession implements RealtimeModelSession {
     clearTimeout(this.startupTimer);
     clearTimeout(this.attemptTimer);
     clearTimeout(this.goAwayTimer);
+    clearTimeout(this.closeEventTimer);
     this.clearDebugTimers();
     const outage = this.outage;
     this.outage = undefined;
@@ -1204,6 +1258,14 @@ export class GeminiLiveSession implements RealtimeModelSession {
     }
     this.audioBacklog = [];
     this.audioSinceHandle = [];
+    if (this.videoInput) {
+      const { framesSent, framesResent } = this.videoInput.stats();
+      this.span.setAttributes({
+        'gemini_live.video.frames_sent': framesSent,
+        'gemini_live.video.frames_resent': framesResent,
+      });
+      this.videoInput.close();
+    }
     this.signal.removeEventListener('abort', this.handleAbort);
     if (!this.readySettled) {
       this.readySettled = true;
@@ -1251,6 +1313,7 @@ export class GeminiLiveSessionFactory implements RealtimeModelSessionFactory {
     private readonly logger: ModuleLogger,
     private readonly reconnectPolicy: GeminiLiveReconnectPolicy = DEFAULT_RECONNECT_POLICY,
     private readonly debug: GeminiLiveDebugOptions = {},
+    private readonly video = false,
   ) {}
 
   async create(options: {
@@ -1296,6 +1359,7 @@ export class GeminiLiveSessionFactory implements RealtimeModelSessionFactory {
         span,
         this.reconnectPolicy,
         this.debug,
+        this.video,
       );
       spanTransferred = true;
       await session.waitUntilReady();
@@ -1321,6 +1385,8 @@ export function createGeminiLiveProcessorFactory(options: {
   startupTimeoutMs?: number;
   reconnectPolicy?: Partial<GeminiLiveReconnectPolicy>;
   debug?: GeminiLiveDebugOptions;
+  /** Enables the video lane; only for models that accept image input. */
+  video?: boolean;
 }): RealtimeModelSessionFactory {
   return new GeminiLiveSessionFactory(
     options.config,
@@ -1333,6 +1399,7 @@ export function createGeminiLiveProcessorFactory(options: {
     }),
     { ...DEFAULT_RECONNECT_POLICY, ...options.reconnectPolicy },
     options.debug ?? geminiLiveDebugOptionsFromEnv(process.env),
+    options.video ?? false,
   );
 }
 

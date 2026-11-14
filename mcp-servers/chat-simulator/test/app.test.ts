@@ -77,9 +77,11 @@ describe('chat simulator', () => {
     expect(await (await app.request('/health')).json()).toEqual({
       status: 'ok',
     });
-    expect(await (await app.request('/')).text()).toContain(
-      'Klex Chat Simulator',
-    );
+    const page = await (await app.request('/')).text();
+    expect(page).toContain('Klex Chat Simulator');
+    // Screen share and camera publish separate tracks and may both be on.
+    expect(page).toContain('<button id="share-screen"');
+    expect(page).toContain('<button id="camera"');
   });
 
   it('validates and stores browser messages as Push Notifications', async () => {
@@ -221,6 +223,7 @@ describe('chat simulator', () => {
       await client.connect(transport);
       expect(client.getProtocolEra()).toBe('modern');
       expect(await realtime.serverSupportsRealtimeMedia()).toBe(true);
+      expect(realtime.serverCapability()?.media).toEqual(['audio', 'video']);
       const subscription = await realtime.listen();
       const closed = subscription.closed.catch(() => undefined);
 

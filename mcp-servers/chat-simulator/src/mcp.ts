@@ -7,10 +7,11 @@ import {
   type PushNotificationsHttpSubscriptionManager,
   registerPushNotificationsServer,
 } from '@stagewise/mcp-extension-push-notifications/server';
-import type {
-  AcceptRealtimeMediaSessionResult,
-  RealtimeMediaSessionEndedNotificationParams,
-  RealtimeMediaSessionOfferedNotificationParams,
+import {
+  type AcceptRealtimeMediaSessionResult,
+  type RealtimeMediaSessionEndedNotificationParams,
+  type RealtimeMediaSessionOfferedNotificationParams,
+  realtimeMediaExtensionCapability,
 } from '@stagewise/mcp-extension-realtime-media';
 import {
   createRealtimeMediaHttpSubscriptionManager,
@@ -91,7 +92,12 @@ class ChatMcpModule implements ChatMcp {
             end: ({ sessionId }) =>
               this.realtimeSessions.end(LOCAL_CONSUMER_KEY, sessionId),
           },
-          { registerDiscoveryHandler: false },
+          {
+            registerDiscoveryHandler: false,
+            capability: realtimeMediaExtensionCapability(['livekit-room'], {
+              video: true,
+            }),
+          },
         );
         return server;
       },

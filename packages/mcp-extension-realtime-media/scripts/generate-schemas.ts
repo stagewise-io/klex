@@ -51,6 +51,10 @@ function postProcess(content: string): string {
     'transports: z.array(z.string())',
     'transports: z.array(z.string().min(1)).min(1)',
   );
+  output = output.replace(
+    'media: z.array(z.string())',
+    "media: z.array(z.string().min(1)).refine((media) => media.includes('audio'), 'media must include audio').meta({ contains: { const: 'audio' } })",
+  );
   output = output.replace('url: z.string()', 'url: z.url()');
   output = output.replace('token: z.string()', 'token: z.string().min(1)');
   output = output.replace(

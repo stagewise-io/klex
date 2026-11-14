@@ -108,6 +108,23 @@ simulator mints short-lived browser and Klex participant tokens for one room.
 Use **Start realtime call** in the browser UI to publish the microphone and play
 Klex's returned audio track. Use headphones to avoid acoustic feedback.
 
+The simulator advertises `media: ["audio", "video"]`. During a call, **Share
+screen** publishes a LiveKit screen-share track and **Camera** publishes a
+camera track from the browser webcam. Either or both can be on at once. Klex
+sees them when its selected realtime model accepts image input (Gemini Live
+models with image input). The status line says what Klex can see.
+
+Klex shows the model every published video track, tiled into one frame of at
+most 1024 px: one track full size, two side by side, three or four in a 2x2
+grid. Each tile is labelled with the participant name and `screen` or
+`camera`. Screen shares take the four tiles first, then cameras, newest first.
+Klex tells the model whenever the tiles change. Publishing and unpublishing
+tracks is the only way to control what Klex sees; Klex also treats a muted
+track as gone until it is unmuted. With both toggles on, ask
+Klex what is on your screen and what it sees on camera. **Stop sharing**,
+**Stop camera** or the browser's own controls remove a track. **Stop camera**
+unpublishes the camera track rather than muting it.
+
 ## E2E check
 
 1. Start the simulator and the agent.

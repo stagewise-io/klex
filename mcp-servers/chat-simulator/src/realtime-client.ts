@@ -15,6 +15,8 @@ function requiredElement<T extends Element>(selector: string): T {
 
 const startButton = requiredElement<HTMLButtonElement>('#start-call');
 const stopButton = requiredElement<HTMLButtonElement>('#stop-call');
+const shareButton = requiredElement<HTMLButtonElement>('#share-screen');
+const cameraButton = requiredElement<HTMLButtonElement>('#camera');
 const status = requiredElement<HTMLElement>('#call-status');
 const audio = requiredElement<HTMLElement>('#remote-audio');
 
@@ -23,6 +25,30 @@ let sessionId: string | undefined;
 
 function setStatus(message: string): void {
   status.textContent = message;
+}
+
+const LIVE_STATUS = 'Live — speak into your microphone; Klex should echo it';
+
+function setSharing(sharing: boolean): void {
+  shareButton.textContent = sharing ? 'Stop sharing' : 'Share screen';
+  shareButton.setAttribute('aria-pressed', String(sharing));
+}
+
+function setCamera(on: boolean): void {
+  cameraButton.textContent = on ? 'Stop camera' : 'Camera';
+  cameraButton.setAttribute('aria-pressed', String(on));
+}
+
+/** Describes what Klex can currently see; both tracks may be live at once. */
+function liveStatus(activeRoom: Room): string {
+  const { localParticipant } = activeRoom;
+  const visible = [
+    localParticipant.isScreenShareEnabled ? 'your shared screen' : undefined,
+    localParticipant.isCameraEnabled ? 'your camera' : undefined,
+  ].filter((entry) => entry !== undefined);
+  return visible.length === 0
+    ? LIVE_STATUS
+    : `Live — Klex can see ${visible.join(' and ')} (about one frame per second)`;
 }
 
 async function stop(): Promise<void> {
@@ -38,6 +64,10 @@ async function stop(): Promise<void> {
   }
   startButton.disabled = false;
   stopButton.disabled = true;
+  setSharing(false);
+  setCamera(false);
+  shareButton.disabled = true;
+  cameraButton.disabled = true;
   setStatus('Idle');
 }
 
@@ -62,6 +92,12 @@ startButton.addEventListener('click', async () => {
       audio.append(element);
     });
     nextRoom.on(RoomEvent.TrackUnsubscribed, (track) => track.detach());
+    nextRoom.on(RoomEvent.LocalTrackUnpublished, (publication) => {
+      if (publication.source === Track.Source.ScreenShare) setSharing(false);
+      else if (publication.source === Track.Source.Camera) setCamera(false);
+      else return;
+      if (room === nextRoom) setStatus(liveStatus(nextRoom));
+    });
     nextRoom.on(RoomEvent.Disconnected, () => {
       if (room === nextRoom) void stop();
     });
@@ -69,7 +105,9 @@ startButton.addEventListener('click', async () => {
     await nextRoom.connect(url, token, { autoSubscribe: true });
     await nextRoom.localParticipant.setMicrophoneEnabled(true);
     stopButton.disabled = false;
-    setStatus('Live — speak into your microphone; Klex should echo it');
+    shareButton.disabled = false;
+    cameraButton.disabled = false;
+    setStatus(LIVE_STATUS);
   } catch (error) {
     setStatus(error instanceof Error ? error.message : String(error));
     await stop();
@@ -77,4 +115,70 @@ startButton.addEventListener('click', async () => {
 });
 
 stopButton.addEventListener('click', () => void stop());
+/** Toggles one published video track; failures leave the call running. */
+async function toggleVideo(
+  button: HTMLButtonElement,
+  enabled: (activeRoom: Room) => boolean,
+  apply: (activeRoom: Room, on: boolean) => Promise<unknown>,
+  show: (on: boolean) => void,
+): Promise<void> {
+  const activeRoom = room;
+  if (!activeRoom) return;
+  const on = !enabled(activeRoom);
+  button.disabled = true;
+  try {
+    await apply(activeRoom, on);
+    if (room !== activeRoom) return;
+    show(on);
+    setStatus(liveStatus(activeRoom));
+  } catch (error) {
+    // Cancelling a browser picker or permission prompt rejects; the call
+    // itself is unaffected.
+    if (room === activeRoom)
+      setStatus(error instanceof Error ? error.message : String(error));
+  } finally {
+    if (room === activeRoom) button.disabled = false;
+  }
+}
+
+/**
+ * Turning the camera off unpublishes it: `setCameraEnabled(false)` only mutes
+ * the track, and Klex should see the camera leave.
+ */
+async function setCameraPublished(
+  activeRoom: Room,
+  on: boolean,
+): Promise<void> {
+  const { localParticipant } = activeRoom;
+  if (on) {
+    await localParticipant.setCameraEnabled(true);
+    return;
+  }
+  const track = localParticipant.getTrackPublication(
+    Track.Source.Camera,
+  )?.track;
+  if (track) await localParticipant.unpublishTrack(track);
+}
+
+shareButton.addEventListener(
+  'click',
+  () =>
+    void toggleVideo(
+      shareButton,
+      (activeRoom) => activeRoom.localParticipant.isScreenShareEnabled,
+      (activeRoom, on) =>
+        activeRoom.localParticipant.setScreenShareEnabled(on, { audio: false }),
+      setSharing,
+    ),
+);
+cameraButton.addEventListener(
+  'click',
+  () =>
+    void toggleVideo(
+      cameraButton,
+      (activeRoom) => activeRoom.localParticipant.isCameraEnabled,
+      setCameraPublished,
+      setCamera,
+    ),
+);
 window.addEventListener('pagehide', () => void room?.disconnect());

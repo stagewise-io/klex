@@ -5,6 +5,11 @@ const GEMINI_VIDEO_MAX_FPS = 1;
 /** A replacement connection only gets the last frame back if it is this fresh. */
 const RESEND_MAX_AGE_MS = 30_000;
 const MAX_PENDING_DESCRIPTIONS = 8;
+/**
+ * Longest a description waits on a response that is owed but not started.
+ * An owed response can be lost with a connection and never arrive.
+ */
+const MAX_RESPONSE_WAIT_MS = 10_000;
 
 export interface GeminiLiveVideoInputStats {
   readonly framesSent: number;
@@ -16,8 +21,10 @@ export interface GeminiLiveVideoInputHooks {
   sendFrame(message: object): boolean;
   /** Records and sends context text the way other session updates are. */
   sendDescription(text: string): void;
-  /** True while the model speaks or owes a response. */
-  isModelBusy(): boolean;
+  /** True while the model is producing a turn. */
+  isModelSpeaking(): boolean;
+  /** True while a requested response has not started yet. */
+  isResponseOwed(): boolean;
   now?: () => number;
 }
 
@@ -32,6 +39,8 @@ export class GeminiLiveVideoInput implements RealtimeVideoInput {
   private readonly now: () => number;
   private latest: { frame: EncodedImageFrame; receivedAt: number } | undefined;
   private pendingDescriptions: string[] = [];
+  private pendingSince = 0;
+  private flushTimer: ReturnType<typeof setTimeout> | undefined;
   private connected = false;
   private closed = false;
   private framesSent = 0;
@@ -52,6 +61,7 @@ export class GeminiLiveVideoInput implements RealtimeVideoInput {
   async describe(text: string): Promise<void> {
     const trimmed = text.trim();
     if (this.closed || !trimmed) return;
+    if (this.pendingDescriptions.length === 0) this.pendingSince = this.now();
     this.pendingDescriptions.push(trimmed);
     if (this.pendingDescriptions.length > MAX_PENDING_DESCRIPTIONS)
       this.pendingDescriptions.shift();
@@ -82,7 +92,7 @@ export class GeminiLiveVideoInput implements RealtimeVideoInput {
 
   /**
    * Client content interrupts generation in Gemini Live, so descriptions wait
-   * for a point where the model is neither speaking nor owing a response.
+   * while the model speaks, and for a bounded time while a response is owed.
    */
   modelIdle(): void {
     this.flushDescriptions();
@@ -93,6 +103,8 @@ export class GeminiLiveVideoInput implements RealtimeVideoInput {
     this.connected = false;
     this.latest = undefined;
     this.pendingDescriptions = [];
+    clearTimeout(this.flushTimer);
+    this.flushTimer = undefined;
   }
 
   stats(): GeminiLiveVideoInputStats {
@@ -117,12 +129,21 @@ export class GeminiLiveVideoInput implements RealtimeVideoInput {
   }
 
   private flushDescriptions(): void {
+    clearTimeout(this.flushTimer);
+    this.flushTimer = undefined;
     if (
       !this.connected ||
       this.pendingDescriptions.length === 0 ||
-      this.hooks.isModelBusy()
+      this.hooks.isModelSpeaking()
     )
       return;
+    if (this.hooks.isResponseOwed()) {
+      const remaining = this.pendingSince + MAX_RESPONSE_WAIT_MS - this.now();
+      if (remaining > 0) {
+        this.flushTimer = setTimeout(() => this.flushDescriptions(), remaining);
+        return;
+      }
+    }
     this.hooks.sendDescription(this.pendingDescriptions.splice(0).join('\n'));
   }
 }

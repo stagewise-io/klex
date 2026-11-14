@@ -310,6 +310,34 @@ describe('Gemini live video across reconnects', () => {
       '[Video] Dana stopped sharing their screen.',
     ]);
   });
+  it('sends notes held for an owed response that a reconnect lost', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { sockets, processor } = await start({ video: true });
+      processorUnderTest = processor;
+      const video = processor.videoInput;
+      if (!video) throw new Error('Expected a video lane');
+      const first = sockets[0] as FakeGeminiSocket;
+      await processor.sendUpdate(update('Please answer this', true));
+      first.message(handleUpdate('handle-1'));
+      await video.describe('[Video] Dana stopped sharing their screen.');
+
+      first.drop(1011, 'Internal error');
+      const second = await nextSocket(sockets, 1);
+      second.open();
+      second.message({ setupComplete: {} });
+      expect(texts(second.after(1))).not.toContain(
+        '[Video] Dana stopped sharing their screen.',
+      );
+      // The owed response never starts on the resumed connection.
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(texts(second.after(1))).toContain(
+        '[Video] Dana stopped sharing their screen.',
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe('Gemini live session durability', () => {

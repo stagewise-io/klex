@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { EncodedImageFrame } from '../model-session';
 import { GeminiLiveVideoInput } from './video-input';
@@ -17,7 +17,7 @@ function still(detail: 'low' | 'high' = 'high'): EncodedImageFrame {
 function harness() {
   const frames: object[] = [];
   const descriptions: string[] = [];
-  const state = { now: 0, busy: false, sendSucceeds: true };
+  const state = { now: 0, busy: false, owed: false, sendSucceeds: true };
   const input = new GeminiLiveVideoInput({
     sendFrame: (message) => {
       if (!state.sendSucceeds) return false;
@@ -25,13 +25,18 @@ function harness() {
       return true;
     },
     sendDescription: (text) => descriptions.push(text),
-    isModelBusy: () => state.busy,
+    isModelSpeaking: () => state.busy,
+    isResponseOwed: () => state.owed,
     now: () => state.now,
   });
   return { input, frames, descriptions, state };
 }
 
 describe('GeminiLiveVideoInput', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('sends JPEG stills as realtime video with per-frame resolution', async () => {
     const { input, frames } = harness();
     input.connectionReady();
@@ -102,6 +107,48 @@ describe('GeminiLiveVideoInput', () => {
     state.busy = false;
     input.modelIdle();
     expect(descriptions).toEqual(['Dana started sharing.\nStill sharing.']);
+  });
+
+  it('waits a bounded time for an owed response that never starts', async () => {
+    vi.useFakeTimers();
+    const { input, descriptions, state } = harness();
+    state.owed = true;
+    input.connectionReady();
+    await input.describe('Dana started sharing.');
+    state.now += 9_999;
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(descriptions).toEqual([]);
+    state.now += 1;
+    await vi.advanceTimersByTimeAsync(1);
+    expect(descriptions).toEqual(['Dana started sharing.']);
+  });
+
+  it('keeps waiting past the bound while the model speaks', async () => {
+    vi.useFakeTimers();
+    const { input, descriptions, state } = harness();
+    state.owed = true;
+    input.connectionReady();
+    await input.describe('Dana started sharing.');
+    state.busy = true;
+    state.now += 20_000;
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(descriptions).toEqual([]);
+    state.busy = false;
+    state.owed = false;
+    input.modelIdle();
+    expect(descriptions).toEqual(['Dana started sharing.']);
+  });
+
+  it('flushes a long-deferred description on the next connection', async () => {
+    vi.useFakeTimers();
+    const { input, descriptions, state } = harness();
+    state.owed = true;
+    await input.describe('Dana started sharing.');
+    state.now += 15_000;
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(descriptions).toEqual([]);
+    input.connectionReady();
+    expect(descriptions).toEqual(['Dana started sharing.']);
   });
 
   it('keeps descriptions when setup was implied by model audio', async () => {

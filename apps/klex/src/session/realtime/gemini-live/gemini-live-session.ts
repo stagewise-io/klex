@@ -287,7 +287,8 @@ export class GeminiLiveSession implements RealtimeModelSession {
       ? new GeminiLiveVideoInput({
           sendFrame: (message) => this.sendLive(message),
           sendDescription: (text) => this.sendVideoDescription(text),
-          isModelBusy: () => this.modelTurnActive || this.awaitingResponse,
+          isModelSpeaking: () => this.modelTurnActive,
+          isResponseOwed: () => this.awaitingResponse,
         })
       : undefined;
     this.startupTimer = setTimeout(

@@ -176,7 +176,7 @@ function lastComposite(composites: VideoComposite[]) {
       size: [composite.width, composite.height],
       tiles: composite.tiles.map((tile) => [
         tile.rect.position,
-        tile.label,
+        `${tile.label.name} · ${tile.label.kind}`,
         tile.frame ? 'frame' : 'placeholder',
       ]),
     }
@@ -424,6 +424,59 @@ describe('RealtimeVision', () => {
     }
   });
 
+  it("frees a muted track's tile and restores it when the track returns", async () => {
+    const harness = setup();
+    const share = new FakeDescriptor('share', 'screenshare', 'Dana');
+    const camera = new FakeDescriptor('camera', 'camera', 'Lee');
+    await harness.add(share, camera);
+    share.current?.push(rawFrame(1, 10));
+    camera.current?.push(rawFrame(1, 100));
+    await harness.tick();
+    expect(lastComposite(harness.composites)?.tiles).toHaveLength(2);
+
+    // The transport ends a muted publication's descriptor.
+    await camera.unpublish();
+    await harness.tick();
+    expect(lastComposite(harness.composites)).toEqual({
+      size: [64, 36],
+      tiles: [['full', 'Dana · screen', 'frame']],
+    });
+    expect(harness.descriptions.at(-1)).toContain(
+      "You now see Dana's screen as live video",
+    );
+
+    // Unmuting publishes a new descriptor under the same id.
+    const unmuted = new FakeDescriptor('camera', 'camera', 'Lee');
+    await harness.add(unmuted);
+    expect(unmuted.isOpen).toBe(true);
+    unmuted.current?.push(rawFrame(2, 100));
+    await harness.tick();
+    expect(lastComposite(harness.composites)?.tiles).toEqual([
+      ['left', 'Dana · screen', 'frame'],
+      ['right', 'Lee · camera', 'frame'],
+    ]);
+    expect(harness.descriptions.at(-1)).toContain(
+      "left: Dana's screen; right: Lee's camera.",
+    );
+    await harness.vision.close();
+  });
+
+  it('opens a returning track even before its earlier descriptor closes', async () => {
+    const harness = setup();
+    const first = new FakeDescriptor('camera', 'camera', 'Lee');
+    await harness.add(first);
+    const returning = new FakeDescriptor('camera', 'camera', 'Lee');
+    await harness.add(returning);
+    expect(first.current?.isClosed).toBe(true);
+    expect(returning.isOpen).toBe(true);
+    // The late close of the earlier descriptor leaves the new tile alone.
+    await first.unpublish();
+    await harness.tick();
+    expect(returning.isOpen).toBe(true);
+    expect(harness.descriptions.at(-1)).toContain("You now see Lee's camera");
+    await harness.vision.close();
+  });
+
   it('closes every source and returns from run on close', async () => {
     const harness = setup();
     const share = new FakeDescriptor('share', 'screenshare');
@@ -439,12 +492,13 @@ describe('RealtimeVision', () => {
 
 describe('video tile labels and notes', () => {
   it('labels tiles with the display name or participant id and the kind', () => {
-    expect(tileLabel(new FakeDescriptor('a', 'screenshare', ' Dana '))).toBe(
-      'Dana · screen',
+    expect(tileLabel(new FakeDescriptor('a', 'screenshare', ' Dana '))).toEqual(
+      { name: 'Dana', kind: 'screen' },
     );
-    expect(tileLabel(new FakeDescriptor('b', 'camera', '  '))).toBe(
-      'b-participant · camera',
-    );
+    expect(tileLabel(new FakeDescriptor('b', 'camera', '  '))).toEqual({
+      name: 'b-participant',
+      kind: 'camera',
+    });
   });
 
   it('lists four tiles by grid position', () => {

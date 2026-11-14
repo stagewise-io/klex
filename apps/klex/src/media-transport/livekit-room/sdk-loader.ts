@@ -367,7 +367,8 @@ class RtcVideoPublicationAdapter implements LiveKitSdkRemoteVideoPublication {
   }
 }
 
-class RtcRoomAdapter implements LiveKitSdkRoom {
+/** @internal Exported for tests. */
+export class RtcRoomAdapter implements LiveKitSdkRoom {
   private readonly room: Room;
   private readonly tracks = new Map<RemoteAudioTrack, RtcRemoteTrackAdapter>();
   private readonly videoPublications = new Map<
@@ -394,6 +395,23 @@ class RtcRoomAdapter implements LiveKitSdkRoom {
     this.room.on(RoomEvent.ParticipantDisconnected, (participant) => {
       for (const sid of participant.trackPublications.keys())
         this.handleUnpublication(sid);
+    });
+    // A muted video publication sends no frames, so it is treated as gone
+    // until it is unmuted; clients mute camera toggles instead of
+    // unpublishing.
+    this.room.on(RoomEvent.TrackMuted, (publication) => {
+      const sid = publication.sid;
+      if (!sid || !this.videoPublications.has(sid)) return;
+      this.handleUnpublication(sid);
+      if (publication instanceof rtc.RemoteTrackPublication)
+        publication.setSubscribed(false);
+    });
+    this.room.on(RoomEvent.TrackUnmuted, (publication, participant) => {
+      if (
+        publication instanceof rtc.RemoteTrackPublication &&
+        participant instanceof rtc.RemoteParticipant
+      )
+        this.handlePublication(publication, participant);
     });
     this.room.on(RoomEvent.TrackSubscribed, (track, publication) => {
       if (!(track instanceof rtc.RemoteVideoTrack) || !publication.sid) return;
@@ -455,6 +473,7 @@ class RtcRoomAdapter implements LiveKitSdkRoom {
     if (
       !kind ||
       !publication.sid ||
+      publication.muted ||
       this.videoPublications.has(publication.sid)
     )
       return;

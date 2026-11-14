@@ -62,6 +62,8 @@ interface Discovered {
 interface TileState {
   readonly descriptor: VideoSourceDescriptor;
   readonly source: VideoSource;
+  /** Unique per opened source, so a reopened track never reuses a composite. */
+  readonly generation: number;
   latest?: RawVideoFrame;
   reopenTimer?: ReturnType<typeof setTimeout>;
 }
@@ -81,6 +83,7 @@ class RealtimeVisionModule implements RealtimeVision {
   private readonly tiles = new Map<string, TileState>();
   private readonly now: () => number;
   private discoveryOrder = 0;
+  private openGeneration = 0;
   private timer: ReturnType<typeof setInterval> | undefined;
   private lastNote = NO_VIDEO_NOTE;
   private lastSent: SentComposite | undefined;
@@ -171,7 +174,12 @@ class RealtimeVisionModule implements RealtimeVision {
       this.givenUp.add(descriptor.id);
       return;
     }
-    const tile: TileState = { descriptor, source };
+    this.openGeneration += 1;
+    const tile: TileState = {
+      descriptor,
+      source,
+      generation: this.openGeneration,
+    };
     this.tiles.set(descriptor.id, tile);
     void this.readFrames(tile);
     this.deps.logger.info(
@@ -285,7 +293,7 @@ class RealtimeVisionModule implements RealtimeVision {
       layout.width,
       layout.height,
       tiles.map((tile, index) => [
-        tile.descriptor.id,
+        tile.generation,
         frames[index]?.rotation ?? null,
       ]),
     ]);

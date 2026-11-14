@@ -9,11 +9,18 @@ export interface EncodedVideoStill {
   readonly height: number;
 }
 
+export interface TileLabel {
+  /** Display name or participant id; shortened when too long. */
+  readonly name: string;
+  /** `screen` or `camera`; always shown in full. */
+  readonly kind: string;
+}
+
 export interface CompositeTile {
   readonly rect: TileRect;
   /** Missing until the source delivers its first frame; drawn as a placeholder. */
   readonly frame?: RawVideoFrame;
-  readonly label: string;
+  readonly label: TileLabel;
 }
 
 export interface VideoComposite {
@@ -36,6 +43,7 @@ const PLACEHOLDER = '#2a2a2a';
 const LABEL_HEIGHT = 22;
 const LABEL_FONT_SIZE = 14;
 const MAX_LABEL_CHARACTERS = 48;
+const LABEL_SEPARATOR = ' · ';
 
 /** Returns undefined when sharp's native addon is unavailable. */
 export function createSharpVideoCompositeEncoder():
@@ -100,16 +108,27 @@ export function createSharpVideoCompositeEncoder():
   };
 }
 
+/**
+ * Formats a label within `MAX_LABEL_CHARACTERS`, e.g. `Dana · screen`.
+ * Only the name is shortened, so the kind always survives.
+ */
+export function formatTileLabel(label: TileLabel): string {
+  const room =
+    MAX_LABEL_CHARACTERS - LABEL_SEPARATOR.length - label.kind.length;
+  const name =
+    label.name.length > room
+      ? `${label.name.slice(0, Math.max(0, room - 1))}…`
+      : label.name;
+  return `${name}${LABEL_SEPARATOR}${label.kind}`;
+}
+
 /** A tile-sized SVG with the label in the bottom-left corner. */
 export function tileOverlaySvg(
   rect: TileRect,
-  label: string,
+  label: TileLabel,
   placeholder: boolean,
 ): string {
-  const text =
-    label.length > MAX_LABEL_CHARACTERS
-      ? `${label.slice(0, MAX_LABEL_CHARACTERS - 1)}…`
-      : label;
+  const text = formatTileLabel(label);
   const labelWidth = Math.min(rect.width, 12 + text.length * 8);
   const top = Math.max(0, rect.height - LABEL_HEIGHT);
   const background = placeholder

@@ -141,6 +141,25 @@ async function toggleVideo(
   }
 }
 
+/**
+ * Turning the camera off unpublishes it: `setCameraEnabled(false)` only mutes
+ * the track, and Klex should see the camera leave.
+ */
+async function setCameraPublished(
+  activeRoom: Room,
+  on: boolean,
+): Promise<void> {
+  const { localParticipant } = activeRoom;
+  if (on) {
+    await localParticipant.setCameraEnabled(true);
+    return;
+  }
+  const track = localParticipant.getTrackPublication(
+    Track.Source.Camera,
+  )?.track;
+  if (track) await localParticipant.unpublishTrack(track);
+}
+
 shareButton.addEventListener(
   'click',
   () =>
@@ -158,7 +177,7 @@ cameraButton.addEventListener(
     void toggleVideo(
       cameraButton,
       (activeRoom) => activeRoom.localParticipant.isCameraEnabled,
-      (activeRoom, on) => activeRoom.localParticipant.setCameraEnabled(on),
+      setCameraPublished,
       setCamera,
     ),
 );

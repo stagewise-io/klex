@@ -5,6 +5,7 @@ import { loadSharp } from '@/shared-utilities';
 
 import {
   createSharpVideoCompositeEncoder,
+  formatTileLabel,
   tileOverlaySvg,
 } from './composite-encoder';
 import { compositeLayout } from './composite-layout';
@@ -48,7 +49,7 @@ describe('createSharpVideoCompositeEncoder', () => {
           {
             rect: layout.tiles[0] as never,
             frame: frame(320, 180, 90),
-            label: 'Dana · camera',
+            label: { name: 'Dana', kind: 'camera' },
           },
         ],
       },
@@ -73,9 +74,9 @@ describe('createSharpVideoCompositeEncoder', () => {
             {
               rect: left as never,
               frame: frame(640, 360, 0, 250),
-              label: 'Dana · screen',
+              label: { name: 'Dana', kind: 'screen' },
             },
-            { rect: right as never, label: 'Lee · camera' },
+            { rect: right as never, label: { name: 'Lee', kind: 'camera' } },
           ],
         },
         { quality: 90 },
@@ -104,19 +105,35 @@ describe('tileOverlaySvg', () => {
     height: 288,
   } as const;
 
-  it('escapes and truncates the label', () => {
-    const svg = tileOverlaySvg(rect, `<Dana & "co"> ${'x'.repeat(80)}`, false);
-    expect(svg).toContain('&lt;Dana &amp; &quot;co&quot;&gt;');
-    expect(svg).toContain('…</text>');
+  it('escapes the label', () => {
+    const svg = tileOverlaySvg(
+      rect,
+      { name: '<Dana & "co">', kind: 'screen' },
+      false,
+    );
+    expect(svg).toContain('&lt;Dana &amp; &quot;co&quot;&gt; · screen</text>');
     expect(svg).not.toContain('<Dana');
   });
 
   it('fills placeholders and leaves frames uncovered', () => {
-    expect(tileOverlaySvg(rect, 'Lee · camera', true)).toContain(
-      '<rect width="512" height="288"',
-    );
-    expect(tileOverlaySvg(rect, 'Lee · camera', false)).not.toContain(
-      '<rect width="512" height="288"',
+    expect(
+      tileOverlaySvg(rect, { name: 'Lee', kind: 'camera' }, true),
+    ).toContain('<rect width="512" height="288"');
+    expect(
+      tileOverlaySvg(rect, { name: 'Lee', kind: 'camera' }, false),
+    ).not.toContain('<rect width="512" height="288"');
+  });
+});
+
+describe('formatTileLabel', () => {
+  it('shortens only the name so the kind survives', () => {
+    const name = `browser-${'0123abcd-'.repeat(4)}`;
+    const label = formatTileLabel({ name, kind: 'screen' });
+    expect(label).toHaveLength(48);
+    expect(label.endsWith('… · screen')).toBe(true);
+    expect(label.startsWith('browser-0123abcd')).toBe(true);
+    expect(formatTileLabel({ name: 'Dana', kind: 'camera' })).toBe(
+      'Dana · camera',
     );
   });
 });

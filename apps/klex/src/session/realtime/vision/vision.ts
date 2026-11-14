@@ -10,6 +10,7 @@ import type { RealtimeVideoInput } from '../model-session';
 import {
   type CompositeTile,
   createSharpVideoCompositeEncoder,
+  type TileLabel,
   type VideoCompositeEncoder,
 } from './composite-encoder';
 import {
@@ -99,6 +100,10 @@ class RealtimeVisionModule implements RealtimeVision {
     try {
       for await (const descriptor of this.deps.sources) {
         if (this.closed) break;
+        // A track that returns, e.g. after an unmute, keeps its id; the new
+        // descriptor replaces the earlier one even if that has not closed yet.
+        const previous = this.discovered.get(descriptor.id);
+        if (previous) this.forget(previous.descriptor);
         this.discoveryOrder += 1;
         this.discovered.set(descriptor.id, {
           descriptor,
@@ -228,15 +233,19 @@ class RealtimeVisionModule implements RealtimeVision {
 
   private handleGone(descriptor: VideoSourceDescriptor): void {
     if (this.discovered.get(descriptor.id)?.descriptor !== descriptor) return;
+    this.forget(descriptor);
+    this.reconcile();
+  }
+
+  private forget(descriptor: VideoSourceDescriptor): void {
     this.discovered.delete(descriptor.id);
     this.reopenAttempts.delete(descriptor.id);
     this.givenUp.delete(descriptor.id);
     const tile = this.tiles.get(descriptor.id);
-    if (tile) {
+    if (tile?.descriptor === descriptor) {
       this.tiles.delete(descriptor.id);
       void this.closeTile(tile);
     }
-    this.reconcile();
   }
 
   /** Open tiles in tile order. */
@@ -365,9 +374,9 @@ function kindName(descriptor: VideoSourceDescriptor): string {
   return descriptor.metadata.kind === 'screenshare' ? 'screen' : 'camera';
 }
 
-/** The label burned into a tile, e.g. `Dana · screen`. */
-export function tileLabel(descriptor: VideoSourceDescriptor): string {
-  return `${displayName(descriptor)} · ${kindName(descriptor)}`;
+/** The label burned into a tile. */
+export function tileLabel(descriptor: VideoSourceDescriptor): TileLabel {
+  return { name: displayName(descriptor), kind: kindName(descriptor) };
 }
 
 const TILE_POSITIONS: Record<number, readonly TilePosition[]> = {

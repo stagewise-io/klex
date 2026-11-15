@@ -989,9 +989,9 @@ class ChatSessionModule implements AgentSession {
 
     // While a lease owns the generation lane, the event is recorded in
     // canonical history first and then forwarded to the lease holder as
-    // context. Inbox events come from MCP servers, which cannot tell a
-    // routine update from one worth speaking about, so a live call never
-    // starts a reply because of one; the caller's speech still does.
+    // context. Inbox events normally come from MCP servers, which cannot
+    // tell a routine update from one worth speaking about, so a live call
+    // never starts a reply because of one; the caller's speech still does.
     if (this.leaseManager.isLeased()) {
       return this.leaseManager.forward(event, false);
     }

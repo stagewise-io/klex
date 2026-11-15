@@ -32,6 +32,7 @@ import { createGPTLiveProtocolState } from './gpt-live';
 import {
   buildGPTLiveSessionConfig,
   type GPTLiveSessionConfig,
+  truncateToTokenBudget,
 } from './session-config';
 import { createGPTLiveTranscriptGrouper } from './transcript-groups';
 import {
@@ -88,8 +89,9 @@ const MAX_TOOL_RESULT_NODES = 512;
 const MAX_TOOL_RESULT_DEPTH = 32;
 const MAX_TOOL_RESULT_STRING_CHARACTERS = 4_096;
 const MAX_TOOL_RESULT_COLLECTION_ENTRIES = 256;
-// GPT-Live caps each thinking append at 500 tokens; stay well below it.
-const MAX_THINKING_CHARACTERS = 1_500;
+// GPT-Live rejects thinking appends above 500 provider tokens; leave headroom
+// for provider-side framing.
+const MAX_THINKING_TOKENS = 450;
 const DEFAULT_VOICE = 'marin';
 const DEFAULT_FRONTEND_INSTRUCTIONS =
   'You are Klex in a live voice conversation. Speak clearly and briefly. Delegate requests that require reasoning, business rules, or tools to the Responses backend.';
@@ -195,7 +197,7 @@ class GPTLiveSession implements RealtimeModelSession {
           type: 'session.thinking.append',
           event_id: `${update.eventId}:thinking`,
           delegation_id: null,
-          content: text.slice(0, MAX_THINKING_CHARACTERS),
+          content: truncateToTokenBudget(text, MAX_THINKING_TOKENS),
         };
     if (this.replayedUpdates.length >= MAX_REPLAYED_UPDATES)
       this.recoverySafe = false;

@@ -261,6 +261,40 @@ function countInitialItemTokens(item: GPTLiveInitialItem): number {
   return tokenizer.encode(text).length + 8;
 }
 
+/**
+ * Returns the longest prefix of whole pieces whose summed `o200k_base` token
+ * counts fit `maxTokens`. Pieces are whitespace-delimited runs of at most
+ * {@link MAX_TOKEN_PIECE_CODE_POINTS} code points: js-tiktoken is quadratic in
+ * the length of an unbroken run (thousands of emoji or CJK characters take
+ * seconds), and joining pieces can only merge tokens across their boundaries,
+ * so the sum is a conservative count that never splits a character.
+ */
+export function truncateToTokenBudget(text: string, maxTokens: number): string {
+  // Every token covers at least one UTF-8 byte.
+  if (Buffer.byteLength(text, 'utf8') <= maxTokens) return text;
+  let used = 0;
+  let prefix = '';
+  for (const [run] of text.matchAll(TOKEN_PIECE_RUN)) {
+    const codePoints = Array.from(run);
+    for (
+      let start = 0;
+      start < codePoints.length;
+      start += MAX_TOKEN_PIECE_CODE_POINTS
+    ) {
+      const piece = codePoints
+        .slice(start, start + MAX_TOKEN_PIECE_CODE_POINTS)
+        .join('');
+      used += tokenizer.encode(piece).length;
+      if (used > maxTokens) return prefix;
+      prefix += piece;
+    }
+  }
+  return prefix;
+}
+
+const TOKEN_PIECE_RUN = /\s+|\S+/gu;
+const MAX_TOKEN_PIECE_CODE_POINTS = 32;
+
 function toFunctionTools(
   tools: readonly InteractionToolDescriptor[],
 ): GPTLiveFunctionTool[] {

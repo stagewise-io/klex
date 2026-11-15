@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 
+import { getEncoding } from 'js-tiktoken';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { RootLogger } from '@stagewise/logger';
@@ -16,6 +17,34 @@ import {
   createGPTLiveProcessorFactory,
   type GPTLiveWebSocket,
 } from './gpt-live-session';
+import { truncateToTokenBudget } from './session-config';
+
+const tokenizer = getEncoding('o200k_base');
+
+describe('truncateToTokenBudget', () => {
+  it('keeps text within budget unchanged', () => {
+    expect(truncateToTokenBudget('Ada joined the meeting.', 450)).toBe(
+      'Ada joined the meeting.',
+    );
+    const prose = 'Ada asked whether the launch moved to Thursday. '.repeat(20);
+    expect(tokenizer.encode(prose).length).toBeLessThan(450);
+    expect(truncateToTokenBudget(prose, 450)).toBe(prose);
+  });
+
+  it('cuts dense text to the budget on a character boundary', () => {
+    for (const text of [
+      '😀'.repeat(1_000),
+      '会'.repeat(3_000),
+      '{"a":1}'.repeat(500),
+    ]) {
+      const truncated = truncateToTokenBudget(text, 50);
+      expect(tokenizer.encode(truncated).length).toBeLessThanOrEqual(50);
+      expect(truncated.length).toBeGreaterThan(0);
+      expect(text.startsWith(truncated)).toBe(true);
+      expect(truncated).not.toMatch(/\uFFFD|\p{Cs}/u);
+    }
+  });
+});
 
 class FakeSocket extends EventEmitter implements GPTLiveWebSocket {
   readyState = 0;
@@ -695,10 +724,30 @@ describe('GPT-Live model session', () => {
       ),
     ).toHaveLength(1);
 
+    const dense = '会議😀'.repeat(2_000);
+    await session.sendUpdate({
+      sequence: 9,
+      eventId: 'notice-dense',
+      event: {
+        ...event,
+        eventId: 'notice-dense',
+        context: {
+          ...event.context,
+          content: [{ type: 'text', text: dense }],
+        },
+      },
+      requestResponse: false,
+    });
+    const thinking = JSON.parse(setupResult.socket.sent.at(-1) ?? '{}');
+    expect(thinking.type).toBe('session.thinking.append');
+    expect(tokenizer.encode(thinking.content).length).toBeLessThanOrEqual(450);
+    expect(thinking.content).not.toMatch(/\uFFFD|\p{Cs}/u);
+    expect(thinking.content.length).toBeGreaterThan(0);
+
     const closing = session.close();
     await expect(
       session.sendUpdate({
-        sequence: 9,
+        sequence: 10,
         eventId: 'notice-3',
         event: { ...event, eventId: 'notice-3' },
         requestResponse: false,

@@ -2,6 +2,13 @@
 
 All notable Klex changes are documented here.
 
+## 0.35.1 (2026-11-15)
+
+### Bug Fixes
+
+- bound GPT-Live thinking appends by tokens (793902d)
+- add push notifications to live calls without requesting a reply (ddd5e9c)
+
 ## 0.35.0 (2026-11-15)
 
 ### Features

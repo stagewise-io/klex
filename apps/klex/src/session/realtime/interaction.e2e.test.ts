@@ -305,7 +305,7 @@ describe('realtime and default chat interaction', () => {
     });
     expect(processor.receivedUpdates[1]).toMatchObject({
       eventId: 'voice:notification-1',
-      requestResponse: true,
+      requestResponse: false,
     });
 
     await processor.emit({

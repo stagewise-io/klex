@@ -88,6 +88,8 @@ const MAX_TOOL_RESULT_NODES = 512;
 const MAX_TOOL_RESULT_DEPTH = 32;
 const MAX_TOOL_RESULT_STRING_CHARACTERS = 4_096;
 const MAX_TOOL_RESULT_COLLECTION_ENTRIES = 256;
+// GPT-Live caps each thinking append at 500 tokens; stay well below it.
+const MAX_THINKING_CHARACTERS = 1_500;
 const DEFAULT_VOICE = 'marin';
 const DEFAULT_FRONTEND_INSTRUCTIONS =
   'You are Klex in a live voice conversation. Speak clearly and briefly. Delegate requests that require reasoning, business rules, or tools to the Responses backend.';
@@ -131,6 +133,7 @@ class GPTLiveSession implements RealtimeModelSession {
   private reconnectReady: Deferred<void> | undefined;
   private readonly replayedUpdates: Array<{
     readonly item: Record<string, unknown>;
+    readonly thinking: Record<string, unknown> | undefined;
     readonly requestResponse: boolean;
   }> = [];
   private recoverySafe = true;
@@ -173,25 +176,33 @@ class GPTLiveSession implements RealtimeModelSession {
     await this.ready.promise;
     if (!this.acceptingUpdates)
       throw new Error('GPT-Live session is no longer accepting updates');
+    const text = renderInteractionUpdateText(update.event);
     const item = {
       type: 'response.item.create',
       event_id: update.eventId,
       item: {
         type: 'message',
         role: 'user',
-        content: [
-          {
-            type: 'input_text',
-            text: renderInteractionUpdateText(update.event),
-          },
-        ],
+        content: [{ type: 'input_text', text }],
       },
     };
+    // Items only reach the Responses backend. Without a response request the
+    // speaking frontend would never see a silent update, so mirror it as
+    // quiet thinking context, which GPT-Live does not speak on append.
+    const thinking = update.requestResponse
+      ? undefined
+      : {
+          type: 'session.thinking.append',
+          event_id: `${update.eventId}:thinking`,
+          delegation_id: null,
+          content: text.slice(0, MAX_THINKING_CHARACTERS),
+        };
     if (this.replayedUpdates.length >= MAX_REPLAYED_UPDATES)
       this.recoverySafe = false;
     else
       this.replayedUpdates.push({
         item,
+        thinking,
         requestResponse: update.requestResponse,
       });
     const reconnectReady = this.reconnectReady;
@@ -200,6 +211,7 @@ class GPTLiveSession implements RealtimeModelSession {
       return;
     }
     this.send(item);
+    if (thinking !== undefined) this.send(thinking);
     if (update.requestResponse)
       this.send({
         type: 'response.create',
@@ -729,6 +741,7 @@ class GPTLiveSession implements RealtimeModelSession {
     let requestResponse = false;
     for (const update of this.replayedUpdates) {
       this.send(update.item);
+      if (update.thinking !== undefined) this.send(update.thinking);
       requestResponse = requestResponse || update.requestResponse;
     }
     if (requestResponse)

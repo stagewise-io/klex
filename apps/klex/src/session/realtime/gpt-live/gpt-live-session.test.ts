@@ -656,23 +656,44 @@ describe('GPT-Live model session', () => {
       event,
       requestResponse: false,
     });
-    expect(JSON.parse(setupResult.socket.sent.at(-1) ?? '{}')).toMatchObject({
+    const silent = setupResult.socket.sent
+      .slice(-2)
+      .map((entry) => JSON.parse(entry));
+    expect(silent[0]).toMatchObject({
       type: 'response.item.create',
       event_id: 'notice-1',
       item: { role: 'user' },
     });
-    expect(setupResult.socket.sent.at(-1)).toContain('source-env');
-    expect(setupResult.socket.sent.at(-1)).toContain('Deployment complete');
+    expect(JSON.stringify(silent[0])).toContain('source-env');
+    expect(JSON.stringify(silent[0])).toContain('Deployment complete');
+    expect(silent[1]).toEqual({
+      type: 'session.thinking.append',
+      event_id: 'notice-1:thinking',
+      delegation_id: null,
+      content: silent[0].item.content[0].text,
+    });
     await session.sendUpdate({
       sequence: 8,
       eventId: 'notice-2',
       event: { ...event, eventId: 'notice-2' },
       requestResponse: true,
     });
-    expect(JSON.parse(setupResult.socket.sent.at(-1) ?? '{}')).toEqual({
+    const responsive = setupResult.socket.sent
+      .slice(-2)
+      .map((entry) => JSON.parse(entry));
+    expect(responsive[0]).toMatchObject({
+      type: 'response.item.create',
+      event_id: 'notice-2',
+    });
+    expect(responsive[1]).toEqual({
       type: 'response.create',
       event_id: 'notice-2:respond',
     });
+    expect(
+      setupResult.socket.sent.filter((entry) =>
+        entry.includes('session.thinking.append'),
+      ),
+    ).toHaveLength(1);
 
     const closing = session.close();
     await expect(
@@ -911,8 +932,19 @@ describe('GPT-Live model session', () => {
           type: 'response.item.create',
           event_id: 'notice-2',
         }),
+        expect.objectContaining({
+          type: 'session.thinking.append',
+          event_id: 'notice-1:thinking',
+        }),
+        expect.objectContaining({
+          type: 'session.thinking.append',
+          event_id: 'notice-2:thinking',
+        }),
       ]),
     );
+    expect(
+      replacementEvents?.some((entry) => entry.type === 'response.create'),
+    ).toBe(false);
   });
 
   it('fails boundedly when a replacement never becomes ready', async () => {

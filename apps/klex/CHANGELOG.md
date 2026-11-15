@@ -2,6 +2,24 @@
 
 All notable Klex changes are documented here.
 
+## 0.35.0 (2026-11-15)
+
+### Features
+
+- tile every published video track into one frame (1ea0daf)
+- let Gemini Live calls see shared screens (9f11c7b)
+
+### Bug Fixes
+
+- send the first composite of a reopened video source (51f82a7)
+- free tiles of muted video and keep label kinds (b486689)
+- bound how long video notes wait for an owed response (1523621)
+- close video sources that lose a focus race (7f29d55)
+- keep the Gemini close reason when writes race the close (694b3a4)
+- send Gemini video media resolution as an object (a08e584)
+- require audio in media capabilities (86bc85b)
+- load sharp in non-SEA ESM builds (3af70ee)
+
 ## 0.34.0 (2026-11-13)
 
 ### Features

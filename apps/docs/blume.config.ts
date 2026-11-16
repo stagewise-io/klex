@@ -78,7 +78,6 @@ export default defineConfig({
   redirects: [
     // English: pre-tab URLs → current (re-sectioned) paths.
     { from: '/', to: '/bot' },
-    { from: '/quickstart', to: '/bot/quickstart' },
     // Use cases are being reworked; keep the old route usable in the meantime.
     { from: '/bot/use-cases', to: '/bot', status: 302 },
     { from: '/architecture', to: '/bot/concepts/how-bots-work' },
@@ -112,7 +111,6 @@ export default defineConfig({
       ];
       const unchanged = [
         '',
-        '/quickstart',
         '/concepts/soul',
         '/concepts/god-messages',
         '/concepts/data-directory',

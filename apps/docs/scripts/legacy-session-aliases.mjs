@@ -1,8 +1,8 @@
 import { copyFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
-// A static meta-refresh drops URL fragments. Serve the current sessions page
-// at the pre-tab path as well, preserving legacy deep links without JavaScript.
+// A static meta-refresh drops URL fragments. Serve current sessions and
+// quickstart pages at pre-tab paths to preserve deep links without JavaScript.
 const locales = [
   '',
   'ar',
@@ -23,4 +23,10 @@ for (const locale of locales) {
   const destination = join(base, 'concepts/cognitive-architecture');
   await mkdir(destination, { recursive: true });
   await copyFile(source, join(destination, 'index.html'));
+  const quickstart = join(base, 'quickstart');
+  await mkdir(quickstart, { recursive: true });
+  await copyFile(
+    join(base, 'bot/quickstart/index.html'),
+    join(quickstart, 'index.html'),
+  );
 }

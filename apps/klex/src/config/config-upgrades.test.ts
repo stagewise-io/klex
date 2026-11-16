@@ -72,6 +72,44 @@ afterEach(async () => {
 });
 
 describe('frozen persisted config upgrades', () => {
+  it('persists watch intent across registered startup without persisting cursors', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'klex-event-intent-'));
+    directories.push(directory);
+    const fixture = JSON.parse(
+      await readFile(new URL('config-v11.json', fixtures), 'utf8'),
+    );
+    await writeFile(join(directory, 'config.json'), JSON.stringify(fixture));
+    const events = [
+      { name: 'webhook.received', arguments: { token: '${env:WATCH_TOKEN}' } },
+    ];
+    for (let run = 0; run < 2; run++) {
+      const localData = createLocalData({
+        logging,
+        dataDirectory: directory,
+        klexVersion: KLEX_VERSION,
+        stores: [CONFIG_STORE_DEFINITION],
+      });
+      await localData.start();
+      const config = createConfig({
+        logging,
+        dataDirectory: directory,
+        env: { PRIMARY_API_KEY: 'fixture-key', WATCH_TOKEN: 'resolved-secret' },
+      });
+      await config.start();
+      if (run === 0)
+        await config.addMcpServer('events-test', {
+          url: 'https://test.example/mcp',
+          events,
+        });
+      expect(config.get().mcpServers['events-test']?.events).toEqual(events);
+      await config.close();
+      await localData.close();
+    }
+    const bytes = await readFile(join(directory, 'config.json'), 'utf8');
+    expect(bytes).toContain('${env:WATCH_TOKEN}');
+    expect(bytes).not.toContain('resolved-secret');
+    expect(bytes).not.toContain('cursor');
+  });
   it.each(
     cases.flatMap((version) =>
       version === 'v1'
@@ -138,7 +176,7 @@ describe('frozen persisted config upgrades', () => {
           store: 'config',
           schemaVersion: 11,
           compatibilityVersion: 8,
-          minimumKlexVersion: '0.33.0',
+          minimumKlexVersion: '0.36.0',
           writtenByKlexVersion: KLEX_VERSION,
         },
       });
@@ -373,7 +411,8 @@ describe('frozen persisted config upgrades', () => {
     expect(persisted).toEqual(originalPayload);
     expect(_klex).toMatchObject({
       schemaVersion: 11,
-      minimumKlexVersion: '0.33.0',
+      // Existing schema-11 fixture metadata is not rewritten on a read-only startup.
+      minimumKlexVersion: original._klex.minimumKlexVersion,
     });
     const beforeStartup = await snapshot(directory);
     await start();
@@ -448,7 +487,7 @@ describe('frozen persisted config upgrades', () => {
     expect(migrated).toEqual(payload);
     expect(_klex).toMatchObject({
       schemaVersion: 11,
-      minimumKlexVersion: '0.33.0',
+      minimumKlexVersion: '0.36.0',
     });
   });
 

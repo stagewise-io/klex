@@ -16,6 +16,21 @@ Owns message history, inbox, extension handler, fallback manager, backoff manage
 
 **Loop:** processes one turn per iteration. Each iteration first flushes `pendingImmediate`, so input queued between turns (backoff wait, transcript writes, idle checkpoint apply) is in history before any decision. Goes idle only when the inbox deferred buffer is empty, no idle-time input is pending, no backoff retry is due, and every non-deferrable input appended to history was consumed by a clean step. An empty inbox alone never means idle: immediate input goes straight to history. If a turn fails completely (all models exhausted) and no new input arrives, applies exponential backoff. A turn that fails because the provider rejected the request skips backoff and its termination counter; the session stays alive and the next inbox input starts a fresh turn. Fatal errors terminate immediately.
 
+## Agent-level MCP Event watches
+
+The main-session MCP ingress exposes `listMcpEvents`, `watchMcpEvents` and
+`unwatchMcpEvents`. Event descriptors are loaded on demand; the server summary
+advertises Events support without injecting schemas. Watches persist as agent
+configuration, not session-owned resource windows. Closing or compacting a chat
+does not stop them. Events use the normal ingress inbox and external-data renderer.
+
+A `mcp-watched-events` data part stores the complete observed watch list for
+checkpoint recovery; its ordinary rendering is an initial full baseline followed
+only by added/removed/changed rows. Cutoff carry uses historical state, not newer
+live state. Missing history gets a fresh baseline at the next step. No heartbeat
+metadata or subscription arguments enter automatic context, and status observation
+does not trigger a model turn. Unwatch does not retract already-ingested events.
+
 ## Inbox
 
 Three-urgency event buffer. Two entry points: `send(event)` for context events (from MCP push notifications, session host) and `sendMessage(message, urgency)` for native messages (from extensions). Both share the same urgency semantics.

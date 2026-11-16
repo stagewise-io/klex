@@ -27,7 +27,11 @@ function fakeClient(opts: {
     getServerCapabilities: () => opts.serverCapabilities,
     registerCapabilities: vi.fn(),
     request: vi.fn(
-      async (req: never, schema: { parse(v: unknown): unknown }) => {
+      async (
+        req: never,
+        schema: { parse(v: unknown): unknown },
+        _options?: { signal?: AbortSignal },
+      ) => {
         requests.push(req);
         return schema.parse(opts.respond?.(req) ?? {});
       },
@@ -88,6 +92,42 @@ describe('registerEventsClient', () => {
     const list = await events.listEvents();
     expect(list.map((e) => e.name)).toEqual(['a', 'b']);
     expect(f.requests[1]?.params['cursor']).toBe('p2');
+  });
+
+  it('returns one catalogue page without conflating replay cursors', async () => {
+    const f = fakeClient({
+      serverCapabilities: supported,
+      respond: () => ({
+        events: [{ name: 'x', delivery: ['poll'] }],
+        nextCursor: 'next',
+      }),
+    });
+    const events = registerEventsClient(f.client);
+    expect((await events.listEventsPage('page')).nextCursor).toBe('next');
+    expect(f.requests[0]?.params['cursor']).toBe('page');
+    expect(f.requests).toHaveLength(1);
+  });
+
+  it('rejects oversized pages and forwards cancellation', async () => {
+    const f = fakeClient({
+      serverCapabilities: supported,
+      respond: () => ({
+        events: [
+          {
+            name: 'x',
+            description: 'x'.repeat(1024 * 1024),
+            delivery: ['poll'],
+          },
+        ],
+      }),
+    });
+    const signal = new AbortController().signal;
+    await expect(
+      registerEventsClient(f.client).listEventsPage(undefined, {
+        request: { signal },
+      }),
+    ).rejects.toThrow('limit');
+    expect(f.raw.request.mock.calls[0]?.[2]).toEqual({ signal });
   });
 
   it('discovers support when neither era nor capabilities are known', async () => {

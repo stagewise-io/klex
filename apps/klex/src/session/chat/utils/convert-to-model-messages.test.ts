@@ -164,7 +164,7 @@ describe('data-context materialization', () => {
     ['events', 'event'],
     ['push-notifications', 'push-notification'],
   ])(
-    'renders %s with envelope, data divider and unchanged metadata',
+    'renders %s without delivery IDs and preserves payload metadata',
     async (origin, kind) => {
       await convertToModelMessagesExtended(
         [
@@ -174,7 +174,18 @@ describe('data-context materialization', () => {
               {
                 origin,
                 eventId: 'e1',
+                type: 'message.received',
+                createdAt: '2026-11-16T09:39:13Z',
+                ...(origin === 'events'
+                  ? {
+                      _meta: {
+                        'example.com/text': 'noisy source instructions',
+                      },
+                    }
+                  : {}),
                 data: {
+                  eventId: 'payload-id',
+                  _meta: { useful: true },
                   content: 'server field',
                   nested: { json: '{ "x": 1 }' },
                 },
@@ -192,8 +203,8 @@ describe('data-context materialization', () => {
         type: 'text',
         text:
           origin === 'events'
-            ? `input "monitoring" ${kind}\n¦eventId: e1\ndata\n¦content: server field\n¦nested:\n¦  json: '{ "x": 1 }'\n`
-            : `input "monitoring" ${kind}\n¦eventId: e1\ndata\n¦metadata:\n¦  content: server field\n¦  nested:\n¦    json: '{ "x": 1 }'\n¦content:\n`,
+            ? `input "monitoring" ${kind}\n¦type: message.received\n¦createdAt: 2026-11-16T09:39:13Z\ndata\n¦eventId: payload-id\n¦_meta:\n¦  useful: true\n¦content: server field\n¦nested:\n¦  json: '{ "x": 1 }'\n`
+            : `input "monitoring" ${kind}\n¦type: message.received\n¦createdAt: 2026-11-16T09:39:13Z\ndata\n¦metadata:\n¦  eventId: payload-id\n¦  _meta:\n¦    useful: true\n¦  content: server field\n¦  nested:\n¦    json: '{ "x": 1 }'\n¦content:\n`,
       });
       expect(parts?.[1]).toEqual({
         type: 'text',

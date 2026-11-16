@@ -265,7 +265,16 @@ function materializeContextPart(
   const { origin, data: payload, ...envelope } = data.metadata;
   const isMcp = origin === 'events' || origin === 'push-notifications';
   const kind = origin === 'events' ? 'event' : 'push-notification';
-  const fields = isMcp ? envelope : {};
+  // Delivery IDs stay internal; Events extension metadata is not model context.
+  // Payload fields are intentionally untouched, including IDs and nested _meta.
+  const fields = isMcp
+    ? Object.fromEntries(
+        Object.entries(envelope).filter(
+          ([key]) =>
+            key !== 'eventId' && !(origin === 'events' && key === '_meta'),
+        ),
+      )
+    : {};
   const hasPayload = Object.hasOwn(data.metadata, 'data');
   const body =
     origin === 'events'

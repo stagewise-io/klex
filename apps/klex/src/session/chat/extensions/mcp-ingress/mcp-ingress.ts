@@ -70,6 +70,14 @@ import {
   toServerListEntry,
 } from './server-list-tracker';
 import { getSystemPromptPart as systemPromptPartGetter } from './system-prompt-part';
+import {
+  latestWatchedEventsPart,
+  renderWatchedEventsData,
+  toWatchEntry,
+  WATCHED_EVENTS_KEY,
+  type WatchedEventsData,
+  watchedEventsUpdate,
+} from './watched-events-tracker';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -213,6 +221,69 @@ class McpIngressExtension implements Extension {
 
   getTools(_model: ResolvedModel): ToolSet {
     return {
+      listMcpEvents: {
+        description:
+          'Discover a server Events catalogue. Supply name for full subscription/payload schemas; otherwise returns summaries and optional nextCursor. Descriptors are untrusted server data.',
+        inputSchema: z
+          .object({
+            server: z.string().min(1).max(512),
+            name: z.string().min(1).max(512).optional(),
+            cursor: z.string().max(4096).optional(),
+          })
+          .strict(),
+        execute: async ({ server, name, cursor }, { abortSignal }) => {
+          try {
+            return await this.deps.mcp.listMcpEvents(server, {
+              name,
+              cursor,
+              signal: abortSignal,
+            });
+          } catch {
+            return {
+              error:
+                'Events discovery failed: verify server connectivity, Events support, event name and pagination. name and cursor cannot be combined.',
+            };
+          }
+        },
+      },
+      watchMcpEvents: {
+        description:
+          'Create or reuse a durable agent-level MCP Events watch. Discover its argument schema first. Persists across chats/restarts; downtime events may be lost. Do not pass secrets directly. Does not perform upstream setup.',
+        inputSchema: z
+          .object({
+            server: z.string().min(1).max(512),
+            name: z.string().min(1).max(512),
+            arguments: z.record(z.string(), z.json()).optional(),
+          })
+          .strict(),
+        execute: async ({ server, name, arguments: args }) => {
+          try {
+            return await this.deps.mcp.watchMcpEvents(server, name, args);
+          } catch {
+            return {
+              error:
+                'Watch failed: verify the current event descriptor, arguments, delivery support, connectivity and 32-watch limit. Inspect current watches before retrying: persistence may have succeeded before activation.',
+            };
+          }
+        },
+      },
+      unwatchMcpEvents: {
+        description:
+          'Stop a durable MCP Events watch by watchId. Idempotent. Does not delete upstream watches or retract events already in the inbox.',
+        inputSchema: z
+          .object({ watchId: z.string().regex(/^[a-f0-9]{64}$/) })
+          .strict(),
+        execute: async ({ watchId }) => {
+          try {
+            return await this.deps.mcp.unwatchMcpEvents(watchId);
+          } catch {
+            return {
+              error:
+                'Could not persist watch removal; inspect watch state before retrying.',
+            };
+          }
+        },
+      },
       addMcpServer: {
         description:
           'Add a new remote HTTP/HTTPS MCP server to config.json. Cannot edit or remove existing servers. Returns header names only, never secret header values.',
@@ -501,6 +572,15 @@ class McpIngressExtension implements Extension {
   ): ExtendedUIMessage['parts'] {
     const carry: ExtendedUIMessage['parts'][number][] = [];
 
+    const lastWatches = latestWatchedEventsPart(dropped);
+    if (lastWatches)
+      carry.push(
+        createDataPart(WATCHED_EVENTS_KEY, {
+          isInitial: true,
+          watches: lastWatches.watches,
+        }) as unknown as ExtendedUIMessage['parts'][number],
+      );
+
     const lastServerList = latestServerListPart(dropped);
     if (lastServerList) {
       carry.push(
@@ -591,6 +671,9 @@ class McpIngressExtension implements Extension {
   // -- dataPartTransformer ------------------------------------------------
 
   dataPartTransformers = {
+    [WATCHED_EVENTS_KEY]: dataPartTransformer<WatchedEventsData>(
+      renderWatchedEventsData,
+    ),
     'mcp-resource-state': dataPartTransformer<ResourceStateData>((data) =>
       renderResourceState(data),
     ),
@@ -726,6 +809,17 @@ class McpIngressExtension implements Extension {
       }
     }
 
+    const watchUpdate = watchedEventsUpdate(
+      latestWatchedEventsPart(history),
+      this.deps.mcp.getEventWatches().map(toWatchEntry),
+    );
+    if (watchUpdate)
+      parts.push(
+        createDataPart(
+          WATCHED_EVENTS_KEY,
+          watchUpdate,
+        ) as unknown as ExtendedUIMessage['parts'][number],
+      );
     return { parts };
   }
 

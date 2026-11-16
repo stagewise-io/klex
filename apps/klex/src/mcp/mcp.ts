@@ -6,9 +6,13 @@ import type {
   Resource,
   ResourceTemplateType,
 } from '@modelcontextprotocol/client';
+import { z } from 'zod';
 
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
-import type { EventOccurrence } from '@stagewise/mcp-extension-events';
+import type {
+  EventDescriptor,
+  EventOccurrence,
+} from '@stagewise/mcp-extension-events';
 import type {
   PushNotification,
   PushNotificationNotification,
@@ -24,6 +28,7 @@ import type { CloudConnectivity } from '@/cloud-connectivity';
 import {
   type Config,
   ConfigValidationError,
+  type McpEventSubscription,
   type McpServerConfig,
 } from '@/config';
 import {
@@ -241,7 +246,23 @@ export interface McpToolCallRecord {
   finishedAt: string | null;
 }
 
+export interface McpEventWatch extends EventSubscriptionStatus {
+  watchId: string;
+  server: string;
+}
+
 export interface Mcp extends ToolProvider {
+  listMcpEvents(
+    server: string,
+    options?: { name?: string; cursor?: string; signal?: AbortSignal },
+  ): Promise<{ events: EventDescriptor[]; nextCursor?: string }>;
+  watchMcpEvents(
+    server: string,
+    name: string,
+    args?: Record<string, unknown>,
+  ): Promise<{ watch: McpEventWatch; alreadyExisted: boolean }>;
+  unwatchMcpEvents(watchId: string): Promise<{ removed: boolean }>;
+  getEventWatches(): McpEventWatch[];
   start(): Promise<void>;
   /** Removes configuration, cancels authorization, and forgets/revokes OAuth credentials. */
   removeServer(namespace: string): Promise<void>;
@@ -945,6 +966,197 @@ class McpModule implements Mcp {
     this.reconcile(structuredClone(servers));
   }
 
+  async listMcpEvents(
+    server: string,
+    options: { name?: string; cursor?: string; signal?: AbortSignal } = {},
+  ): Promise<{ events: EventDescriptor[]; nextCursor?: string }> {
+    if (options.name !== undefined && options.cursor !== undefined)
+      throw new Error('name and cursor cannot be combined');
+    const connection = this.servers.get(server)?.connection;
+    if (!connection?.supportsEvents || !connection.events)
+      throw new Error('Events server unavailable or unsupported');
+    const signal = options.signal ?? AbortSignal.timeout(30000);
+    const events: EventDescriptor[] = [];
+    let cursor = options.cursor;
+    const seen = new Set<string>();
+    for (let page = 0; page < 100; page++) {
+      const result = await connection.events.listEventsPage(cursor, {
+        request: { signal },
+      });
+      if (signal.aborted || this.servers.get(server)?.connection !== connection)
+        throw new Error('Events connection changed');
+      if (options.name !== undefined) {
+        const descriptor = result.events.find(
+          (item) => item.name === options.name,
+        );
+        if (descriptor) {
+          if (Buffer.byteLength(JSON.stringify(descriptor)) > 65536)
+            throw new Error('Event descriptor exceeds limit');
+          return { events: [descriptor] };
+        }
+      } else {
+        events.push(
+          ...result.events.map(({ name, description, delivery }) => ({
+            name,
+            description,
+            delivery,
+          })),
+        );
+        if (Buffer.byteLength(JSON.stringify(events)) > 65536)
+          throw new Error('Events catalogue summary exceeds limit');
+        return {
+          events,
+          ...(result.nextCursor ? { nextCursor: result.nextCursor } : {}),
+        };
+      }
+      if (!result.nextCursor) throw new Error('Event descriptor not found');
+      if (seen.has(result.nextCursor))
+        throw new Error('Events catalogue pagination did not advance');
+      seen.add(result.nextCursor);
+      cursor = result.nextCursor;
+    }
+    throw new Error('Events catalogue lookup exceeded limit');
+  }
+
+  getEventWatches(): McpEventWatch[] {
+    const watches = new Map<string, McpEventWatch>();
+    const raw =
+      this.deps.config.get?.()?.mcpServers ?? this.deps.config.getMcpServers();
+    for (const [server, config] of Object.entries(raw)) {
+      for (const subscription of config.events ?? []) {
+        const sourceKey = canonicalConfigSignature({
+          name: subscription.name,
+          arguments: subscription.arguments ?? {},
+        });
+        const runtimeSubscription =
+          this.deps.config.resolveEnvironment(subscription);
+        const runtimeKey = canonicalConfigSignature({
+          name: runtimeSubscription.name,
+          arguments: runtimeSubscription.arguments ?? {},
+        });
+        const state = this.eventsSources
+          .get(server)
+          ?.source.statuses()
+          .find((item) => item.sourceKey === runtimeKey);
+        const connection = this.servers.get(server)?.connection;
+        const watchId = canonicalConfigSignature({ server, sourceKey });
+        watches.set(watchId, {
+          name: subscription.name,
+          sourceKey,
+          server,
+          watchId,
+          status:
+            state?.status ??
+            (connection
+              ? connection.supportsEvents
+                ? 'starting'
+                : 'terminated'
+              : 'disconnected'),
+          gap: state?.gap ?? false,
+          ...(state?.delivery ? { delivery: state.delivery } : {}),
+          ...(state?.reason
+            ? { reason: state.reason }
+            : connection && !connection.supportsEvents
+              ? { reason: 'unsupported-events' as const }
+              : !connection
+                ? { reason: 'transport' as const }
+                : {}),
+        });
+      }
+    }
+    return [...watches.values()].sort((a, b) =>
+      a.watchId.localeCompare(b.watchId),
+    );
+  }
+
+  async watchMcpEvents(
+    server: string,
+    name: string,
+    args: Record<string, unknown> = {},
+  ): Promise<{ watch: McpEventWatch; alreadyExisted: boolean }> {
+    const subscription: McpEventSubscription = { name, arguments: args };
+    if (!name || Buffer.byteLength(JSON.stringify(subscription)) > 65536)
+      throw new Error('Invalid or oversized Events watch');
+    const resolved = this.deps.config.resolveEnvironment(subscription);
+    const connection = this.servers.get(server)?.connection;
+    const descriptor = (
+      await this.listMcpEvents(server, { name: resolved.name })
+    ).events[0];
+    if (!descriptor) throw new Error('Event descriptor not found');
+    try {
+      if (descriptor.inputSchema)
+        z.fromJSONSchema(descriptor.inputSchema).parse(
+          resolved.arguments ?? {},
+        );
+      if (descriptor.payloadSchema) z.fromJSONSchema(descriptor.payloadSchema);
+    } catch {
+      throw new Error('Events arguments invalid or schema unsupported');
+    }
+    if (
+      !descriptor.delivery.some(
+        (mode) =>
+          mode === 'poll' || (mode === 'push' && connection?.eventsStream),
+      )
+    )
+      throw new Error('No supported Events delivery mode');
+    const key = canonicalConfigSignature({ name, arguments: args });
+    let alreadyExisted = false;
+    await this.deps.config.mutate((config) => {
+      if (this.servers.get(server)?.connection !== connection)
+        throw new Error('Events connection changed');
+      const current = config.mcpServers[server];
+      if (!current) throw new Error('MCP server removed');
+      alreadyExisted = (current.events ?? []).some(
+        (item) =>
+          canonicalConfigSignature({
+            name: item.name,
+            arguments: item.arguments ?? {},
+          }) === key,
+      );
+      if (alreadyExisted) return config;
+      if ((current.events?.length ?? 0) >= 32)
+        throw new Error('Events watch limit reached');
+      return {
+        ...config,
+        mcpServers: {
+          ...config.mcpServers,
+          [server]: {
+            ...current,
+            events: [...(current.events ?? []), subscription],
+          },
+        },
+      };
+    });
+    const watchId = canonicalConfigSignature({ server, sourceKey: key });
+    const watch = this.getEventWatches().find(
+      (item) => item.watchId === watchId,
+    );
+    if (!watch) throw new Error('Events watch removed concurrently');
+    return { watch, alreadyExisted };
+  }
+
+  async unwatchMcpEvents(watchId: string): Promise<{ removed: boolean }> {
+    let removed = false;
+    await this.deps.config.mutate((config) => {
+      const mcpServers = { ...config.mcpServers };
+      for (const [server, current] of Object.entries(mcpServers)) {
+        const events = current.events?.filter((item) => {
+          const sourceKey = canonicalConfigSignature({
+            name: item.name,
+            arguments: item.arguments ?? {},
+          });
+          return canonicalConfigSignature({ server, sourceKey }) !== watchId;
+        });
+        if (events && events.length !== current.events?.length) {
+          removed = true;
+          mcpServers[server] = { ...current, events };
+        }
+      }
+      return removed ? { ...config, mcpServers } : config;
+    });
+    return { removed };
+  }
+
   private reconcile(servers: Readonly<Record<string, McpServerConfig>>): void {
     if (!this.started) return;
     this.deps.logger.debug(
@@ -955,7 +1167,20 @@ class McpModule implements Mcp {
     for (const runtime of [...this.servers.values()]) {
       if (this.removals.has(runtime.namespace)) continue;
       const next = servers[runtime.namespace];
-      if (next && runtime.signature === signature(next)) continue;
+      if (next && runtime.signature === signature(next)) {
+        if (
+          canonicalConfigSignature(runtime.config.events ?? []) !==
+          canonicalConfigSignature(next.events ?? [])
+        ) {
+          runtime.config = next;
+          const source = this.eventsSources.get(runtime.namespace)?.source;
+          if (source)
+            void source
+              .updateSubscriptions(next.events ?? [])
+              .catch(() => undefined);
+        }
+        continue;
+      }
       const reason = next ? 'configuration-changed' : 'configuration-removed';
       const connection = this.invalidateRuntime(runtime);
       if (connection) this.closeConnection(connection, runtime.namespace);
@@ -1090,10 +1315,10 @@ class McpModule implements Mcp {
         this.publishRegistry();
         if (connection.supportsPushNotifications)
           this.startEventWorker(connection);
-        if (connection.supportsEvents && runtime.config.events?.length) {
+        if (connection.supportsEvents) {
           const source = createEventsSource({
             connection,
-            subscriptions: runtime.config.events,
+            subscriptions: runtime.config.events ?? [],
             logger: this.deps.logger,
             publish: async (event, occurrence) => {
               if (
@@ -1764,8 +1989,9 @@ class McpModule implements Mcp {
         supportsPushNotifications:
           connection?.supportsPushNotifications ?? false,
         supportsEvents: connection?.supportsEvents ?? false,
-        eventSubscriptions:
-          this.eventsSources.get(name)?.source.statuses() ?? [],
+        eventSubscriptions: this.getEventWatches().filter(
+          (item) => item.server === name,
+        ),
         supportsRealtimeMedia: connection?.supportsRealtimeMedia ?? false,
         supportsResourceSubscription:
           connection?.supportsResourceSubscription ?? false,
@@ -2340,7 +2566,8 @@ export function createMcp(deps: McpDependencies): Mcp {
 }
 
 function signature(config: McpServerConfig): string {
-  return canonicalConfigSignature(config);
+  const { events: _events, ...transport } = config;
+  return canonicalConfigSignature(transport);
 }
 
 function safeDiagnosticError(error: unknown): {

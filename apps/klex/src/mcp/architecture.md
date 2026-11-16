@@ -18,6 +18,31 @@ Klex can also consume `io.modelcontextprotocol/events`, pinned to draft SEP comm
 `events: [{ name, arguments, delivery }]`; delivery defaults to push then poll.
 Webhook delivery and a server-side facade are not included.
 
+The main-session ingress tools expose progressive discovery and durable watch intent:
+`listMcpEvents({server, cursor?})` returns catalogue summaries; `{server, name}`
+returns the complete descriptor. `watchMcpEvents({server, name, arguments?})`
+validates the current descriptor and atomically creates or reuses an intent in the
+server's existing `events` list. `unwatchMcpEvents({watchId})` removes that intent
+idempotently, without calling any server-specific setup/cleanup tool. Watch IDs
+are stable opaque hashes of server and canonical raw configuration, not wire
+subscription IDs. Raw arguments and resolved environment values are excluded from
+automatic watch summaries. Different argument scopes have different IDs.
+
+Watches belong to the agent, not a chat. Watch-only config updates reconcile loops
+in place and preserve unaffected cursors, receipts, resources and realtime
+sessions. Removing a watch aborts its loop; queued inbox events are not retracted.
+Rewatch starts a new run from now. Transport/credential changes still reconnect.
+Model context receives an initial watched-state baseline and only changed rows
+thereafter; checkpoints carry the cutoff baseline. Reading watch state does not
+wake the model. No descriptor cache is used for model discovery or validation.
+
+Admin API server create/update accepts optional `events` (maximum 32); update
+replaces the list and `[]` clears it. HTTP updates merge atomically with current
+config so unrelated concurrent watch/header changes survive. Invalid configured
+watches remain visible with sanitized lifecycle reasons; model-created watches
+are validated before persistence. Status `starting` means saved intent, not an
+activated stream. Discovery and publication errors are not echoed from servers.
+
 `connection.ts` registers the facade and captures stream JSON-RPC ids on the
 transport. `events-source` runs one loop per canonical `(name, arguments)` and
 registers with the same source registry as Push Notifications. Its event IDs

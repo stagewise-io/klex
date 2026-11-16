@@ -21,6 +21,7 @@ export interface ServerListEntry {
   status: McpConnectionStatus;
   toolCount: number;
   resourceCount: number;
+  supportsEvents?: boolean;
 }
 
 /** Data carried in a `data-mcp-server-list` custom data part. */
@@ -61,6 +62,7 @@ export function toServerListEntry(info: McpServerInfo): ServerListEntry {
     status: info.status,
     toolCount: info.toolCount,
     resourceCount: info.resourceCount,
+    supportsEvents: info.supportsEvents ?? false,
   };
 }
 
@@ -87,7 +89,8 @@ export function diffServerLists(
     } else if (
       old.status !== entry.status ||
       old.toolCount !== entry.toolCount ||
-      old.resourceCount !== entry.resourceCount
+      old.resourceCount !== entry.resourceCount ||
+      (old.supportsEvents ?? false) !== (entry.supportsEvents ?? false)
     ) {
       changed.push(entry);
     }
@@ -132,13 +135,13 @@ export function latestServerListPart(
 
 /** Renders a server list entry as a compact pipe-delimited row. */
 function formatServerRow(entry: ServerListEntry): string {
-  return `${entry.name}|${entry.status}|${entry.toolCount}|${entry.resourceCount}`;
+  return `${entry.name}|${entry.status}|${entry.toolCount}|${entry.resourceCount}|${entry.supportsEvents ? 'yes' : 'no'}`;
 }
 
 /** Renders `ServerListData` into model-visible text parts. */
 export function renderServerListData(data: ServerListData): TextPart[] {
   if (data.isInitial) {
-    const lines = ['<mcp-servers>', 'name|status|tools|resources'];
+    const lines = ['<mcp-servers>', 'name|status|tools|resources|events'];
     for (const s of data.servers) lines.push(formatServerRow(s));
     lines.push('</mcp-servers>');
     return [{ type: 'text', text: lines.join('\n') }];
@@ -147,22 +150,14 @@ export function renderServerListData(data: ServerListData): TextPart[] {
   // Diff
   const diff = data.diff;
   if (!diff) return [];
-  const lines = ['<mcp-servers-diff>'];
-  if (diff.added.length > 0) {
-    lines.push('added:');
-    for (const s of diff.added) lines.push(`  ${formatServerRow(s)}`);
-  }
-  if (diff.removed.length > 0) {
-    lines.push('removed:');
-    for (const name of diff.removed) lines.push(`  ${name}`);
-  }
-  if (diff.changed.length > 0) {
-    lines.push('changed:');
-    for (const s of diff.changed) lines.push(`  ${formatServerRow(s)}`);
-  }
-  // Include current full list for context after the diff
-  lines.push('current:');
-  for (const s of data.servers) lines.push(`  ${formatServerRow(s)}`);
+  const lines = [
+    '<mcp-servers-diff>',
+    'action|name|status|tools|resources|events',
+  ];
+  for (const s of diff.added) lines.push(`added|${formatServerRow(s)}`);
+  // Removed entries retain only their name, not their previous status/counts.
+  for (const name of diff.removed) lines.push(`removed|${name}||||`);
+  for (const s of diff.changed) lines.push(`changed|${formatServerRow(s)}`);
   lines.push('</mcp-servers-diff>');
   return [{ type: 'text', text: lines.join('\n') }];
 }

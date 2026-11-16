@@ -238,58 +238,82 @@ export function updateMcpServer(
     const update = c.req.valid('json');
 
     try {
-      let server: McpServerConfig;
-      if ('command' in update) {
-        server = update;
-      } else {
-        const current = deps.config.get().mcpServers[name];
-        if (!current) {
-          return c.json(
-            { error: 'MCP server not found', code: 'server_not_found' },
-            404,
-          );
-        }
-        if ('command' in current) {
-          if (!update.url) {
-            return c.json(
-              {
-                error: 'URL is required when changing the transport to HTTP',
-                code: 'invalid_config',
-              },
-              400,
-            );
-          }
-          const { headerUpdates: _headerUpdates, ...replacement } = update;
-          server = { ...replacement, url: update.url };
+      await deps.config.mutate((latest) => {
+        let server: McpServerConfig;
+        if ('command' in update) {
+          server = update;
         } else {
-          const headers = { ...(current.headers ?? {}) };
-          const headerUpdates = Object.entries(update.headerUpdates ?? {});
-          for (const [key, value] of headerUpdates) {
-            if (value !== null) continue;
-            const existingKey = Object.keys(headers).find(
-              (storedKey) => storedKey.toLowerCase() === key.toLowerCase(),
-            );
-            if (existingKey) delete headers[existingKey];
+          const current = latest.mcpServers[name];
+          if (!current)
+            throw new ConfigValidationError('MCP server not found', {
+              code: 'not_found',
+            });
+          if (
+            'command' in current &&
+            !update.url &&
+            !update.headerUpdates &&
+            !update.type
+          ) {
+            server = {
+              ...current,
+              ...(update.events !== undefined ? { events: update.events } : {}),
+              ...(update.versionNegotiation !== undefined
+                ? { versionNegotiation: update.versionNegotiation }
+                : {}),
+            };
+          } else if ('command' in current) {
+            if (!update.url)
+              throw new ConfigValidationError(
+                'URL is required when changing the transport to HTTP',
+                { code: 'validation' },
+              );
+            const { headerUpdates: _headerUpdates, ...replacement } = update;
+            server = { ...replacement, url: update.url };
+          } else {
+            const headers = { ...(current.headers ?? {}) };
+            const headerUpdates = Object.entries(update.headerUpdates ?? {});
+            for (const [key, value] of headerUpdates) {
+              if (value !== null) continue;
+              const existingKey = Object.keys(headers).find(
+                (storedKey) => storedKey.toLowerCase() === key.toLowerCase(),
+              );
+              if (existingKey) delete headers[existingKey];
+            }
+            for (const [key, value] of headerUpdates) {
+              if (value === null) continue;
+              const existingKey = Object.keys(headers).find(
+                (storedKey) => storedKey.toLowerCase() === key.toLowerCase(),
+              );
+              if (existingKey) delete headers[existingKey];
+              headers[key] = value;
+            }
+            const { headerUpdates: _headerUpdates, ...httpUpdate } = update;
+            server = { ...current, ...httpUpdate, headers };
+            if (Object.keys(headers).length === 0) delete server.headers;
           }
-          for (const [key, value] of headerUpdates) {
-            if (value === null) continue;
-            const existingKey = Object.keys(headers).find(
-              (storedKey) => storedKey.toLowerCase() === key.toLowerCase(),
-            );
-            if (existingKey) delete headers[existingKey];
-            headers[key] = value;
-          }
-          const { headerUpdates: _headerUpdates, ...httpUpdate } = update;
-          server = { ...current, ...httpUpdate, headers };
-          if (Object.keys(headers).length === 0) delete server.headers;
         }
-      }
 
-      await deps.config.updateMcpServer(name, server);
+        if (!latest.mcpServers[name])
+          throw new ConfigValidationError('MCP server not found', {
+            code: 'not_found',
+          });
+        return {
+          ...latest,
+          mcpServers: { ...latest.mcpServers, [name]: server },
+        };
+      });
       return c.json(serverListResponse(deps.mcp), 200);
     } catch (error) {
       if (error instanceof ConfigValidationError) {
-        return c.json({ error: error.message, code: 'server_not_found' }, 404);
+        if (error.code === 'not_found')
+          return c.json(
+            { error: error.message, code: 'server_not_found' },
+            404,
+          );
+        return c.json(
+          { error: 'Invalid MCP server configuration', code: 'invalid_config' },
+          400,
+        );
       }
       deps.logger.error({ error }, 'MCP server update failed');
       return c.json(

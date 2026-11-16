@@ -39,6 +39,83 @@ const event = {
 };
 
 describe('EventsSource', () => {
+  it('updates watches in place, preserves an unrelated poll and cancels removed delivery', async () => {
+    const h = harness();
+    vi.mocked(h.events.listEvents).mockResolvedValue([
+      { name: 'x', delivery: ['poll'] },
+      { name: 'y', delivery: ['poll'] },
+    ]);
+    const pending = new Map<
+      string,
+      {
+        signal: AbortSignal;
+        resolve(value: { events: (typeof event)[]; cursor: string }): void;
+      }
+    >();
+    h.poll.mockImplementation(
+      async (params, options) =>
+        new Promise((resolve) => {
+          pending.set(params.name, {
+            signal: options!.request!.signal!,
+            resolve,
+          });
+        }),
+    );
+    try {
+      await h.source.start();
+      const original = pending.get('x');
+      await h.source.updateSubscriptions([{ name: 'x' }, { name: 'y' }]);
+      expect(pending.get('x')).toBe(original);
+      expect(h.poll).toHaveBeenCalledTimes(2);
+      expect(original?.signal.aborted).toBe(false);
+      const removed = pending.get('y');
+      await h.source.updateSubscriptions([{ name: 'x' }]);
+      expect(removed?.signal.aborted).toBe(true);
+      removed?.resolve({ events: [{ ...event, name: 'y' }], cursor: 'late' });
+      await Promise.resolve();
+      expect(h.published).toEqual([]);
+      expect(h.source.statuses().map((state) => state.name)).toEqual(['x']);
+      expect(original?.signal.aborted).toBe(false);
+    } finally {
+      h.source.close();
+    }
+  });
+
+  it('preserves unsettled receipts and handled cursors while adding another watch', async () => {
+    const h = harness();
+    vi.mocked(h.events.listEvents).mockResolvedValue([
+      { name: 'x', delivery: ['poll'] },
+      { name: 'y', delivery: ['poll'] },
+    ]);
+    h.poll.mockImplementation(async (params, options) => {
+      if (params.name === 'x' && !params.cursor)
+        return { events: [event], cursor: 'handled', hasMore: true };
+      return new Promise((resolve) =>
+        options?.request?.signal?.addEventListener(
+          'abort',
+          () => resolve({ events: [] }),
+          { once: true },
+        ),
+      );
+    });
+    try {
+      await h.source.start();
+      await vi.waitFor(() => expect(h.source.hasUnsettled()).toBe(true));
+      await h.source.updateSubscriptions([{ name: 'x' }, { name: 'y' }]);
+      expect(h.source.hasUnsettled()).toBe(true);
+      await h.source.settleDelivered();
+      await vi.waitFor(() =>
+        expect(
+          h.poll.mock.calls.some(
+            ([params]) => params.name === 'x' && params.cursor === 'handled',
+          ),
+        ).toBe(true),
+      );
+      expect(h.published).toHaveLength(1);
+    } finally {
+      h.source.close();
+    }
+  });
   it('advances past an oversized batch instead of retrying it forever', async () => {
     const h = harness();
     h.poll.mockResolvedValueOnce({

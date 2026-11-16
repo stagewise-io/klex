@@ -151,8 +151,28 @@ const mcpServerInfoSchema = z
         z.object({
           name: z.string(),
           sourceKey: z.string(),
+          watchId: z.string().optional(),
+          server: z.string().optional(),
+          reason: z
+            .enum([
+              'descriptor-missing',
+              'invalid-arguments',
+              'unsupported-schema',
+              'unsupported-delivery',
+              'transport',
+              'consumer',
+              'unsupported-events',
+            ])
+            .optional(),
           delivery: z.enum(['push', 'poll']).optional(),
-          status: z.enum(['starting', 'active', 'terminated', 'paused']),
+          status: z.enum([
+            'starting',
+            'active',
+            'terminated',
+            'paused',
+            'disconnected',
+            'retrying',
+          ]),
           gap: z.boolean(),
         }),
       )
@@ -186,6 +206,14 @@ const mcpVersionNegotiationSchema = z.union([
   z.object({ pin: z.string().min(1) }).strict(),
 ]);
 
+const eventWatchConfigSchema = z
+  .object({
+    name: z.string().min(1),
+    arguments: z.record(z.string(), z.unknown()).optional(),
+    delivery: z.enum(['push', 'poll']).optional(),
+  })
+  .strict();
+
 const createMcpServerBodySchema = z
   .union([
     z
@@ -196,6 +224,7 @@ const createMcpServerBodySchema = z
         args: z.array(z.string()).optional(),
         env: z.record(z.string(), z.string()).optional(),
         versionNegotiation: mcpVersionNegotiationSchema.optional(),
+        events: z.array(eventWatchConfigSchema).max(32).optional(),
       })
       .strict(),
     z
@@ -205,6 +234,7 @@ const createMcpServerBodySchema = z
         url: z.url(),
         headers: z.record(z.string(), z.string()).optional(),
         versionNegotiation: mcpVersionNegotiationSchema.optional(),
+        events: z.array(eventWatchConfigSchema).max(32).optional(),
       })
       .strict(),
   ])
@@ -219,6 +249,7 @@ const updateMcpServerBodySchema = z
         args: z.array(z.string()).optional(),
         env: z.record(z.string(), z.string()).optional(),
         versionNegotiation: mcpVersionNegotiationSchema.optional(),
+        events: z.array(eventWatchConfigSchema).max(32).optional(),
       })
       .strict(),
     z
@@ -229,6 +260,7 @@ const updateMcpServerBodySchema = z
           .record(z.string(), z.union([z.string(), z.null()]))
           .optional(),
         versionNegotiation: mcpVersionNegotiationSchema.optional(),
+        events: z.array(eventWatchConfigSchema).max(32).optional(),
       })
       .strict(),
   ])

@@ -13,7 +13,7 @@ export const CONFIG_STORE_DEFINITION: JsonStoreDefinition = {
   // Schema 10 adds optional effort policy and blocks older strict readers.
   // Schema 11 adds MCP Events subscriptions after the released schema 10.
   compatibilityVersion: 8,
-  minimumKlexVersion: '0.33.0',
+  minimumKlexVersion: '0.36.0',
   legacySchemaVersion: 1,
   versions: LOCAL_DATA_MIGRATIONS.config.versions,
   migrations: LOCAL_DATA_MIGRATIONS.config.migrations,

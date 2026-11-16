@@ -25,6 +25,10 @@ function createMockDeps(
   mcpOverrides: Partial<NonNullable<ExtensionDeps['mcp']>> = {},
 ): ExtensionDeps & { mcp: NonNullable<ExtensionDeps['mcp']> } {
   const mcp = {
+    getEventWatches: vi.fn(() => []),
+    listMcpEvents: vi.fn(),
+    watchMcpEvents: vi.fn(),
+    unwatchMcpEvents: vi.fn(),
     listResources: vi.fn(),
     readResource: vi.fn(),
     onResourceUpdated: vi.fn(() => () => {}),
@@ -102,7 +106,10 @@ async function callTool(
     input: Record<string, unknown>,
   ) => Promise<Record<string, unknown>>;
   if (!execute) throw new Error(`Tool ${name} has no execute`);
-  return execute(input);
+  return (execute as (...args: unknown[]) => Promise<Record<string, unknown>>)(
+    input,
+    {},
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -197,8 +204,11 @@ describe('MCP Ingress extension', () => {
     expect(Object.keys(tools).sort()).toEqual([
       'addMcpServer',
       'closeResource',
+      'listMcpEvents',
       'listResources',
       'openResource',
+      'unwatchMcpEvents',
+      'watchMcpEvents',
     ]);
   });
 
@@ -393,6 +403,55 @@ describe('MCP Ingress extension', () => {
   // -------------------------------------------------------------------------
   // listResources
   // -------------------------------------------------------------------------
+
+  it('discovers and manages watches and restores the watched-state cutoff baseline', async () => {
+    const watch = {
+      watchId: 'a'.repeat(64),
+      server: 'test',
+      name: 'x',
+      sourceKey: 'hidden',
+      status: 'starting' as const,
+      gap: false,
+    };
+    const deps = createMockDeps({
+      listMcpEvents: vi
+        .fn()
+        .mockResolvedValue({ events: [{ name: 'x', delivery: ['poll'] }] }),
+      watchMcpEvents: vi
+        .fn()
+        .mockResolvedValue({ watch, alreadyExisted: false }),
+      unwatchMcpEvents: vi.fn().mockResolvedValue({ removed: true }),
+      getEventWatches: vi.fn(() => [watch]),
+    });
+    const ext = createMcpIngressExt().create(deps);
+    await ext.onStart?.();
+    try {
+      expect(
+        await callTool(ext, 'listMcpEvents', { server: 'test' }),
+      ).toHaveProperty('events');
+      expect(
+        await callTool(ext, 'watchMcpEvents', { server: 'test', name: 'x' }),
+      ).toHaveProperty('watch.watchId', watch.watchId);
+      const first = await ext.getProvisionalStepContext?.([], {} as never);
+      const history = [
+        { id: 'baseline', role: 'user', parts: first?.parts },
+      ] as unknown as ExtendedUIMessage[];
+      expect(
+        (await ext.getProvisionalStepContext?.(history, {} as never))?.parts,
+      ).toEqual([]);
+      const carry = ext.getCheckpointCarry?.(history);
+      expect(JSON.stringify(carry)).toContain('mcp-watched-events');
+      expect(JSON.stringify(carry)).not.toContain('hidden');
+      expect(
+        await callTool(ext, 'unwatchMcpEvents', { watchId: watch.watchId }),
+      ).toEqual({ removed: true });
+      vi.mocked(deps.mcp.getEventWatches).mockReturnValue([]);
+      const delta = ext.getProvisionalStepContext?.(history, {} as never);
+      expect(JSON.stringify(delta)).toContain('removed');
+    } finally {
+      await ext.onClose?.();
+    }
+  });
 
   it('listResources calls mcp.listResources with the server name and returns formatted output', async () => {
     const deps = createMockDeps({
@@ -1519,7 +1578,7 @@ describe('MCP Ingress extension', () => {
     const result = await ext.getProvisionalStepContext?.([], {} as never);
     const parts = result?.parts ?? [];
     // 1 resource-state part + 1 server-list initial part + 1 open-resources initial part
-    expect(parts).toHaveLength(3);
+    expect(parts).toHaveLength(4);
     expect(parts[0]?.type).toBe('data-mcp-resource-state');
     const data = (parts[0] as { data: Record<string, unknown> }).data;
     expect(data.namespace).toBe('github');
@@ -1647,7 +1706,7 @@ describe('MCP Ingress extension', () => {
     ];
     const result = await ext.getProvisionalStepContext?.(history, {} as never);
     // No resource-state parts needed, but server-list + open-resources initial emitted
-    expect(result?.parts).toHaveLength(2);
+    expect(result?.parts).toHaveLength(3);
     expect((result?.parts[0] as { type?: string })?.type).toBe(
       'data-mcp-server-list',
     );
@@ -1703,7 +1762,7 @@ describe('MCP Ingress extension', () => {
     const result = await ext.getProvisionalStepContext?.(history, {} as never);
     const parts = result?.parts ?? [];
     // 1 resource-state part for b.txt + 1 server-list initial + 1 open-resources initial
-    expect(parts).toHaveLength(3);
+    expect(parts).toHaveLength(4);
     const data = (parts[0] as { data: Record<string, unknown> }).data;
     expect(data.uri).toBe('file:///b.txt');
     expect((parts[1] as { type?: string })?.type).toBe('data-mcp-server-list');
@@ -1718,7 +1777,7 @@ describe('MCP Ingress extension', () => {
     await ext.onStart?.();
     const result = await ext.getProvisionalStepContext?.([], {} as never);
     // No resource windows, but the initial server list and open-resources list are emitted
-    expect(result?.parts).toHaveLength(2);
+    expect(result?.parts).toHaveLength(3);
     expect((result?.parts[0] as { type?: string })?.type).toBe(
       'data-mcp-server-list',
     );
@@ -2052,18 +2111,29 @@ describe('MCP Ingress extension', () => {
           },
         ],
         removed: ['slack'],
-        changed: [],
+        changed: [
+          {
+            name: 'github',
+            status: 'connected',
+            toolCount: 12,
+            resourceCount: 3,
+            supportsEvents: true,
+          },
+        ],
       },
     });
     expect(parts).toHaveLength(1);
     const text = (parts[0] as { text: string }).text;
-    expect(text).toContain('<mcp-servers-diff>');
-    expect(text).toContain('added:');
-    expect(text).toContain('filesystem|connected|3|10');
-    expect(text).toContain('removed:');
-    expect(text).toContain('slack');
-    expect(text).toContain('current:');
-    expect(text).toContain('</mcp-servers-diff>');
+    expect(text).toBe(
+      [
+        '<mcp-servers-diff>',
+        'action|name|status|tools|resources|events',
+        'added|filesystem|connected|3|10|no',
+        'removed|slack||||',
+        'changed|github|connected|12|3|yes',
+        '</mcp-servers-diff>',
+      ].join('\n'),
+    );
   });
 
   // ---------------------------------------------------------------------------

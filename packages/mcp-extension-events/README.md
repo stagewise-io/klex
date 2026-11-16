@@ -9,6 +9,10 @@ Client-side support for the MCP Events extension (`io.modelcontextprotocol/event
 - Types, generated Zod schemas, `schema.json`.
 - `@stagewise/mcp-extension-events/client`:
   - `registerEventsClient`: capability, discovery, `events/list`, `events/poll`.
+    `listEventsPage(cursor?, options?)` returns one bounded catalogue page; the
+    existing `listEvents` aggregates with page/count/byte limits. Catalogue cursors
+    are not nullable replay cursors. Model-facing watch management belongs to Klex,
+    not this storage-independent protocol package.
   - `runPollLoop`: poll delivery.
   - `runStreamLoop` with `createSdkStreamPort` and `createRequestIdTap`: push delivery over `events/stream`.
   - `selectDeliveryMode`: push, then poll.

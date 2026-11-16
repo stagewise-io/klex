@@ -214,7 +214,7 @@ describe('config v2', () => {
 
   it('advances compatibility metadata for consult model selection', async () => {
     expect(CONFIG_STORE_DEFINITION.compatibilityVersion).toBe(8);
-    expect(CONFIG_STORE_DEFINITION.minimumKlexVersion).toBe('0.33.0');
+    expect(CONFIG_STORE_DEFINITION.minimumKlexVersion).toBe('0.36.0');
 
     const dataDirectory = await directory();
     await writeFile(
@@ -239,7 +239,7 @@ describe('config v2', () => {
     };
     expect(persisted._klex).toMatchObject({
       compatibilityVersion: 8,
-      minimumKlexVersion: '0.33.0',
+      minimumKlexVersion: '0.36.0',
     });
   });
 
@@ -662,7 +662,7 @@ describe('config v2', () => {
         _klex: {
           ...original._klex,
           schemaVersion: 11,
-          minimumKlexVersion: '0.33.0',
+          minimumKlexVersion: '0.36.0',
           writtenByKlexVersion: KLEX_VERSION,
         },
       });
@@ -1053,7 +1053,7 @@ describe('config v2', () => {
 
   it('records the current config compatibility metadata', async () => {
     expect(CONFIG_STORE_DEFINITION.compatibilityVersion).toBe(8);
-    expect(CONFIG_STORE_DEFINITION.minimumKlexVersion).toBe('0.33.0');
+    expect(CONFIG_STORE_DEFINITION.minimumKlexVersion).toBe('0.36.0');
 
     const dataDirectory = await directory();
     await writeFile(
@@ -1078,7 +1078,7 @@ describe('config v2', () => {
     };
     expect(persisted._klex).toMatchObject({
       compatibilityVersion: 8,
-      minimumKlexVersion: '0.33.0',
+      minimumKlexVersion: '0.36.0',
     });
   });
 

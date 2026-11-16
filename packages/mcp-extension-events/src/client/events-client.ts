@@ -18,6 +18,7 @@ import {
 import type {
   EventDescriptor,
   EventsCapabilities,
+  EventsListResult,
   EventsPollParams,
   EventsPollResult,
   ServerDiscoverResult,
@@ -40,6 +41,10 @@ export interface RegisteredEventsClient {
   discover(options?: EventsRequestOptions): Promise<ServerDiscoverResult>;
   /** Never sends `events/*` to a server that did not advertise the extension. */
   serverSupportsEvents(options?: EventsRequestOptions): Promise<boolean>;
+  listEventsPage(
+    cursor?: string,
+    options?: EventsRequestOptions,
+  ): Promise<EventsListResult>;
   listEvents(options?: EventsRequestOptions): Promise<EventDescriptor[]>;
   poll(
     params: EventsPollParams,
@@ -128,26 +133,46 @@ export function registerEventsClient(
     }
   };
 
+  const listEventsPage = async (
+    cursor?: string,
+    options?: EventsRequestOptions,
+  ): Promise<EventsListResult> => {
+    await requireSupport(options);
+    const result = await client.request(
+      {
+        method: EVENTS_LIST_METHOD,
+        params: withMeta(
+          cursor === undefined ? {} : { cursor },
+          options?.metadata,
+        ),
+      },
+      EventsListResultSchema,
+      options?.request,
+    );
+    if (
+      result.events.length > 1000 ||
+      Buffer.byteLength(JSON.stringify(result)) > 1024 * 1024
+    )
+      throw new Error('Events catalogue page exceeds limit');
+    return result;
+  };
+
   return {
     discover,
+    listEventsPage,
     serverSupportsEvents,
     async listEvents(options) {
       await requireSupport(options);
       const events: EventDescriptor[] = [];
       let cursor: string | undefined;
       for (let page = 0; page < MAX_LIST_PAGES; page++) {
-        const result = await client.request(
-          {
-            method: EVENTS_LIST_METHOD,
-            params: withMeta(
-              cursor === undefined ? {} : { cursor },
-              options?.metadata,
-            ),
-          },
-          EventsListResultSchema,
-          options?.request,
-        );
+        const result = await listEventsPage(cursor, options);
         events.push(...result.events);
+        if (
+          events.length > 10000 ||
+          Buffer.byteLength(JSON.stringify(events)) > 4 * 1024 * 1024
+        )
+          throw new Error('Events catalogue exceeds limit');
         if (!result.nextCursor) return events;
         cursor = result.nextCursor;
       }

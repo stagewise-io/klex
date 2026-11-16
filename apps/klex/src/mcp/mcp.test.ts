@@ -61,6 +61,14 @@ function createConfigHarness(initial: Record<string, McpServerConfig>): {
   let servers = structuredClone(initial);
   let listener: ConfigListener | undefined;
   const config = {
+    get: () => ({ mcpServers: servers }),
+    resolveEnvironment: <T>(value: T) => value,
+    mutate: async (fn: (value: KlexConfig) => KlexConfig) => {
+      const next = fn({ mcpServers: servers } as KlexConfig);
+      servers = next.mcpServers;
+      await listener?.(next);
+      return next;
+    },
     getMcpServers: () => servers,
     subscribe: (next: ConfigListener) => {
       listener = next;
@@ -96,6 +104,112 @@ function connection(namespace: string): McpConnection {
     invoke: vi.fn(),
     close: vi.fn(async () => undefined),
   } as unknown as McpConnection;
+}
+
+describe('agent Events watches', () => {
+  it('discovers, deduplicates, persists and removes without reconnecting', async () => {
+    const h = createConfigHarness({
+      test: { url: 'https://test.example/mcp', headers: { Secret: 'keep' } },
+    });
+    const descriptor = {
+      name: 'x',
+      delivery: ['poll'],
+      inputSchema: {
+        type: 'object',
+        properties: { id: { type: 'string' } },
+        required: ['id'],
+      },
+    };
+    const events = {
+      listEvents: vi.fn().mockResolvedValue([descriptor]),
+      listEventsPage: vi.fn().mockResolvedValue({ events: [descriptor] }),
+      poll: vi.fn(
+        async (_p, options) =>
+          new Promise((resolve) =>
+            options.request.signal.addEventListener(
+              'abort',
+              () => resolve({ events: [] }),
+              { once: true },
+            ),
+          ),
+      ),
+    };
+    const c = {
+      ...connection('test'),
+      supportsEvents: true,
+      events,
+    } as unknown as McpConnection;
+    const connect = vi.fn(async () => c);
+    const mcp = createMcp({
+      config: h.config,
+      logging,
+      dataDirectory: join(tmpdir(), randomTestDirectory()),
+      connect,
+    });
+    await mcp.start();
+    try {
+      await vi.waitFor(() => expect(connect).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() =>
+        expect(mcp.getServerStatuses()[0]?.status).toBe('connected'),
+      );
+      const summary = await mcp.listMcpEvents('test');
+      expect(summary.events[0]?.inputSchema).toBeUndefined();
+      expect(
+        (await mcp.listMcpEvents('test', { name: 'x' })).events[0]?.inputSchema,
+      ).toBeDefined();
+      await expect(mcp.watchMcpEvents('test', 'x', {})).rejects.toThrow(
+        'invalid',
+      );
+      expect(h.config.get().mcpServers.test?.events).toBeUndefined();
+      const first = await mcp.watchMcpEvents('test', 'x', { id: 'a' });
+      const [second, concurrent] = await Promise.all([
+        mcp.watchMcpEvents('test', 'x', { id: 'a' }),
+        mcp.watchMcpEvents('test', 'x', { id: 'a' }),
+      ]);
+      expect(concurrent.watch.watchId).toBe(first.watch.watchId);
+      expect(second.alreadyExisted).toBe(true);
+      expect(second.watch.watchId).toBe(first.watch.watchId);
+      expect(h.config.get().mcpServers.test?.events).toHaveLength(1);
+      expect(h.config.get().mcpServers.test).toHaveProperty(
+        'headers.Secret',
+        'keep',
+      );
+      expect(mcp.getEventWatches()).toHaveLength(1);
+      events.listEventsPage.mockResolvedValueOnce({
+        events: [{ ...descriptor, description: 'x'.repeat(65536) }],
+      } as never);
+      await expect(mcp.listMcpEvents('test', { name: 'x' })).rejects.toThrow(
+        'limit',
+      );
+      await expect(
+        mcp.listMcpEvents('test', { name: 'x', cursor: 'page' }),
+      ).rejects.toThrow('combined');
+      const mutate = h.config.mutate;
+      h.config.mutate = vi
+        .fn()
+        .mockRejectedValueOnce(new Error('disk unavailable'));
+      await expect(
+        mcp.watchMcpEvents('test', 'x', { id: 'b' }),
+      ).rejects.toThrow('disk unavailable');
+      h.config.mutate = mutate;
+      expect(mcp.getEventWatches()).toHaveLength(1);
+      expect(await mcp.unwatchMcpEvents(first.watch.watchId)).toEqual({
+        removed: true,
+      });
+      expect(await mcp.unwatchMcpEvents(first.watch.watchId)).toEqual({
+        removed: false,
+      });
+      expect(mcp.getEventWatches()).toEqual([]);
+      expect(connect).toHaveBeenCalledTimes(1);
+      expect(c.close).not.toHaveBeenCalled();
+    } finally {
+      await mcp.close();
+    }
+  });
+});
+
+function randomTestDirectory(): string {
+  return `events-watch-${Date.now()}-${Math.random()}`;
 }
 
 function resourceSubscriptionConnection(namespace: string): McpConnection {
@@ -1097,11 +1211,12 @@ describe('MCP server statuses', () => {
   });
 
   it('omits the resolved runtime URL when persisted config is unavailable', async () => {
-    const { mcp } = setup(
+    const { mcp, config } = setup(
       { remote: { url: 'https://mcp.example.com/secret-path' } },
       async ({ namespace }) => connection(namespace),
     );
 
+    config.config.get = undefined as unknown as Config['get'];
     try {
       const assertStatus = () => {
         expect(serverRow(mcp, 'remote')).toMatchObject({ transport: 'http' });

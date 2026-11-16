@@ -23,7 +23,21 @@ export interface EventSubscriptionStatus {
   name: string;
   sourceKey: string;
   delivery?: 'push' | 'poll';
-  status: 'starting' | 'active' | 'terminated' | 'paused';
+  status:
+    | 'starting'
+    | 'active'
+    | 'terminated'
+    | 'paused'
+    | 'disconnected'
+    | 'retrying';
+  reason?:
+    | 'descriptor-missing'
+    | 'invalid-arguments'
+    | 'unsupported-schema'
+    | 'unsupported-delivery'
+    | 'transport'
+    | 'consumer'
+    | 'unsupported-events';
   gap: boolean;
 }
 
@@ -32,6 +46,9 @@ export interface EventsSource extends InboundEventSource {
   close(): void;
   refresh(): Promise<void>;
   statuses(): EventSubscriptionStatus[];
+  updateSubscriptions(
+    subscriptions: readonly McpEventSubscription[],
+  ): Promise<void>;
 }
 
 interface Dependencies {
@@ -53,6 +70,8 @@ class EventsSourceModule implements EventsSource {
   private readonly states = new Map<string, EventSubscriptionStatus>();
   private readonly loops = new Map<string, AbortController>();
   private readonly payloadValidators = new Map<string, z.ZodType>();
+  private subscriptions: readonly McpEventSubscription[] | undefined;
+  private revision = 0;
   private started = false;
   private starting?: Promise<void>;
   private retryTimer?: ReturnType<typeof setTimeout>;
@@ -92,6 +111,39 @@ class EventsSourceModule implements EventsSource {
     for (const state of this.states.values()) state.status = 'paused';
   }
 
+  async updateSubscriptions(
+    subscriptions: readonly McpEventSubscription[],
+  ): Promise<void> {
+    if (subscriptions.length > 32)
+      throw new Error(
+        'At most 32 MCP Events subscriptions are supported per server',
+      );
+    this.subscriptions = structuredClone(subscriptions);
+    this.revision++;
+    const wanted = new Set(
+      subscriptions.map((item) =>
+        canonicalConfigSignature({
+          name: item.name,
+          arguments: item.arguments ?? {},
+        }),
+      ),
+    );
+    for (const [key] of this.states) {
+      if (wanted.has(key)) continue;
+      this.loops.get(key)?.abort();
+      this.loops.delete(key);
+      this.states.delete(key);
+      this.payloadValidators.delete(key);
+      for (const delivered of this.delivered) {
+        const identity = JSON.parse(delivered) as string[];
+        if (identity[2] === key) this.delivered.delete(delivered);
+      }
+    }
+    // Wait for an older catalogue fetch, then reconcile the latest intent.
+    await this.starting?.catch(() => undefined);
+    await this.refresh();
+  }
+
   async refresh(): Promise<void> {
     if (this.controller.signal.aborted) return;
     for (const [key, state] of this.states) {
@@ -124,6 +176,12 @@ class EventsSourceModule implements EventsSource {
       .catch((error: unknown) => {
         this.started = false;
         if (!this.controller.signal.aborted) {
+          for (const state of this.states.values()) {
+            if (!this.loops.has(state.sourceKey)) {
+              state.status = 'retrying';
+              state.reason = 'transport';
+            }
+          }
           const delay = Math.min(
             1000 * 2 ** Math.min(this.failures++, 6),
             60_000,
@@ -145,11 +203,25 @@ class EventsSourceModule implements EventsSource {
   private async reconcile(): Promise<void> {
     const { connection } = this.deps;
     if (!connection.supportsEvents || !connection.events) return;
+    const revision = this.revision;
+    for (const item of this.subscriptions ?? this.deps.subscriptions) {
+      const key = canonicalConfigSignature({
+        name: item.name,
+        arguments: item.arguments ?? {},
+      });
+      if (!this.states.has(key))
+        this.states.set(key, {
+          name: item.name,
+          sourceKey: key,
+          status: 'starting',
+          gap: false,
+        });
+    }
     const descriptors = await connection.events.listEvents({
       request: { signal: this.controller.signal },
     });
-    if (this.controller.signal.aborted) return;
-    for (const subscription of this.deps.subscriptions) {
+    if (this.controller.signal.aborted || revision !== this.revision) return;
+    for (const subscription of this.subscriptions ?? this.deps.subscriptions) {
       const sourceKey = canonicalConfigSignature({
         name: subscription.name,
         arguments: subscription.arguments ?? {},
@@ -167,16 +239,19 @@ class EventsSourceModule implements EventsSource {
       );
       if (!descriptor) {
         state.status = 'terminated';
+        state.reason = 'descriptor-missing';
         this.loops.get(sourceKey)?.abort();
         this.loops.delete(sourceKey);
         continue;
       }
       let delivery: 'push' | 'poll';
+      let failure: EventSubscriptionStatus['reason'] = 'unsupported-schema';
       try {
         if (descriptor.inputSchema) {
-          z.fromJSONSchema(descriptor.inputSchema).parse(
-            subscription.arguments ?? {},
-          );
+          const validator = z.fromJSONSchema(descriptor.inputSchema);
+          failure = 'invalid-arguments';
+          validator.parse(subscription.arguments ?? {});
+          failure = 'unsupported-schema';
         }
         if (descriptor.payloadSchema) {
           this.payloadValidators.set(
@@ -186,6 +261,7 @@ class EventsSourceModule implements EventsSource {
         } else {
           this.payloadValidators.delete(sourceKey);
         }
+        failure = 'unsupported-delivery';
         delivery = selectDeliveryMode(
           descriptor,
           connection.eventsStream ? ['push', 'poll'] : ['poll'],
@@ -193,14 +269,24 @@ class EventsSourceModule implements EventsSource {
         ) as 'push' | 'poll';
       } catch {
         state.status = 'terminated';
+        state.reason = failure;
         this.loops.get(sourceKey)?.abort();
         this.loops.delete(sourceKey);
         continue;
       }
       // Refresh active validators without starting a second loop or resetting
       // its cursor. Delivery changes apply on the next subscription start.
-      if (existing && existing.status !== 'terminated') continue;
+      if (
+        existing &&
+        this.loops.has(sourceKey) &&
+        existing.status !== 'terminated' &&
+        existing.delivery === delivery
+      )
+        continue;
+      this.loops.get(sourceKey)?.abort();
+      state.status = 'starting';
       state.delivery = delivery;
+      state.reason = undefined;
       const loopController = new AbortController();
       this.loops.set(sourceKey, loopController);
       const loopSignal = AbortSignal.any([
@@ -214,14 +300,22 @@ class EventsSourceModule implements EventsSource {
         signal: loopSignal,
         onBatch: (batch: PollBatch) => this.ingest(state, batch, loopSignal),
         onTerminated: () => {
-          state.status = 'terminated';
+          if (!loopSignal.aborted) {
+            state.status = 'terminated';
+            state.reason = 'transport';
+          }
         },
         // Upstream errors can contain credentials and arguments: log only scope.
-        onError: () =>
+        onError: () => {
+          if (!loopSignal.aborted) {
+            state.status = 'retrying';
+            state.reason ??= 'transport';
+          }
           this.deps.logger.warn(
             { namespace: connection.namespace, sourceKey },
             'MCP Events subscription retrying',
-          ),
+          );
+        },
       };
       const loop =
         delivery === 'push' && connection.eventsStream
@@ -245,6 +339,7 @@ class EventsSourceModule implements EventsSource {
   ): Promise<void> {
     if (signal.aborted) throw new Error('Events source closed');
     state.status = 'active';
+    state.reason = undefined;
     state.gap ||= batch.truncated;
     if (batch.events.length > MAX_BATCH_EVENTS) {
       state.gap = true;
@@ -258,6 +353,7 @@ class EventsSourceModule implements EventsSource {
       return;
     }
     for (const occurrence of batch.events) {
+      if (signal.aborted) throw new Error('Events watch stopped');
       try {
         this.validateOccurrenceBounds(occurrence);
         this.payloadValidators.get(state.sourceKey)?.parse(occurrence.data);
@@ -292,8 +388,10 @@ class EventsSourceModule implements EventsSource {
         };
       });
       try {
-        if (!(await this.deps.publish(event, occurrence)))
+        if (!(await this.deps.publish(event, occurrence))) {
+          state.reason = 'consumer';
           throw new Error('No Events consumer');
+        }
         if (signal.aborted) throw new Error('Events source closed');
         signal.addEventListener('abort', settle, { once: true });
         this.pending.add(settle);

@@ -71,8 +71,22 @@ function makeDeps(
   config: Partial<Config> = {},
   mcp: Partial<Mcp> = {},
 ): McpRouteDependencies {
+  const get =
+    config.get ??
+    (() =>
+      ({
+        mcpServers: { existing: { url: 'https://existing.example.com/mcp' } },
+      }) as unknown as Readonly<KlexConfig>);
   return {
     config: {
+      mutate: vi.fn(async (fn: (value: KlexConfig) => KlexConfig) => {
+        const next = fn(get());
+        const entries = Object.entries(next.mcpServers);
+        const entry =
+          entries.find(([name]) => name === 'existing') ?? entries[0];
+        if (entry) await config.updateMcpServer?.(entry[0], entry[1]);
+        return next;
+      }),
       get: () =>
         ({
           mcpServers: {
@@ -108,6 +122,51 @@ function createApp(deps: McpRouteDependencies): OpenAPIHono {
 // ---------------------------------------------------------------------------
 // GET /v1/mcp-servers
 // ---------------------------------------------------------------------------
+
+describe('Events configuration API', () => {
+  it('accepts Events on create and replacement/clearing on update', async () => {
+    const add = vi.fn(async () => klexConfigStub);
+    const update = vi.fn(async () => klexConfigStub);
+    const app = createApp(
+      makeDeps({ addMcpServer: add, updateMcpServer: update }),
+    );
+    const events = [{ name: 'webhook.received', arguments: { id: 'a' } }];
+    const request = (path: string, method: string, body: unknown) =>
+      app.request(path, {
+        method,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    expect(
+      (
+        await request('/v1/mcp-servers', 'POST', {
+          name: 'test',
+          url: 'https://test.example/mcp',
+          events,
+        })
+      ).status,
+    ).toBe(201);
+    expect(add).toHaveBeenCalledWith(
+      'test',
+      expect.objectContaining({ events }),
+    );
+    expect(
+      (await request('/v1/mcp-servers/existing', 'PATCH', { events })).status,
+    ).toBe(200);
+    expect(update).toHaveBeenLastCalledWith(
+      'existing',
+      expect.objectContaining({ events }),
+    );
+    expect(
+      (await request('/v1/mcp-servers/existing', 'PATCH', { events: [] }))
+        .status,
+    ).toBe(200);
+    expect(update).toHaveBeenLastCalledWith(
+      'existing',
+      expect.objectContaining({ events: [] }),
+    );
+  });
+});
 
 describe('GET /v1/mcp-servers — list MCP servers', () => {
   it('returns an empty array when no servers are configured', async () => {

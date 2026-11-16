@@ -155,7 +155,10 @@ class MachineMcpModule implements MachineMcp {
           acknowledgeEvents: ({ eventIds }) =>
             store.acknowledge(principalId, eventIds),
         });
-        if (desktop) registerDesktopTools(server, desktop, principalId);
+        if (desktop)
+          registerDesktopTools(server, desktop, principalId, (path) =>
+            paths.resolve(path),
+          );
         if (pushNotifications) {
           server.registerTool(
             'createWatcher',

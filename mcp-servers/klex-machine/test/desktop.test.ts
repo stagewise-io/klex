@@ -457,6 +457,47 @@ describe('desktop MCP tools', () => {
     ]);
   });
 
+  it('captures the follow-up screenshot before any other queued action', async () => {
+    const backend = fakeBackend();
+    let release!: () => void;
+    const settled = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const desktop = new DesktopService(backend, { sleep: () => settled });
+    const shot = desktop.withSettledScreenshot(() =>
+      desktop.click('bot-1', { x: 1, y: 1 }, 'left', 1, []),
+    );
+    await vi.waitFor(() => expect(backend.calls).toHaveLength(1));
+    const other = desktop.click('bot-2', { x: 2, y: 2 }, 'left', 1, []);
+    release();
+    await Promise.all([shot, other]);
+    expect(backend.calls.map(([name]) => name)).toEqual([
+      'click',
+      'capture',
+      'click',
+    ]);
+  });
+
+  it('launches apps from the machine working directory', async () => {
+    const backend = fakeBackend();
+    mcp = createMachineMcp(cwd, {
+      omitHostDetails: true,
+      desktop: new DesktopService(backend),
+    });
+    await rpc(mcp, 'tools/call', {
+      name: 'desktop_launch',
+      arguments: { command: 'browser' },
+    });
+    await rpc(mcp, 'tools/call', {
+      name: 'desktop_launch',
+      arguments: { command: 'browser', cwd: 'sub' },
+    });
+    expect(backend.calls).toEqual([
+      ['launch', { command: 'browser', args: [], cwd }],
+      ['launch', { command: 'browser', args: [], cwd: join(cwd, 'sub') }],
+    ]);
+  });
+
   it('returns a structured error when a human holds control', async () => {
     const backend = fakeBackend();
     mcp = createMachineMcp(cwd, {

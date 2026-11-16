@@ -33,20 +33,23 @@ export function registerDesktopTools(
   server: McpServer,
   desktop: DesktopService,
   principalId: string,
+  resolvePath: (path: string) => string = (path) => path,
 ): void {
   const action = async (
     input: AfterAction,
     operation: () => Promise<unknown>,
   ) => {
+    const text = (value: unknown) => ({
+      type: 'text' as const,
+      text: JSON.stringify(value ?? { ok: true }),
+    });
     try {
-      const value = await operation();
-      const text = {
-        type: 'text' as const,
-        text: JSON.stringify(value ?? { ok: true }),
-      };
-      if (!input.screenshot) return { content: [text] };
-      const shot = await desktop.settledScreenshot(input.settleMs);
-      return { content: [text, ...imageContent(shot)] };
+      if (!input.screenshot) return { content: [text(await operation())] };
+      const { value, screenshot } = await desktop.withSettledScreenshot(
+        operation,
+        input.settleMs,
+      );
+      return { content: [text(value), ...imageContent(screenshot)] };
     } catch (error) {
       return errorResult(error);
     }
@@ -262,7 +265,7 @@ export function registerDesktopTools(
             principalId,
             input.command,
             input.args ?? [],
-            input.cwd,
+            resolvePath(input.cwd ?? '.'),
           ),
       ),
   );

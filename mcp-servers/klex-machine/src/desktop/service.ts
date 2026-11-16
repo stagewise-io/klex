@@ -204,13 +204,29 @@ export class DesktopService {
     });
   }
 
-  /** Wait for the UI to settle after an action, then capture. */
-  async settledScreenshot(
+  /**
+   * Run an action, wait for the UI to settle, then capture, with no other
+   * desktop operation in between. `operation` must call one of this service's
+   * methods synchronously so its job is queued ahead of the capture.
+   */
+  async withSettledScreenshot<T>(
+    operation: () => Promise<T>,
     settleMs = DEFAULT_SETTLE_MS,
     format: ImageFormat = 'jpeg',
-  ): Promise<DesktopScreenshot> {
-    await this.#sleep(Math.min(Math.max(settleMs, 0), MAX_SETTLE_MS));
-    return this.screenshot(format);
+  ): Promise<{ value: T; screenshot: DesktopScreenshot }> {
+    const result = operation();
+    const screenshot = this.#serial(async () => {
+      try {
+        await result;
+      } catch {
+        return undefined;
+      }
+      await this.#sleep(Math.min(Math.max(settleMs, 0), MAX_SETTLE_MS));
+      return this.#capture(format);
+    });
+    const [value, shot] = await Promise.all([result, screenshot]);
+    if (!shot) throw new Error('Desktop action failed before its screenshot');
+    return { value, screenshot: shot };
   }
 
   async #capture(format: ImageFormat): Promise<DesktopScreenshot> {

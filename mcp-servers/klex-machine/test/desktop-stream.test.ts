@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import type { IncomingMessage } from 'node:http';
 import { createServer, type Server, type Socket } from 'node:net';
@@ -354,7 +355,10 @@ describe('desktop link', () => {
 
   it('applies leases and relays filtered RFB between a viewer stream and Xvnc', async () => {
     cloud = await startCloud();
-    const socketPath = join(dir, 'vnc.sock');
+    const socketPath =
+      process.platform === 'win32'
+        ? `\\\\.\\pipe\\klex-machine-vnc-${randomUUID()}`
+        : join(dir, 'vnc.sock');
     vnc = await startVnc(socketPath);
     const desktop = new DesktopService(fakeBackend());
     link = startDesktopLink({

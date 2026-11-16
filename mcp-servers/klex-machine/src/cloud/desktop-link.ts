@@ -20,6 +20,7 @@ const AVAILABILITY_POLL_MS = 10_000;
 const STREAM_CONNECT_TIMEOUT_MS = 15_000;
 const HIGH_WATER_BYTES = 4 * 1024 * 1024;
 const MAX_EARLY_VNC_BYTES = 64 * 1024;
+const CLOSE_TIMEOUT_MS = 2000;
 const LOW_WATER_BYTES = 1024 * 1024;
 const STREAM_ID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -377,7 +378,13 @@ export function startDesktopLink(options: DesktopLinkOptions): DesktopLink {
       control = undefined;
       if (socket && socket.readyState !== WebSocket.CLOSED) {
         await new Promise<void>((resolve) => {
-          socket.once('close', () => resolve());
+          // ws waits up to 30 s for the peer's close frame, longer than
+          // supervisors wait before SIGKILL.
+          const force = setTimeout(() => socket.terminate(), CLOSE_TIMEOUT_MS);
+          socket.once('close', () => {
+            clearTimeout(force);
+            resolve();
+          });
           if (socket.readyState === WebSocket.OPEN) socket.close(1001);
           else socket.terminate();
         });

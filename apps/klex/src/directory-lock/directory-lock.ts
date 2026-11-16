@@ -1,4 +1,12 @@
-import { type FileHandle, open, readFile, unlink } from 'node:fs/promises';
+import {
+  type FileHandle,
+  open,
+  readdir,
+  readFile,
+  rm,
+  rmdir,
+  unlink,
+} from 'node:fs/promises';
 import { join } from 'node:path';
 
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
@@ -6,6 +14,8 @@ import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 export interface DirectoryLock {
   acquire(): Promise<void>;
   release(): Promise<void>;
+  /** Removes an unused directory without deleting an open or replacement lock. */
+  removeDirectory(): Promise<void>;
 }
 
 export interface DirectoryLockDependencies {
@@ -43,6 +53,7 @@ class DirectoryLockModule implements DirectoryLock {
     private readonly deps: {
       logger: ModuleLogger;
       lockPath: string;
+      dataDirectory: string;
     },
   ) {}
 
@@ -88,6 +99,25 @@ class DirectoryLockModule implements DirectoryLock {
     heldLockPaths.delete(this.deps.lockPath);
     if (removeError) throw removeError;
     this.deps.logger.debug('Working directory lock released');
+  }
+
+  async removeDirectory(): Promise<void> {
+    if (!this.acquired || !this.handle) {
+      throw new Error('Cannot remove a directory without owning its lock');
+    }
+    // The on-disk record and process registry keep the lock live after closing
+    // the handle. Windows must not recursively remove an open lock file.
+    await this.handle.close();
+    this.handle = null;
+    const directory = this.deps.dataDirectory;
+    for (const entry of await readdir(directory)) {
+      if (entry === LOCK_FILE_NAME) continue;
+      await rm(join(directory, entry), { recursive: true, force: true });
+    }
+    await this.release();
+    // Never recursively remove after releasing ownership: another process may
+    // already have created a replacement lock or written useful state.
+    await rmdir(directory);
   }
 
   private async tryAcquire(): Promise<void> {
@@ -240,5 +270,6 @@ export function createDirectoryLock(
       bindings: { module: 'directory-lock' },
     }),
     lockPath: join(deps.dataDirectory, LOCK_FILE_NAME),
+    dataDirectory: deps.dataDirectory,
   });
 }

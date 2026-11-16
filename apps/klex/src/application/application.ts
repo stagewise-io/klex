@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 import type {
@@ -462,9 +461,9 @@ class ApplicationModule implements Application {
         this.preserveCreatedAgent
       )
         return;
-      await rm(createdDirectory, { recursive: true, force: true });
-      // Update recovery must retry creation, not reopen the deleted directory.
+      // Even partial removal must retry creation, not reopen damaged state.
       cli.dataDirectory = undefined;
+      await dirLock.removeDirectory();
       logger.info(
         { directory: createdDirectory },
         'Removed unused bot directory after startup failure',
@@ -810,10 +809,6 @@ class ApplicationModule implements Application {
       conversationHost: sessionHost,
     });
     cloudConnectivity.setTunnelRequestHandler(adminApi.handle.bind(adminApi));
-    // A local admin listener can accept work even before sessions start.
-    if (cli.dangerousLocalAdminApiPort !== undefined) {
-      this.preserveCreatedAgent = true;
-    }
     const runtime = await startRuntime({
       logging,
       onRollbackError: () => {
@@ -823,7 +818,15 @@ class ApplicationModule implements Application {
         modelCallLogger,
         sessionHistory,
         skillRegistry,
-        adminApi,
+        adminApi: {
+          start: async () => {
+            await adminApi.start();
+            // A bound local listener can accept work before sessions start.
+            if (cli.dangerousLocalAdminApiPort !== undefined)
+              this.preserveCreatedAgent = true;
+          },
+          close: () => adminApi.close(),
+        },
         cloudConnectivity: {
           start: async () => {
             try {

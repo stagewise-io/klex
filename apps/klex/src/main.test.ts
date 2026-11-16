@@ -52,7 +52,10 @@ const mocks = vi.hoisted(() => {
     createLearningExt:
       vi.fn<(options: { getSoul: () => string | null }) => void>(),
     readSoul: vi.fn((_directory: string) => 'Current soul'),
-    removeDirectory: vi.fn(async () => undefined),
+    removeDirectory: vi.fn(async () => {
+      await resource.release();
+    }),
+    adminStart: vi.fn(async () => undefined),
     startRuntime: vi.fn(),
     createAgent: vi.fn(),
     createCloudConnectivity: vi.fn(),
@@ -66,12 +69,10 @@ const mocks = vi.hoisted(() => {
   };
 });
 
-vi.mock('node:fs/promises', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('node:fs/promises')>()),
-  rm: mocks.removeDirectory,
-}));
 vi.mock('@stagewise/logger', () => ({ createLogger: () => mocks.logger }));
-vi.mock('@/admin-api', () => ({ createAdminApi: () => mocks.resource }));
+vi.mock('@/admin-api', () => ({
+  createAdminApi: () => ({ ...mocks.resource, start: mocks.adminStart }),
+}));
 vi.mock('@/agent-directory', () => ({
   createAgentDirectory: () => ({ create: mocks.createAgent }),
   defaultAgentRoot: () => '/unused/agents',
@@ -91,7 +92,10 @@ vi.mock('@/data-directory', () => ({
   ensureDataDirectory: mocks.ensureDataDirectory,
 }));
 vi.mock('@/directory-lock', () => ({
-  createDirectoryLock: () => mocks.resource,
+  createDirectoryLock: () => ({
+    ...mocks.resource,
+    removeDirectory: mocks.removeDirectory,
+  }),
 }));
 vi.mock('@/god-messages', () => ({ createGodMessages: vi.fn() }));
 vi.mock('@/health-server', () => ({
@@ -593,10 +597,7 @@ describe('managed-update agent continuity', () => {
         ),
       );
       if (create) {
-        expect(mocks.removeDirectory).toHaveBeenCalledExactlyOnceWith(
-          mocks.selectedDirectory,
-          { recursive: true, force: true },
-        );
+        expect(mocks.removeDirectory).toHaveBeenCalledExactlyOnceWith();
         const removedAt = mocks.removeDirectory.mock.invocationCallOrder[0];
         const releasedAt = mocks.resource.release.mock.invocationCallOrder[0];
         if (removedAt === undefined || releasedAt === undefined) {
@@ -619,6 +620,7 @@ describe('managed-update agent continuity', () => {
     'session',
     'rollback-failed',
     'local-admin',
+    'local-admin-failed',
   ] as const)(
     'preserves useful or uncertain startup state: %s',
     async (stage) => {
@@ -629,6 +631,7 @@ describe('managed-update agent continuity', () => {
           >[0],
         ) => {
           try {
+            await options.modules.adminApi.start();
             await options.modules.cloudConnectivity.start();
             await options.modules.sessionHost.start();
           } catch (error) {
@@ -640,6 +643,8 @@ describe('managed-update agent continuity', () => {
         },
       );
       const failure = new Error('Startup failed');
+      if (stage === 'local-admin-failed')
+        mocks.adminStart.mockRejectedValueOnce(failure);
       mocks.createCloudConnectivity.mockImplementationOnce(
         (options: {
           onTokenEnrollment(): { finish(outcome: string): void };
@@ -671,7 +676,7 @@ describe('managed-update agent continuity', () => {
         '--cloud',
         '--cloud-enroll-token',
         'test-token',
-        ...(stage === 'local-admin'
+        ...(['local-admin', 'local-admin-failed'].includes(stage)
           ? ['--dangerous-local-admin-api-port', '8088']
           : []),
       ]);
@@ -680,7 +685,8 @@ describe('managed-update agent continuity', () => {
           expect.stringContaining('update-recovery mode'),
         ),
       );
-      if (stage === 'enrollment-failed')
+      expect(mocks.adminStart).toHaveBeenCalledOnce();
+      if (stage === 'enrollment-failed' || stage === 'local-admin-failed')
         expect(mocks.removeDirectory).toHaveBeenCalledOnce();
       else expect(mocks.removeDirectory).not.toHaveBeenCalled();
     },
@@ -726,7 +732,9 @@ describe('managed-update agent continuity', () => {
           'Agent startup failed',
         );
       } else expect(mocks.removeDirectory).not.toHaveBeenCalled();
-      expect(requestRestart().arguments).not.toContain('--create-bot');
+      if (stage === 'removal')
+        expect(requestRestart().arguments).toContain('--create-bot');
+      else expect(requestRestart().arguments).not.toContain('--create-bot');
     },
   );
 

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import type { IncomingMessage } from 'node:http';
-import { createServer, type Server, type Socket } from 'node:net';
+import { connect, createServer, type Server, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -14,10 +14,11 @@ import {
   startDesktopLink,
 } from '../src/cloud/desktop-link.js';
 import {
-  type DesktopBackend,
+  type DesktopCapabilities,
   type DesktopControlChange,
   DesktopControlLease,
   DesktopInputDeniedError,
+  type DesktopProvider,
   DesktopService,
   LEASE_DISCONNECT_GRACE_MS,
   RfbClientFilter,
@@ -42,10 +43,28 @@ function handshake(): Buffer {
   return Buffer.concat([VERSION, Buffer.from([1]), Buffer.from([0])]);
 }
 
-function fakeBackend(): DesktopBackend {
+const SCREEN = { width: 1280, height: 800 };
+const STREAMING: DesktopCapabilities = {
+  computerUse: true,
+  stream: true,
+  screen: SCREEN,
+};
+
+function fakeProvider(
+  socketPath?: string,
+  probe: DesktopProvider['probe'] = async () => STREAMING,
+): DesktopProvider {
   const noop = async () => undefined;
   return {
-    probe: async () => ({ width: 1280, height: 800 }),
+    probe,
+    screenSize: async () => SCREEN,
+    openStream: () =>
+      new Promise((resolve, reject) => {
+        if (!socketPath) return reject(new Error('No stream source'));
+        const socket = connect(socketPath);
+        socket.once('connect', () => resolve(socket));
+        socket.once('error', reject);
+      }),
     capture: async () => Buffer.from([0xff, 0xd8, 0xff, 0xd9]),
     click: noop,
     drag: noop,
@@ -190,12 +209,12 @@ describe('DesktopControlLease', () => {
   });
 
   it('checks the lease after the screen refresh that precedes input', async () => {
-    const backend = fakeBackend();
+    const backend = fakeProvider();
     const click = vi.fn(async () => undefined);
     const desktop = new DesktopService({
       ...backend,
       click,
-      probe: async () => {
+      screenSize: async () => {
         desktop.lease.apply({ mode: 'human', holder: { name: 'Julian' } });
         return { width: 1280, height: 800 };
       },
@@ -255,7 +274,7 @@ describe('desktop control notifications', () => {
 
   it('queues a memory-only event for each principal when control changes', async () => {
     const store = createNotificationStore({ logger: silentMachineLogger });
-    const desktop = new DesktopService(fakeBackend());
+    const desktop = new DesktopService(fakeProvider());
     mcp = createMachineMcp(cwd, {
       principalId: 'bot-1',
       omitHostDetails: true,
@@ -282,6 +301,8 @@ interface CloudFake {
   control: Promise<{ socket: WebSocket; request: IncomingMessage }>;
   stream: Promise<{ socket: WebSocket; request: IncomingMessage }>;
   messages: unknown[];
+  /** Control connections accepted so far. */
+  controls(): number;
   next(type: string): Promise<Record<string, unknown>>;
   close(): Promise<void>;
 }
@@ -291,6 +312,7 @@ async function startCloud(): Promise<CloudFake> {
   await new Promise<void>((resolve) => server.once('listening', resolve));
   const messages: unknown[] = [];
   const waiters: Array<() => void> = [];
+  let controls = 0;
   let resolveControl!: (value: {
     socket: WebSocket;
     request: IncomingMessage;
@@ -311,6 +333,7 @@ async function startCloud(): Promise<CloudFake> {
   );
   server.on('connection', (socket, request) => {
     if (request.url === '/api/machine-desktop/control') {
+      controls += 1;
       socket.on('message', (data) => {
         messages.push(JSON.parse(data.toString()));
         for (const waiter of waiters.splice(0)) waiter();
@@ -324,6 +347,7 @@ async function startCloud(): Promise<CloudFake> {
     control,
     stream,
     messages,
+    controls: () => controls,
     async next(type) {
       for (;;) {
         const index = messages.findIndex(
@@ -401,14 +425,13 @@ describe('desktop link', () => {
         ? `\\\\.\\pipe\\klex-machine-vnc-${randomUUID()}`
         : join(dir, 'vnc.sock');
     vnc = await startVnc(socketPath);
-    const desktop = new DesktopService(fakeBackend());
+    const desktop = new DesktopService(fakeProvider(socketPath));
     link = startDesktopLink({
       cloudBaseUrl: cloud.url,
       getToken: async () => 'machine-token',
       invalidateToken: () => undefined,
       desktop,
       machineVersion: '1.2.3',
-      vncSocketPath: socketPath,
     });
 
     const { socket: control, request } = await cloud.control;
@@ -477,14 +500,13 @@ describe('desktop link', () => {
 
   it('does not acknowledge a human lease that already expired', async () => {
     cloud = await startCloud();
-    const desktop = new DesktopService(fakeBackend());
+    const desktop = new DesktopService(fakeProvider());
     link = startDesktopLink({
       cloudBaseUrl: cloud.url,
       getToken: async () => 'machine-token',
       invalidateToken: () => undefined,
       desktop,
       machineVersion: '1.2.3',
-      vncSocketPath: join(dir, 'missing.sock'),
     });
     const { socket: control } = await cloud.control;
     await cloud.next('hello');
@@ -534,9 +556,8 @@ describe('desktop link', () => {
         return 'machine-token';
       },
       invalidateToken: () => undefined,
-      desktop: new DesktopService(fakeBackend()),
+      desktop: new DesktopService(fakeProvider(socketPath)),
       machineVersion: '1.2.3',
-      vncSocketPath: socketPath,
     });
     const { socket: control } = await cloud.control;
     await cloud.next('hello');
@@ -561,9 +582,8 @@ describe('desktop link', () => {
       cloudBaseUrl: cloud.url,
       getToken: async () => 'machine-token',
       invalidateToken: () => undefined,
-      desktop: new DesktopService(fakeBackend()),
+      desktop: new DesktopService(fakeProvider(socketPath)),
       machineVersion: '1.2.3',
-      vncSocketPath: socketPath,
     });
     const { socket: control } = await cloud.control;
     await cloud.next('hello');
@@ -587,9 +607,8 @@ describe('desktop link', () => {
       cloudBaseUrl: cloud.url,
       getToken: async () => 'machine-token',
       invalidateToken: () => undefined,
-      desktop: new DesktopService(fakeBackend()),
+      desktop: new DesktopService(fakeProvider()),
       machineVersion: '1.2.3',
-      vncSocketPath: join(dir, 'missing.sock'),
     });
     const { request } = await cloud.control;
     await cloud.next('hello');
@@ -599,22 +618,70 @@ describe('desktop link', () => {
     expect(Date.now() - started).toBeLessThan(4000);
   });
 
-  it('refuses streams when the VNC socket is unreachable', async () => {
+  it.each([
+    ['a headless machine', { computerUse: false, stream: false }],
+    [
+      'a display without VNC',
+      { computerUse: true, stream: false, screen: SCREEN },
+    ],
+  ] as const)(
+    'stays off Cloud on %s until the provider reports stream',
+    async (_case, offline) => {
+      cloud = await startCloud();
+      let capabilities: DesktopCapabilities = offline;
+      const probe = vi.fn(async () => capabilities);
+      const getToken = vi.fn(async () => 'machine-token');
+      link = startDesktopLink({
+        cloudBaseUrl: cloud.url,
+        getToken,
+        invalidateToken: () => undefined,
+        desktop: new DesktopService(fakeProvider(undefined, probe), {
+          now: () => probe.mock.calls.length * 10_000,
+        }),
+        machineVersion: '1.2.3',
+        availabilityPollMs: 5,
+      });
+      await vi.waitFor(() =>
+        expect(probe.mock.calls.length).toBeGreaterThan(2),
+      );
+      expect(getToken).not.toHaveBeenCalled();
+      expect(cloud.controls()).toBe(0);
+
+      capabilities = STREAMING;
+      await cloud.control;
+      expect(await cloud.next('hello')).toMatchObject({ screen: SCREEN });
+    },
+  );
+
+  it('withdraws from Cloud when the stream source fails', async () => {
     cloud = await startCloud();
+    let capabilities: DesktopCapabilities = STREAMING;
+    const probe = vi.fn(async () => capabilities);
     link = startDesktopLink({
       cloudBaseUrl: cloud.url,
       getToken: async () => 'machine-token',
       invalidateToken: () => undefined,
-      desktop: new DesktopService(fakeBackend()),
+      desktop: new DesktopService(fakeProvider(undefined, probe)),
       machineVersion: '1.2.3',
-      vncSocketPath: join(dir, 'missing.sock'),
+      availabilityPollMs: 5,
+      random: () => 0,
     });
     const { socket: control } = await cloud.control;
     await cloud.next('hello');
+    capabilities = { computerUse: true, stream: false, screen: SCREEN };
+    const withdrawn = new Promise<void>((resolve) =>
+      control.once('close', () => resolve()),
+    );
     control.send(JSON.stringify({ type: 'stream.open', streamId: STREAM_ID }));
     expect(await cloud.next('stream.failed')).toMatchObject({
       streamId: STREAM_ID,
       reason: 'desktop_unavailable',
     });
+    await withdrawn;
+    await vi.waitFor(() => expect(probe).toHaveBeenCalledTimes(2), {
+      timeout: 3000,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(cloud.controls()).toBe(1);
   });
 });

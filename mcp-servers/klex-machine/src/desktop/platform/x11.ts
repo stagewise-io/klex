@@ -1,15 +1,22 @@
 import { execFile, spawn } from 'node:child_process';
+import { connect, type Socket } from 'node:net';
+import type { Duplex } from 'node:stream';
 
-import type {
-  CaptureOptions,
-  DesktopBackend,
-  DesktopWindow,
-  LaunchOptions,
-  MouseButton,
-  Point,
-  ScreenSize,
-  ScrollDirection,
-} from './backend.js';
+import {
+  type CaptureOptions,
+  type DesktopCapabilities,
+  type DesktopProvider,
+  type DesktopWindow,
+  type LaunchOptions,
+  type MouseButton,
+  NO_DESKTOP,
+  type Point,
+  type ScreenSize,
+  type ScrollDirection,
+} from '../provider.js';
+
+export const DEFAULT_VNC_SOCKET_PATH = '/run/klex/vnc.sock';
+const STREAM_CONNECT_TIMEOUT_MS = 2_000;
 
 const COMMAND_TIMEOUT_MS = 15_000;
 const MAX_CAPTURE_BYTES = 32 * 1024 * 1024;
@@ -27,11 +34,17 @@ export type ProcessLauncher = (
   options: LaunchOptions & { env: NodeJS.ProcessEnv },
 ) => Promise<{ pid: number }>;
 
-export interface X11DesktopBackendOptions {
-  display: string;
+export type SocketConnector = (path: string) => Socket;
+
+export interface X11DesktopProviderOptions {
+  /** X display such as `:1`. Without one, the provider reports no desktop. */
+  display?: string;
   env?: NodeJS.ProcessEnv;
+  /** Unix socket of a VNC server for this display, such as Xvnc's `-rfbunixpath`. */
+  vncSocketPath?: string;
   run?: CommandRunner;
   launch?: ProcessLauncher;
+  connect?: SocketConnector;
 }
 
 const BUTTONS: Record<MouseButton, string> = {
@@ -157,28 +170,85 @@ const launchProcess: ProcessLauncher = ({ command, args, cwd, env }) =>
     });
   });
 
-/** X11 desktop driven by xdotool and captured with ImageMagick `import`. */
-export class X11DesktopBackend implements DesktopBackend {
+/**
+ * X11 desktop: input and windows through xdotool, capture through ImageMagick
+ * `import`, and the stream from a VNC server's Unix socket. Computer use needs
+ * the display and both tools; streaming needs the display and a live socket.
+ */
+export class X11DesktopProvider implements DesktopProvider {
+  readonly #display: string | undefined;
   readonly #env: NodeJS.ProcessEnv;
+  readonly #vncSocketPath: string;
   readonly #run: CommandRunner;
   readonly #launch: ProcessLauncher;
+  readonly #connect: SocketConnector;
 
-  constructor(options: X11DesktopBackendOptions) {
-    this.#env = { ...(options.env ?? process.env), DISPLAY: options.display };
+  constructor(options: X11DesktopProviderOptions = {}) {
+    this.#display = options.display?.trim() || undefined;
+    this.#env = { ...(options.env ?? process.env), DISPLAY: this.#display };
+    this.#vncSocketPath = options.vncSocketPath ?? DEFAULT_VNC_SOCKET_PATH;
     this.#run = options.run ?? runCommand;
     this.#launch = options.launch ?? launchProcess;
+    this.#connect = options.connect ?? ((path) => connect(path));
   }
 
-  async probe(): Promise<ScreenSize> {
-    const [geometry] = await Promise.all([
-      this.#xdotool(['getdisplaygeometry']),
-      this.#exec('import', ['-version']),
+  async probe(): Promise<DesktopCapabilities> {
+    if (!this.#display) return NO_DESKTOP;
+    let screen: ScreenSize;
+    try {
+      screen = await this.screenSize();
+    } catch {
+      return NO_DESKTOP;
+    }
+    const [computerUse, stream] = await Promise.all([
+      this.#exec('import', ['-version']).then(
+        () => true,
+        () => false,
+      ),
+      this.#connectStream().then(
+        (socket) => {
+          socket.destroy();
+          return true;
+        },
+        () => false,
+      ),
     ]);
+    return { computerUse, stream, screen };
+  }
+
+  async screenSize(): Promise<ScreenSize> {
+    const geometry = await this.#xdotool(['getdisplaygeometry']);
     const [width, height] = geometry.trim().split(/\s+/).map(Number);
     if (!width || !height) {
       throw new Error(`Unexpected display geometry: ${geometry.trim()}`);
     }
     return { width, height };
+  }
+
+  async openStream(): Promise<Duplex> {
+    if (!this.#display) throw new Error('No X display is configured');
+    await this.screenSize();
+    return this.#connectStream();
+  }
+
+  #connectStream(): Promise<Socket> {
+    return new Promise((resolve, reject) => {
+      const socket = this.#connect(this.#vncSocketPath);
+      const timer = setTimeout(() => {
+        socket.destroy();
+        reject(new Error('VNC socket connect timed out'));
+      }, STREAM_CONNECT_TIMEOUT_MS);
+      socket.once('connect', () => {
+        clearTimeout(timer);
+        socket.off('error', onError);
+        resolve(socket);
+      });
+      const onError = (error: Error) => {
+        clearTimeout(timer);
+        reject(error);
+      };
+      socket.once('error', onError);
+    });
   }
 
   async capture(options: CaptureOptions): Promise<Buffer> {

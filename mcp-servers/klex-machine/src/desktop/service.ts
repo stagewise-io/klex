@@ -1,22 +1,27 @@
-import type {
-  DesktopBackend,
-  DesktopWindow,
-  ImageFormat,
-  MouseButton,
-  Point,
-  Region,
-  ScreenSize,
-  ScrollDirection,
-} from './backend.js';
+import type { Duplex } from 'node:stream';
+
 import type {
   DesktopInputAction,
   DesktopInputControl,
 } from './input-control.js';
 import { DesktopControlLease } from './lease.js';
+import {
+  type DesktopCapabilities,
+  type DesktopProvider,
+  type DesktopWindow,
+  type ImageFormat,
+  type MouseButton,
+  NO_DESKTOP,
+  type Point,
+  type Region,
+  type ScreenSize,
+  type ScrollDirection,
+} from './provider.js';
 
 /** Screenshots fit this box so model-facing coordinates stay stable. */
 export const MAX_SCREENSHOT_SIZE: ScreenSize = { width: 1280, height: 800 };
 const PROBE_RETRY_MS = 10_000;
+const PROBE_REFRESH_MS = 60_000;
 const DEFAULT_SETTLE_MS = 300;
 const MAX_SETTLE_MS = 5_000;
 
@@ -46,18 +51,18 @@ export interface DesktopServiceOptions {
 
 export class DesktopService {
   readonly lease: DesktopControlLease;
-  readonly #backend: DesktopBackend;
+  readonly #provider: DesktopProvider;
   readonly #inputControl: DesktopInputControl;
   readonly #max: ScreenSize;
   readonly #now: () => number;
   readonly #sleep: (ms: number) => Promise<void>;
-  #screen: ScreenSize | undefined;
-  #probe: Promise<ScreenSize | undefined> | undefined;
+  #probe: Promise<DesktopCapabilities> | undefined;
   #probedAt = 0;
+  #probeTtl = 0;
   #queue: Promise<unknown> = Promise.resolve();
 
-  constructor(backend: DesktopBackend, options: DesktopServiceOptions = {}) {
-    this.#backend = backend;
+  constructor(provider: DesktopProvider, options: DesktopServiceOptions = {}) {
+    this.#provider = provider;
     this.lease = options.lease ?? new DesktopControlLease();
     this.#inputControl = options.inputControl ?? this.lease;
     this.#max = options.maxScreenshotSize ?? MAX_SCREENSHOT_SIZE;
@@ -67,27 +72,36 @@ export class DesktopService {
       ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   }
 
-  /** Whether a display is reachable. The result is re-checked after a short interval. */
-  async available(): Promise<boolean> {
-    if (!this.#probe || this.#now() - this.#probedAt >= PROBE_RETRY_MS) {
+  /**
+   * The provider's latest probe. A full result is re-checked every minute and
+   * a partial one every few seconds, so a desktop that appears or goes away is
+   * noticed without probing on every request.
+   */
+  capabilities(): Promise<DesktopCapabilities> {
+    if (!this.#probe || this.#now() - this.#probedAt >= this.#probeTtl) {
       this.#probedAt = this.#now();
-      this.#probe = this.#backend.probe().then(
-        (screen) => {
-          this.#screen = screen;
-          return screen;
+      this.#probeTtl = PROBE_RETRY_MS;
+      this.#probe = this.#provider.probe().then(
+        (capabilities) => {
+          if (capabilities.computerUse && capabilities.stream) {
+            this.#probeTtl = PROBE_REFRESH_MS;
+          }
+          return capabilities;
         },
-        () => {
-          this.#screen = undefined;
-          return undefined;
-        },
+        () => NO_DESKTOP,
       );
     }
-    return (await this.#probe) !== undefined;
+    return this.#probe;
   }
 
-  /** Physical screen size from the latest probe, if a display is reachable. */
-  async screenSize(): Promise<ScreenSize | undefined> {
-    return (await this.available()) ? this.#screen : undefined;
+  /** Drops the cached probe, for callers that just saw a capability fail. */
+  invalidate(): void {
+    this.#probe = undefined;
+  }
+
+  /** Opens an RFB source for one viewer. */
+  openStream(): Promise<Duplex> {
+    return this.#provider.openStream();
   }
 
   screenshot(format: ImageFormat = 'jpeg'): Promise<DesktopScreenshot> {
@@ -116,7 +130,7 @@ export class DesktopService {
         width: Math.max(1, Math.round(physical.width * fit)),
         height: Math.max(1, Math.round(physical.height * fit)),
       };
-      const data = await this.#backend.capture({
+      const data = await this.#provider.capture({
         region: physical,
         size,
         format,
@@ -133,7 +147,7 @@ export class DesktopService {
     modifiers: string[],
   ): Promise<void> {
     return this.#input(principalId, 'click', async (toScreen) =>
-      this.#backend.click(toScreen(point), button, count, modifiers),
+      this.#provider.click(toScreen(point), button, count, modifiers),
     );
   }
 
@@ -144,13 +158,13 @@ export class DesktopService {
     button: MouseButton,
   ): Promise<void> {
     return this.#input(principalId, 'drag', async (toScreen) =>
-      this.#backend.drag(toScreen(from), toScreen(to), button),
+      this.#provider.drag(toScreen(from), toScreen(to), button),
     );
   }
 
   move(principalId: string, point: Point): Promise<void> {
     return this.#input(principalId, 'move', async (toScreen) =>
-      this.#backend.move(toScreen(point)),
+      this.#provider.move(toScreen(point)),
     );
   }
 
@@ -161,21 +175,21 @@ export class DesktopService {
     amount: number,
   ): Promise<void> {
     return this.#input(principalId, 'scroll', async (toScreen) =>
-      this.#backend.scroll(toScreen(point), direction, amount),
+      this.#provider.scroll(toScreen(point), direction, amount),
     );
   }
 
   type(principalId: string, text: string): Promise<void> {
-    return this.#input(principalId, 'type', () => this.#backend.type(text));
+    return this.#input(principalId, 'type', () => this.#provider.type(text));
   }
 
   key(principalId: string, combos: string[]): Promise<void> {
-    return this.#input(principalId, 'key', () => this.#backend.key(combos));
+    return this.#input(principalId, 'key', () => this.#provider.key(combos));
   }
 
   focusWindow(principalId: string, id: string): Promise<void> {
     return this.#input(principalId, 'focusWindow', () =>
-      this.#backend.focusWindow(id),
+      this.#provider.focusWindow(id),
     );
   }
 
@@ -186,14 +200,14 @@ export class DesktopService {
     cwd?: string,
   ): Promise<{ pid: number }> {
     return this.#input(principalId, 'launch', () =>
-      this.#backend.launch({ command, args, ...(cwd ? { cwd } : {}) }),
+      this.#provider.launch({ command, args, ...(cwd ? { cwd } : {}) }),
     );
   }
 
   listWindows(): Promise<DesktopWindow[]> {
     return this.#serial(async () => {
       const space = this.#space(await this.#refreshScreen());
-      const windows = await this.#backend.listWindows();
+      const windows = await this.#provider.listWindows();
       return windows.map((window) => ({
         ...window,
         bounds: {
@@ -236,7 +250,7 @@ export class DesktopService {
     const space = this.#space(screen);
     const size = { width: space.width, height: space.height };
     const scaled = size.width !== screen.width || size.height !== screen.height;
-    const data = await this.#backend.capture({
+    const data = await this.#provider.capture({
       format,
       ...(scaled ? { size } : {}),
     });
@@ -265,9 +279,8 @@ export class DesktopService {
   }
 
   /** Re-read the geometry so resolution changes never use stale scaling. */
-  async #refreshScreen(): Promise<ScreenSize> {
-    this.#screen = await this.#backend.probe();
-    return this.#screen;
+  #refreshScreen(): Promise<ScreenSize> {
+    return this.#provider.screenSize();
   }
 
   #space(screen: ScreenSize): ScreenSize & { scale: number } {

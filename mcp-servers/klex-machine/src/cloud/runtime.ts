@@ -30,7 +30,7 @@ export async function startCloudMachineRuntime(
   options?: MachineFactsOptions & {
     logger?: MachineLogger;
     /** Streams this desktop to Cloud viewers and enforces the control lease. */
-    desktop?: { service: DesktopService; vncSocketPath?: string };
+    desktop?: { service: DesktopService };
   },
 ): Promise<CloudMachineRuntime> {
   const enrollment = await loadMachineEnrollment(dataDir);
@@ -88,9 +88,6 @@ export async function startCloudMachineRuntime(
         desktop: desktop.service,
         machineVersion: options?.version ?? 'unknown',
         logger,
-        ...(desktop.vncSocketPath
-          ? { vncSocketPath: desktop.vncSocketPath }
-          : {}),
       })
     : undefined;
   return {

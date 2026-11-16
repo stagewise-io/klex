@@ -6,14 +6,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   type CaptureOptions,
-  type DesktopBackend,
   DesktopInputDeniedError,
+  type DesktopProvider,
   DesktopService,
-  desktopFromEnvironment,
-  toXdotoolCombo,
-  X11DesktopBackend,
+  NO_DESKTOP,
 } from '../src/desktop/index.js';
-import type { CommandRunner } from '../src/desktop/x11.js';
+import { desktopFromEnvironment } from '../src/desktop/platform/index.js';
 import { createMachineMcp, type MachineMcp } from '../src/mcp.js';
 
 vi.mock('../src/cloud/facts/device-type.js', () => ({
@@ -22,9 +20,9 @@ vi.mock('../src/cloud/facts/device-type.js', () => ({
 
 const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
 
-function fakeBackend(
+function fakeProvider(
   screen = { width: 1280, height: 800 },
-): DesktopBackend & { calls: unknown[][] } {
+): DesktopProvider & { calls: unknown[][] } {
   const calls: unknown[][] = [];
   const record =
     (name: string) =>
@@ -34,7 +32,9 @@ function fakeBackend(
     };
   return {
     calls,
-    probe: async () => screen,
+    probe: async () => ({ computerUse: true, stream: false, screen }),
+    screenSize: async () => screen,
+    openStream: () => Promise.reject(new Error('No stream source')),
     capture: async (options: CaptureOptions) => {
       calls.push(['capture', options]);
       return JPEG;
@@ -63,7 +63,7 @@ function fakeBackend(
 
 describe('DesktopService', () => {
   it('maps screenshot coordinates to a larger physical screen', async () => {
-    const backend = fakeBackend({ width: 2560, height: 1600 });
+    const backend = fakeProvider({ width: 2560, height: 1600 });
     const desktop = new DesktopService(backend);
 
     const shot = await desktop.screenshot();
@@ -96,13 +96,13 @@ describe('DesktopService', () => {
   });
 
   it('captures at native size when the screen fits', async () => {
-    const backend = fakeBackend();
+    const backend = fakeProvider();
     await new DesktopService(backend).screenshot('png');
     expect(backend.calls).toEqual([['capture', { format: 'png' }]]);
   });
 
   it('rejects coordinates outside the screenshot', async () => {
-    const backend = fakeBackend();
+    const backend = fakeProvider();
     const desktop = new DesktopService(backend);
     await expect(desktop.move('local', { x: 1280, y: 0 })).rejects.toThrow(
       'outside the 1280x800 screenshot',
@@ -111,7 +111,7 @@ describe('DesktopService', () => {
   });
 
   it('zooms a screenshot region from physical pixels', async () => {
-    const backend = fakeBackend({ width: 2560, height: 1600 });
+    const backend = fakeProvider({ width: 2560, height: 1600 });
     const zoom = await new DesktopService(backend).zoom({
       x: 10,
       y: 20,
@@ -130,7 +130,7 @@ describe('DesktopService', () => {
   });
 
   it('asks the input control before every input action, at execution time', async () => {
-    const backend = fakeBackend();
+    const backend = fakeProvider();
     const authorize = vi.fn(({ action }: { action: string }) => {
       if (action === 'type')
         throw new DesktopInputDeniedError('Alex has control', {
@@ -154,155 +154,29 @@ describe('DesktopService', () => {
     expect(backend.calls.map(([name]) => name)).toEqual(['key', 'capture']);
   });
 
-  it('reports unavailable when the probe fails and retries after a backoff', async () => {
+  it('re-probes failed or partial capabilities sooner than full ones', async () => {
     let now = 0;
-    const backend = fakeBackend();
+    const provider = fakeProvider();
+    const screen = { width: 1280, height: 800 };
     const probe = vi
-      .fn<DesktopBackend['probe']>()
-      .mockRejectedValueOnce(new Error('Cannot open display'))
-      .mockResolvedValue({ width: 1280, height: 800 });
-    backend.probe = probe;
-    const desktop = new DesktopService(backend, { now: () => now });
+      .fn<DesktopProvider['probe']>()
+      .mockRejectedValueOnce(new Error('provider bug'))
+      .mockResolvedValueOnce({ computerUse: true, stream: false, screen })
+      .mockResolvedValue({ computerUse: true, stream: true, screen });
+    provider.probe = probe;
+    const desktop = new DesktopService(provider, { now: () => now });
 
-    expect(await desktop.available()).toBe(false);
-    expect(await desktop.available()).toBe(false);
+    expect(await desktop.capabilities()).toEqual(NO_DESKTOP);
     now = 10_000;
-    expect(await desktop.available()).toBe(true);
-    expect(probe).toHaveBeenCalledTimes(2);
-  });
-});
-
-describe('X11DesktopBackend', () => {
-  function backendWith(outputs: Record<string, string> = {}) {
-    const calls: [string, string[]][] = [];
-    const run: CommandRunner = async (file, args) => {
-      calls.push([file, [...args]]);
-      const key = `${file} ${args[0]}`;
-      return Buffer.from(outputs[key] ?? (file === 'import' ? 'img' : ''));
-    };
-    const backend = new X11DesktopBackend({
-      display: ':1',
-      env: {},
-      run,
-      launch: async () => ({ pid: 7 }),
-    });
-    return { backend, calls };
-  }
-
-  it('releases held modifiers when a click fails', async () => {
-    const calls: string[][] = [];
-    const backend = new X11DesktopBackend({
-      display: ':1',
-      env: {},
-      run: async (_file, args) => {
-        calls.push(args);
-        if (args.includes('click')) throw new Error('timed out');
-        return Buffer.from('');
-      },
-      launch: async () => ({ pid: 7 }),
-    });
-    await expect(
-      backend.click({ x: 1, y: 1 }, 'left', 1, ['ctrl']),
-    ).rejects.toThrow('timed out');
-    expect(calls.at(-1)).toEqual(['keyup', 'ctrl']);
-  });
-
-  it('builds xdotool argument vectors without a shell', async () => {
-    const { backend, calls } = backendWith();
-    await backend.click({ x: 5, y: 6 }, 'right', 2, ['Ctrl', 'shift']);
-    await backend.type('a; rm -rf / $(x)');
-    await backend.key(['cmd+L', 'Enter', 'ctrl+shift+t', 'f5']);
-    await backend.scroll({ x: 1, y: 2 }, 'down', 4);
-
-    expect(calls).toEqual([
-      ['xdotool', ['keydown', 'ctrl', 'keydown', 'shift']],
-      [
-        'xdotool',
-        ['mousemove', '5', '6', 'click', '--repeat', '2', '--delay', '80', '3'],
-      ],
-      ['xdotool', ['keyup', 'shift', 'keyup', 'ctrl']],
-      [
-        'xdotool',
-        ['type', '--clearmodifiers', '--delay', '12', '--', 'a; rm -rf / $(x)'],
-      ],
-      [
-        'xdotool',
-        [
-          'key',
-          '--clearmodifiers',
-          '--delay',
-          '40',
-          '--',
-          'super+L',
-          'Return',
-          'ctrl+shift+t',
-          'F5',
-        ],
-      ],
-      [
-        'xdotool',
-        ['mousemove', '1', '2', 'click', '--repeat', '4', '--delay', '30', '5'],
-      ],
-    ]);
-  });
-
-  it('captures regions with ImageMagick', async () => {
-    const { backend, calls } = backendWith();
-    await backend.capture({
-      region: { x: 1, y: 2, width: 3, height: 4 },
-      size: { width: 30, height: 40 },
-      format: 'jpeg',
-    });
-    expect(calls).toEqual([
-      [
-        'import',
-        [
-          '-silent',
-          '-window',
-          'root',
-          '-crop',
-          '3x4+1+2',
-          '+repage',
-          '-resize',
-          '30x40!',
-          '-quality',
-          '75',
-          'jpeg:-',
-        ],
-      ],
-    ]);
-  });
-
-  it('parses the display geometry and window list', async () => {
-    const { backend } = backendWith({
-      'xdotool getdisplaygeometry': '1280 800\n',
-      'xdotool search': '11\n12\n',
-      'xdotool getactivewindow': '12\n',
-      'xdotool getwindowname': 'Title\n',
-      'xdotool getwindowgeometry':
-        'WINDOW=12\nX=10\nY=20\nWIDTH=300\nHEIGHT=200\nSCREEN=0\n',
-    });
-    expect(await backend.probe()).toEqual({ width: 1280, height: 800 });
-    expect(await backend.listWindows()).toEqual([
-      {
-        id: '11',
-        title: 'Title',
-        bounds: { x: 10, y: 20, width: 300, height: 200 },
-        focused: false,
-      },
-      {
-        id: '12',
-        title: 'Title',
-        bounds: { x: 10, y: 20, width: 300, height: 200 },
-        focused: true,
-      },
-    ]);
-  });
-
-  it('rejects unknown key names', () => {
-    expect(toXdotoolCombo('Ctrl+Alt+Delete')).toBe('ctrl+alt+Delete');
-    expect(() => toXdotoolCombo('ctrl+')).toThrow('Invalid key combo');
-    expect(() => toXdotoolCombo('ctrl+$(x)')).toThrow('Unsupported key name');
+    expect(await desktop.capabilities()).toMatchObject({ stream: false });
+    now = 20_000;
+    expect(await desktop.capabilities()).toMatchObject({ stream: true });
+    now = 70_000;
+    await desktop.capabilities();
+    expect(probe).toHaveBeenCalledTimes(3);
+    desktop.invalidate();
+    await desktop.capabilities();
+    expect(probe).toHaveBeenCalledTimes(4);
   });
 });
 
@@ -367,41 +241,35 @@ describe('desktop MCP tools', () => {
   ] as const)(
     'are omitted on %s with DISPLAY=%s',
     async (platform, display) => {
-      const original = Object.getOwnPropertyDescriptor(process, 'platform');
-      Object.defineProperty(process, 'platform', { value: platform });
-      vi.stubEnv('DISPLAY', display);
-      vi.stubEnv('KLEX_MACHINE_DESKTOP', undefined);
-      vi.stubEnv('PATH', cwd);
-      try {
-        expect(desktopFromEnvironment() === undefined).toBe(
-          platform !== 'linux' || display === undefined,
-        );
-        mcp = createMachineMcp(cwd, { omitHostDetails: true });
-        const { tools } = await rpc(mcp, 'tools/list');
-        const resources = (await rpc(mcp, 'resources/list'))?.resources;
-        const init = await rpc(mcp, 'initialize', {
-          protocolVersion: '2025-06-18',
-          capabilities: {},
-          clientInfo: { name: 'test', version: '1' },
-        });
-        expect(tools?.length).toBeGreaterThan(0);
-        expect(tools?.some(({ name }) => name.startsWith('desktop_'))).toBe(
-          false,
-        );
-        expect(resources ?? []).toEqual([]);
-        expect(init?.instructions).not.toContain('desktop_*');
-      } finally {
-        if (original) Object.defineProperty(process, 'platform', original);
-        vi.unstubAllEnvs();
-      }
+      const desktop = desktopFromEnvironment(
+        { ...(display ? { DISPLAY: display } : {}), PATH: cwd },
+        {},
+        platform,
+      );
+      expect(desktop === undefined).toBe(platform !== 'linux');
+      mcp = createMachineMcp(cwd, {
+        omitHostDetails: true,
+        ...(desktop ? { desktop } : {}),
+      });
+      const { tools } = await rpc(mcp, 'tools/list');
+      const resources = (await rpc(mcp, 'resources/list'))?.resources;
+      const init = await rpc(mcp, 'initialize', {
+        protocolVersion: '2025-06-18',
+        capabilities: {},
+        clientInfo: { name: 'test', version: '1' },
+      });
+      expect(tools?.length).toBeGreaterThan(0);
+      expect(tools?.some(({ name }) => name.startsWith('desktop_'))).toBe(
+        false,
+      );
+      expect(resources ?? []).toEqual([]);
+      expect(init?.instructions).not.toContain('desktop_*');
     },
   );
 
-  it('are not advertised without a reachable display', async () => {
-    const backend = fakeBackend();
-    backend.probe = async () => {
-      throw new Error('Cannot open display');
-    };
+  it('are not advertised when the provider reports no computer use', async () => {
+    const backend = fakeProvider();
+    backend.probe = async () => NO_DESKTOP;
     mcp = createMachineMcp(cwd, {
       omitHostDetails: true,
       desktop: new DesktopService(backend),
@@ -411,7 +279,7 @@ describe('desktop MCP tools', () => {
   });
 
   it('returns screenshots as image content and as a resource', async () => {
-    const backend = fakeBackend();
+    const backend = fakeProvider();
     mcp = createMachineMcp(cwd, {
       omitHostDetails: true,
       desktop: new DesktopService(backend),
@@ -465,7 +333,7 @@ describe('desktop MCP tools', () => {
   });
 
   it('appends a settled screenshot only when asked', async () => {
-    const backend = fakeBackend();
+    const backend = fakeProvider();
     mcp = createMachineMcp(cwd, {
       omitHostDetails: true,
       desktop: new DesktopService(backend, { sleep: async () => undefined }),
@@ -489,7 +357,7 @@ describe('desktop MCP tools', () => {
   });
 
   it('captures the follow-up screenshot before any other queued action', async () => {
-    const backend = fakeBackend();
+    const backend = fakeProvider();
     let release!: () => void;
     const settled = new Promise<void>((resolve) => {
       release = resolve;
@@ -510,7 +378,7 @@ describe('desktop MCP tools', () => {
   });
 
   it('launches apps from the machine working directory', async () => {
-    const backend = fakeBackend();
+    const backend = fakeProvider();
     mcp = createMachineMcp(cwd, {
       omitHostDetails: true,
       desktop: new DesktopService(backend),
@@ -530,7 +398,7 @@ describe('desktop MCP tools', () => {
   });
 
   it('returns a structured error when a human holds control', async () => {
-    const backend = fakeBackend();
+    const backend = fakeProvider();
     mcp = createMachineMcp(cwd, {
       principalId: 'agent-1',
       omitHostDetails: true,

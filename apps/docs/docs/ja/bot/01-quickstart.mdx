@@ -8,6 +8,10 @@ related:
 
 Klex は、ほとんどのユーザーにクラウドホストのボットを推奨しています。自分のコンピューターでボットを実行し、Klex Cloud に登録するかどうかを選ぶこともできます。モデルプロバイダーへのアクセスが必要です。クラウドでの設定には Klex Cloud アカウントも必要です。
 
+<div className="hosting-quickstart">
+<Tabs inline hash sync={false}>
+<Tab title="クラウドホスト" id="クラウドホスト">
+
 <a id="ボットの作成"></a>
 
 ## クラウドホストのボットを作成する
@@ -18,18 +22,26 @@ Klex は、ほとんどのユーザーにクラウドホストのボットを推
 
 接続したアプリでボットにメッセージを送り、応答するか確認します。Cloud ダッシュボードで活動を確認できます。
 
+</Tab>
+<Tab title="セルフホスト" id="セルフホスト">
+
 <a id="インストール"></a>
 
 ## セルフホスト用に Klex をインストールする
 
 自分のコンピューターでボットを実行するには、ターミナルから Klex をインストールします。
 
-<Tabs param="install">
-  <Tab title="macOS">`curl -fsSL https://klex.bot/install.sh | sh`</Tab>
-  <Tab title="Linux">`curl -fsSL https://klex.bot/install.sh | sh`</Tab>
-  <Tab title="Windows">`irm https://klex.bot/install.ps1 | iex`</Tab>
-  <Tab title="WSL">`curl -fsSL https://klex.bot/install.sh | sh`</Tab>
-</Tabs>
+**macOS、Linux、WSL:**
+
+```sh
+curl -fsSL https://klex.bot/install.sh | sh
+```
+
+**Windows（PowerShell）:**
+
+```powershell
+irm https://klex.bot/install.ps1 | iex
+```
 
 ### Cloud を使った設定
 
@@ -48,7 +60,32 @@ klex --no-cloud
 3. **Settings → Soul** を開き、ボットの性格と仕事を説明する Soul を作成します。
 4. **Settings → MCP Servers** で必要なサーバーを接続します。接続先アプリでボットのアカウントの権限を設定します。
 
-外部チャンネルからイベントを受け取るには、該当するリソース更新または Klex の[プッシュ通知拡張](https://github.com/stagewise-io/klex/tree/main/packages/mcp-extension-push-notifications)に対応する MCP サーバーを接続します。
+外部チャンネルからイベントを受け取るには、該当するリソース更新、MCP Events、または Klex の[プッシュ通知拡張](https://github.com/stagewise-io/klex/tree/main/packages/mcp-extension-push-notifications)に対応する MCP サーバーを接続します。
 
+</Tab>
+</Tabs>
+</div>
 
 <a id="選択メニューを使わずにセルフホストのボットを作成する"></a>
+
+## コマンドでセルフホストのボットを作成する
+
+Cloud に登録するボットを作成して起動するには、Klex Cloud の登録トークンを使います。
+
+```sh
+klex --create-bot --cloud-enroll-token <token>
+```
+
+コマンドライン引数の代わりに、`KLEX_CLOUD_ENROLLMENT_TOKEN` でトークンを指定することもできます。端末 UI なしで実行するには `--headless` を追加します。
+
+スタンドアロンのボットを作成するには、名前を指定します。
+
+```sh
+klex --create-bot --no-cloud --bot-name Ada
+```
+
+作成時に `--data-dir` や `KLEX_DATA_DIR` は使えません。これらは既存のボットを選択するためのものです。ボットを動作させる前に、プロバイダーとチャットモデルを設定してください。
+
+ボットが応答しない場合は、[トラブルシューティング](/bot/guides/observability#if-a-bot-does-not-respond)を参照してください。
+
+<script src="/quickstart-tabs.js" defer></script>

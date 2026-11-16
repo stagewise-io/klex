@@ -19,6 +19,7 @@ const STABLE_CONNECTION_MS = 60_000;
 const AVAILABILITY_POLL_MS = 10_000;
 const STREAM_CONNECT_TIMEOUT_MS = 15_000;
 const HIGH_WATER_BYTES = 4 * 1024 * 1024;
+const MAX_EARLY_VNC_BYTES = 64 * 1024;
 const LOW_WATER_BYTES = 1024 * 1024;
 const STREAM_ID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -256,7 +257,16 @@ export function startDesktopLink(options: DesktopLinkOptions): DesktopLink {
       vnc.destroy();
       return;
     }
-    vnc.pause();
+    // Keep reading until the stream opens so a dropped Xvnc is noticed; it only
+    // sends its 12-byte version before the viewer answers.
+    const early: Buffer[] = [];
+    let earlyBytes = 0;
+    const buffer = (chunk: Buffer) => {
+      early.push(chunk);
+      earlyBytes += chunk.length;
+      if (earlyBytes > MAX_EARLY_VNC_BYTES) close(1011, 'rfb_protocol_error');
+    };
+    vnc.on('data', buffer);
     const vncEnded = (code: number) =>
       close(
         code,
@@ -301,6 +311,8 @@ export function startDesktopLink(options: DesktopLinkOptions): DesktopLink {
       const local = vnc as Socket;
       const filter = new RfbClientFilter();
       let paused = false;
+      local.off('data', buffer);
+      for (const chunk of early.splice(0)) socket.send(chunk, { binary: true });
       local.on('data', (chunk: Buffer) => {
         socket.send(chunk, { binary: true }, () => {
           if (paused && socket.bufferedAmount < LOW_WATER_BYTES) {
@@ -335,7 +347,6 @@ export function startDesktopLink(options: DesktopLinkOptions): DesktopLink {
         }
         if (forward.length > 0 && !local.write(forward)) socket.pause();
       });
-      local.resume();
     });
   }
 

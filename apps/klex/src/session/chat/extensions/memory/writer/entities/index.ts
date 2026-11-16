@@ -6,9 +6,20 @@ export {
   entityIdSchema,
   entityPatchSchema,
   entityRevision,
+  linkedIdentitySchema,
   loadMatcherSchema,
   type MemoryEntity,
   relationSchema,
   renderEntity,
   sectionNameSchema,
 } from './entities';
+export {
+  capSources,
+  type Fact,
+  type FactSource,
+  type FactVersion,
+  factText,
+  formatFacts,
+  MAX_FACT_HISTORY,
+  parseFacts,
+} from './facts';

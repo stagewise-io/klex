@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 
 import type { ToolSet } from 'ai';
 
@@ -20,43 +20,42 @@ import {
   importLegacySkills,
   LEARNING_SKILL_NAMESPACE,
 } from '@/session/chat/extensions/learning';
-import { isMemoryResultMessage } from '@/session/chat/extensions/memory/retrieval/memory-result';
-import { escapeXml } from '@/session/chat/utils/escape-xml';
-import {
-  ACTIVITY_HISTORY_FILTER,
-  createHistoryView,
-  LINES_FORMAT_PROMPT,
-} from '@/session/chat/utils/history-view';
+import { LINES_FORMAT_PROMPT } from '@/session/chat/utils/history-view';
 import { SessionInboxUrgency } from '@/session/inbox';
 import type { ChildSessionHandle } from '@/session/types';
+import type { SkillRegistry } from '@/skills';
 
-import { createEntityStore, type EntityStore } from '../entities';
-import prompt from '../system-prompt.md';
-import { createWriterState, type WriterState } from '../writer-state';
-import { createWriterTools } from '../writer-tools';
+import { createEntityStore, type EntityStore } from './entities';
+import { createWriterState, type WriterState } from './state';
+import prompt from './system-prompt.md';
+import { createWriterTools } from './tools';
+import { writerView } from './view';
 
-const historyView = createHistoryView({
-  filter: {
-    ...ACTIVITY_HISTORY_FILTER,
-    skipMessage: isMemoryResultMessage,
-    text: {
-      roles: ['user', 'assistant'],
-      limit: { max: 500, truncate: 'middle' },
-    },
-    tools: {
-      ...(ACTIVITY_HISTORY_FILTER.tools as Exclude<
-        typeof ACTIVITY_HISTORY_FILTER.tools,
-        false
-      >),
-      skip: (name) => name === 'recall' || name === 'readSkill',
-    },
-  },
-  lines: { messageLimit: 4_000, contextLimit: 2_000 },
-});
-const fitHistory = historyView.fit.bind(historyView);
+// Enabling memory on an existing bot must not replay its whole history on the user's budget.
+const FIRST_RUN_MAX_AGE_MS = 7 * 24 * 60 * 60_000;
+const FIRST_RUN_MAX_MESSAGES = 1_000;
+
+/** Starting cursor for a first activation: only the newest week, at most 1,000 messages. */
+export function firstRunStart(
+  sources: readonly { id: string; persistedAt: string }[],
+  now: number,
+): { cursor: string | null; skipped: number } {
+  const capped = Math.max(0, sources.length - FIRST_RUN_MAX_MESSAGES);
+  const index = sources.findIndex(
+    (source, position) =>
+      position >= capped &&
+      Date.parse(source.persistedAt) >= now - FIRST_RUN_MAX_AGE_MS,
+  );
+  const start = index === -1 ? sources.length : index;
+  return { cursor: sources[start - 1]?.id ?? null, skipped: start };
+}
 
 export interface MemoryWriterExtOptions {
   activities: ActivityHistory;
+  skillReader: Pick<
+    SkillRegistry,
+    'list' | 'get' | 'readReference' | 'addDeletionGuard'
+  >;
   legacyLearningDirectory: string;
 }
 
@@ -87,6 +86,7 @@ class MemoryWriterExtension implements Extension {
   private wakePending = false;
   private parentActive = false;
   private unsubscribe: (() => void) | undefined;
+  private removeDeletionGuard: (() => void) | undefined;
   private retry: ReturnType<typeof setTimeout> | undefined;
   private childCompleted = false;
   private readonly dataDirectory: string;
@@ -97,8 +97,7 @@ class MemoryWriterExtension implements Extension {
     private readonly deps: ExtensionDeps,
     private readonly options: MemoryWriterExtOptions,
   ) {
-    // Preserve writer documents and the registered state path across the rename.
-    this.dataDirectory = join(dirname(deps.getDataDir(true)), 'memory-writer');
+    this.dataDirectory = deps.getDataDir(true);
     this.state = createWriterState(this.dataDirectory);
     this.entities = createEntityStore(join(this.dataDirectory, 'entities'));
   }
@@ -120,6 +119,28 @@ class MemoryWriterExtension implements Extension {
     });
     if (imported.failed)
       throw new Error('Legacy skill import failed; memory writer paused');
+    this.removeDeletionGuard = this.options.skillReader.addDeletionGuard(
+      (id) => {
+        const references = this.entities
+          .list()
+          .filter((entity) =>
+            entity.frontmatter.RelatedTo.some(
+              ({ target }) => target.kind === 'skill' && target.id === id,
+            ),
+          )
+          .map((entity) => entity.id);
+        if (references.length)
+          throw new Error(
+            `Cannot delete skill "${id}": referenced by entities ${references.join(', ')}`,
+          );
+      },
+    );
+    const brokenReferences = this.brokenReferences();
+    if (brokenReferences.length)
+      this.deps.logger.warn(
+        { brokenReferences },
+        'Memory contains broken references; stop the bot before repairing files',
+      );
     this.ready = true;
     this.unsubscribe = this.options.activities.subscribe(() => {
       if (!this.parentActive) this.wake();
@@ -162,6 +183,20 @@ class MemoryWriterExtension implements Extension {
     await this.work;
     await this.child?.close();
     this.child = undefined;
+    this.removeDeletionGuard?.();
+    this.removeDeletionGuard = undefined;
+  }
+
+  private brokenReferences() {
+    return this.entities
+      .list()
+      .flatMap((entity) =>
+        entity.frontmatter.RelatedTo.filter(({ target }) =>
+          target.kind === 'entity'
+            ? !this.entities.get(target.id)
+            : !this.options.skillReader.get(target.id),
+        ).map(({ target }) => ({ entityId: entity.id, target })),
+      );
   }
 
   introspect(): Record<string, unknown> {
@@ -172,6 +207,7 @@ class MemoryWriterExtension implements Extension {
       dataDirectory: this.dataDirectory,
       entitiesDirectory: join(this.dataDirectory, 'entities'),
       entityCount: this.entities.list().length,
+      brokenReferences: this.brokenReferences(),
     };
   }
 
@@ -186,9 +222,23 @@ class MemoryWriterExtension implements Extension {
           this.wakePending = false;
           const latest = (await this.options.activities.latest(1))[0];
           if (!latest || this.closed) continue;
+          const first = this.state.get().initialized
+            ? null
+            : firstRunStart(
+                await this.options.activities.manifest(),
+                Date.now(),
+              );
+          if (first?.skipped)
+            this.deps.logger.info(
+              { skipped: first.skipped, cursor: first.cursor },
+              'Memory writer first run skips history older than its initial window',
+            );
           await this.state.update((draft) => {
-            // A missing cursor means oldest retained history, never a recent window.
-            draft.initialized = true;
+            // Once initialized, a missing cursor means oldest retained history.
+            if (!draft.initialized) {
+              draft.initialized = true;
+              draft.cursor ??= first?.cursor ?? null;
+            }
             if (
               !draft.pendingThrough ||
               this.options.activities.compareIds(
@@ -236,9 +286,9 @@ class MemoryWriterExtension implements Extension {
       const batch = await activities.readRange(
         cursor,
         pendingThrough,
-        60_000,
+        12_000,
         true,
-        fitHistory,
+        writerView,
       );
       if (!batch) {
         // Retention can remove evidence while a job waits. Never invent missing facts.
@@ -261,7 +311,7 @@ class MemoryWriterExtension implements Extension {
         const firstSourceId = batch.firstSourceId;
         const previous = firstSourceId
           ? await Promise.all(
-              (await activities.listNeighbors(firstSourceId, 5))
+              (await activities.listNeighbors(firstSourceId, 2))
                 .filter(
                   (source) =>
                     activities.compareIds(source.id, firstSourceId) < 0,
@@ -270,9 +320,9 @@ class MemoryWriterExtension implements Extension {
                 .map((source) =>
                   activities.readPage(source.id, {
                     offset: 0,
-                    limit: 2_400,
+                    limit: 1_200,
                     maxBytes: 2_000_000,
-                    view: fitHistory,
+                    view: writerView,
                   }),
                 ),
             )
@@ -294,55 +344,67 @@ class MemoryWriterExtension implements Extension {
               `[${activityMessageId(page.id)}]\n${page.text}${page.nextOffset != null ? '\n[entry clipped]' : ''}`,
           )
           .join('\n\n');
+        // Entry lines carry only the time; the wrapper and day changes carry the date.
+        const date = batch.startedAt.slice(0, 10);
+        let day = date;
         const newText = batch.text.replace(
-          /^Source (history:[A-Za-z0-9_-]+) \([^\n]*\)\n/gm,
-          (_header, id: string) => `[${activityMessageId(id)}]\n`,
+          /^Source (history:[A-Za-z0-9_-]+) \(([^\n]*)\)\n/gm,
+          (_header, id: string, persistedAt: string) => {
+            const changed = persistedAt.slice(0, 10) !== day;
+            day = persistedAt.slice(0, 10);
+            return `[${activityMessageId(id)}]${changed ? ` ${day}` : ''}\n`;
+          },
         );
         this.abort = new AbortController();
         this.tools = createWriterTools({
           entities: this.entities,
           skills,
+          skillReader: this.options.skillReader,
           activities,
           signal: this.abort.signal,
-          view: fitHistory,
+          view: writerView,
           sourceIds,
         }).tools;
-        await this.ensureChild();
-        if (this.closed) return;
-        const child = this.child;
-        if (!child) throw new Error('Memory writer child unavailable');
-        this.childCompleted = false;
-        child.inbox.sendMessage(
-          {
-            id: randomUUID(),
-            role: 'user',
-            parts: [
-              {
-                type: 'text',
-                text: `<previous-activities>\n${escapeXml(previousText)}\n</previous-activities>\n\n<new-activities>\n${escapeXml(newText)}\n</new-activities>`,
-              },
-            ],
-          },
-          SessionInboxUrgency.Default,
-        );
-        while (!this.closed) {
-          if (child.getSessionInfo().status === 'terminated') {
-            this.child = undefined;
-            throw new Error('Memory writer session terminated');
-          }
-          if (await child.waitForIdle(1_000)) {
+        try {
+          await this.createChild();
+          if (this.closed) return;
+          const child = this.child;
+          if (!child) throw new Error('Memory writer child unavailable');
+          this.childCompleted = false;
+          child.inbox.sendMessage(
+            {
+              id: randomUUID(),
+              role: 'user',
+              parts: [
+                {
+                  type: 'text',
+                  text: `<previous-activities>\n${previousText}\n</previous-activities>\n\n<new-activities date="${date}">\n${newText}\n</new-activities>`,
+                },
+              ],
+            },
+            SessionInboxUrgency.Default,
+          );
+          while (!this.closed) {
             if (child.getSessionInfo().status === 'terminated') {
-              this.child = undefined;
-              throw new Error('Memory writer terminated before settling');
+              throw new Error('Memory writer session terminated');
             }
-            if (!this.childCompleted)
-              throw new Error('Memory writer did not complete successfully');
-            break;
+            if (await child.waitForIdle(1_000)) {
+              if (child.getSessionInfo().status === 'terminated') {
+                throw new Error('Memory writer terminated before settling');
+              }
+              if (!this.childCompleted)
+                throw new Error('Memory writer did not complete successfully');
+              break;
+            }
           }
+          if (this.closed) return;
+        } finally {
+          this.abort.abort();
+          this.tools = {};
+          const child = this.child;
+          this.child = undefined;
+          await child?.close();
         }
-        if (this.closed) return;
-        this.abort.abort();
-        this.tools = {};
       }
       await this.state.update((draft) => {
         draft.cursor = batch.id;
@@ -350,8 +412,7 @@ class MemoryWriterExtension implements Extension {
     }
   }
 
-  private async ensureChild(): Promise<void> {
-    if (this.child) return;
+  private async createChild(): Promise<void> {
     const child = await this.deps.createChildSession({
       name: 'memory-writer',
       extensionIdentifier: 'io.stagewise/memory-writer',
@@ -366,16 +427,21 @@ class MemoryWriterExtension implements Extension {
             toolsExtension(
               () => this.tools,
               (event) => {
-                this.childCompleted = Boolean(
-                  event.generation &&
-                    !event.shouldContinue &&
-                    !event.forceNextStep &&
-                    !event.generationFailed &&
-                    !event.fatalError &&
-                    !event.requestRejected &&
-                    !event.modelFallbackOccurred &&
-                    !event.instinctAborted,
-                );
+                if (
+                  event.forceNextStep ||
+                  event.generationFailed ||
+                  event.fatalError ||
+                  event.requestRejected ||
+                  event.modelFallbackOccurred ||
+                  event.instinctAborted
+                ) {
+                  this.childCompleted = false;
+                } else if (event.generation) {
+                  // Normal generations request another step; the following
+                  // no-generation decision step ends the turn. Preserve success
+                  // through that clean skip, but never through a later failure.
+                  this.childCompleted = true;
+                }
               },
             ),
         },

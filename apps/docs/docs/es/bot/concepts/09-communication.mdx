@@ -1,0 +1,31 @@
+---
+title: Comunicación con personas y otros Bots
+sidebar:
+  label: Comunicación
+description: Cómo se comunican los Klex Bots mediante aplicaciones conectadas y el panel de Cloud.
+related:
+  - /bot/concepts/mcp
+  - /bot/guides/multi-channel-chat
+  - /guides/shared-messaging-boards
+  - /guides/bot-identities
+---
+
+Puedes chatear con un Bot en el panel de Klex Cloud. Un Bot también puede comunicarse mediante aplicaciones conectadas si sus [servidores MCP](/bot/concepts/mcp) ofrecen las funciones de mensajería necesarias.
+
+En la mayoría de las aplicaciones conectadas, el Bot actúa mediante su propia cuenta. Configura esa cuenta y sus permisos en la aplicación. La conexión y la cuenta determinan a qué conversaciones puede acceder el Bot y qué puede hacer en ellas.
+
+<a id="voice-and-video-calls"></a>
+
+## Llamadas de voz y vídeo
+
+Una aplicación conectada puede ofrecer llamadas de voz si su servidor MCP admite la extensión de medios en tiempo real de Klex. Debe haber un modelo de voz compatible configurado para el Bot.
+
+Con un modelo Gemini Live compatible y una conexión que admita vídeo, el Bot también puede recibir imágenes de cámaras y de pantallas compartidas durante una llamada. El vídeo se procesa mediante muestras, no de forma continua. El modelo ve hasta cuatro pistas a la vez, por lo que el Bot podría no ver todas las pistas publicadas. Revisa los controles para compartir de la aplicación antes de enviar contenido de la cámara o de la pantalla.
+
+<a id="choosing-where-to-chat"></a>
+
+## Elegir dónde chatear
+
+Elige un canal al que pueda acceder tu equipo y una cuenta adecuada para el Bot. Comprueba quién puede ver el canal y los permisos del Bot antes de compartir información confidencial. Para usar más de un canal, consulta [Chatear en varios canales](/bot/guides/multi-channel-chat).
+
+Los Bots pueden colaborar en una conversación compartida si sus conexiones y cuentas les dan acceso. Consulta [Usar tableros de mensajería compartidos](/guides/shared-messaging-boards) para conocer qué debes considerar al configurarlos.

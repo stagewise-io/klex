@@ -1,0 +1,31 @@
+---
+title: Comunicação com pessoas e outros Bots
+sidebar:
+  label: Comunicação
+description: Como os Klex Bots se comunicam por aplicativos conectados e pelo painel da Cloud.
+related:
+  - /bot/concepts/mcp
+  - /bot/guides/multi-channel-chat
+  - /guides/shared-messaging-boards
+  - /guides/bot-identities
+---
+
+Você pode conversar com um Bot no painel do Klex Cloud. Um Bot também pode se comunicar por aplicativos conectados quando seus [servidores MCP](/bot/concepts/mcp) oferecem os recursos de mensagens necessários.
+
+Na maioria dos aplicativos conectados, o Bot age por meio da própria conta. Configure essa conta e suas permissões no aplicativo. A conexão e a conta determinam quais conversas o Bot pode acessar e o que ele pode fazer nelas.
+
+<a id="voice-and-video-calls"></a>
+
+## Chamadas de voz e vídeo
+
+Um aplicativo conectado pode oferecer chamadas de voz se seu servidor MCP oferecer suporte à extensão de mídia em tempo real do Klex. Um modelo de voz compatível deve estar configurado para o Bot.
+
+Com um modelo Gemini Live compatível e uma conexão que ofereça suporte a vídeo, o Bot também pode receber imagens de câmeras e de telas compartilhadas durante uma chamada. O vídeo é processado por amostragem, não de forma contínua. O modelo vê até quatro faixas por vez, portanto o Bot pode não ver todas as faixas publicadas. Confira os controles de compartilhamento do aplicativo antes de enviar conteúdo da câmera ou da tela.
+
+<a id="choosing-where-to-chat"></a>
+
+## Escolher onde conversar
+
+Escolha um canal acessível à sua equipe e uma conta adequada para o Bot. Verifique quem pode ver o canal e as permissões do Bot antes de compartilhar informações confidenciais. Para usar mais de um canal, consulte [Conversar em vários canais](/bot/guides/multi-channel-chat).
+
+Bots podem colaborar em uma conversa compartilhada quando suas conexões e contas dão acesso a ela. Consulte [Usar quadros de mensagens compartilhados](/guides/shared-messaging-boards) para saber o que considerar na configuração.

@@ -12,6 +12,7 @@ import {
   MAX_BODY_LENGTH,
   MAX_DESCRIPTION_LENGTH,
   MAX_NAME_LENGTH,
+  MAX_REFERENCE_LENGTH,
 } from '@/skills';
 
 // Extend Zod with .openapi() metadata support for spec generation.
@@ -1070,6 +1071,9 @@ const skillListResponseSchema = z
 const skillDetailSchema = skillSummarySchema
   .extend({
     body: z.string().describe('Markdown body of the SKILL.md'),
+    references: z
+      .array(z.string())
+      .describe('Reference file names (`references/<name>.md`), sorted'),
     // LEGACY(skill-registry): duplicates `metadata.sourceEpisodes` of learned
     // skills, and Cloud does not read it. Removing it is a breaking Admin API
     // change; remove it with the bare-name routes.
@@ -1102,6 +1106,27 @@ const skillIdParamsSchema = z.object({
     example: 'ask-before-contract-changes',
   }),
 });
+
+const skillReferenceParamsSchema = skillIdParamsSchema.extend({
+  reference: z.string().min(1).openapi({
+    description: 'Reference file name without `.md`',
+    example: 'examples',
+  }),
+});
+
+const skillReferenceSchema = z
+  .object({
+    id: z.string().describe('Qualified skill id'),
+    reference: z.string(),
+    content: z.string().describe('Markdown content'),
+  })
+  .openapi('SkillReference');
+
+const putSkillReferenceBodySchema = z
+  .object({
+    content: z.string().trim().min(1).max(MAX_REFERENCE_LENGTH),
+  })
+  .openapi('PutSkillReferenceBody');
 
 const ambiguousSkillResponseSchema = errorResponseSchema
   .extend({
@@ -1645,6 +1670,7 @@ export {
   providerTypesResponseSchema,
   providerVoicesQuerySchema,
   providerVoicesResponseSchema,
+  putSkillReferenceBodySchema,
   serializedMessagePartSchema,
   serializedMessageSchema,
   sessionHistoryListQuerySchema,
@@ -1659,6 +1685,8 @@ export {
   skillIdParamsSchema,
   skillListResponseSchema,
   skillNameParamsSchema,
+  skillReferenceParamsSchema,
+  skillReferenceSchema,
   skillSummarySchema,
   timezoneSettingsSchema,
   todoIdParamsSchema,

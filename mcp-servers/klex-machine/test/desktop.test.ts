@@ -9,6 +9,7 @@ import {
   type DesktopBackend,
   DesktopInputDeniedError,
   DesktopService,
+  desktopFromEnvironment,
   toXdotoolCombo,
   X11DesktopBackend,
 } from '../src/desktop/index.js';
@@ -316,6 +317,8 @@ interface RpcResult {
     contents?: { uri: string; mimeType?: string; blob?: string }[];
     isError?: boolean;
     tools?: { name: string }[];
+    resources?: { uri: string }[];
+    instructions?: string;
   };
 }
 
@@ -355,6 +358,44 @@ describe('desktop MCP tools', () => {
     mcp = undefined;
     await rm(cwd, { force: true, recursive: true });
   });
+
+  it.each([
+    ['darwin', ':0'],
+    ['win32', ':0'],
+    ['linux', undefined],
+    ['linux', ':99'],
+  ] as const)(
+    'are omitted on %s with DISPLAY=%s',
+    async (platform, display) => {
+      const original = Object.getOwnPropertyDescriptor(process, 'platform');
+      Object.defineProperty(process, 'platform', { value: platform });
+      vi.stubEnv('DISPLAY', display);
+      vi.stubEnv('KLEX_MACHINE_DESKTOP', undefined);
+      vi.stubEnv('PATH', cwd);
+      try {
+        expect(desktopFromEnvironment() === undefined).toBe(
+          platform !== 'linux' || display === undefined,
+        );
+        mcp = createMachineMcp(cwd, { omitHostDetails: true });
+        const { tools } = await rpc(mcp, 'tools/list');
+        const resources = (await rpc(mcp, 'resources/list'))?.resources;
+        const init = await rpc(mcp, 'initialize', {
+          protocolVersion: '2025-06-18',
+          capabilities: {},
+          clientInfo: { name: 'test', version: '1' },
+        });
+        expect(tools?.length).toBeGreaterThan(0);
+        expect(tools?.some(({ name }) => name.startsWith('desktop_'))).toBe(
+          false,
+        );
+        expect(resources ?? []).toEqual([]);
+        expect(init?.instructions).not.toContain('desktop_*');
+      } finally {
+        if (original) Object.defineProperty(process, 'platform', original);
+        vi.unstubAllEnvs();
+      }
+    },
+  );
 
   it('are not advertised without a reachable display', async () => {
     const backend = fakeBackend();

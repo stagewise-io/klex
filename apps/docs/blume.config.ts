@@ -82,10 +82,6 @@ export default defineConfig({
     // Use cases are being reworked; keep the old route usable in the meantime.
     { from: '/bot/use-cases', to: '/bot', status: 302 },
     { from: '/architecture', to: '/bot/concepts/how-bots-work' },
-    {
-      from: '/concepts/cognitive-architecture',
-      to: '/bot/concepts/cognitive-architecture',
-    },
     { from: '/concepts/soul', to: '/bot/concepts/soul' },
     { from: '/concepts/god-messages', to: '/bot/concepts/god-messages' },
     { from: '/concepts/model-providers', to: '/bot/concepts/models' },
@@ -117,7 +113,6 @@ export default defineConfig({
       const unchanged = [
         '',
         '/quickstart',
-        '/concepts/cognitive-architecture',
         '/concepts/soul',
         '/concepts/god-messages',
         '/concepts/data-directory',

@@ -559,6 +559,17 @@ class AgentBuild {
           src: route === '/' ? '^/$' : `^${escaped}/?$`,
           dest: route === '/' ? '/index.html' : `${route}/index.html`,
         });
+        // Serve the legacy sessions URL as an alias so fragments survive.
+        const legacySessions = route.replace(
+          /^(\/(?:ar|de|es|fr|hi|ja|ko|pt|ru|uk|zh))?\/bot\/concepts\/cognitive-architecture$/,
+          '$1/concepts/cognitive-architecture',
+        );
+        if (legacySessions !== route) {
+          routes.push({
+            src: `^${legacySessions}/?$`,
+            dest: `${legacySessions}/index.html`,
+          });
+        }
       }
     }
     if (this.kind === 'marketing') {

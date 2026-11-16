@@ -1,0 +1,40 @@
+---
+title: Modelle
+description: Einen Modellanbieter konfigurieren und Modelle für die verschiedenen Aufgaben eines Klex Bots auswählen.
+related:
+  - /bot/quickstart
+  - /bot/concepts/how-bots-work
+  - /cloud/hosted-vs-local
+---
+
+Ein Klex Bot nutzt Modelle der Anbieter, die Sie konfigurieren. Klex unterstützt verschiedene Anbietertypen, darunter OpenAI, Anthropic, Google Gemini, lokales Ollama und kompatible eigene Endpunkte. Welche Modelle verfügbar sind, hängt vom Anbieter und Ihrem Konto ab.
+
+Ein Anbieter ist der Dienst oder Endpunkt, mit dem sich Klex verbindet. Ein Modell ist ein bestimmtes Modell dieses Anbieters. Wenn Sie einen Anbieter konfigurieren, wird nicht automatisch für jede Aufgabe ein Modell ausgewählt.
+
+<a id="configure-models"></a>
+
+## Modelle konfigurieren
+
+In der selbst gehosteten Klex-App:
+
+1. Öffnen Sie **Settings → Providers & Endpoints**, drücken Sie `a`, und wählen Sie einen Anbietertyp. Geben Sie die erforderlichen Einstellungen ein und melden Sie sich gegebenenfalls an.
+2. Öffnen Sie **Settings → Model Selection**, wählen Sie **Chat** und fügen Sie ein Modell eines konfigurierten Anbieters hinzu. Für reguläre Gespräche und die Erstellung der Soul ist ein Chatmodell nötig.
+3. Prüfen Sie die weiteren Zwecke und fügen Sie bei Bedarf kompatible Modelle hinzu. Die Auswahl umfasst Modelle für Memory, Beratung, Bild- und Audioeingaben sowie Sprache.
+
+Einige Anbieter erkennen Modelle automatisch, bei anderen müssen Sie Modellinformationen manuell hinzufügen. Verfügbarkeit und unterstützte Funktionen hängen vom Anbieter und Modell ab.
+
+<a id="choosing-models-for-different-tasks"></a>
+
+## Modelle für verschiedene Aufgaben auswählen
+
+Sie können dasselbe Modell für mehrere Zwecke nutzen oder unterschiedliche Modelle für verschiedene Aufgaben auswählen. Berücksichtigen Sie, ob ein Modell die erforderlichen Eingaben unterstützt, und prüfen Sie Kosten und Latenz Ihres Anbieters. Lesen Sie vor der Nutzung die Bedingungen und Preise des Anbieters.
+
+Für Chats können Sie eine geordnete Liste von Modellen konfigurieren. Nach einem Modellfehler kann Klex auf ein anderes konfiguriertes Chatmodell zurückgreifen. Das garantiert keine erfolgreiche Antwort. Unter **Model Selection** können Sie die Reihenfolge ändern.
+
+<a id="instincts-and-model-usage"></a>
+
+## Instincts und Modellnutzung
+
+Klex kann ein **Instincts**-Modell nutzen, um vor einem Generierungsschritt den Kontext zu klassifizieren. Ist kein Instincts-Modell konfiguriert, nutzt Klex verfügbare Chatmodelle für die Klassifizierung. Diese Aufrufe können zusätzliche Modellnutzung und Kosten verursachen. Unter **Settings → Model Selection** können Sie ein Instincts-Modell auswählen. Prüfen Sie dessen Preis und beobachten Sie die Nutzung.
+
+Standardmäßig läuft Dynamic Effort im Shadow-Modus: Es bewertet einen vorgeschlagenen Reasoning-Aufwand, ohne die Einstellungen des Hauptmodells zu ändern. Auch diese Klassifizierung kann ein Modell nutzen und Kosten verursachen.

@@ -82,7 +82,10 @@ export default defineConfig({
     // Use cases are being reworked; keep the old route usable in the meantime.
     { from: '/bot/use-cases', to: '/bot', status: 302 },
     { from: '/architecture', to: '/bot/concepts/how-bots-work' },
-    { from: '/concepts/cognitive-architecture', to: '/bot/concepts/memory' },
+    {
+      from: '/concepts/cognitive-architecture',
+      to: '/bot/concepts/cognitive-architecture',
+    },
     { from: '/concepts/soul', to: '/bot/concepts/soul' },
     { from: '/concepts/god-messages', to: '/bot/concepts/god-messages' },
     { from: '/concepts/model-providers', to: '/bot/concepts/models' },
@@ -90,10 +93,6 @@ export default defineConfig({
     { from: '/concepts/data-directory', to: '/bot/concepts/data-directory' },
     // English: first-sectioned URLs → re-sectioned paths.
     { from: '/bot/architecture', to: '/bot/concepts/how-bots-work' },
-    {
-      from: '/bot/concepts/cognitive-architecture',
-      to: '/bot/concepts/memory',
-    },
     { from: '/bot/concepts/model-providers', to: '/bot/concepts/models' },
     { from: '/bot/concepts/model-selection', to: '/bot/concepts/models' },
     // Locale URLs: map renamed placeholders to their current fallback pages.

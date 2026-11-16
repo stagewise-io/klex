@@ -1,0 +1,42 @@
+---
+title: So funktionieren Klex Bots
+sidebar:
+  label: Überblick
+description: Wie ein Klex Bot läuft, sich erinnert und mit verbundenen Computern und Apps arbeitet.
+related:
+  - /bot/quickstart
+  - /bot/concepts/brain-and-computers
+  - /bot/concepts/memory
+  - /cloud/hosted-vs-local
+---
+
+Ein Klex Bot ist ein autonomer Agent mit eigener Identität und eigenem Gedächtnis. Er läuft in einer Bot-Umgebung und arbeitet in anderen Umgebungen, die über MCP (Model Context Protocol) verbunden sind.
+
+Die Bot-Umgebung hält den Bot am Laufen und verwaltet sein Gedächtnis. Seine Arbeit erledigt er in verbundenen Computern und Apps, nicht in dieser Umgebung.
+
+<div class="bot-overview-diagram">
+  <img class="bot-overview-wide" src="/images/bot-overview-wide.svg" width="1200" height="480" alt="Ein Klex Bot und sein Gedächtnis befinden sich in der Bot-Umgebung. Das Gedächtnis enthält Skills und Learnings. Separate MCP-Verbindungen verbinden den Bot mit einem Computer und einer App außerhalb der Umgebung, wo er arbeitet." />
+  <img class="bot-overview-compact" src="/images/bot-overview-compact.svg" width="640" height="810" alt="Ein Klex Bot und sein Gedächtnis befinden sich in der Bot-Umgebung. Das Gedächtnis enthält Skills und Learnings. Separate MCP-Verbindungen verbinden den Bot mit einem Computer und einer App außerhalb der Umgebung, wo er arbeitet." />
+</div>
+
+## Wo der Bot läuft
+
+Die Bot-Umgebung verwaltet die aktiven Sessions und das Gedächtnis des Bots. Sie hält ihn am Laufen, ist aber kein Arbeitsplatz, an dem er seine Aufgaben erledigt.
+
+Sie können einen in der Cloud gehosteten Bot nutzen oder einen Bot in Ihrer eigenen Umgebung betreiben. Klex empfiehlt Cloud-Hosting. Ein selbst gehosteter Bot kann auch bei Klex Cloud registriert werden. Für einen selbst gehosteten Bot ist die Registrierung bei Klex Cloud technisch nicht erforderlich; ohne sie ist die Nutzung jedoch weniger vollständig. Siehe [Cloud-Hosting und Self-Hosting im Vergleich](/cloud/hosted-vs-local).
+
+## Wie der Bot mit Computern und Apps arbeitet
+
+Ein Bot verbindet sich mit einem MCP-Server, um auf eine externe Umgebung zuzugreifen. Das kann ein vollständiger Computer oder eine App wie GitHub oder Google Workspace sein. Auch ein Computer wird über MCP verbunden.
+
+Bei den meisten MCPs handelt der Bot über ein eigenes Konto oder eine eigene Identität. Diese Identität wird pro Bot eingerichtet und kann Berechtigungen und Zugriffsfreigaben erhalten. Mehr zum Verbindungs- und Zugriffsmodell finden Sie unter [Verbindungen](/bot/concepts/brain-and-computers).
+
+## Woran sich der Bot erinnert
+
+Das Gedächtnis eines Klex Bots speichert derzeit Skills und Learnings. Chats und Gedächtnis werden im Datenverzeichnis des Bots gespeichert. Unter [Gedächtnis](/bot/concepts/memory) erfahren Sie, was heute bekannt ist; das [Datenverzeichnis](/bot/concepts/data-directory) erklärt die Speicherung und den Administratorzugriff.
+
+## Nächste Schritte
+
+- [Einen Bot erstellen](/bot/quickstart)
+- [Computer und Apps verbinden](/bot/concepts/brain-and-computers)
+- [Das Gedächtnis kennenlernen](/bot/concepts/memory)

@@ -297,7 +297,7 @@ describe('config v2', () => {
     await prepareConfigStore(dataDirectory);
     const migrated = JSON.parse(await readFile(configPath, 'utf8'));
     expect(migrated._klex).toMatchObject({
-      schemaVersion: 11,
+      schemaVersion: 12,
       compatibilityVersion: 8,
     });
     expect(migrated.modelSelection).toEqual(completeV2Config.modelSelection);
@@ -468,7 +468,7 @@ describe('config v2', () => {
     expect(persisted).not.toHaveProperty('telemetry');
     expect(persisted._klex).toMatchObject({
       store: 'config',
-      schemaVersion: 11,
+      schemaVersion: 12,
     });
     expect(persisted.extensions).toEqual({
       memory: {
@@ -507,7 +507,7 @@ describe('config v2', () => {
       string,
       unknown
     >;
-    expect(persisted._klex).toMatchObject({ schemaVersion: 11 });
+    expect(persisted._klex).toMatchObject({ schemaVersion: 12 });
     expect(persisted).not.toHaveProperty('episodeFinishIdleTriggerTimeMs');
     expect(persisted).not.toHaveProperty('memoryWriteIntervalMs');
     expect(persisted).not.toHaveProperty('memoryWriteStepInterval');
@@ -601,7 +601,7 @@ describe('config v2', () => {
     });
     expect(migrated.extensions).toEqual(completeV5StoredConfig.extensions);
     expect(migrated._klex).toMatchObject({
-      schemaVersion: 11,
+      schemaVersion: 12,
       compatibilityVersion: 8,
     });
     await prepareConfigStore(dataDirectory);
@@ -659,9 +659,15 @@ describe('config v2', () => {
       expect(JSON.parse(bytes)).toEqual({
         ...original,
         modelSelection: { ...original.modelSelection, voice: { sts } },
+        // Custom timers stay; schema 12 only adds the new fields.
+        instinct: {
+          ...original.instinct,
+          attemptTimeoutMs: 5_000,
+          fallbackResetIdleMs: 600_000,
+        },
         _klex: {
           ...original._klex,
-          schemaVersion: 11,
+          schemaVersion: 12,
           minimumKlexVersion: '0.36.0',
           writtenByKlexVersion: KLEX_VERSION,
         },
@@ -724,7 +730,15 @@ describe('config v2', () => {
     const migrated = step.up(input);
     expect(migrated).toEqual({
       ...input,
-      instinct: completeV2Config.instinct,
+      // Released 5→6 output keeps the schema-6 instinct defaults.
+      instinct: {
+        enabled: true,
+        timeoutMs: 8_000,
+        classifierTimeoutMs: 4_000,
+        historyCharacterCap: 16_000,
+        messageCharacterCap: 2_000,
+        contextCharacterCap: 2_000,
+      },
       modelSelection: { ...input.modelSelection, instincts: [] },
     });
     const schema = CONFIG_STORE_DEFINITION.versions.find(
@@ -802,7 +816,7 @@ describe('config v2', () => {
     await prepareConfigStore(dataDirectory);
     expect(
       JSON.parse(await readFile(configPath, 'utf8'))._klex.schemaVersion,
-    ).toBe(11);
+    ).toBe(12);
   });
 
   it.each(['tts', 'stt'])(
@@ -1356,7 +1370,7 @@ describe('config v2', () => {
     );
     expect(persisted._klex).toMatchObject({
       store: 'config',
-      schemaVersion: 11,
+      schemaVersion: 12,
     });
     expect(parseKlexConfig(persisted).configVersion).toBe(2);
     await config.close();

@@ -38,6 +38,19 @@ const cases = [
   'v9',
   'v10-effort',
 ];
+// Schema 12 lifts the released instinct timer defaults and adds fallback timers.
+const liftedInstinct = {
+  timeoutMs: 12_000,
+  classifierTimeoutMs: 10_000,
+  attemptTimeoutMs: 5_000,
+  fallbackResetIdleMs: 600_000,
+};
+async function readExpected() {
+  const expected = JSON.parse(
+    await readFile(new URL('config-expected-v7.json', fixtures), 'utf8'),
+  );
+  return { ...expected, instinct: { ...expected.instinct, ...liftedInstinct } };
+}
 
 async function snapshot(
   directory: string,
@@ -127,9 +140,7 @@ describe('frozen persisted config upgrades', () => {
       const original = JSON.parse(
         await readFile(new URL(`config-${version}.json`, fixtures), 'utf8'),
       );
-      const expected = JSON.parse(
-        await readFile(new URL('config-expected-v7.json', fixtures), 'utf8'),
-      );
+      const expected = await readExpected();
       if (version === 'v10-effort')
         expected.effort = {
           mode: 'automatic',
@@ -174,7 +185,7 @@ describe('frozen persisted config upgrades', () => {
         ...expected,
         _klex: {
           store: 'config',
-          schemaVersion: 11,
+          schemaVersion: 12,
           compatibilityVersion: 8,
           minimumKlexVersion: '0.36.0',
           writtenByKlexVersion: KLEX_VERSION,
@@ -190,9 +201,7 @@ describe('frozen persisted config upgrades', () => {
   it('does not rewrite an already-current config in released key order on first startup', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'klex-current-order-'));
     directories.push(directory);
-    const expected = JSON.parse(
-      await readFile(new URL('config-expected-v7.json', fixtures), 'utf8'),
-    );
+    const expected = await readExpected();
     const { _klex } = JSON.parse(
       await readFile(new URL('config-v11.json', fixtures), 'utf8'),
     );
@@ -208,14 +217,18 @@ describe('frozen persisted config upgrades', () => {
       timezone: expected.timezone,
       extensions: expected.extensions,
       sessionHistory: { maxBytes: 32 * 1024 * 1024 },
-      instinct: expected.instinct,
+      instinct: {
+        ...expected.instinct,
+        attemptTimeoutMs: 5_000,
+        fallbackResetIdleMs: 600_000,
+      },
     };
     await writeFile(
       join(directory, 'config.json'),
       JSON.stringify(
         {
           ...payload,
-          _klex: { ..._klex, schemaVersion: 11, minimumKlexVersion: '0.31.1' },
+          _klex: { ..._klex, schemaVersion: 12, minimumKlexVersion: '0.36.0' },
         },
         null,
         2,
@@ -408,11 +421,13 @@ describe('frozen persisted config upgrades', () => {
       await readFile(configPath, 'utf8'),
     );
     const { _klex: _originalMetadata, ...originalPayload } = original;
-    expect(persisted).toEqual(originalPayload);
+    expect(persisted).toEqual({
+      ...originalPayload,
+      instinct: { ...originalPayload.instinct, ...liftedInstinct },
+    });
     expect(_klex).toMatchObject({
-      schemaVersion: 11,
-      // Existing schema-11 fixture metadata is not rewritten on a read-only startup.
-      minimumKlexVersion: original._klex.minimumKlexVersion,
+      schemaVersion: 12,
+      minimumKlexVersion: '0.36.0',
     });
     const beforeStartup = await snapshot(directory);
     await start();
@@ -484,9 +499,12 @@ describe('frozen persisted config upgrades', () => {
     const { _klex, ...migrated } = JSON.parse(
       await readFile(configPath, 'utf8'),
     );
-    expect(migrated).toEqual(payload);
+    expect(migrated).toEqual({
+      ...payload,
+      instinct: { ...payload.instinct, ...liftedInstinct },
+    });
     expect(_klex).toMatchObject({
-      schemaVersion: 11,
+      schemaVersion: 12,
       minimumKlexVersion: '0.36.0',
     });
   });
@@ -565,13 +583,116 @@ describe('frozen persisted config upgrades', () => {
     const beforeRestart = await snapshot(directory);
     await start();
     expect(await snapshot(directory)).toEqual(beforeRestart);
-    // Startup restamps only `_klex`; the payload, including events, is intact.
+    // Only `_klex` and the lifted instinct timers change; events stay intact.
     const { _klex: _before, ...expectedPayload } = JSON.parse(original);
     const { _klex, ...persistedPayload } = JSON.parse(
       await readFile(configPath, 'utf8'),
     );
-    expect(persistedPayload).toEqual(expectedPayload);
-    expect(_klex).toMatchObject({ schemaVersion: 11 });
+    expect(persistedPayload).toEqual({
+      ...expectedPayload,
+      instinct: { ...expectedPayload.instinct, ...liftedInstinct },
+    });
+    expect(_klex).toMatchObject({ schemaVersion: 12 });
+  });
+
+  it('lifts only released instinct defaults in 11→12 and keeps user values', async () => {
+    const migration = CONFIG_STORE_DEFINITION.migrations.find(
+      (step) => step.from === 11,
+    );
+    if (!migration) throw new Error('Missing 11→12 migration');
+    const { _klex: _metadata, ...input } = JSON.parse(
+      await readFile(new URL('config-v11.json', fixtures), 'utf8'),
+    );
+    const lifted = await migration.up(structuredClone(input));
+    expect(lifted).toEqual({
+      ...input,
+      instinct: { ...input.instinct, ...liftedInstinct },
+    });
+    expect(Object.keys(lifted)).toEqual(Object.keys(input));
+    const custom = {
+      ...input,
+      instinct: {
+        ...input.instinct,
+        timeoutMs: 9_000,
+        classifierTimeoutMs: 3_000,
+      },
+    };
+    const kept = await migration.up(structuredClone(custom));
+    expect(kept.instinct).toMatchObject({
+      timeoutMs: 9_000,
+      classifierTimeoutMs: 3_000,
+      attemptTimeoutMs: 5_000,
+      fallbackResetIdleMs: 600_000,
+    });
+    const absent = { ...input };
+    delete absent.instinct;
+    expect(await migration.up(structuredClone(absent))).toEqual(absent);
+  });
+
+  it('restores a v11 config after a failed 11→12 migration, retries, and blocks v11 readers', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'klex-v12-failure-'));
+    directories.push(directory);
+    const original = await readFile(
+      new URL('config-v11.json', fixtures),
+      'utf8',
+    );
+    const configPath = join(directory, 'config.json');
+    await writeFile(configPath, original);
+    const start = async (
+      definition: typeof CONFIG_STORE_DEFINITION,
+      klexVersion = KLEX_VERSION,
+    ) => {
+      const localData = createLocalData({
+        logging,
+        dataDirectory: directory,
+        klexVersion,
+        stores: [definition],
+      });
+      try {
+        await localData.start();
+      } finally {
+        await localData.close();
+      }
+    };
+    await expect(
+      start({
+        ...CONFIG_STORE_DEFINITION,
+        migrations: CONFIG_STORE_DEFINITION.migrations.map((step) =>
+          step.from === 11
+            ? {
+                ...step,
+                up: () => {
+                  throw new Error('injected instinct timer migration failure');
+                },
+              }
+            : step,
+        ),
+      }),
+    ).rejects.toThrow(/original data was restored/);
+    expect(await readFile(configPath, 'utf8')).toBe(original);
+    await start(CONFIG_STORE_DEFINITION);
+    const { _klex, ...migrated } = JSON.parse(
+      await readFile(configPath, 'utf8'),
+    );
+    expect(migrated.instinct).toMatchObject(liftedInstinct);
+    expect(_klex).toMatchObject({ schemaVersion: 12 });
+    const before = await snapshot(directory);
+    await expect(
+      start(
+        {
+          ...CONFIG_STORE_DEFINITION,
+          schemaVersion: 11,
+          versions: CONFIG_STORE_DEFINITION.versions.filter(
+            ({ version }) => version <= 11,
+          ),
+          migrations: CONFIG_STORE_DEFINITION.migrations.filter(
+            ({ to }) => to <= 11,
+          ),
+        },
+        '0.35.2',
+      ),
+    ).rejects.toThrow(/schema|newer/i);
+    expect(await snapshot(directory)).toEqual(before);
   });
 
   it('keeps the released 5→6 output voice lists; only 6→7 removes them', async () => {

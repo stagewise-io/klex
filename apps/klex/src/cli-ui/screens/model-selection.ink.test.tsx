@@ -278,7 +278,7 @@ describe('ModelSelectionScreen', () => {
       await vi.waitFor(() =>
         expect(view.lastFrame()).toContain(
           purpose === 'instincts'
-            ? 'Uses Chat models via generation'
+            ? 'Uses Memory, then Compaction'
             : 'No models',
         ),
       );

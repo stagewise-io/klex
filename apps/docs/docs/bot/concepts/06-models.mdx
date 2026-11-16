@@ -26,3 +26,9 @@ Some providers discover models automatically; others require you to add model in
 You can use the same model for more than one purpose or choose different models for different work. Consider whether a model supports the required input and the cost and latency of your provider. Check provider terms and pricing before use.
 
 For chat, you can configure an ordered list of models. Klex can fall back to another configured chat model after a model error; a fallback does not guarantee a successful response. You can reorder the list in **Model Selection**.
+
+## Instincts and model usage
+
+Klex can use an **Instincts** model to classify context before a generation step. If no Instincts model is configured, it uses available Chat models for classification. These calls can add model usage and cost. You can select an Instincts model in **Settings → Model Selection**; check its price and monitor usage.
+
+By default, dynamic effort runs in shadow mode: it evaluates a suggested reasoning effort without changing the main model’s settings. Shadow classification can still use a model and incur cost.

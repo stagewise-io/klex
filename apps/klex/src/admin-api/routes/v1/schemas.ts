@@ -5,6 +5,7 @@ import {
   MODEL_PURPOSES,
   PROVIDER_DISPLAY_NAME_MAX_LENGTH,
 } from '@/config';
+import { MAX_TODO_DESCRIPTION_LENGTH } from '@/session/chat/extensions/todos/todo-list';
 import type { ChildSessionSummary } from '@/session/types';
 import { GenerationHealthErrorSchema } from '@/session-history/generation-health';
 import {
@@ -1196,6 +1197,76 @@ const episodeSummaryListResponseSchema = z
   })
   .openapi('EpisodeSummaryListResponse');
 
+// --- Todos ---
+
+const todoSchema = z
+  .object({
+    id: z.string().describe('Four-character todo ID'),
+    description: z.string().describe('What the agent should do'),
+    reminderTime: z
+      .string()
+      .nullable()
+      .describe(
+        'ISO 8601 time of the one-shot reminder, or null. Cleared once the reminder fires',
+      ),
+  })
+  .openapi('Todo');
+
+const todoListResponseSchema = z
+  .object({
+    todos: z
+      .array(todoSchema)
+      .describe('Active todos in the order the agent sees them'),
+  })
+  .openapi('TodoListResponse');
+
+const todoIdParamsSchema = z.object({
+  id: z.string().min(1).openapi({
+    description: 'Todo ID',
+    example: 'k3x9',
+  }),
+});
+
+const todoDescriptionInputSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(MAX_TODO_DESCRIPTION_LENGTH)
+  .describe(
+    'Self-contained task: action, requester, conversation IDs, links and needed context',
+  );
+
+const todoReminderTimeInputSchema = z
+  .string()
+  .datetime({ offset: true })
+  .nullable()
+  .describe(
+    'Future ISO 8601 time at which the agent is reminded once. Null clears it',
+  );
+
+const createTodoBodySchema = z
+  .object({
+    description: todoDescriptionInputSchema,
+    reminderTime: todoReminderTimeInputSchema.optional(),
+  })
+  .openapi('CreateTodoBody');
+
+const updateTodoBodySchema = z
+  .object({
+    description: todoDescriptionInputSchema.optional(),
+    reminderTime: todoReminderTimeInputSchema.optional(),
+  })
+  .refine(
+    (value) =>
+      value.description !== undefined || value.reminderTime !== undefined,
+    'At least one field is required',
+  )
+  .openapi('UpdateTodoBody');
+
+const deleteTodoResponseSchema = z
+  .object({ deleted: z.literal(true), id: z.string() })
+  .openapi('DeleteTodoResponse');
+
 // --- Session history ---
 
 const sessionKindSchema = z
@@ -1529,6 +1600,8 @@ export {
   createKnownModelBodySchema,
   createMcpServerBodySchema,
   createProviderBodySchema,
+  createTodoBodySchema,
+  deleteTodoResponseSchema,
   episodeSummaryListQuerySchema,
   episodeSummaryListResponseSchema,
   episodeSummarySchema,
@@ -1588,10 +1661,14 @@ export {
   skillNameParamsSchema,
   skillSummarySchema,
   timezoneSettingsSchema,
+  todoIdParamsSchema,
+  todoListResponseSchema,
+  todoSchema,
   toolCallHistoryResponseSchema,
   updateKnownModelBodySchema,
   updateMcpServerBodySchema,
   updateProviderBodySchema,
+  updateTodoBodySchema,
   usageDataPointSchema,
   usageGranularitySchema,
   usageQuerySchema,

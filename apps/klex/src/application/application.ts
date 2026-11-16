@@ -82,7 +82,10 @@ import {
   createTimeExt,
   createTimeExtGod,
 } from '@/session/chat/extensions/time';
-import { createTodosExt } from '@/session/chat/extensions/todos';
+import {
+  createTodoList,
+  createTodosExt,
+} from '@/session/chat/extensions/todos';
 import { createVoiceCapabilityExt } from '@/session/chat/extensions/voice-capability';
 import systemPrompt from '@/session/chat/utils/system-prompt.md';
 import {
@@ -698,6 +701,10 @@ class ApplicationModule implements Application {
     // Shared canonical reader; grouping and progress belong to each consumer.
     const activities = createActivityHistory(sessionHistory);
     const episodeSummaryLog = createEpisodeSummaryLog();
+    // One factory and list for the default and god sessions, which share the
+    // agent-wide todos file.
+    const todoList = createTodoList();
+    const todosExt = createTodosExt({ todoList });
 
     // Default session: full extension set + MCP access.
     const defaultSessionFactory = makeSessionFactory([
@@ -711,7 +718,7 @@ class ApplicationModule implements Application {
       createImageInputOptimizerExt,
       createAudioInputOptimizerExt,
       createReadAttachmentExt,
-      createTodosExt,
+      todosExt,
       createSkillsExt(skillRegistry),
       createMcpIngressExt(),
       createVoiceCapabilityExt({
@@ -763,7 +770,7 @@ class ApplicationModule implements Application {
         }),
         createImageInputOptimizerExt,
         createAudioInputOptimizerExt,
-        createTodosExt,
+        todosExt,
       ],
     });
     const soul = createSoul({
@@ -788,6 +795,7 @@ class ApplicationModule implements Application {
       sessionHistory,
       skillRegistry,
       episodeSummaryLog,
+      todoList,
       soul,
       localPort: cli.dangerousLocalAdminApiPort,
       timezone,

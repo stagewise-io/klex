@@ -194,6 +194,27 @@ The Admin API contract includes the dedicated God Messages session:
 - `GET /v1/god-messages/messages` returns cursor-paginated session history.
 - `POST /v1/god-messages/reset` replaces a resettable session.
 
+## Todos
+
+These routes manage the agent's todo list, which all of its sessions share:
+
+- `GET /v1/todos` returns `{ todos }` in the order the agent sees them.
+- `POST /v1/todos` appends a todo from `{ description, reminderTime? }` and
+  returns it with `201`.
+- `PATCH /v1/todos/{id}` changes `description` and/or `reminderTime`. A null
+  `reminderTime` clears the reminder.
+- `DELETE /v1/todos/{id}` clears a todo and cancels its reminder.
+
+Each todo is `{ id, description, reminderTime }`; `reminderTime` is an ISO 8601
+string or null and is cleared once the reminder fires. Descriptions are trimmed
+and must be 1–500 characters. Reminder times must include a UTC offset or `Z`
+and be in the future; past ones return `400` with code `reminder_in_past`.
+More than 100 todos return `409` with code `todo_limit_reached`. Unknown IDs
+return `404` with code `todo_not_found`. All routes return `503` with code
+`not_running` while the todos extension is not running. The agent sees changes
+on its next step, and reminders are rescheduled immediately. Bots before this
+release return `404` for these routes.
+
 ## Session history
 
 The agent persists the transcript of every chat session instance (default,

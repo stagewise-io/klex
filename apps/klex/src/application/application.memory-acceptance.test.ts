@@ -109,6 +109,15 @@ const sessionsResponse = z.object({
   sessions: z.array(z.object({ instanceId: z.string() })),
 });
 const messagesResponse = z.object({ messages: z.array(z.unknown()) });
+const todosResponse = z.object({
+  todos: z.array(
+    z.object({
+      id: z.string(),
+      description: z.string(),
+      reminderTime: z.string().nullable(),
+    }),
+  ),
+});
 const titlesResponse = z.object({
   summaries: z.array(z.object({ episodeId: z.string(), title: z.string() })),
   nextCursor: z.string().nullable(),
@@ -181,7 +190,15 @@ async function boot(dataDirectory: string) {
     expect(response.status, path).toBe(200);
     return schema.parse(await response.json());
   };
-  return { app, get };
+  const post = (path: string, body: unknown) =>
+    admin.handle(
+      new Request(`http://acceptance.local${path}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    );
+  return { app, get, post };
 }
 
 async function legacyDirectory() {
@@ -259,11 +276,15 @@ describe('composed application memory acceptance (offline)', () => {
   it('boots fresh, serves all retained API contracts, closes and restarts', async () => {
     const root = await directory();
     for (let restart = 0; restart < 2; restart++) {
-      const { app, get } = await boot(root);
+      const { app, get, post } = await boot(root);
       if (restart === 0) {
         expect((await get('/v1/sessions', sessionsResponse)).sessions).toEqual(
           [],
         );
+        const created = await post('/v1/todos', {
+          description: 'Admin todo survives restart',
+        });
+        expect(created.status).toBe(201);
         const history = observed.history;
         if (!history) throw new Error('History missing');
         const recorder = history.openRecorder({
@@ -298,6 +319,12 @@ describe('composed application memory acceptance (offline)', () => {
           ),
         ),
       ).toContain('API evidence survives restart');
+      expect((await get('/v1/todos', todosResponse)).todos).toEqual([
+        expect.objectContaining({
+          description: 'Admin todo survives restart',
+          reminderTime: null,
+        }),
+      ]);
       expect(await get('/v1/episode-summaries', titlesResponse)).toEqual({
         summaries: [],
         nextCursor: null,

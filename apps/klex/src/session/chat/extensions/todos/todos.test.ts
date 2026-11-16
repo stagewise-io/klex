@@ -16,6 +16,7 @@ import {
   type ExtensionDeps,
   type ExtensionFactory,
 } from '../extension-api';
+import { createTodoList, type TodoListHub } from './todo-list';
 import {
   createTodosExt,
   TODOS_KEY,
@@ -170,7 +171,12 @@ function introspect(
 // ---------------------------------------------------------------------------
 
 describe('Todos extension', () => {
+  let todoList: TodoListHub;
+  let todosExt: ExtensionFactory;
+
   beforeEach(() => {
+    todoList = createTodoList();
+    todosExt = createTodosExt({ todoList });
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2025-03-15T10:00:00Z'));
   });
@@ -188,7 +194,7 @@ describe('Todos extension', () => {
 
   it('exposes todo and reminder management tools', () => {
     const { deps } = createMockDeps();
-    const ext = createTodosExt.create(deps);
+    const ext = todosExt.create(deps);
     const tools = ext.getTools?.({} as never);
     if (!tools) throw new Error('Extension has no getTools');
     expect(tools).toHaveProperty('createTodo');
@@ -202,7 +208,7 @@ describe('Todos extension', () => {
 
   it('createTodo returns a 4-char id and the todo in the list', async () => {
     const { deps } = createMockDeps();
-    const ext = createTodosExt.create(deps);
+    const ext = todosExt.create(deps);
     const result = await callTool(ext, 'createTodo', {
       description: 'Check deploy status',
     });
@@ -219,7 +225,7 @@ describe('Todos extension', () => {
     ['whitespace', '   '],
   ])('createTodo treats after=%s as append', async (_label, after) => {
     const { deps } = createMockDeps();
-    const ext = createTodosExt.create(deps);
+    const ext = todosExt.create(deps);
     const tool = getTool(ext, 'createTodo');
     const schema = tool.inputSchema as {
       safeParse: (input: unknown) => { success: boolean };
@@ -240,7 +246,7 @@ describe('Todos extension', () => {
 
   it('createTodo stores and schedules an optional reminder', async () => {
     const { deps } = createMockDeps();
-    const ext = createTodosExt.create(deps);
+    const ext = todosExt.create(deps);
     const result = await callTool(ext, 'createTodo', {
       description: 'Check deployment',
       reminderTime: '2025-03-15T11:00:00Z',
@@ -259,7 +265,7 @@ describe('Todos extension', () => {
 
   it('createTodo stores a past reminder time as null', async () => {
     const { deps, sendMessage } = createMockDeps();
-    const ext = createTodosExt.create(deps);
+    const ext = todosExt.create(deps);
     const result = await callTool(ext, 'createTodo', {
       description: 'Already elapsed',
       reminderTime: '2025-03-15T09:00:00Z',
@@ -273,7 +279,7 @@ describe('Todos extension', () => {
 
   it('createTodo appends to end of list by default', async () => {
     const { deps } = createMockDeps();
-    const ext = createTodosExt.create(deps);
+    const ext = todosExt.create(deps);
     await callTool(ext, 'createTodo', { description: 'First' });
     await callTool(ext, 'createTodo', { description: 'Second' });
     await callTool(ext, 'createTodo', { description: 'Third' });
@@ -287,7 +293,7 @@ describe('Todos extension', () => {
 
   it('createTodo with after inserts after the specified todo', async () => {
     const { deps } = createMockDeps();
-    const ext = createTodosExt.create(deps);
+    const ext = todosExt.create(deps);
     const r1 = await callTool(ext, 'createTodo', {
       description: 'First',
     });
@@ -308,7 +314,7 @@ describe('Todos extension', () => {
 
   it('createTodo with after at end of list', async () => {
     const { deps } = createMockDeps();
-    const ext = createTodosExt.create(deps);
+    const ext = todosExt.create(deps);
     const _r1 = await callTool(ext, 'createTodo', {
       description: 'First',
     });
@@ -329,7 +335,7 @@ describe('Todos extension', () => {
 
   it('createTodo with unknown after id throws', async () => {
     const { deps } = createMockDeps();
-    const ext = createTodosExt.create(deps);
+    const ext = todosExt.create(deps);
     await callTool(ext, 'createTodo', { description: 'First' });
     await expect(
       callTool(ext, 'createTodo', {
@@ -341,7 +347,7 @@ describe('Todos extension', () => {
 
   it('createTodo persists without sending inbox input', async () => {
     const { deps, sendMessage } = createMockDeps();
-    const ext = createTodosExt.create(deps);
+    const ext = todosExt.create(deps);
     await callTool(ext, 'createTodo', { description: 'Test' });
     expect(sendMessage).not.toHaveBeenCalled();
     const context = await ext.getProvisionalStepContext?.([], {} as never);
@@ -355,7 +361,7 @@ describe('Todos extension', () => {
 
   it('createTodo rejects empty description via zod schema', async () => {
     const { deps } = createMockDeps();
-    const ext = createTodosExt.create(deps);
+    const ext = todosExt.create(deps);
     const tool = getTool(ext, 'createTodo');
     const schema = tool.inputSchema as {
       safeParse: (input: unknown) => { success: boolean };
@@ -366,7 +372,7 @@ describe('Todos extension', () => {
 
   it('createTodo rejects description > 500 chars via zod schema', async () => {
     const { deps } = createMockDeps();
-    const ext = createTodosExt.create(deps);
+    const ext = todosExt.create(deps);
     const tool = getTool(ext, 'createTodo');
     const schema = tool.inputSchema as {
       safeParse: (input: unknown) => { success: boolean };
@@ -377,7 +383,7 @@ describe('Todos extension', () => {
 
   it('createTodo rejects after onClose', async () => {
     const { deps } = createMockDeps();
-    const ext = createTodosExt.create(deps);
+    const ext = todosExt.create(deps);
     await ext.onClose?.();
     await expect(
       callTool(ext, 'createTodo', {
@@ -388,7 +394,7 @@ describe('Todos extension', () => {
 
   it('createTodo rejects when MAX_TODOS (100) is reached', async () => {
     const { deps } = createMockDeps();
-    const ext = createTodosExt.create(deps);
+    const ext = todosExt.create(deps);
     for (let i = 0; i < 100; i++) {
       await callTool(ext, 'createTodo', {
         description: `Todo ${i}`,
@@ -403,7 +409,7 @@ describe('Todos extension', () => {
 
   it('allows creating a new todo after clearing one at the limit', async () => {
     const { deps } = createMockDeps();
-    const ext = createTodosExt.create(deps);
+    const ext = todosExt.create(deps);
     const first = await callTool(ext, 'createTodo', {
       description: 'First',
     });
@@ -421,7 +427,7 @@ describe('Todos extension', () => {
 
   it('generates unique 4-char ids with collision detection', async () => {
     const { deps } = createMockDeps();
-    const ext = createTodosExt.create(deps);
+    const ext = todosExt.create(deps);
     const ids = new Set<string>();
     for (let i = 0; i < 20; i++) {
       const result = await callTool(ext, 'createTodo', {
@@ -441,7 +447,7 @@ describe('Todos extension', () => {
 
   it('updates, clears, and reports a todo reminder', async () => {
     const { deps } = createMockDeps();
-    const ext = createTodosExt.create(deps);
+    const ext = todosExt.create(deps);
     const created = await callTool(ext, 'createTodo', {
       description: 'Check deploy',
     });
@@ -485,7 +491,7 @@ describe('Todos extension', () => {
 
   it('supports reminders beyond the native timer delay limit', async () => {
     const { deps, sendMessage } = createMockDeps();
-    const ext = createTodosExt.create(deps);
+    const ext = todosExt.create(deps);
     const created = await callTool(ext, 'createTodo', {
       description: 'Review monthly report',
       reminderTime: '2025-04-15T10:00:00Z',
@@ -509,7 +515,7 @@ describe('Todos extension', () => {
 
   it('fires a due todo reminder once and clears its timestamp', async () => {
     const { deps, sendMessage } = createMockDeps();
-    const ext = createTodosExt.create(deps);
+    const ext = todosExt.create(deps);
     const created = await callTool(ext, 'createTodo', {
       description: 'Check deploy',
       reminderTime: '2025-03-15T10:00:01Z',
@@ -536,7 +542,7 @@ describe('Todos extension', () => {
 
   it('restores a reminder when the extension closes during delivery', async () => {
     const { deps, sendMessage } = createMockDeps();
-    const ext = createTodosExt.create(deps);
+    const ext = todosExt.create(deps);
     await callTool(ext, 'createTodo', {
       description: 'Check deploy',
       reminderTime: '2025-03-15T10:00:01Z',
@@ -560,7 +566,7 @@ describe('Todos extension', () => {
 
   it('clearTodo on existing id returns cancelled: true and updated list', async () => {
     const { deps } = createMockDeps();
-    const ext = createTodosExt.create(deps);
+    const ext = todosExt.create(deps);
     const created = await callTool(ext, 'createTodo', {
       description: 'To be cleared',
     });
@@ -573,7 +579,7 @@ describe('Todos extension', () => {
 
   it('clearTodo preserves order of remaining todos', async () => {
     const { deps } = createMockDeps();
-    const ext = createTodosExt.create(deps);
+    const ext = todosExt.create(deps);
     const r1 = await callTool(ext, 'createTodo', {
       description: 'First',
     });
@@ -591,7 +597,7 @@ describe('Todos extension', () => {
 
   it('clearTodo on unknown id returns cancelled: false with unchanged list', async () => {
     const { deps } = createMockDeps();
-    const ext = createTodosExt.create(deps);
+    const ext = todosExt.create(deps);
     await callTool(ext, 'createTodo', {
       description: 'Existing',
     });
@@ -604,7 +610,7 @@ describe('Todos extension', () => {
 
   it('clearTodo never sends inbox input', async () => {
     const { deps, sendMessage } = createMockDeps();
-    const ext = createTodosExt.create(deps);
+    const ext = todosExt.create(deps);
     const created = await callTool(ext, 'createTodo', {
       description: 'To clear',
     });
@@ -615,7 +621,7 @@ describe('Todos extension', () => {
 
   it('clearTodo rejects after onClose', async () => {
     const { deps } = createMockDeps();
-    const ext = createTodosExt.create(deps);
+    const ext = todosExt.create(deps);
     await ext.onClose?.();
     await expect(callTool(ext, 'clearTodo', { id: 'aaaa' })).rejects.toThrow(
       /closed/,
@@ -628,7 +634,7 @@ describe('Todos extension', () => {
 
   it('onStart with no todos does not inject a data part', async () => {
     const { deps, sendMessage } = createMockDeps();
-    const ext = createTodosExt.create(deps);
+    const ext = todosExt.create(deps);
     await ext.onStart?.();
     expect(sendMessage).not.toHaveBeenCalled();
   });
@@ -636,7 +642,7 @@ describe('Todos extension', () => {
   it('triggers the default session once on startup when todos are open', async () => {
     const dataDirectory = mkdtempSync(join(tmpdir(), 'todos-ext-startup-'));
     const seed = createMockDeps([], dataDirectory);
-    const seedExt = createTodosExt.create(seed.deps);
+    const seedExt = todosExt.create(seed.deps);
     await callTool(seedExt, 'createTodo', {
       description: 'Resume pending work',
     });
@@ -646,7 +652,7 @@ describe('Todos extension', () => {
       dataDirectory,
       DEFAULT_SESSION_ID,
     );
-    const defaultSessionExt = createTodosExt.create(defaultSession.deps);
+    const defaultSessionExt = todosExt.create(defaultSession.deps);
     await defaultSessionExt.onStart?.();
 
     expect(defaultSession.sendMessage).toHaveBeenCalledWith(
@@ -658,7 +664,7 @@ describe('Todos extension', () => {
     );
 
     const replacement = createMockDeps([], dataDirectory, DEFAULT_SESSION_ID);
-    const replacementExt = createTodosExt.create(replacement.deps);
+    const replacementExt = todosExt.create(replacement.deps);
     await replacementExt.onStart?.();
     expect(replacement.sendMessage).not.toHaveBeenCalled();
   });
@@ -666,13 +672,13 @@ describe('Todos extension', () => {
   it('does not trigger an ad-hoc session when persisted todos are open', async () => {
     const dataDirectory = mkdtempSync(join(tmpdir(), 'todos-ext-adhoc-'));
     const seed = createMockDeps([], dataDirectory);
-    const seedExt = createTodosExt.create(seed.deps);
+    const seedExt = todosExt.create(seed.deps);
     await callTool(seedExt, 'createTodo', {
       description: 'Resume pending work',
     });
 
     const adHoc = createMockDeps([], dataDirectory, 'ad-hoc-session');
-    const adHocExt = createTodosExt.create(adHoc.deps);
+    const adHocExt = todosExt.create(adHoc.deps);
     await adHocExt.onStart?.();
     expect(adHoc.sendMessage).not.toHaveBeenCalled();
   });
@@ -681,8 +687,8 @@ describe('Todos extension', () => {
     const dataDirectory = mkdtempSync(join(tmpdir(), 'todos-ext-shared-'));
     const first = createMockDeps([], dataDirectory);
     const second = createMockDeps([], dataDirectory);
-    const firstExt = createTodosExt.create(first.deps);
-    const secondExt = createTodosExt.create(second.deps);
+    const firstExt = todosExt.create(first.deps);
+    const secondExt = todosExt.create(second.deps);
     await Promise.all([firstExt.onStart?.(), secondExt.onStart?.()]);
     await callTool(firstExt, 'createTodo', { description: 'Shared' });
     const context = await secondExt.getProvisionalStepContext?.(
@@ -705,7 +711,7 @@ describe('Todos extension', () => {
 
   it('historyTransformer returns history unchanged when no data-todos parts exist', () => {
     const { deps, setHistory } = createMockDeps();
-    const ext = createTodosExt.create(deps);
+    const ext = todosExt.create(deps);
     const history = [
       createTextMessage('user', 'Hello'),
       createTextMessage('assistant', 'Hi there'),
@@ -720,7 +726,7 @@ describe('Todos extension', () => {
 
   it('historyTransformer renders first data-todos part as full list', () => {
     const { deps, setHistory } = createMockDeps();
-    const ext = createTodosExt.create(deps);
+    const ext = todosExt.create(deps);
     const t1 = makeTodo({
       id: 'aaaa',
       description: 'Task A',
@@ -749,7 +755,7 @@ describe('Todos extension', () => {
 
   it('historyTransformer renders subsequent parts as diffs', () => {
     const { deps, setHistory } = createMockDeps();
-    const ext = createTodosExt.create(deps);
+    const ext = todosExt.create(deps);
     const t1 = makeTodo({ id: 'aaaa', description: 'Task A' });
     const t2 = makeTodo({
       id: 'bbbb',
@@ -789,7 +795,7 @@ describe('Todos extension', () => {
 
   it('getCheckpointCarry carries the last dropped todo list without reminder', async () => {
     const { deps } = createMockDeps();
-    const ext = createTodosExt.create(deps);
+    const ext = todosExt.create(deps);
     const t1 = makeTodo({ id: 'aaaa', description: 'Task A' });
     const t2 = makeTodo({ id: 'bbbb', description: 'Task B' });
     const dropped = [
@@ -810,7 +816,7 @@ describe('Todos extension', () => {
 
   it('getCheckpointCarry carries nothing when no todo parts were dropped', async () => {
     const { deps } = createMockDeps();
-    const ext = createTodosExt.create(deps);
+    const ext = todosExt.create(deps);
     const carry = await ext.getCheckpointCarry?.([
       createTextMessage('user', 'Start'),
     ]);
@@ -819,7 +825,7 @@ describe('Todos extension', () => {
 
   it('historyTransformer renders the carried list as base and later parts as diffs', async () => {
     const { deps } = createMockDeps();
-    const ext = createTodosExt.create(deps);
+    const ext = todosExt.create(deps);
     const t1 = makeTodo({ id: 'aaaa', description: 'Task A' });
     const t2 = makeTodo({ id: 'bbbb', description: 'Task B' });
     const carry =
@@ -851,7 +857,7 @@ describe('Todos extension', () => {
 
   it('historyTransformer handles empty todos list in a data part', () => {
     const { deps, setHistory } = createMockDeps();
-    const ext = createTodosExt.create(deps);
+    const ext = todosExt.create(deps);
     const t1 = makeTodo({ id: 'aaaa', description: 'Task A' });
 
     const history = [
@@ -881,7 +887,7 @@ describe('Todos extension', () => {
 
   it('dataPartTransformers produces full list text for the todos key', () => {
     const { deps } = createMockDeps();
-    const ext = createTodosExt.create(deps);
+    const ext = todosExt.create(deps);
     const transformers = ext.dataPartTransformers;
     if (!transformers) throw new Error('No dataPartTransformers');
     const transformer = transformers[TODOS_KEY];
@@ -899,7 +905,7 @@ describe('Todos extension', () => {
 
   it('dataPartTransformers handles empty todos list', () => {
     const { deps } = createMockDeps();
-    const ext = createTodosExt.create(deps);
+    const ext = todosExt.create(deps);
     const transformers = ext.dataPartTransformers;
     if (!transformers) throw new Error('No dataPartTransformers');
     const transformer = transformers[TODOS_KEY];
@@ -916,7 +922,7 @@ describe('Todos extension', () => {
 
   it('introspect returns todo count and todo entries', async () => {
     const { deps } = createMockDeps();
-    const ext = createTodosExt.create(deps);
+    const ext = todosExt.create(deps);
     await callTool(ext, 'createTodo', {
       description: 'Test todo',
     });
@@ -930,7 +936,7 @@ describe('Todos extension', () => {
 
   it('introspect returns empty state when no todos are active', () => {
     const { deps } = createMockDeps();
-    const ext = createTodosExt.create(deps);
+    const ext = todosExt.create(deps);
     const state = introspect(ext);
     expect(state.todoCount).toBe(0);
     expect(state.todos).toEqual([]);
@@ -938,7 +944,7 @@ describe('Todos extension', () => {
 
   it('introspect returns todos in insertion order', async () => {
     const { deps } = createMockDeps();
-    const ext = createTodosExt.create(deps);
+    const ext = todosExt.create(deps);
     const r1 = await callTool(ext, 'createTodo', {
       description: 'First',
     });
@@ -953,5 +959,232 @@ describe('Todos extension', () => {
     expect(todos[0]!.description).toBe('First');
     expect(todos[1]!.description).toBe('After First');
     expect(todos[2]!.description).toBe('Second');
+  });
+
+  // -------------------------------------------------------------------------
+  // Shared todo list (admin API writes, default and god sessions)
+  // -------------------------------------------------------------------------
+
+  async function latestTodosPart(
+    ext: ReturnType<ExtensionFactory['create']>,
+    history: ExtendedUIMessage[] = [],
+  ): Promise<TodosDataUIPart | undefined> {
+    const context = await ext.getProvisionalStepContext?.(history, {} as never);
+    const part = context?.parts[0] as unknown as
+      | { data: TodosDataUIPart }
+      | undefined;
+    return part?.data;
+  }
+
+  it('is available only while an extension is running', async () => {
+    const { deps } = createMockDeps();
+    const ext = todosExt.create(deps);
+    expect(todoList.isAvailable()).toBe(false);
+    await ext.onStart?.();
+    expect(todoList.isAvailable()).toBe(true);
+    await ext.onClose?.();
+    expect(todoList.isAvailable()).toBe(false);
+  });
+
+  it('shows list writes to the model on its next step', async () => {
+    const { deps } = createMockDeps();
+    const ext = todosExt.create(deps);
+    await ext.onStart?.();
+
+    const { todo } = await todoList.create({
+      description: 'Added by the operator',
+      reminderTime: null,
+    });
+    const snapshot = await latestTodosPart(ext);
+    expect(snapshot?.todos).toEqual([todo]);
+
+    await todoList.update(todo.id, { description: 'Edited by the operator' });
+    const history = [createTodosMessage(snapshot?.todos ?? [])];
+    const edited = await latestTodosPart(ext, history);
+    expect(edited?.todos).toEqual([
+      { ...todo, description: 'Edited by the operator' },
+    ]);
+
+    const rendered = ext.historyTransformer?.(
+      [...history, createTodosMessage(edited?.todos ?? [])],
+      {} as never,
+    ) as ExtendedUIMessage[];
+    const diff = rendered.at(1);
+    if (!diff) throw new Error('Expected a rendered todos diff');
+    expect(extractTextParts(diff)).toBe(
+      `Todo updated: (ID: ${todo.id}) Edited by the operator`,
+    );
+  });
+
+  it('arms a reminder created through the list', async () => {
+    const { deps, sendMessage } = createMockDeps();
+    const ext = todosExt.create(deps);
+    await ext.onStart?.();
+
+    const { todo } = await todoList.create({
+      description: 'Call back',
+      reminderTime: '2025-03-15T10:00:05Z',
+    });
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        parts: [
+          expect.objectContaining({
+            data: expect.objectContaining({ reminderTodoId: todo.id }),
+          }),
+        ],
+      }),
+      SessionInboxUrgency.Default,
+    );
+    expect(todoList.getTodos()).toEqual([{ ...todo, reminderTime: null }]);
+  });
+
+  it('re-arms a model reminder moved through the list', async () => {
+    const { deps, sendMessage } = createMockDeps();
+    const ext = todosExt.create(deps);
+    await ext.onStart?.();
+    const created = await callTool(ext, 'createTodo', {
+      description: 'Check deploy',
+      reminderTime: '2025-03-15T10:00:05Z',
+    });
+
+    await todoList.update(created.id as string, {
+      reminderTime: '2025-03-15T10:00:20Z',
+    });
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+  });
+
+  it('disarms reminders cleared or deleted through the list', async () => {
+    const { deps, sendMessage } = createMockDeps();
+    const ext = todosExt.create(deps);
+    await ext.onStart?.();
+    const cleared = await callTool(ext, 'createTodo', {
+      description: 'Cleared reminder',
+      reminderTime: '2025-03-15T10:00:05Z',
+    });
+    const deleted = await callTool(ext, 'createTodo', {
+      description: 'Deleted todo',
+      reminderTime: '2025-03-15T10:00:05Z',
+    });
+
+    await todoList.update(cleared.id as string, { reminderTime: null });
+    await todoList.delete(deleted.id as string);
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(todoList.getTodos()).toEqual([
+      { id: cleared.id, description: 'Cleared reminder', reminderTime: null },
+    ]);
+  });
+
+  it('shares one list between the default and god sessions', async () => {
+    const dataDirectory = mkdtempSync(join(tmpdir(), 'todos-ext-god-'));
+    const defaultSession = createMockDeps(
+      [],
+      dataDirectory,
+      DEFAULT_SESSION_ID,
+    );
+    const godSession = createMockDeps([], dataDirectory, 'god');
+    const defaultExt = todosExt.create(defaultSession.deps);
+    const godExt = todosExt.create(godSession.deps);
+    await Promise.all([defaultExt.onStart?.(), godExt.onStart?.()]);
+
+    const created = await callTool(godExt, 'createTodo', {
+      description: 'From the god session',
+      reminderTime: '2025-03-15T10:00:05Z',
+    });
+    expect((await latestTodosPart(defaultExt))?.todos).toEqual([
+      expect.objectContaining({ id: created.id }),
+    ]);
+
+    await callTool(defaultExt, 'changeTodoReminder', {
+      id: created.id,
+      reminderTime: '2025-03-15T10:00:20Z',
+    });
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(defaultSession.sendMessage).not.toHaveBeenCalled();
+    expect(godSession.sendMessage).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.waitFor(() =>
+      expect(
+        defaultSession.sendMessage.mock.calls.length +
+          godSession.sendMessage.mock.calls.length,
+      ).toBe(1),
+    );
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(
+      defaultSession.sendMessage.mock.calls.length +
+        godSession.sendMessage.mock.calls.length,
+    ).toBe(1);
+  });
+
+  it('serializes concurrent tool and list writes without losing any', async () => {
+    const { deps } = createMockDeps();
+    const ext = todosExt.create(deps);
+    await ext.onStart?.();
+
+    await Promise.all(
+      Array.from({ length: 10 }, (_, index) => [
+        callTool(ext, 'createTodo', { description: `Model ${index}` }),
+        todoList.create({ description: `Admin ${index}`, reminderTime: null }),
+      ]).flat(),
+    );
+
+    const todos = await todoList.list();
+    expect(todos).toHaveLength(20);
+    expect(new Set(todos.map((todo) => todo.id)).size).toBe(20);
+
+    const reloaded = createTodoList();
+    reloaded.bind(deps.getDataDir(true));
+    expect(await reloaded.list()).toEqual(todos);
+  });
+
+  it('enforces the limit across concurrent tool and list writes', async () => {
+    const { deps } = createMockDeps();
+    const ext = todosExt.create(deps);
+    await ext.onStart?.();
+    for (let i = 0; i < 99; i++) {
+      await todoList.create({ description: `Todo ${i}`, reminderTime: null });
+    }
+
+    const results = await Promise.allSettled([
+      callTool(ext, 'createTodo', { description: 'Model' }),
+      todoList.create({ description: 'Admin', reminderTime: null }),
+    ]);
+
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    const [rejected] = results.filter((r) => r.status === 'rejected');
+    expect((rejected as PromiseRejectedResult).reason).toMatchObject({
+      code: 'todo_limit_reached',
+      message: expect.stringMatching(/maximum of 100/i),
+    });
+    expect(todoList.getTodos()).toHaveLength(100);
+  });
+
+  it('delivers a reminder once when a list write races its delivery', async () => {
+    const { deps, sendMessage } = createMockDeps();
+    const ext = todosExt.create(deps);
+    await ext.onStart?.();
+    const { todo } = await todoList.create({
+      description: 'Racing reminder',
+      reminderTime: '2025-03-15T10:00:01Z',
+    });
+
+    vi.advanceTimersByTime(1_000);
+    await todoList.update(todo.id, { description: 'Edited while firing' });
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+    expect(todoList.getTodos()).toEqual([
+      { id: todo.id, description: 'Edited while firing', reminderTime: null },
+    ]);
   });
 });

@@ -102,7 +102,7 @@ export function startDesktopLink(options: DesktopLinkOptions): DesktopLink {
   async function run(): Promise<void> {
     if (closed) return;
     const { stream, screen } = await options.desktop.capabilities();
-    if (!stream || !screen) {
+    if (!stream) {
       schedule(availabilityPollMs);
       return;
     }
@@ -145,7 +145,9 @@ export function startDesktopLink(options: DesktopLinkOptions): DesktopLink {
       send({
         type: 'hello',
         v: PROTOCOL_VERSION,
-        screen: { width: screen.width, height: screen.height },
+        ...(screen
+          ? { screen: { width: screen.width, height: screen.height } }
+          : {}),
         machineVersion: options.machineVersion,
         capabilities: ['stream', 'lease', 'rfb-input-filter'],
       });

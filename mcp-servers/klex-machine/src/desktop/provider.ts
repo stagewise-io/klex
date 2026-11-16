@@ -50,7 +50,7 @@ export interface DesktopCapabilities {
   computerUse: boolean;
   /** An RFB source can be opened: the desktop is offered to Cloud viewers. */
   stream: boolean;
-  /** Physical screen size; set whenever either capability is. */
+  /** Physical screen size; always set with `computerUse`, when known otherwise. */
   screen?: ScreenSize;
 }
 

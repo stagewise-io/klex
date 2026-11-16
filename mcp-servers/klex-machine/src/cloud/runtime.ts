@@ -6,7 +6,9 @@ import {
   type ProxyEnvironmentHandler,
 } from '@klex/mcp-proxy-sdk/daemon/node';
 
+import type { DesktopService } from '../desktop/index.js';
 import { type MachineLogger, silentMachineLogger } from '../logger.js';
+import { type DesktopLink, startDesktopLink } from './desktop-link.js';
 import {
   createMachineFactsCollector,
   encodeMachineFactsHeader,
@@ -25,7 +27,11 @@ export interface CloudMachineRuntime {
 export async function startCloudMachineRuntime(
   dataDir: string,
   handler: ProxyEnvironmentHandler,
-  options?: MachineFactsOptions & { logger?: MachineLogger },
+  options?: MachineFactsOptions & {
+    logger?: MachineLogger;
+    /** Streams this desktop to Cloud viewers and enforces the control lease. */
+    desktop?: { service: DesktopService; vncSocketPath?: string };
+  },
 ): Promise<CloudMachineRuntime> {
   const enrollment = await loadMachineEnrollment(dataDir);
   const identity = await loadMachineIdentity(join(dataDir, IDENTITY_FILE));
@@ -73,11 +79,30 @@ export async function startCloudMachineRuntime(
     await daemon.close();
     throw error;
   }
+  const desktop = options?.desktop;
+  const link: DesktopLink | undefined = desktop
+    ? startDesktopLink({
+        cloudBaseUrl: enrollment.cloudBaseUrl,
+        getToken: () => tokenClient.getToken(),
+        invalidateToken: () => tokenClient.invalidate(),
+        desktop: desktop.service,
+        machineVersion: options?.version ?? 'unknown',
+        logger,
+        ...(desktop.vncSocketPath
+          ? { vncSocketPath: desktop.vncSocketPath }
+          : {}),
+      })
+    : undefined;
   return {
     daemon,
     async close() {
-      tokenClient.close();
-      await daemon.close();
+      try {
+        await link?.close();
+      } finally {
+        tokenClient.close();
+        desktop?.service.lease.close();
+        await daemon.close();
+      }
     },
   };
 }

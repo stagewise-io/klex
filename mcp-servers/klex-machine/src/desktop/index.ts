@@ -3,6 +3,8 @@ import { X11DesktopBackend } from './x11.js';
 
 export type * from './backend.js';
 export * from './input-control.js';
+export * from './lease.js';
+export * from './rfb-filter.js';
 export * from './service.js';
 export { DESKTOP_SCREEN_RESOURCE_URI, registerDesktopTools } from './tools.js';
 export { toXdotoolCombo, X11DesktopBackend } from './x11.js';

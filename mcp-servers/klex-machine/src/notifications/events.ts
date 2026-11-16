@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import type {
   JSONValue,
   PushNotification,
@@ -197,6 +199,38 @@ export function shellLostEvent(
       cwd: info.cwd,
       createdAt: info.createdAt,
       lostAt,
+    },
+  );
+}
+
+const DESKTOP_BOOT_ID = randomUUID();
+
+export interface DesktopControlEventInfo {
+  mode: 'agent' | 'human';
+  holder?: string;
+  expiresAt?: string;
+  reason: 'cloud' | 'expired' | 'disconnected';
+  sequence: number;
+  changedAt: string;
+}
+
+export function desktopControlChangedEvent(
+  change: DesktopControlEventInfo,
+): PushNotification {
+  const text =
+    change.mode === 'human'
+      ? `${change.holder ?? 'A person'} took control of the desktop. Desktop input tools are paused until control returns; screenshots still work.`
+      : 'Control of the desktop returned to you. Take a fresh screenshot before acting; the screen may have changed.';
+  return notification(
+    `desktop:control:${DESKTOP_BOOT_ID}:${change.sequence}`,
+    'desktop.control_changed',
+    change.changedAt,
+    text,
+    {
+      mode: change.mode,
+      holder: change.holder ?? null,
+      expiresAt: change.expiresAt ?? null,
+      reason: change.reason,
     },
   );
 }

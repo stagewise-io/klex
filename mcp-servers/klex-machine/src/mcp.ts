@@ -24,6 +24,7 @@ import { detectedMachineIcons, machineIcons } from './icons.js';
 import { type MachineLogger, silentMachineLogger } from './logger.js';
 import {
   createNotificationStore,
+  desktopControlChangedEvent,
   type NotificationStore,
   shellExitedEvent,
   watcherCompletedEvent,
@@ -61,6 +62,7 @@ class MachineMcpModule implements MachineMcp {
   readonly #unsubscribe: () => void;
   readonly #shellTracking = new Set<string>();
   readonly #desktop: DesktopService | undefined;
+  readonly #unwatchDesktop: () => void;
 
   constructor(defaultCwd: string, options: MachineMcpOptions) {
     const paths = new MachinePathResolver(defaultCwd);
@@ -75,6 +77,14 @@ class MachineMcpModule implements MachineMcp {
         ? undefined
         : (options.desktop ?? desktopFromEnvironment());
     this.#ownsStore = !options.notifications;
+    this.#unwatchDesktop =
+      this.#desktop?.lease.onChange((change) => {
+        try {
+          store.publish(principalId, desktopControlChangedEvent(change));
+        } catch (error) {
+          logger.error({ error }, 'Desktop control notification failed');
+        }
+      }) ?? (() => {});
     this.#shell = new ShellService(paths, undefined, {
       onExit: (info, output) => {
         if (!this.#shellTracking.delete(info.id)) return;
@@ -468,6 +478,7 @@ class MachineMcpModule implements MachineMcp {
   }
 
   async close(): Promise<void> {
+    this.#unwatchDesktop();
     this.#unsubscribe();
     this.#subscriptions.close();
     try {

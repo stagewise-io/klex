@@ -90,7 +90,11 @@ On Linux, when `DISPLAY` points at a reachable X server and `xdotool` and ImageM
 
 Screenshots fit a 1280×800 box and every coordinate uses screenshot pixels, so a larger screen is scaled transparently. Run the display at 1280×800 to avoid scaling. Screenshots are JPEG by default and come back as MCP image content plus `width`, `height` and the physical `screen` size. Action tools return a screenshot only when called with `screenshot: true`. Clients that cannot show images in tool results can read the `desktop://screen` resource instead.
 
-Input is serialized per display and passes through a `DesktopInputControl` hook before it runs. The default allows the agent. A human-takeover lease can reject with `DesktopInputDeniedError`, which tools report as `{"error":{"code":"desktop_controlled_by_user",...}}`. Screenshots, zoom and window lists are never gated. Commands run through `execFile` without a shell, and key names are validated before they reach `xdotool`.
+Input is serialized per display and checked against the control lease when it runs, not when it is queued. While a person holds control, input tools return `{"error":{"code":"desktop_controlled_by_user",...}}`. Each principal with a desktop session also gets a `desktop.control_changed` push notification when control moves between the agent and a person. These notifications are kept in memory only. Screenshots, zoom and window lists are never gated.
+
+### Streaming to Cloud
+
+In enrolled mode with a reachable display, the daemon keeps a control WebSocket open at `{cloudBaseUrl}/api/machine-desktop/control`. It authenticates with its existing `machine:connect` token. Cloud uses that socket to set the control lease and to request viewer streams. For each stream, the daemon dials `/api/machine-desktop/streams/{id}` and relays raw RFB to the Xvnc Unix socket (`/run/klex/vnc.sock`, or `KLEX_MACHINE_VNC_SOCKET`). It never opens a TCP VNC listener. Viewer key, pointer, clipboard and resize messages are dropped unless Cloud has given a person control. A human lease reverts to the agent when it expires, or 30 seconds after the control socket drops. Commands run through `execFile` without a shell, and key names are validated before they reach `xdotool`.
 
 The tools act with the daemon's OS user on that user's display. Anyone who can drive the desktop can read everything that user can, including the machine identity in the data directory.
 

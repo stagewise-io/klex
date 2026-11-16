@@ -488,7 +488,7 @@ describe('desktop link', () => {
     cloud = await startCloud();
     const socketPath =
       process.platform === 'win32'
-        ? `\\.pipeklex-machine-vnc-${randomUUID()}`
+        ? `\\\\.\\pipe\\klex-machine-vnc-${randomUUID()}`
         : join(dir, 'vnc.sock');
     const accepted = new Promise<Socket>((resolve) => {
       const server = createServer(resolve);

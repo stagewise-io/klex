@@ -9,36 +9,48 @@ import {
 } from './presets';
 import type { HistoryFilterOptions } from './types';
 
-it('retains semantic Events in transcript and instinct views without general metadata', () => {
-  const history: ExtendedUIMessage[] = [
-    {
-      id: 'event',
-      role: 'user',
-      parts: [
-        {
-          type: 'data-context',
-          data: {
-            sourceEnv: 'monitoring',
-            metadata: {
-              origin: 'events',
-              type: 'incident.opened',
-              data: { incidentId: 'inc-42' },
+it.each([
+  { incidentId: 'inc-42', entries: [] },
+  { incidentId: 'inc-42', entries: Array.from({ length: 300 }, (_, i) => i) },
+  { incidentId: `inc-42${'x'.repeat(1000)}`, entries: [] },
+])(
+  'retains semantic Events, including wide payloads, without general metadata',
+  (payload) => {
+    const history: ExtendedUIMessage[] = [
+      {
+        id: 'event',
+        role: 'user',
+        parts: [
+          {
+            type: 'data-context',
+            data: {
+              sourceEnv: 'monitoring',
+              metadata: {
+                origin: 'events',
+                type: 'incident.opened',
+                eventId: 'internal-delivery-id',
+                _meta: { 'example.com/text': 'noisy instructions' },
+                data: payload,
+              },
+              content: [],
             },
-            content: [],
           },
-        },
-      ],
-    },
-  ];
-  for (const view of [
-    createTranscriptHistoryView(),
-    createInstinctHistoryView({ data: {} }),
-  ]) {
-    const result = view.render(history);
-    expect(result.text).toContain('incident.opened');
-    expect(result.text).toContain('inc-42');
-  }
-});
+        ],
+      },
+    ];
+    for (const view of [
+      createTranscriptHistoryView(),
+      createInstinctHistoryView({ data: {} }),
+    ]) {
+      const result = view.render(history);
+      expect(result.text).toContain('incident.opened');
+      expect(result.text).toContain('inc-42');
+      expect(result.text).not.toContain('[unserializable]');
+      expect(result.text).not.toContain('internal-delivery-id');
+      expect(result.text).not.toContain('noisy instructions');
+    }
+  },
+);
 
 const LIMIT = { max: 50, truncate: 'middle' } as const;
 

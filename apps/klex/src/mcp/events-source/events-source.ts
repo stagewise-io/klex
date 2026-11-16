@@ -74,6 +74,7 @@ class EventsSourceModule implements EventsSource {
   private revision = 0;
   private started = false;
   private starting?: Promise<void>;
+  private refreshRequested = false;
   private retryTimer?: ReturnType<typeof setTimeout>;
   private failures = 0;
   private refreshTimer?: ReturnType<typeof setTimeout>;
@@ -149,6 +150,7 @@ class EventsSourceModule implements EventsSource {
     for (const [key, state] of this.states) {
       if (state.status === 'terminated') this.states.delete(key);
     }
+    this.refreshRequested = true;
     this.started = false;
     await this.start();
   }
@@ -158,7 +160,12 @@ class EventsSourceModule implements EventsSource {
     if (this.starting) return this.starting;
     if (this.started) return;
     clearTimeout(this.retryTimer);
-    this.starting = this.reconcile()
+    this.starting = (async () => {
+      do {
+        this.refreshRequested = false;
+        await this.reconcile();
+      } while (this.refreshRequested && !this.controller.signal.aborted);
+    })()
       .then(() => {
         this.started = true;
         this.failures = 0;
@@ -237,7 +244,11 @@ class EventsSourceModule implements EventsSource {
       const descriptor = descriptors.find(
         (item) => item.name === subscription.name,
       );
+      const hasActiveLoop =
+        this.loops.has(sourceKey) && state.status !== 'terminated';
       if (!descriptor) {
+        // A transient catalogue regression must not discard a live cursor.
+        if (hasActiveLoop) continue;
         state.status = 'terminated';
         state.reason = 'descriptor-missing';
         this.loops.get(sourceKey)?.abort();
@@ -245,6 +256,7 @@ class EventsSourceModule implements EventsSource {
         continue;
       }
       let delivery: 'push' | 'poll';
+      let payloadValidator: z.ZodType | undefined;
       let failure: EventSubscriptionStatus['reason'] = 'unsupported-schema';
       try {
         if (descriptor.inputSchema) {
@@ -253,14 +265,8 @@ class EventsSourceModule implements EventsSource {
           validator.parse(subscription.arguments ?? {});
           failure = 'unsupported-schema';
         }
-        if (descriptor.payloadSchema) {
-          this.payloadValidators.set(
-            sourceKey,
-            z.fromJSONSchema(descriptor.payloadSchema),
-          );
-        } else {
-          this.payloadValidators.delete(sourceKey);
-        }
+        if (descriptor.payloadSchema)
+          payloadValidator = z.fromJSONSchema(descriptor.payloadSchema);
         failure = 'unsupported-delivery';
         delivery = selectDeliveryMode(
           descriptor,
@@ -268,12 +274,17 @@ class EventsSourceModule implements EventsSource {
           subscription.delivery ? [subscription.delivery] : ['push', 'poll'],
         ) as 'push' | 'poll';
       } catch {
+        if (hasActiveLoop) continue;
         state.status = 'terminated';
         state.reason = failure;
         this.loops.get(sourceKey)?.abort();
         this.loops.delete(sourceKey);
         continue;
       }
+      // Commit validator changes only after the whole descriptor is usable.
+      if (payloadValidator)
+        this.payloadValidators.set(sourceKey, payloadValidator);
+      else this.payloadValidators.delete(sourceKey);
       // Refresh active validators without starting a second loop or resetting
       // its cursor. Delivery changes apply on the next subscription start.
       if (

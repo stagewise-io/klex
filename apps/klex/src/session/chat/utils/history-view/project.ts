@@ -202,12 +202,19 @@ function projectContext(
   // blocks. Transcript presets omit general metadata, but must retain Events
   // for compaction, consult and the classifier under the context text budget.
   if (!options.metadata && data.metadata.origin === 'events') {
-    const { data: payload, _meta, type, ...envelope } = data.metadata;
+    // Occurrences are size/depth bounded at ingress. Serialize their JSON body
+    // directly before applying the text budget: compactJson's node cap would
+    // replace wide but valid payloads wholesale with [unserializable]. Keep
+    // transport metadata and delivery IDs out of model-facing projections too.
     const event = serializeValue(
-      { type, data: payload, ...envelope, ...(_meta ? { _meta } : {}) },
+      {
+        type: data.metadata.type,
+        data: data.metadata.data,
+        createdAt: data.metadata.createdAt,
+      },
       {
         ...options.text,
-        json: 'compact',
+        json: 'plain',
       },
     );
     if (event !== null) record.items.push({ kind: 'text', text: event });

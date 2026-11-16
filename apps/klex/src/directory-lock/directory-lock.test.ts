@@ -1,4 +1,13 @@
-import { chmod, mkdtemp, readFile, rm, stat, unlink } from 'node:fs/promises';
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  unlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -197,6 +206,54 @@ describe('DirectoryLock', () => {
         await chmod(dir, 0o700);
       }
       await expect(stat(join(dir, '.klex.lock'))).resolves.toBeDefined();
+    },
+  );
+
+  it('removes an unused directory and never releases a replacement lock', async () => {
+    const lock = createDirectoryLock({ logging, dataDirectory: dir });
+    await lock.acquire();
+    await mkdir(join(dir, 'nested'));
+    await writeFile(join(dir, 'nested', 'state.json'), '{}');
+    await lock.removeDirectory();
+    await expect(stat(dir)).rejects.toMatchObject({ code: 'ENOENT' });
+    await mkdir(dir);
+    const replacement = createDirectoryLock({ logging, dataDirectory: dir });
+    await replacement.acquire();
+    await lock.release();
+    await expect(isDirectoryInUse(dir)).resolves.toBe(true);
+    await replacement.release();
+  });
+
+  it('refuses removal without lock ownership', async () => {
+    const lock = createDirectoryLock({ logging, dataDirectory: dir });
+    await writeFile(join(dir, 'state.json'), '{}');
+    await expect(lock.removeDirectory()).rejects.toThrow(
+      'without owning its lock',
+    );
+    await expect(readFile(join(dir, 'state.json'), 'utf8')).resolves.toBe('{}');
+  });
+
+  it.runIf(process.platform !== 'win32')(
+    'keeps ownership after partial removal fails',
+    async () => {
+      const lock = createDirectoryLock({ logging, dataDirectory: dir });
+      await lock.acquire();
+      await writeFile(join(dir, 'state.json'), '{}');
+      await chmod(dir, 0o500);
+      try {
+        await expect(lock.removeDirectory()).rejects.toMatchObject({
+          code: 'EACCES',
+        });
+        await expect(isDirectoryInUse(dir)).resolves.toBe(true);
+        const replacement = createDirectoryLock({
+          logging,
+          dataDirectory: dir,
+        });
+        await expect(replacement.acquire()).rejects.toThrow('already in use');
+      } finally {
+        await chmod(dir, 0o700);
+        await lock.release();
+      }
     },
   );
 

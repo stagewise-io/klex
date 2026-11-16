@@ -71,7 +71,12 @@ it('filters docs aggregates and removes Markdown mirrors without removing HTML p
     );
   };
   try {
-    const pages = ['/', '/quickstart', '/architecture'].map((route) => ({
+    const pages = [
+      '/',
+      '/quickstart',
+      '/architecture',
+      '/guides/limit-blast-radius',
+    ].map((route) => ({
       route,
       title: route === '/' ? 'Introduction' : route.slice(1),
       url: `https://docs.klex.bot${route}`,
@@ -122,6 +127,7 @@ it('filters docs aggregates and removes Markdown mirrors without removing HTML p
     await createAgentBuild({ kind: 'docs', directory }).build();
     const llms = await readFile(join(directory, 'dist/llms.txt'), 'utf8');
     expect(llms).not.toContain('/quickstart');
+    expect(llms).toContain('/guides/limit-blast-radius');
     expect(llms).toContain(
       '[architecture](https://docs.klex.bot/architecture)',
     );

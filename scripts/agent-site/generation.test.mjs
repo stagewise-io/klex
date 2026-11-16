@@ -75,6 +75,8 @@ it('filters docs aggregates and removes Markdown mirrors without removing HTML p
       '/',
       '/quickstart',
       '/architecture',
+      '/bot/concepts/cognitive-architecture',
+      '/de/bot/concepts/cognitive-architecture',
       '/guides/limit-blast-radius',
     ].map((route) => ({
       route,
@@ -87,6 +89,11 @@ it('filters docs aggregates and removes Markdown mirrors without removing HTML p
     await save('docs/index.mdx', '# Introduction');
     await save('docs/01-quickstart.mdx', '# Quickstart');
     await save('docs/02-architecture.mdx', '# Architecture');
+    await save('docs/bot/concepts/cognitive-architecture.mdx', '# Sessions');
+    await save(
+      'docs/de/bot/concepts/cognitive-architecture.mdx',
+      '# Sitzungen',
+    );
     // Blume route groups do not appear in the published URL.
     await save(
       'docs/guides/(security)/limit-blast-radius.mdx',
@@ -149,6 +156,12 @@ it('filters docs aggregates and removes Markdown mirrors without removing HTML p
     expect(
       routes.some((route) => route.dest === '/architecture/index.html'),
     ).toBe(true);
+    for (const prefix of ['', '/de']) {
+      expect(routes).toContainEqual({
+        src: `^${prefix}/concepts/cognitive-architecture/?$`,
+        dest: `${prefix}/concepts/cognitive-architecture/index.html`,
+      });
+    }
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

@@ -1,0 +1,29 @@
+---
+title: Das Gedächtnis eines Klex Bots
+sidebar:
+  label: Gedächtnis
+description: Was das Gedächtnis eines Klex Bots speichert, wo es liegt und wie Administratoren darauf zugreifen.
+related:
+  - /bot/concepts/data-directory
+  - /bot/concepts/how-bots-work
+  - /cloud/hosted-vs-local
+---
+
+Das Gedächtnis eines Klex Bots speichert **Skills und Learnings**. Es wird in der eigenen Umgebung des Bots verwaltet, zusammen mit den aktiven Sitzungen, die den Bot am Laufen halten.
+
+<a id="where-chats-and-memory-are-stored"></a>
+
+## Wo Chats und Gedächtnis gespeichert werden
+
+Chats und Gedächtnis liegen im Datenverzeichnis des Bots:
+
+- Bei einem **Cloud-gehosteten Bot** liegt das Verzeichnis in der gehosteten Umgebung.
+- Bei einem **selbst gehosteten Bot** liegt es im lokalen Ordner, der für die Daten des Bots verwendet wird.
+
+Alle Daten Cloud-gehosteter Bots, einschließlich des Gedächtnisses, werden bei der Übertragung und im Ruhezustand verschlüsselt.
+
+<a id="how-administrators-access-them"></a>
+
+## Wie Administratoren darauf zugreifen
+
+Administratoren können über die Admin API des Bots auf Chats und Gedächtnis zugreifen. Das Dashboard von Klex Cloud dient als Oberfläche und Reverse-Proxy für die Admin API des jeweiligen Bots. Mehr zum Speicherort erfahren Sie unter [Datenverzeichnis](/bot/concepts/data-directory).

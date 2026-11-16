@@ -86,6 +86,8 @@ export interface StartRuntimeOptions {
    */
   adopted?: readonly ClosableResource[];
   modules: RuntimeStartupModules;
+  /** A failed rollback may leave writers alive; callers must preserve their data. */
+  onRollbackError?: () => void;
 }
 
 /**
@@ -110,6 +112,7 @@ export async function startRuntime(
       await closeReverse(
         started.map(({ resource }) => resource),
         logger,
+        options.onRollbackError,
       );
       throw error;
     }
@@ -151,14 +154,16 @@ function runtimeShutdownOrder(
 async function closeReverse(
   resources: readonly ClosableResource[],
   logger: Pick<RootLogger, 'error'>,
+  onError?: () => void,
 ): Promise<void> {
-  await closeInOrder(resources.toReversed(), logger, true);
+  await closeInOrder(resources.toReversed(), logger, true, onError);
 }
 
 async function closeInOrder(
   resources: readonly ClosableResource[],
   logger: Pick<RootLogger, 'error'>,
   rollback = false,
+  onError?: () => void,
 ): Promise<void> {
   for (const resource of resources) {
     // Only startup rollback may abandon a stalled step to keep recovery alive.
@@ -168,6 +173,7 @@ async function closeInOrder(
       ? closeWithTimeout(() => resource.close())
       : Promise.resolve().then(() => resource.close());
     await closing.catch((error: unknown) => {
+      onError?.();
       logger.error({ error }, 'Resource shutdown failed');
     });
   }

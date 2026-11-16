@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 import type {
@@ -146,6 +147,8 @@ class ApplicationModule implements Application {
   private starting: Promise<boolean> | undefined;
   private closing: Promise<void> | undefined;
   private shuttingDown = false;
+  private startupFailed = false;
+  private preserveCreatedAgent = false;
   private exitHandler: (() => void) | undefined;
   private terminationHandler: (() => void) | undefined;
   private restartHandler:
@@ -158,6 +161,7 @@ class ApplicationModule implements Application {
 
   start(): Promise<boolean> {
     this.starting ??= this.run().catch(async (error: unknown) => {
+      this.startupFailed = true;
       await this.close();
       throw error;
     });
@@ -166,7 +170,12 @@ class ApplicationModule implements Application {
 
   close(): Promise<void> {
     if (!this.starting) return Promise.resolve();
-    this.closing ??= closeReverse(this.resources, this.deps.logger);
+    // An explicit close (including a signal during startup) is not a failure.
+    if (!this.startupFailed) this.preserveCreatedAgent = true;
+    this.closing ??= closeReverse(this.resources, this.deps.logger, () => {
+      // A timed-out or failed writer may still be using the directory.
+      this.preserveCreatedAgent = true;
+    });
     return this.closing;
   }
 
@@ -265,7 +274,10 @@ class ApplicationModule implements Application {
       return {
         attemptFailed: () => tracker.attemptFailed(),
         finish: (outcome) => {
-          if (outcome === 'enrolled') cloudEnrollmentCompleted = true;
+          if (outcome === 'enrolled') {
+            cloudEnrollmentCompleted = true;
+            this.preserveCreatedAgent = true;
+          }
           tracker.finish(outcome);
         },
       };
@@ -293,13 +305,14 @@ class ApplicationModule implements Application {
       logging,
       rootDirectory: cli.agentRoot || defaultAgentRoot(),
     });
+    let createdDirectory: string | undefined;
     if (cli.createAgent) {
       const agent = await agentDirectory.create(
         cli.cloudEnabled ? undefined : cli.agentName,
       );
       cli.dataDirectory = agent.directory;
-      // Keep this path visible if enrollment fails, so the user can retry with
-      // --data-dir instead of creating a second identity.
+      createdDirectory = agent.directory;
+      // Report the location; failed, unused creations are rolled back below.
       process.stdout.write(`Created bot at ${agent.directory}\n`);
     }
     const closeInteractiveResources = async () => {
@@ -439,6 +452,24 @@ class ApplicationModule implements Application {
     const releaseLock = this.own({ close: () => dirLock.release() });
     if (!interactiveLock) await dirLock.acquire();
     interactiveLock = undefined;
+    // Registered after the lock so rollback removes an unused creation only
+    // after its writers close, but before releasing exclusive ownership.
+    this.resources.push(async () => {
+      if (
+        createdDirectory === undefined ||
+        !this.startupFailed ||
+        this.shuttingDown ||
+        this.preserveCreatedAgent
+      )
+        return;
+      await rm(createdDirectory, { recursive: true, force: true });
+      // Update recovery must retry creation, not reopen the deleted directory.
+      cli.dataDirectory = undefined;
+      logger.info(
+        { directory: createdDirectory },
+        'Removed unused bot directory after startup failure',
+      );
+    });
 
     const localData =
       interactiveLocalData ??
@@ -779,15 +810,40 @@ class ApplicationModule implements Application {
       conversationHost: sessionHost,
     });
     cloudConnectivity.setTunnelRequestHandler(adminApi.handle.bind(adminApi));
+    // A local admin listener can accept work even before sessions start.
+    if (cli.dangerousLocalAdminApiPort !== undefined) {
+      this.preserveCreatedAgent = true;
+    }
     const runtime = await startRuntime({
       logging,
+      onRollbackError: () => {
+        this.preserveCreatedAgent = true;
+      },
       modules: {
         modelCallLogger,
         sessionHistory,
         skillRegistry,
         adminApi,
-        cloudConnectivity,
-        sessionHost,
+        cloudConnectivity: {
+          start: async () => {
+            try {
+              await cloudConnectivity.start();
+            } finally {
+              // Capture before runtime rollback closes and clears enrollment.
+              if (cloudConnectivity.isEnrolled())
+                this.preserveCreatedAgent = true;
+            }
+          },
+          close: () => cloudConnectivity.close(),
+        },
+        sessionHost: {
+          start: async () => {
+            // Sessions can do work before the rest of startup completes.
+            this.preserveCreatedAgent = true;
+            await sessionHost.start();
+          },
+          close: () => sessionHost.close(),
+        },
         realtime,
         mcp,
         telemetryManager,
@@ -1055,9 +1111,11 @@ function resolveTerminationDrainTimeoutMs(
 async function closeReverse(
   resources: readonly (() => Promise<void>)[],
   logger: Pick<ModuleLogger, 'warn' | 'error'>,
+  onError: () => void,
 ): Promise<void> {
   for (const resource of [...resources].reverse()) {
     await resource().catch((error: unknown) => {
+      onError();
       logger.error({ error }, 'Resource shutdown failed');
     });
   }

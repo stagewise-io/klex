@@ -52,6 +52,8 @@ const mocks = vi.hoisted(() => {
     createLearningExt:
       vi.fn<(options: { getSoul: () => string | null }) => void>(),
     readSoul: vi.fn((_directory: string) => 'Current soul'),
+    removeDirectory: vi.fn(async () => undefined),
+    startRuntime: vi.fn(),
     createAgent: vi.fn(),
     createCloudConnectivity: vi.fn(),
     createAgentPicker: vi.fn(),
@@ -64,6 +66,10 @@ const mocks = vi.hoisted(() => {
   };
 });
 
+vi.mock('node:fs/promises', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('node:fs/promises')>()),
+  rm: mocks.removeDirectory,
+}));
 vi.mock('@stagewise/logger', () => ({ createLogger: () => mocks.logger }));
 vi.mock('@/admin-api', () => ({ createAdminApi: () => mocks.resource }));
 vi.mock('@/agent-directory', () => ({
@@ -78,7 +84,7 @@ vi.mock('@/cloud-connectivity', () => ({
   createCloudConnectivity: mocks.createCloudConnectivity,
 }));
 vi.mock('@/composition/runtime', () => ({
-  startRuntime: () => mocks.resource,
+  startRuntime: mocks.startRuntime,
 }));
 vi.mock('@/config', () => ({ createConfig: mocks.createConfig }));
 vi.mock('@/data-directory', () => ({
@@ -246,6 +252,7 @@ describe('managed-update agent continuity', () => {
     vi.stubEnv('KLEX_HEALTH_PORT', '');
     vi.spyOn(process, 'on').mockReturnValue(process);
     mocks.onRestartRequested = undefined;
+    mocks.startRuntime.mockResolvedValue(mocks.resource);
     mocks.createAgentPicker.mockImplementation(
       (options: { prepareAgent: (directory: string) => Promise<boolean> }) => ({
         choose: async () => {
@@ -564,6 +571,170 @@ describe('managed-update agent continuity', () => {
     expect(mocks.readSoul).toHaveBeenCalledWith(
       join(mocks.selectedDirectory, 'extensions', 'io.stagewise/soul'),
     );
+  });
+
+  it.each([false, true])(
+    'removes only a new unused bot after config startup fails, create=%s',
+    async (create) => {
+      mocks.createConfig.mockReturnValueOnce({
+        ...mocks.resource,
+        start: vi.fn().mockRejectedValue(new Error('Invalid config')),
+      });
+      await launch([
+        '--headless',
+        '--auto-update',
+        ...(create
+          ? ['--create-bot', '--no-cloud', '--bot-name', 'Ada']
+          : ['--data-dir', 'existing/bot']),
+      ]);
+      await vi.waitFor(() =>
+        expect(mocks.logger.warn).toHaveBeenCalledWith(
+          expect.stringContaining('update-recovery mode'),
+        ),
+      );
+      if (create) {
+        expect(mocks.removeDirectory).toHaveBeenCalledExactlyOnceWith(
+          mocks.selectedDirectory,
+          { recursive: true, force: true },
+        );
+        const removedAt = mocks.removeDirectory.mock.invocationCallOrder[0];
+        const releasedAt = mocks.resource.release.mock.invocationCallOrder[0];
+        if (removedAt === undefined || releasedAt === undefined) {
+          throw new Error('Expected directory removal and lock release');
+        }
+        expect(mocks.resource.close.mock.invocationCallOrder[0]).toBeLessThan(
+          removedAt,
+        );
+        expect(removedAt).toBeLessThan(releasedAt);
+        const restart = requestRestart();
+        expect(restart.arguments).toContain('--create-bot');
+        expect(restart.environment.KLEX_DATA_DIR).toBeFalsy();
+      } else expect(mocks.removeDirectory).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    'enrollment-failed',
+    'enrolled',
+    'session',
+    'rollback-failed',
+    'local-admin',
+  ] as const)(
+    'preserves useful or uncertain startup state: %s',
+    async (stage) => {
+      mocks.startRuntime.mockImplementationOnce(
+        async (
+          options: Parameters<
+            typeof import('@/composition/runtime').startRuntime
+          >[0],
+        ) => {
+          try {
+            await options.modules.cloudConnectivity.start();
+            await options.modules.sessionHost.start();
+          } catch (error) {
+            await options.modules.cloudConnectivity
+              .close()
+              .catch(() => options.onRollbackError?.());
+            throw error;
+          }
+        },
+      );
+      const failure = new Error('Startup failed');
+      mocks.createCloudConnectivity.mockImplementationOnce(
+        (options: {
+          onTokenEnrollment(): { finish(outcome: string): void };
+        }) => ({
+          ...mocks.resource,
+          start: async () => {
+            if (stage === 'enrolled')
+              options.onTokenEnrollment().finish('enrolled');
+            if (stage !== 'session') throw failure;
+          },
+          isEnrolled: () => stage === 'enrolled',
+          close:
+            stage === 'rollback-failed'
+              ? vi.fn().mockRejectedValue(new Error('Close failed'))
+              : mocks.resource.close,
+        }),
+      );
+      if (stage === 'session') {
+        const { createSessionHost } = await import('@/session/session-host');
+        vi.mocked(createSessionHost).mockReturnValueOnce({
+          start: vi.fn().mockRejectedValue(failure),
+          close: mocks.resource.close,
+        } as unknown as ReturnType<typeof createSessionHost>);
+      }
+      await launch([
+        '--headless',
+        '--auto-update',
+        '--create-bot',
+        '--cloud',
+        '--cloud-enroll-token',
+        'test-token',
+        ...(stage === 'local-admin'
+          ? ['--dangerous-local-admin-api-port', '8088']
+          : []),
+      ]);
+      await vi.waitFor(() =>
+        expect(mocks.logger.warn).toHaveBeenCalledWith(
+          expect.stringContaining('update-recovery mode'),
+        ),
+      );
+      if (stage === 'enrollment-failed')
+        expect(mocks.removeDirectory).toHaveBeenCalledOnce();
+      else expect(mocks.removeDirectory).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['lock', 'cleanup', 'removal'] as const)(
+    'handles %s failure without deleting uncertain state or hiding startup errors',
+    async (stage) => {
+      const failure = new Error('Configuration startup failed');
+      mocks.createConfig.mockReturnValue({
+        ...mocks.resource,
+        start: vi.fn().mockRejectedValue(failure),
+        close:
+          stage === 'cleanup'
+            ? vi.fn().mockRejectedValue(new Error('Writer still active'))
+            : mocks.resource.close,
+      });
+      if (stage === 'lock')
+        mocks.resource.acquire.mockRejectedValueOnce(
+          new Error('Already locked'),
+        );
+      if (stage === 'removal')
+        mocks.removeDirectory.mockRejectedValueOnce(
+          new Error('Permission denied'),
+        );
+      await launch([
+        '--headless',
+        '--auto-update',
+        '--create-bot',
+        '--no-cloud',
+        '--bot-name',
+        'Ada',
+      ]);
+      await vi.waitFor(() =>
+        expect(mocks.logger.warn).toHaveBeenCalledWith(
+          expect.stringContaining('update-recovery mode'),
+        ),
+      );
+      if (stage === 'removal') {
+        expect(mocks.removeDirectory).toHaveBeenCalledOnce();
+        expect(mocks.logger.error).toHaveBeenCalledWith(
+          { error: failure },
+          'Agent startup failed',
+        );
+      } else expect(mocks.removeDirectory).not.toHaveBeenCalled();
+      expect(requestRestart().arguments).not.toContain('--create-bot');
+    },
+  );
+
+  it('preserves a newly created bot on normal shutdown', async () => {
+    await launch(['--create-bot', '--no-cloud', '--bot-name', 'Ada']);
+    await vi.waitFor(() => expect(mocks.createCliUi).toHaveBeenCalled());
+    await mocks.shutdowns.at(-1)?.cleanup();
+    expect(mocks.removeDirectory).not.toHaveBeenCalled();
   });
 
   it.each([false, true])(

@@ -7,6 +7,8 @@ import type { ToolResultPart } from 'ai';
 
 import type { ModelInputCapabilities, ProviderType } from '@/config';
 
+import { googleInputSchema } from './google-input-schema';
+
 export const REMOTE_INPUT_UNAVAILABLE =
   'Remote media unavailable or unsupported.';
 
@@ -254,8 +256,24 @@ export function withRemoteInputMapping(
       return model.supportedUrls;
     },
     doGenerate: (options) =>
-      model.doGenerate({ ...options, prompt: map(options.prompt) }),
+      model.doGenerate({
+        ...options,
+        tools: options.tools?.map((tool) =>
+          tool.type === 'function'
+            ? { ...tool, inputSchema: googleInputSchema(tool.inputSchema) }
+            : tool,
+        ),
+        prompt: map(options.prompt),
+      }),
     doStream: (options) =>
-      model.doStream({ ...options, prompt: map(options.prompt) }),
+      model.doStream({
+        ...options,
+        tools: options.tools?.map((tool) =>
+          tool.type === 'function'
+            ? { ...tool, inputSchema: googleInputSchema(tool.inputSchema) }
+            : tool,
+        ),
+        prompt: map(options.prompt),
+      }),
   };
 }

@@ -27,9 +27,45 @@ import {
   loadMatcherSchema,
   MAX_FACT_HISTORY,
   type MemoryEntity,
+  relationSchema,
   sectionNameSchema,
 } from '../entities';
+import {
+  checkCopied,
+  checkFact,
+  checkSkill,
+  copiedValues,
+  MAX_WRITER_FACT,
+  parseSkillBody,
+  renderSkillBody,
+  type StructuredSkill,
+  similarSkills,
+} from './quality';
 import { rejectSecrets } from './secrets';
+
+// Writer input: a relation also names its reverse, so one call links both sides.
+const writerRelationSchema = relationSchema.extend({
+  inverse: z
+    .string()
+    .trim()
+    .min(1)
+    .max(200)
+    .optional()
+    .describe(
+      'Entity targets: label from the target\'s side, e.g. relationship "requested" / inverse "requested by". Tool writes both sides.',
+    ),
+});
+type WriterRelation = z.infer<typeof writerRelationSchema>;
+const writerFieldsSchema = entityFieldsSchema.extend({
+  relatedTo: z.array(writerRelationSchema).max(100).default([]),
+});
+const writerPatchSchema = entityPatchSchema.extend({
+  relatedTo: z.array(writerRelationSchema).max(100).optional(),
+});
+const stripInverse = (relations: readonly WriterRelation[]) =>
+  relations.map(({ inverse: _inverse, ...relation }) => relation);
+const PEOPLE = new Set(['person', 'bot', 'team']);
+const WORK_ITEMS = new Set(['issue', 'pull-request']);
 
 const sourceIdsSchema = z
   .array(z.string().min(1).max(4096))
@@ -42,9 +78,9 @@ const factInputSchema = z
     text: z
       .string()
       .min(1)
-      .max(1_000)
+      .max(MAX_WRITER_FACT * 2)
       .describe(
-        'One self-contained declarative fact, one line, caveman style. No citations, headings or LinkedIdentities values.',
+        'One fact, one line, caveman style, without the subject. No citations or IDs.',
       ),
     sourceIds: sourceIdsSchema.min(1),
   })
@@ -308,6 +344,96 @@ const skillLoadOnSchema = z
   .describe(
     'Auto-load triggers, any one fires: event or tool call where this procedure applies. Same matcher rules as entities.',
   );
+const item = (max: number, hint: string) =>
+  z.string().trim().min(3).max(max).describe(hint);
+const skillParts = {
+  when: z
+    .string()
+    .trim()
+    .min(10)
+    .max(150)
+    .describe(
+      'Trigger: when to use, and when not if confusable. e.g. "Replying to a Linear agent session event; not plain issue comments".',
+    ),
+  steps: z
+    .array(
+      item(
+        120,
+        'Imperative, caveman. e.g. "Push head branch before create_pull_request".',
+      ),
+    )
+    .min(1)
+    .max(8),
+  pitfalls: z
+    .array(
+      item(
+        140,
+        'Proven failure → fix. e.g. "422 head invalid: branch not pushed".',
+      ),
+    )
+    .max(5),
+  verify: z
+    .string()
+    .trim()
+    .max(120)
+    .describe(
+      'One concrete success check, not a repeated step. Empty if none.',
+    ),
+};
+const skillCreateSchema = z
+  .object({
+    name: z
+      .string()
+      .regex(SKILL_NAME_PATTERN)
+      .describe('Bare kebab-case name, without learning/ prefix.'),
+    when: skillParts.when,
+    steps: skillParts.steps,
+    pitfalls: skillParts.pitfalls.default([]),
+    verify: skillParts.verify.default(''),
+    sourceIds: z
+      .array(z.string().min(1).max(4096))
+      .min(1)
+      .max(6)
+      .describe('SQLite message IDs from this batch.'),
+    loadOn: skillLoadOnSchema.default([]),
+    notDuplicateOf: z
+      .array(z.string())
+      .max(10)
+      .default([])
+      .describe('Only after a Similar rejection: ids you checked that differ.'),
+  })
+  .strict();
+const skillUpdateSchema = z
+  .object({
+    name: skillCreateSchema.shape.name,
+    revision: z
+      .string()
+      .regex(/^[a-f0-9]{16}$/)
+      .describe('Revision from latest read. Conflict: read again.'),
+    when: skillParts.when.optional(),
+    steps: skillParts.steps.optional(),
+    pitfalls: skillParts.pitfalls.optional(),
+    verify: skillParts.verify.optional(),
+    sourceIds: skillCreateSchema.shape.sourceIds,
+    loadOn: skillLoadOnSchema
+      .optional()
+      .describe('Replaces all triggers. Omit to keep.'),
+  })
+  .strict();
+const structured = (input: {
+  steps: string[];
+  pitfalls: string[];
+  verify: string;
+}): StructuredSkill => ({
+  steps: input.steps,
+  pitfalls: input.pitfalls,
+  verify: input.verify,
+});
+const skillTexts = (skill: StructuredSkill) => [
+  ...skill.steps,
+  ...skill.pitfalls,
+  skill.verify,
+];
 const skillContent = z
   .object({
     name: z
@@ -339,6 +465,10 @@ export interface WriterToolsOptions {
   signal: AbortSignal;
   sourceIds: ReadonlySet<string>;
   view?: ActivityView;
+  /** The bot itself; never an entity. */
+  selfName?: string;
+  /** Batch text; identity and matcher values must be copied from it. */
+  evidenceText?: string;
 }
 export interface WriterTools {
   tools: ToolSet;
@@ -397,10 +527,10 @@ class WriterToolsModule implements WriterTools {
         });
         if (!page?.text || page.truncated)
           throw new Error('Source is unavailable or omitted');
-        result.push({
-          label: `${page.startedAt?.slice(0, 10) || 'unknown date'} · ${sourceLabel(page.platforms)}`,
-          id,
-        });
+        const label = `${page.startedAt?.slice(0, 10) || 'unknown date'} · ${sourceLabel(page.platforms)}`;
+        // One citation per day and platform: more add bytes, not evidence.
+        if (!result.some((source) => source.label === label))
+          result.push({ label, id });
       }
       if (options.signal.aborted) throw new Error('Writer closed');
       return result;
@@ -437,6 +567,96 @@ class WriterToolsModule implements WriterTools {
           throw new Error(
             `Invalid reference: ${relation.target.kind} "${relation.target.id}" does not exist`,
           );
+      }
+    };
+    const entityType = (id: string) => options.entities.get(id)?.entityType;
+    /** Shape rules code can check; messages name the fix. */
+    const checkEntity = (
+      title: string,
+      type: string,
+      identities: readonly { server: string; match: Record<string, string> }[],
+      relations: readonly { target: { kind: string; id: string } }[],
+      facts: readonly string[],
+      copied: { identities: string[]; matchers: string[] },
+    ) => {
+      const self = options.selfName?.toLowerCase();
+      if (self && title.trim().toLowerCase() === self)
+        throw new Error(
+          `"${title}" is self. Never create or edit an entity for self; put facts on the people and things self works with`,
+        );
+      for (const fact of facts) checkFact(fact, title, type);
+      const evidence = options.evidenceText;
+      if (evidence !== undefined) {
+        checkCopied(copied.identities, evidence, 'Identity value');
+        checkCopied(copied.matchers, evidence, 'LoadOn value');
+      }
+      if (
+        type === 'issue' &&
+        !identities.some(
+          (identity) =>
+            identity.server === 'linear' && 'issueId' in identity.match,
+        )
+      )
+        throw new Error(
+          'No tracker ID. Use entityType "pull-request" until the Linear issueId appears; then retype to "issue"',
+        );
+      const people = relations.filter(
+        ({ target }) =>
+          target.kind === 'entity' && PEOPLE.has(entityType(target.id) ?? ''),
+      ).length;
+      if (WORK_ITEMS.has(type) && people < 1)
+        throw new Error(
+          'Link who requested, owns or reviews it: add a relatedTo person or bot with inverse, e.g. relationship "requested by" / inverse "requested". Create the person first if missing',
+        );
+      if (type === 'event' && people < 2)
+        throw new Error(
+          'An event links everyone involved: add at least two relatedTo people or bots with inverse "took part in"',
+        );
+    };
+    /** Writes or removes the reverse side of entity relations of `id`. */
+    const syncInverses = async (
+      id: string,
+      next: readonly WriterRelation[],
+      previous: readonly { target: { kind: string; id: string } }[],
+    ) => {
+      const targets = new Set(
+        [...next, ...previous]
+          .filter(({ target }) => target.kind === 'entity')
+          .map(({ target }) => target.id),
+      );
+      for (const targetId of targets) {
+        if (targetId === id) continue;
+        const target = options.entities.get(targetId);
+        if (!target) continue;
+        const relation = next.find(
+          ({ target: t }) => t.kind === 'entity' && t.id === targetId,
+        );
+        const others = target.frontmatter.RelatedTo.filter(
+          ({ target: t }) => !(t.kind === 'entity' && t.id === id),
+        );
+        const existing = target.frontmatter.RelatedTo.find(
+          ({ target: t }) => t.kind === 'entity' && t.id === id,
+        );
+        const label = relation?.inverse ?? existing?.relationship;
+        const reverse =
+          relation && label
+            ? [
+                {
+                  target: { kind: 'entity' as const, id },
+                  strength: relation.strength,
+                  relationship: label,
+                },
+              ]
+            : [];
+        if (
+          JSON.stringify(existing ? [existing] : []) === JSON.stringify(reverse)
+        )
+          continue;
+        await options.entities.update(
+          targetId,
+          { relatedTo: [...others, ...reverse] },
+          {},
+        );
       }
     };
     this.tools = {
@@ -514,16 +734,22 @@ class WriterToolsModule implements WriterTools {
           'Create new identity when no match exists. Facts only, no instructions. Need General and sources.',
         inputSchema: z
           .object({
-            fields: entityFieldsSchema,
+            fields: writerFieldsSchema,
             sections: z.array(sectionSchema).min(1).max(5),
           })
           .strict(),
         execute: guarded(async ({ fields, sections: input }) => {
-          rejectSecrets(
-            [fields, input],
-            (input as z.infer<typeof sectionSchema>[]).flatMap((section) =>
-              section.facts.map(({ text }) => text),
-            ),
+          const texts = (input as z.infer<typeof sectionSchema>[]).flatMap(
+            (section) => section.facts.map(({ text }) => text),
+          );
+          rejectSecrets([fields, input], texts);
+          checkEntity(
+            fields.title,
+            fields.entityType,
+            fields.linkedIdentities,
+            fields.relatedTo,
+            texts,
+            copiedValues(fields),
           );
           const content = await sections(input);
           checkShape(
@@ -533,7 +759,11 @@ class WriterToolsModule implements WriterTools {
             fields.linkedIdentities,
           );
           checkRelations(fields.relatedTo);
-          const entity = await options.entities.create(fields, content);
+          const entity = await options.entities.create(
+            { ...fields, relatedTo: stripInverse(fields.relatedTo) },
+            content,
+          );
+          await syncInverses(entity.id, fields.relatedTo, []);
           return {
             status: 'created',
             id: entity.id,
@@ -548,7 +778,7 @@ class WriterToolsModule implements WriterTools {
         inputSchema: z
           .object({
             id: entityIdSchema,
-            fields: entityPatchSchema,
+            fields: writerPatchSchema,
             revision: z
               .string()
               .regex(/^[a-f0-9]{16}$/)
@@ -565,6 +795,23 @@ class WriterToolsModule implements WriterTools {
           if (!entity) throw new Error('Unknown entity');
           if (entityRevision(entity) !== revision)
             throw new Error('Entity changed; read it again before editing');
+          const nextRelations: WriterRelation[] =
+            fields.relatedTo ?? entity.frontmatter.RelatedTo;
+          checkEntity(
+            fields.title ?? entity.frontmatter.Title,
+            fields.entityType ?? entity.entityType,
+            fields.linkedIdentities ?? entity.frontmatter.LinkedIdentities,
+            nextRelations,
+            (operations as Operation[])
+              .filter(({ op }) =>
+                ['add', 'supersede', 'reword', 'merge'].includes(op),
+              )
+              .map(({ text }) => text),
+            copiedValues({
+              linkedIdentities: fields.linkedIdentities,
+              loadOn: fields.loadOn,
+            }),
+          );
           const draft: Record<string, Fact[]> = Object.assign(
             Object.create(null),
             structuredClone(entity.sections),
@@ -692,13 +939,24 @@ class WriterToolsModule implements WriterTools {
           checkRelations(fields.relatedTo ?? entity.frontmatter.RelatedTo);
           const updated = await options.entities.update(
             id,
-            fields,
+            {
+              ...fields,
+              ...(fields.relatedTo
+                ? { relatedTo: stripInverse(fields.relatedTo) }
+                : {}),
+            },
             draft,
             Object.keys(entity.sections).filter(
               (name) => !Object.hasOwn(draft, name),
             ),
             revision,
           );
+          if (fields.relatedTo)
+            await syncInverses(
+              id,
+              fields.relatedTo,
+              entity.frontmatter.RelatedTo,
+            );
           return {
             status: 'updated',
             id,
@@ -831,117 +1089,90 @@ class WriterToolsModule implements WriterTools {
       },
       createLearnedSkill: {
         description:
-          'Create learning skill. Use when no existing skill fits. Bare name; need sources.',
-        inputSchema: skillContent,
-        execute: skillWrite(async (input: z.infer<typeof skillContent>) => {
-          rejectSecrets(input, [input.description, input.body]);
-          checkShape(Object.create(null), [], input.loadOn);
-          await sources(input.sourceIds);
-          if (options.skills.get(input.name))
-            throw new Error('Skill already exists; update it');
-          const created = await options.skills.put(
-            input.name,
-            { description: input.description, body: input.body },
-            {
-              metadata: {
-                sourceEpisodes: input.sourceIds,
-                loadOn: uniqueMatchers(input.loadOn),
+          'Create learning skill from structured parts; tool renders it. Only when no existing skill fits.',
+        inputSchema: skillCreateSchema,
+        execute: skillWrite(
+          async (input: z.infer<typeof skillCreateSchema>) => {
+            const skill = structured(input);
+            rejectSecrets(input, [input.when, ...skillTexts(skill)]);
+            checkSkill(skill);
+            checkShape(Object.create(null), [], input.loadOn);
+            if (options.evidenceText !== undefined)
+              checkCopied(
+                copiedValues({ loadOn: input.loadOn }).matchers,
+                options.evidenceText,
+                'LoadOn value',
+              );
+            await sources(input.sourceIds);
+            if (options.skills.get(input.name))
+              throw new Error('Skill already exists; read and update it');
+            const similar = similarSkills(
+              input.name,
+              input.loadOn,
+              options.skills
+                .list()
+                .filter((other) => !input.notDuplicateOf.includes(other.id)),
+            );
+            if (similar.length)
+              throw new Error(
+                `Similar: ${similar.join(', ')}. Read and extend it, or set notDuplicateOf: [ids] if it is a different procedure`,
+              );
+            const created = await options.skills.put(
+              input.name,
+              { description: input.when, body: renderSkillBody(skill) },
+              {
+                metadata: {
+                  sourceEpisodes: input.sourceIds,
+                  loadOn: uniqueMatchers(input.loadOn),
+                },
+                durable: true,
               },
-              durable: true,
-            },
-          );
-          return {
-            status: 'created',
-            id: created.id,
-            revision: skillRevision(created),
-          };
-        }),
+            );
+            return {
+              status: 'created',
+              id: created.id,
+              revision: skillRevision(created),
+            };
+          },
+        ),
       },
       updateLearnedSkill: {
         description:
-          'Improve learning skill. Read first. Bare name; ordered edits commit together. Need sources.',
-        inputSchema: z
-          .object({
-            name: skillContent.shape.name,
-            revision: z
-              .string()
-              .regex(/^[a-f0-9]{16}$/)
-              .describe('Revision from latest read. Conflict: read again.'),
-            description: skillContent.shape.description
-              .optional()
-              .describe('Omit to keep existing description.'),
-            sourceIds: skillContent.shape.sourceIds,
-            loadOn: skillLoadOnSchema
-              .optional()
-              .describe('Replaces all triggers. Omit to keep.'),
-            operations: z
-              .array(
-                z
-                  .object({
-                    op: z
-                      .enum(['append', 'edit', 'replace'])
-                      .describe(
-                        'append: add text; edit: change exact unique oldText, empty text deletes; replace: rewrite whole body. Body must stay nonempty.',
-                      ),
-                    text: z.string().max(MAX_BODY_LENGTH),
-                    oldText: z.string().max(MAX_BODY_LENGTH).default(''),
-                  })
-                  .strict(),
-              )
-              .max(50),
-          })
-          .strict(),
+          'Improve learning skill. Read first. Given lists replace whole lists; omitted keep. Free-form legacy skill: give steps to rewrite it.',
+        inputSchema: skillUpdateSchema,
         execute: skillWrite(
-          async (input: {
-            name: string;
-            revision: string;
-            description?: string;
-            sourceIds: string[];
-            loadOn?: z.infer<typeof skillLoadOnSchema>;
-            operations: {
-              op: 'append' | 'edit' | 'replace';
-              text: string;
-              oldText: string;
-            }[];
-          }) => {
-            rejectSecrets(input, [
-              input.description ?? '',
-              ...input.operations.map(({ text }) => text),
-            ]);
-            checkShape(Object.create(null), [], input.loadOn);
-            await sources(input.sourceIds);
+          async (input: z.infer<typeof skillUpdateSchema>) => {
             const existing = options.skills.get(input.name);
             if (!existing) throw new Error('Unknown learned skill');
             if (skillRevision(existing) !== input.revision)
               throw new Error('Skill changed; read it again before editing');
-            let body = existing.body;
-            for (const operation of input.operations) {
-              if (operation.op === 'edit') {
-                if (
-                  !operation.oldText ||
-                  !body.includes(operation.oldText) ||
-                  body.indexOf(operation.oldText) !==
-                    body.lastIndexOf(operation.oldText)
-                )
-                  throw new Error('oldText must match exactly once');
-                body = body.replace(operation.oldText, () => operation.text);
-              } else {
-                if (operation.oldText || !operation.text.trim())
-                  throw new Error(
-                    'Append/replace requires nonempty text and no oldText',
-                  );
-                body =
-                  operation.op === 'append'
-                    ? `${body}\n\n${operation.text}`
-                    : operation.text;
-              }
-            }
-            if (!body.trim() || body.length > MAX_BODY_LENGTH)
-              throw new Error('Invalid skill body size');
+            const current = parseSkillBody(existing.body);
+            if (!current && !input.steps)
+              throw new Error(
+                'Free-form skill: give steps (and pitfalls, verify) to rewrite it in structured form',
+              );
+            const skill: StructuredSkill = {
+              steps: input.steps ?? current?.steps ?? [],
+              pitfalls: input.pitfalls ?? current?.pitfalls ?? [],
+              verify: input.verify ?? current?.verify ?? '',
+            };
+            rejectSecrets(input, [input.when ?? '', ...skillTexts(skill)]);
+            checkSkill(skill);
+            checkShape(Object.create(null), [], input.loadOn);
+            if (options.evidenceText !== undefined)
+              checkCopied(
+                copiedValues({ loadOn: input.loadOn }).matchers,
+                options.evidenceText,
+                'LoadOn value',
+              );
+            await sources(input.sourceIds);
             if (options.signal.aborted) throw new Error('Writer closed');
             const updated = await options.skills.put(
               input.name,
-              { description: input.description ?? existing.description, body },
+              {
+                description: input.when ?? existing.description,
+                body: renderSkillBody(skill),
+              },
               {
                 metadata: {
                   ...existing.metadata,

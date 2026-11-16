@@ -57,6 +57,8 @@ export interface MemoryWriterExtOptions {
     'list' | 'get' | 'readReference' | 'addDeletionGuard'
   >;
   legacyLearningDirectory: string;
+  /** Bot's configured name, read per chunk. */
+  selfName?: () => string | undefined;
 }
 
 class WriterToolsExtension implements Extension {
@@ -355,8 +357,11 @@ class MemoryWriterExtension implements Extension {
             return `[${activityMessageId(id)}]${changed ? ` ${day}` : ''}\n`;
           },
         );
+        const selfName = this.options.selfName?.()?.trim() || undefined;
         this.abort = new AbortController();
         this.tools = createWriterTools({
+          selfName,
+          evidenceText: `${previousText}\n${batch.text}`,
           entities: this.entities,
           skills,
           skillReader: this.options.skillReader,
@@ -378,7 +383,7 @@ class MemoryWriterExtension implements Extension {
               parts: [
                 {
                   type: 'text',
-                  text: `<previous-activities>\n${previousText}\n</previous-activities>\n\n<new-activities date="${date}">\n${newText}\n</new-activities>`,
+                  text: `${selfName ? `<self name="${selfName}"/>\n\n` : ''}<previous-activities>\n${previousText}\n</previous-activities>\n\n<new-activities date="${date}">\n${newText}\n</new-activities>`,
                 },
               ],
             },

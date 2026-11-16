@@ -75,6 +75,13 @@ const fact = (text: string) => ({
   sources: [{ label: 'old', id: 'old' }],
   history: [],
 });
+const skillInput = (name: string, extra: object = {}) => ({
+  name,
+  when: 'Use when deploying acme/web to staging; not production',
+  steps: ['Push head branch first'],
+  sourceIds: [source],
+  ...extra,
+});
 const create = (id = source, text = 'Project owner') => ({
   fields: { title: 'Alex Smith', entityType: 'person' },
   sections: [{ name: 'General', facts: [{ text, sourceIds: [id] }] }],
@@ -120,19 +127,12 @@ describe('memory writer tools', () => {
     );
     await expect(
       call(tools, 'updateLearnedSkill', {
-        name: external.id,
+        ...skillInput(external.id),
         revision: read.revision,
-        sourceIds: [source],
-        operations: [{ op: 'replace', text: 'Changed' }],
       }),
     ).rejects.toThrow('Invalid tool input');
     await expect(
-      call(tools, 'createLearnedSkill', {
-        name: external.id,
-        description: 'Changed',
-        body: 'Changed',
-        sourceIds: [source],
-      }),
+      call(tools, 'createLearnedSkill', skillInput(external.id)),
     ).rejects.toThrow('Invalid tool input');
     expect(registry.get(external.id)?.body).toBe(external.body);
     expect(
@@ -309,12 +309,11 @@ describe('memory writer tools', () => {
         }
       ).sections.General,
     ).toBe('[General#1] Former project owner\n  was 1: Project owner');
-    await call(second, 'createLearnedSkill', {
-      name: 'source-test',
-      description: 'Test',
-      body: 'Steps',
-      sourceIds: ['message-2'],
-    });
+    await call(
+      second,
+      'createLearnedSkill',
+      skillInput('source-test', { sourceIds: ['message-2'] }),
+    );
     expect(skills.get('source-test')?.metadata.sourceEpisodes).toEqual([
       'message-2',
     ]);
@@ -455,15 +454,19 @@ describe('memory writer tools', () => {
       name,
       facts: [{ text, sourceIds: [source] }],
     });
+    const wide = {
+      name: 'General',
+      facts: Array.from({ length: 5 }, () => ({
+        text: 'x'.repeat(150),
+        sourceIds: [source],
+      })),
+    };
     const reject = async (input: unknown, reason: string) =>
       expect(await call(tools, 'createEntity', input)).toMatchObject({
         status: 'rejected',
         reason: expect.stringContaining(reason),
       });
-    await reject(
-      { ...create(), sections: [section('General', 'x'.repeat(601))] },
-      'General exceeds 600',
-    );
+    await reject({ ...create(), sections: [wide] }, 'General exceeds 600');
     await reject(
       {
         ...create(),
@@ -557,89 +560,71 @@ describe('memory writer tools', () => {
     });
   });
 
-  it('applies skill body patches without rewriting unrelated content and rejects stale/ambiguous batches', async () => {
+  it('renders structured skills, keeps omitted parts, and rejects stale, run-specific or duplicate input', async () => {
     const { tools, skills } = await fixture();
     const name = 'patch-workflow';
-    await call(tools, 'createLearnedSkill', {
-      name,
-      description: 'Original',
-      body: 'Keep this.\n\nChange this.',
-      sourceIds: [source],
-    });
-    const patch = async (operations: unknown[], description?: string) => {
-      const read = (await call(tools, 'readSkill', {
-        id: `learning/${name}`,
-      })) as {
-        revision: string;
-      };
-      return call(tools, 'updateLearnedSkill', {
-        name,
-        revision: read.revision,
-        sourceIds: [source],
-        operations,
-        ...(description ? { description } : {}),
-      });
-    };
-    const stale = (await call(tools, 'readSkill', {
-      id: `learning/${name}`,
-    })) as {
-      revision: string;
-    };
-    expect(
-      await patch([
-        { op: 'append', text: 'More.' },
-        { op: 'edit', oldText: 'Change this.', text: '$& corrected.' },
-      ]),
-    ).toMatchObject({ status: 'updated' });
-    expect(skills.get(name)?.body).toBe('Keep this.\n\n$& corrected.\n\nMore.');
-    expect(skills.get(name)?.description).toBe('Original');
-    expect(
-      await call(tools, 'updateLearnedSkill', {
-        name,
-        revision: stale.revision,
-        sourceIds: [source],
-        operations: [],
+    await call(
+      tools,
+      'createLearnedSkill',
+      skillInput(name, {
+        pitfalls: ['422 head invalid: branch not pushed'],
+        verify: 'PR page opens',
       }),
-    ).toMatchObject({ status: 'rejected' });
-    const before = skills.get(name);
-    expect(
-      await patch([
-        { op: 'append', text: 'Do not persist' },
-        { op: 'edit', oldText: 'missing', text: '' },
-      ]),
-    ).toMatchObject({ status: 'rejected' });
-    expect(skills.get(name)).toEqual(before);
-    expect(
-      await patch(
-        [{ op: 'replace', text: 'repeat repeat' }],
-        'New description',
-      ),
-    ).toMatchObject({ status: 'updated' });
-    expect(
-      await patch([{ op: 'edit', oldText: 'repeat', text: 'once' }]),
-    ).toMatchObject({ status: 'rejected' });
-    expect(
-      await patch([{ op: 'edit', oldText: 'repeat repeat', text: '' }]),
-    ).toMatchObject({ status: 'rejected' });
-    expect(await patch([{ op: 'replace', text: '  ' }])).toMatchObject({
+    );
+    expect(skills.get(name)?.body).toBe(
+      '## Steps\n1. Push head branch first\n\n## Pitfalls\n- 422 head invalid: branch not pushed\n\n## Verify\nPR page opens',
+    );
+    const revision = async () =>
+      (
+        (await call(tools, 'readSkill', { id: `learning/${name}` })) as {
+          revision: string;
+        }
+      ).revision;
+    const update = async (extra: object, rev?: string) =>
+      call(tools, 'updateLearnedSkill', {
+        name,
+        revision: rev ?? (await revision()),
+        sourceIds: [source],
+        ...extra,
+      });
+    const stale = await revision();
+    expect(await update({ steps: ['Push, then open the PR'] })).toMatchObject({
+      status: 'updated',
+    });
+    expect(skills.get(name)?.body).toContain('1. Push, then open the PR');
+    expect(skills.get(name)?.body).toContain('422 head invalid');
+    expect(skills.get(name)?.description).toContain('acme/web');
+    expect(await update({ pitfalls: [] }, stale)).toMatchObject({
       status: 'rejected',
     });
+    const reject = async (extra: object, reason: string) =>
+      expect(await update(extra)).toMatchObject({
+        status: 'rejected',
+        reason: expect.stringContaining(reason),
+      });
+    await reject({ steps: ['Free disk space this run'] }, 'ties it to one run');
+    await reject({ steps: ['Push'], verify: 'Push' }, 'verify repeats a step');
+    expect(skills.get(name)?.body).toContain('Push, then open the PR');
+    await skills.put('legacy', { description: 'Old', body: 'Prose body.' });
+    const legacy = (await call(tools, 'readSkill', {
+      id: 'learning/legacy',
+    })) as { revision: string };
     expect(
-      await patch([{ op: 'edit', oldText: 'repeat repeat', text: 'Short.' }]),
-    ).toMatchObject({ status: 'updated' });
-    expect(skills.get(name)?.body).toBe('Short.');
-    expect(skills.get(name)?.description).toBe('New description');
-    expect(skills.get(name)?.metadata.sourceEpisodes).toEqual([source]);
-    const read = (await call(tools, 'readSkill', {
-      id: `learning/${name}`,
-    })) as {
-      revision: string;
-    };
+      await call(tools, 'updateLearnedSkill', {
+        name: 'legacy',
+        revision: legacy.revision,
+        sourceIds: [source],
+        verify: 'x',
+      }),
+    ).toMatchObject({
+      status: 'rejected',
+      reason: expect.stringContaining('Free-form skill'),
+    });
     const concurrent = {
       name,
-      revision: read.revision,
+      revision: await revision(),
       sourceIds: [source],
-      operations: [{ op: 'append', text: 'Once.' }],
+      steps: ['Once'],
     };
     const results = await Promise.all([
       call(tools, 'updateLearnedSkill', concurrent),
@@ -735,13 +720,11 @@ describe('memory writer tools', () => {
       toolName: 'create_pull_request',
       arguments: [],
     };
-    await call(tools, 'createLearnedSkill', {
-      name: 'pr-body',
-      description: 'When opening a PR',
-      body: 'Link the Linear issue.',
-      sourceIds: [source],
-      loadOn: [trigger, trigger],
-    });
+    await call(
+      tools,
+      'createLearnedSkill',
+      skillInput('pr-body', { loadOn: [trigger, trigger] }),
+    );
     expect(skills.get('pr-body')?.metadata.loadOn).toEqual([trigger]);
     const update = async (extra: object) => {
       const { revision } = (await call(tools, 'readSkill', {
@@ -751,7 +734,7 @@ describe('memory writer tools', () => {
         name: 'pr-body',
         revision,
         sourceIds: [source],
-        operations: [{ op: 'append', text: `Step ${Math.random()}` }],
+        steps: [`Step ${Math.random()}`],
         ...extra,
       });
     };
@@ -763,12 +746,7 @@ describe('memory writer tools', () => {
   });
   it('writes, reads and deletes learned skill references and skills', async () => {
     const { tools, skills } = await fixture();
-    await call(tools, 'createLearnedSkill', {
-      name: 'deploy',
-      description: 'When deploying',
-      body: 'For flags, load reference `flags`.',
-      sourceIds: [source],
-    });
+    await call(tools, 'createLearnedSkill', skillInput('deploy'));
     expect(
       await call(tools, 'writeSkillReference', {
         name: 'deploy',
@@ -804,6 +782,159 @@ describe('memory writer tools', () => {
     ).toMatchObject({ status: 'deleted' });
     expect(skills.get('deploy')).toBeNull();
   });
+  it('rejects entity output a cheap model gets wrong, with a fix in the message', async () => {
+    const evidence =
+      'issue 0eff93ac-11f0-4da1-ac13-78d5697ca0e7 PR_kwDOT3Z8XM8AAAABO4mHbw';
+    const { tools, entities, activities, skills, registry, controller } =
+      await fixture();
+    const strict = createWriterTools({
+      entities,
+      skills,
+      skillReader: registry,
+      activities,
+      signal: controller.signal,
+      sourceIds: new Set([source]),
+      selfName: 'Jonathan',
+      evidenceText: evidence,
+    }).tools;
+    const reject = async (input: unknown, reason: string) =>
+      expect(await call(strict, 'createEntity', input)).toMatchObject({
+        status: 'rejected',
+        reason: expect.stringContaining(reason),
+      });
+    const fields = (extra: object) => ({
+      ...create().fields,
+      ...extra,
+    });
+    await reject(
+      create(source, 'Alex Smith prefers short replies'),
+      'Drop the subject',
+    );
+    await reject(
+      create(source, 'Alex prefers short replies'),
+      'Drop the subject',
+    );
+    await reject(
+      create(source, 'Tests passed on the branch'),
+      'progress or status',
+    );
+    await reject(create(source, 'x'.repeat(161)), 'max 160');
+    await reject(
+      { ...create(), fields: fields({ title: 'Jonathan' }) },
+      'is self',
+    );
+    await reject(
+      {
+        ...create(),
+        fields: fields({
+          linkedIdentities: [
+            { server: 'slack', match: { user: 'U0C33JW11PS' } },
+          ],
+        }),
+      },
+      'not found in the activities',
+    );
+    await reject(
+      {
+        ...create(),
+        fields: fields({
+          title: 'CLOUD-254',
+          entityType: 'issue',
+          linkedIdentities: [
+            {
+              server: 'github',
+              match: { subjectNodeId: 'PR_kwDOT3Z8XM8AAAABO4mHbw' },
+            },
+          ],
+        }),
+      },
+      'pull-request',
+    );
+    await reject(
+      {
+        ...create(),
+        fields: fields({ title: 'PR 12', entityType: 'pull-request' }),
+      },
+      'Link who requested',
+    );
+    expect(entities.list()).toHaveLength(0);
+    // Copied exactly: accepted, and a truncated Linear ID is not.
+    const issue = (id: string) => ({
+      fields: {
+        title: 'CLOUD-254',
+        entityType: 'issue',
+        linkedIdentities: [{ server: 'linear', match: { issueId: id } }],
+        relatedTo: [
+          {
+            target: { kind: 'entity', id: 'placeholder' },
+            strength: 50,
+            relationship: 'requested by',
+            inverse: 'requested',
+          },
+        ],
+      },
+      sections: create().sections,
+    });
+    await reject(
+      issue('0eff93ac-11f0-4da1-ac13-78d5697ca0'),
+      'not found in the activities',
+    );
+    const person = await entities.create(
+      { title: 'Alex Smith', entityType: 'person' },
+      { General: [fact('Owner')] },
+    );
+    const linked = issue('0eff93ac-11f0-4da1-ac13-78d5697ca0e7');
+    const relation = linked.fields.relatedTo[0];
+    if (!relation) throw new Error('Missing relation');
+    relation.target.id = person.id;
+    const created = (await call(strict, 'createEntity', linked)) as {
+      status: string;
+      id: string;
+    };
+    expect(created.status).toBe('created');
+    // One call linked both sides.
+    expect(entities.get(person.id)?.frontmatter.RelatedTo).toEqual([
+      {
+        target: { kind: 'entity', id: created.id },
+        strength: 50,
+        relationship: 'requested',
+      },
+    ]);
+    expect(entities.get(created.id)?.frontmatter.RelatedTo[0]).toEqual({
+      target: { kind: 'entity', id: person.id },
+      strength: 50,
+      relationship: 'requested by',
+    });
+  });
+  it('rejects a new skill that duplicates an existing one', async () => {
+    const { tools } = await fixture();
+    const trigger = {
+      type: 'toolCallPattern',
+      mcpServer: 'linear',
+      toolName: 'createLinearAgentActivity',
+      arguments: [],
+    };
+    await call(
+      tools,
+      'createLearnedSkill',
+      skillInput('linear-agent-session-response', { loadOn: [trigger] }),
+    );
+    const duplicate = skillInput('linear-installation-context', {
+      loadOn: [trigger],
+    });
+    expect(await call(tools, 'createLearnedSkill', duplicate)).toMatchObject({
+      status: 'rejected',
+      reason: expect.stringContaining(
+        'Similar: learning/linear-agent-session-response',
+      ),
+    });
+    expect(
+      await call(tools, 'createLearnedSkill', {
+        ...duplicate,
+        notDuplicateOf: ['learning/linear-agent-session-response'],
+      }),
+    ).toMatchObject({ status: 'created' });
+  });
   it('rejects credentials in entity and skill writes', async () => {
     const { tools, entities, skills } = await fixture();
     const token = 'ghs_abcdefghijklmnopqrstuvwxyz123456';
@@ -817,12 +948,13 @@ describe('memory writer tools', () => {
       reason: 'Input contains a credential; never store secrets',
     });
     expect(
-      await call(tools, 'createLearnedSkill', {
-        name: 'deploy',
-        description: 'When deploying',
-        body: `curl -H "Authorization: Bearer ${token}"`,
-        sourceIds: [source],
-      }),
+      await call(
+        tools,
+        'createLearnedSkill',
+        skillInput('deploy', {
+          steps: [`curl -H "Authorization: Bearer ${token}"`],
+        }),
+      ),
     ).toMatchObject({ status: 'rejected' });
     const prose = (text: string) =>
       call(tools, 'createEntity', create(source, text));
@@ -840,8 +972,8 @@ describe('memory writer tools', () => {
     expect(
       await call(tools, 'createEntity', {
         fields: {
-          title: 'PR 12',
-          entityType: 'pull-request',
+          title: 'acme/web',
+          entityType: 'repository',
           linkedIdentities: [
             {
               server: 'github',
@@ -877,14 +1009,9 @@ describe('memory writer tools', () => {
   });
   it('restricts skills to create/update in learning and rejects qualified names', async () => {
     const { tools, skills, registry } = await fixture();
-    const input = {
-      name: 'deploy-workflow',
-      description: 'When deploying',
-      body: 'Follow the specific workflow.',
-      sourceIds: [source],
-    };
+    const input = skillInput('deploy-workflow');
     await call(tools, 'createLearnedSkill', input);
-    expect(skills.get(input.name)?.body).toBe(input.body);
+    expect(skills.get(input.name)?.body).toContain('Push head branch first');
     expect(await call(tools, 'createLearnedSkill', input)).toMatchObject({
       status: 'rejected',
     });
@@ -895,9 +1022,9 @@ describe('memory writer tools', () => {
       name: input.name,
       revision: read.revision,
       sourceIds: [source],
-      operations: [{ op: 'replace', text: 'Updated workflow.' }],
+      steps: ['Updated workflow'],
     });
-    expect(skills.get(input.name)?.body).toBe('Updated workflow.');
+    expect(skills.get(input.name)?.body).toContain('1. Updated workflow');
     await expect(
       call(tools, 'createLearnedSkill', { ...input, name: 'templates/escape' }),
     ).rejects.toThrow();

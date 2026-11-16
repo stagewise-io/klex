@@ -129,13 +129,19 @@ import {
   deleteLegacySkill,
   deleteLegacySkillRoute,
   deleteSkill,
+  deleteSkillReference,
+  deleteSkillReferenceRoute,
   deleteSkillRoute,
   getLegacySkill,
   getLegacySkillRoute,
   getSkill,
+  getSkillReference,
+  getSkillReferenceRoute,
   getSkillRoute,
   listSkills,
   listSkillsRoute,
+  putSkillReference,
+  putSkillReferenceRoute,
   replaceTemplateSkills,
   replaceTemplateSkillsRoute,
   updateLegacySkill,
@@ -239,6 +245,9 @@ export function createAdminApp(deps: AdminAppDependencies) {
     .openapi(getSkillRoute, getSkill(deps))
     .openapi(updateSkillRoute, updateSkill(deps))
     .openapi(deleteSkillRoute, deleteSkill(deps))
+    .openapi(getSkillReferenceRoute, getSkillReference(deps))
+    .openapi(putSkillReferenceRoute, putSkillReference(deps))
+    .openapi(deleteSkillReferenceRoute, deleteSkillReference(deps))
     .openapi(replaceTemplateSkillsRoute, replaceTemplateSkills(deps))
     // LEGACY(skill-registry): bare-name skill routes, see `routes/v1/skills.ts`.
     .openapi(getLegacySkillRoute, getLegacySkill(deps))

@@ -56,15 +56,30 @@ class SkillsExtension implements Extension {
     return {
       readSkill: {
         description:
-          'Load a skill by id before doing a task that matches its description.',
+          'Load a skill by id before doing a task that matches its description. Pass `reference` to load one of its listed reference files.',
         inputSchema: z.object({
           id: z
             .string()
             .trim()
             .min(1)
             .describe('Skill id from the list, e.g. "namespace/name".'),
+          reference: z
+            .string()
+            .trim()
+            .min(1)
+            .optional()
+            .describe('Reference name listed in the skill, without .md.'),
         }),
-        execute: async ({ id }: { id: string }) => this.readSkill(id),
+        execute: async ({
+          id,
+          reference,
+        }: {
+          id: string;
+          reference?: string;
+        }) =>
+          reference === undefined
+            ? this.readSkill(id)
+            : this.readReference(id, reference),
       },
     };
   }
@@ -79,6 +94,23 @@ class SkillsExtension implements Extension {
   private readSkill(id: string): string {
     const content = this.registry.read(id);
     if (content === null) return unknownSkill(id, this.registry);
+    const references = this.registry.get(id)?.references ?? [];
+    this.recordRead(id);
+    return references.length
+      ? `${content}\n\n---\nReference files (load with readSkill id + reference when needed): ${references.join(', ')}`
+      : content;
+  }
+
+  private readReference(id: string, reference: string): string {
+    const skill = this.registry.get(id);
+    if (!skill) return unknownSkill(id, this.registry);
+    const content = this.registry.readReference(id, reference);
+    if (content === null)
+      return `Unknown reference "${reference}" of "${id}". Available: ${skill.references.join(', ') || '(none)'}`;
+    return content;
+  }
+
+  private recordRead(id: string): void {
     void this.registry
       .recordRead(id)
       .catch((error: unknown) =>
@@ -87,7 +119,6 @@ class SkillsExtension implements Extension {
           'Recording skill read failed',
         ),
       );
-    return content;
   }
 
   private refreshSkillList(): void {

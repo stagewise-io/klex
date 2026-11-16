@@ -51,7 +51,72 @@ async function readRegistryFile(dir: string) {
 
 const content = { description: 'Fix the build.', body: 'Run pnpm build.' };
 
+describe('skill references', () => {
+  it('writes, reloads, limits and deletes reference files with the skill', async () => {
+    const { registry, dir } = await started();
+    registry.claimNamespace('memory', 'learning');
+    const learning = registry.forNamespace('learning');
+    await learning.put('deploy', content);
+    expect(await learning.putReference('missing', 'x', 'text')).toBeNull();
+    await expect(
+      learning.putReference('deploy', '../escape', 'text'),
+    ).rejects.toBeInstanceOf(SkillValidationError);
+    const skill = await learning.putReference('deploy', 'examples', 'Example');
+    expect(skill?.references).toEqual(['examples']);
+    expect(
+      await readFile(
+        join(dir, 'skills', 'learning', 'deploy', 'references', 'examples.md'),
+        'utf8',
+      ),
+    ).toBe('Example\n');
+    for (const name of ['a', 'b', 'c', 'd'])
+      await learning.putReference('deploy', name, name);
+    await expect(
+      learning.putReference('deploy', 'e', 'e'),
+    ).rejects.toBeInstanceOf(SkillValidationError);
+
+    const { registry: reloaded } = await started(dir);
+    expect(reloaded.readReference('learning/deploy', 'examples')).toBe(
+      'Example',
+    );
+    expect(await reloaded.deleteReference('learning/deploy', 'a')).toBe(true);
+    expect(reloaded.get('learning/deploy')?.references).toEqual([
+      'b',
+      'c',
+      'd',
+      'examples',
+    ]);
+    expect(await reloaded.delete('learning/deploy')).toBe(true);
+    expect(reloaded.readReference('learning/deploy', 'b')).toBeNull();
+  });
+});
+
 describe('skill registry namespaces', () => {
+  it('guards admin and namespace deletions and preflights template replacement', async () => {
+    const { registry } = await started();
+    registry.claimNamespace('memory', 'learning');
+    const learning = registry.forNamespace('learning');
+    await learning.put('keep', content);
+    await registry.replaceTemplateSkills([{ name: 'keep', ...content }]);
+    const remove = registry.addDeletionGuard((id) => {
+      throw new Error(`Referenced: ${id}`);
+    });
+    await expect(registry.delete('learning/keep')).rejects.toThrow(
+      SkillValidationError,
+    );
+    await expect(learning.delete('keep')).rejects.toThrow(
+      'Referenced: learning/keep',
+    );
+    await expect(
+      registry.replaceTemplateSkills([{ name: 'new', ...content }]),
+    ).rejects.toThrow('Referenced: templates/keep');
+    expect(registry.get('templates/new')).toBeNull();
+    expect(registry.get('templates/keep')).not.toBeNull();
+    expect(learning.get('keep')).not.toBeNull();
+    remove();
+    expect(await learning.delete('keep')).toBe(true);
+    expect(await registry.delete('templates/keep')).toBe(true);
+  });
   it('rejects invalid, reserved and foreign-owned namespaces', async () => {
     const { registry } = await started();
     expect(() => registry.claimNamespace('a', 'Bad_Name')).toThrow(/Invalid/);

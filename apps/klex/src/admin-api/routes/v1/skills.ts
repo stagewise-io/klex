@@ -11,11 +11,14 @@ import {
   ambiguousSkillResponseSchema,
   deleteSkillResponseSchema,
   errorResponseSchema,
+  putSkillReferenceBodySchema,
   replaceTemplateSkillsBodySchema,
   skillDetailSchema,
   skillIdParamsSchema,
   skillListResponseSchema,
   skillNameParamsSchema,
+  skillReferenceParamsSchema,
+  skillReferenceSchema,
   updateSkillBodySchema,
 } from './schemas';
 
@@ -54,6 +57,7 @@ const editRequest = {
 
 const deleteResponses = {
   ...detailResponses,
+  400: errorResponse('Skill is referenced'),
   200: {
     description: 'Skill deleted',
     content: { 'application/json': { schema: deleteSkillResponseSchema } },
@@ -161,9 +165,109 @@ export function deleteSkill(
   return async (c) => {
     const { namespace, name } = c.req.valid('param');
     const id = formatSkillId(namespace, name);
-    if (!(await deps.skillRegistry.delete(id)))
-      return c.json(notFound(id), 404);
-    return c.json({ deleted: true as const, id, name }, 200);
+    try {
+      if (!(await deps.skillRegistry.delete(id)))
+        return c.json(notFound(id), 404);
+      return c.json({ deleted: true as const, id, name }, 200);
+    } catch (error) {
+      if (error instanceof SkillValidationError)
+        return c.json({ error: error.message, code: 'validation_failed' }, 400);
+      throw error;
+    }
+  };
+}
+
+export const getSkillReferenceRoute = createRoute({
+  method: 'get',
+  path: '/v1/skills/{namespace}/{name}/references/{reference}',
+  tags: ['Skills'],
+  summary: 'Get a skill reference file',
+  request: { params: skillReferenceParamsSchema },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: skillReferenceSchema } },
+      description: 'Reference file',
+    },
+    404: errorResponse('Skill or reference not found'),
+    500: errorResponse('Internal server error'),
+  },
+});
+
+export function getSkillReference(
+  deps: SkillsRouteDependencies,
+): RouteHandler<typeof getSkillReferenceRoute> {
+  return (c) => {
+    const { namespace, name, reference } = c.req.valid('param');
+    const id = formatSkillId(namespace, name);
+    const content = deps.skillRegistry.readReference(id, reference);
+    if (content === null)
+      return c.json(notFound(`${id}/references/${reference}`), 404);
+    return c.json({ id, reference, content }, 200);
+  };
+}
+
+export const putSkillReferenceRoute = createRoute({
+  method: 'put',
+  path: '/v1/skills/{namespace}/{name}/references/{reference}',
+  tags: ['Skills'],
+  summary: 'Create or replace a skill reference file',
+  description:
+    'Writes `references/<reference>.md` of a skill and marks the skill user-edited.',
+  request: {
+    params: skillReferenceParamsSchema,
+    body: {
+      required: true,
+      content: { 'application/json': { schema: putSkillReferenceBodySchema } },
+    },
+  },
+  responses: {
+    ...detailResponses,
+    400: errorResponse('Invalid reference'),
+  },
+});
+
+export function putSkillReference(
+  deps: SkillsRouteDependencies,
+): RouteHandler<typeof putSkillReferenceRoute> {
+  return async (c) => {
+    const { namespace, name, reference } = c.req.valid('param');
+    const id = formatSkillId(namespace, name);
+    try {
+      const skill = await deps.skillRegistry.putReference(
+        id,
+        reference,
+        c.req.valid('json').content,
+      );
+      if (!skill) return c.json(notFound(id), 404);
+      return c.json(toDetail(deps.skillRegistry, skill), 200);
+    } catch (error) {
+      if (error instanceof SkillValidationError)
+        return c.json({ error: error.message, code: 'validation_failed' }, 400);
+      throw error;
+    }
+  };
+}
+
+export const deleteSkillReferenceRoute = createRoute({
+  method: 'delete',
+  path: '/v1/skills/{namespace}/{name}/references/{reference}',
+  tags: ['Skills'],
+  summary: 'Delete a skill reference file',
+  request: { params: skillReferenceParamsSchema },
+  responses: detailResponses,
+});
+
+export function deleteSkillReference(
+  deps: SkillsRouteDependencies,
+): RouteHandler<typeof deleteSkillReferenceRoute> {
+  return async (c) => {
+    const { namespace, name, reference } = c.req.valid('param');
+    const id = formatSkillId(namespace, name);
+    if (!(await deps.skillRegistry.deleteReference(id, reference)))
+      return c.json(notFound(`${id}/references/${reference}`), 404);
+    const skill = deps.skillRegistry.get(id);
+    if (!skill) return c.json(notFound(id), 404);
+    return c.json(toDetail(deps.skillRegistry, skill), 200);
   };
 }
 
@@ -307,9 +411,15 @@ export function deleteLegacySkill(
     if (resolved.status === 404) return c.json(resolved.body, 404);
     if (resolved.status === 409) return c.json(resolved.body, 409);
     const { id } = resolved.skill;
-    if (!(await deps.skillRegistry.delete(id)))
-      return c.json(notFound(id), 404);
-    return c.json({ deleted: true as const, id, name }, 200);
+    try {
+      if (!(await deps.skillRegistry.delete(id)))
+        return c.json(notFound(id), 404);
+      return c.json({ deleted: true as const, id, name }, 200);
+    } catch (error) {
+      if (error instanceof SkillValidationError)
+        return c.json({ error: error.message, code: 'validation_failed' }, 400);
+      throw error;
+    }
   };
 }
 
@@ -371,6 +481,7 @@ function toDetail(registry: SkillRegistry, skill: Skill) {
   return {
     ...toSummary(skill),
     body: skill.body,
+    references: skill.references,
     // LEGACY(skill-registry): deprecated field, see `skillDetailSchema`.
     sourceEpisodes:
       Array.isArray(sourceEpisodes) &&

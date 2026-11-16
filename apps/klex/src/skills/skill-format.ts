@@ -2,6 +2,7 @@ import {
   MAX_BODY_LENGTH,
   MAX_DESCRIPTION_LENGTH,
   MAX_NAME_LENGTH,
+  MAX_REFERENCE_LENGTH,
   SKILL_NAME_PATTERN,
 } from './skills-config';
 
@@ -49,6 +50,18 @@ export function validateSkill(skill: SkillDocument): string | null {
     return 'description too long';
   if (!skill.body.trim()) return 'empty body';
   if (skill.body.length > MAX_BODY_LENGTH) return 'body too long';
+  return null;
+}
+
+/** Null when valid, otherwise the reason. Names use skill-name syntax, stored as `<name>.md`. */
+export function validateReference(
+  reference: string,
+  content: string,
+): string | null {
+  if (!isValidSkillName(reference))
+    return `invalid reference name "${reference}"`;
+  if (!content.trim()) return 'empty reference';
+  if (content.length > MAX_REFERENCE_LENGTH) return 'reference too long';
   return null;
 }
 

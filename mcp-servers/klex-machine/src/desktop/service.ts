@@ -67,9 +67,8 @@ export class DesktopService {
       ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   }
 
-  /** Whether a display is reachable. Failures are retried after a short backoff. */
+  /** Whether a display is reachable. The result is re-checked after a short interval. */
   async available(): Promise<boolean> {
-    if (this.#screen) return true;
     if (!this.#probe || this.#now() - this.#probedAt >= PROBE_RETRY_MS) {
       this.#probedAt = this.#now();
       this.#probe = this.#backend.probe().then(
@@ -77,7 +76,10 @@ export class DesktopService {
           this.#screen = screen;
           return screen;
         },
-        () => undefined,
+        () => {
+          this.#screen = undefined;
+          return undefined;
+        },
       );
     }
     return (await this.#probe) !== undefined;

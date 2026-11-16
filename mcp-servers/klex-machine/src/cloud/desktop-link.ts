@@ -52,6 +52,8 @@ export interface DesktopLink {
 
 interface Stream {
   close(code?: number): void;
+  /** Settles once the stream socket has closed. */
+  done: Promise<void>;
 }
 
 /**
@@ -238,6 +240,10 @@ export function startDesktopLink(options: DesktopLinkOptions): DesktopLink {
     let vnc: Socket | undefined;
     let ws: WebSocket | undefined;
     let filter: RfbClientFilter | undefined;
+    let markDone!: () => void;
+    const done = new Promise<void>((resolve) => {
+      markDone = resolve;
+    });
     const close = (code = 1000, reason?: StreamFailureReason) => {
       if (finished) return;
       finished = true;
@@ -248,12 +254,20 @@ export function startDesktopLink(options: DesktopLinkOptions): DesktopLink {
         'Desktop stream closed',
       );
       vnc?.destroy();
-      if (ws && ws.readyState !== WebSocket.CLOSED) {
-        if (ws.readyState === WebSocket.OPEN) ws.close(code);
-        else ws.terminate();
+      const socket = ws;
+      if (!socket || socket.readyState === WebSocket.CLOSED) {
+        markDone();
+        return;
       }
+      const force = setTimeout(() => socket.terminate(), CLOSE_TIMEOUT_MS);
+      socket.once('close', () => {
+        clearTimeout(force);
+        markDone();
+      });
+      if (socket.readyState === WebSocket.OPEN) socket.close(code);
+      else socket.terminate();
     };
-    streams.set(streamId, { close });
+    streams.set(streamId, { close, done });
 
     if (!(await options.desktop.available().catch(() => false)))
       return close(1000, 'desktop_unavailable');
@@ -373,7 +387,10 @@ export function startDesktopLink(options: DesktopLinkOptions): DesktopLink {
       if (closed) return;
       closed = true;
       clearTimeout(timer);
-      for (const stream of [...streams.values()]) stream.close(1001);
+      const closingStreams = [...streams.values()].map((stream) => {
+        stream.close(1001);
+        return stream.done;
+      });
       const socket = control;
       control = undefined;
       if (socket && socket.readyState !== WebSocket.CLOSED) {
@@ -389,7 +406,7 @@ export function startDesktopLink(options: DesktopLinkOptions): DesktopLink {
           else socket.terminate();
         });
       }
-      await loop;
+      await Promise.all([loop, ...closingStreams]);
     },
   };
 }

@@ -1,6 +1,7 @@
 # Spike image: a GUI Linux desktop driven by klex-machine's desktop_* tools.
 # Build context is mcp-servers/klex-machine after `pnpm --filter @klex/machine build`.
-FROM node:24-bookworm
+# Google publishes Chrome for amd64 only.
+FROM --platform=linux/amd64 node:24-bookworm
 
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \

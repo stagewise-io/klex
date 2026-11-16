@@ -206,6 +206,28 @@ describe('DesktopControlLease', () => {
     expect(click).not.toHaveBeenCalled();
   });
 
+  it('checks expiry when deciding, and fails closed on a malformed expiry', () => {
+    let now = Date.parse('2026-11-16T12:00:00.000Z');
+    const lease = new DesktopControlLease({ now: () => now });
+    lease.apply({
+      mode: 'human',
+      holder: { name: 'Julian' },
+      expiresAt: new Date(now + 1000).toISOString(),
+    });
+    expect(lease.allowsStreamInput(STREAM_ID)).toBe(true);
+    now += 2000;
+    expect(lease.allowsStreamInput(STREAM_ID)).toBe(false);
+    expect(() => lease.authorize()).not.toThrow();
+
+    lease.apply({
+      mode: 'human',
+      holder: { name: 'Julian' },
+      expiresAt: 'soon',
+    });
+    expect(lease.state.mode).toBe('agent');
+    lease.close();
+  });
+
   it('cancels the disconnect grace when Cloud resends the lease', () => {
     vi.useFakeTimers();
     const lease = new DesktopControlLease();
@@ -526,6 +548,37 @@ describe('desktop link', () => {
       reason: 'desktop_unavailable',
     });
     releaseToken();
+  });
+
+  it('terminates viewer streams that never answer the close frame on shutdown', async () => {
+    cloud = await startCloud();
+    const socketPath =
+      process.platform === 'win32'
+        ? `\\\\.\\pipe\\klex-machine-vnc-${randomUUID()}`
+        : join(dir, 'vnc.sock');
+    vnc = await startVnc(socketPath);
+    link = startDesktopLink({
+      cloudBaseUrl: cloud.url,
+      getToken: async () => 'machine-token',
+      invalidateToken: () => undefined,
+      desktop: new DesktopService(fakeBackend()),
+      machineVersion: '1.2.3',
+      vncSocketPath: socketPath,
+    });
+    const { socket: control } = await cloud.control;
+    await cloud.next('hello');
+    control.send(JSON.stringify({ type: 'stream.open', streamId: STREAM_ID }));
+    const { socket: viewer, request } = await cloud.stream;
+    await nextBinary(viewer);
+    request.socket.pause();
+    const viewerClosed = new Promise<void>((resolve) =>
+      viewer.once('close', () => resolve()),
+    );
+    const started = Date.now();
+    await link.close();
+    expect(Date.now() - started).toBeLessThan(4000);
+    request.socket.resume();
+    await viewerClosed;
   });
 
   it('closes promptly when Cloud never answers the close frame', async () => {

@@ -249,7 +249,7 @@ export function registerDesktopTools(
     'desktop_launch',
     {
       description:
-        'Start a GUI application on the desktop, detached. Pass the executable and arguments separately; no shell is used. Example: {"command":"google-chrome","args":["https://example.com"]}.',
+        'Start a GUI application on the desktop, detached. Pass the executable and arguments separately; no shell is used. Example: {"command":"google-chrome","args":["https://example.com"]}. settleMs defaults to 2000 here, since applications take longer to appear.',
       inputSchema: z.object({
         command: z.string().min(1).max(4096),
         args: z.array(z.string().max(16_384)).max(64).optional(),

@@ -96,10 +96,12 @@ export async function startCloudMachineRuntime(
   return {
     daemon,
     async close() {
+      const closingLink = link?.close();
+      // Abort token requests first so a stalled one cannot hold the link open.
+      tokenClient.close();
       try {
-        await link?.close();
+        await closingLink;
       } finally {
-        tokenClient.close();
         desktop?.service.lease.close();
         await daemon.close();
       }

@@ -33,6 +33,20 @@ function output(message: ModelMessage | undefined) {
 }
 
 describe('projectSandboxToolMedia', () => {
+  it('keeps an own __proto__ key in projected results', () => {
+    const value = JSON.parse(
+      `{"__proto__":{"kept":true},"content":[{"type":"image","mimeType":"image/png","data":"${PIXEL}"}]}`,
+    );
+    const [message] = projectSandboxToolMedia([
+      toolMessage('runInSandbox', value),
+    ]);
+    const result = output(message);
+    if (result.type !== 'content') throw new Error('Expected content output');
+    const first = result.value[0];
+    if (first?.type !== 'text') throw new Error('Expected text item');
+    expect(first.text).toContain('"__proto__":{"kept":true}');
+  });
+
   it('turns MCP image content into native image parts', () => {
     const [message] = projectSandboxToolMedia([
       toolMessage('runInSandbox', {

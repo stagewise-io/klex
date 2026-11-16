@@ -11,6 +11,7 @@ import type { ModelCallLogger } from '@/model-call-logger';
 import type { ProviderRegistry } from '@/provider-registry';
 import type { EpisodeSummaryLog } from '@/session/chat/extensions/episode-summary/summary-log';
 import type { Soul } from '@/session/chat/extensions/soul';
+import type { TodoList } from '@/session/chat/extensions/todos/todo-list';
 import type { SessionHistory } from '@/session-history';
 import type { SkillRegistry } from '@/skills';
 
@@ -28,6 +29,7 @@ export interface AdminApiDependencies {
   sessionHistory: SessionHistory;
   skillRegistry: SkillRegistry;
   episodeSummaryLog: EpisodeSummaryLog;
+  todoList: TodoList;
   soul: Soul;
   localPort: number | undefined;
   timezone: string;
@@ -58,6 +60,7 @@ class AdminApiModule implements AdminApi {
       sessionHistory: SessionHistory;
       skillRegistry: SkillRegistry;
       episodeSummaryLog: EpisodeSummaryLog;
+      todoList: TodoList;
       soul: Soul;
       localPort: number | undefined;
       timezone: string;
@@ -79,6 +82,7 @@ class AdminApiModule implements AdminApi {
       sessionHistory: this.deps.sessionHistory,
       skillRegistry: this.deps.skillRegistry,
       episodeSummaryLog: this.deps.episodeSummaryLog,
+      todoList: this.deps.todoList,
       soul: this.deps.soul,
       soulAbortSignal: this.shutdown.signal,
       logger: this.deps.logger,
@@ -149,6 +153,7 @@ export function createAdminApi(deps: AdminApiDependencies): AdminApi {
     sessionHistory: deps.sessionHistory,
     skillRegistry: deps.skillRegistry,
     episodeSummaryLog: deps.episodeSummaryLog,
+    todoList: deps.todoList,
     soul: deps.soul,
     localPort: deps.localPort,
     timezone: deps.timezone,

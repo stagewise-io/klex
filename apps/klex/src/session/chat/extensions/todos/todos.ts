@@ -18,8 +18,8 @@ import {
   isDataPartOf,
   type ProvisionalStepContext,
 } from '../extension-api';
-import { createTodosStore, type TodosStore } from './storage';
 import systemPromptPart from './system-prompt.md';
+import { MAX_TODO_DESCRIPTION_LENGTH, type TodoListHub } from './todo-list';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -49,12 +49,6 @@ export type TodosDataUIPart = {
 
 export const TODOS_KEY = 'todos';
 
-const ID_ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789';
-const ID_LENGTH = 4;
-const MAX_ID_ATTEMPTS = 10;
-
-const MAX_DESCRIPTION_LENGTH = 500;
-const MAX_TODOS = 100;
 const REMINDER_TIMER_SLICE_MS = 24 * 60 * 60 * 1_000;
 
 interface ReminderTimer {
@@ -71,19 +65,6 @@ const todoOutputSchema = z.object({
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function generateTodoId(existing: Set<string>): string {
-  for (let i = 0; i < MAX_ID_ATTEMPTS; i++) {
-    let id = '';
-    for (let j = 0; j < ID_LENGTH; j++) {
-      id += ID_ALPHABET[Math.floor(Math.random() * ID_ALPHABET.length)];
-    }
-    if (!existing.has(id)) return id;
-  }
-  throw new Error(
-    `Failed to generate a unique todo id after ${MAX_ID_ATTEMPTS} attempts`,
-  );
-}
 
 function formatScheduledFor(reminderTime: string): string {
   return new Date(reminderTime).toUTCString();
@@ -110,6 +91,7 @@ function formatFullList(todos: Todo[]): string {
 interface TodosDiff {
   added: Todo[];
   removed: Todo[];
+  descriptionUpdated: Todo[];
   reminderUpdated: Todo[];
 }
 
@@ -126,13 +108,19 @@ function todosEqual(left: readonly Todo[], right: readonly Todo[]): boolean {
 }
 
 function computeDiff(prev: Todo[], current: Todo[]): TodosDiff {
-  const prevIds = new Set(prev.map((t) => t.id));
+  const prevById = new Map(prev.map((t) => [t.id, t]));
   const currentIds = new Set(current.map((t) => t.id));
   return {
-    added: current.filter((t) => !prevIds.has(t.id)),
+    added: current.filter((t) => !prevById.has(t.id)),
     removed: prev.filter((t) => !currentIds.has(t.id)),
+    descriptionUpdated: current.filter((todo) => {
+      const previous = prevById.get(todo.id);
+      return (
+        previous !== undefined && previous.description !== todo.description
+      );
+    }),
     reminderUpdated: current.filter((todo) => {
-      const previous = prev.find((candidate) => candidate.id === todo.id);
+      const previous = prevById.get(todo.id);
       return (
         previous !== undefined && previous.reminderTime !== todo.reminderTime
       );
@@ -149,6 +137,9 @@ function formatDiff(diff: TodosDiff): string {
   }
   for (const t of diff.removed) {
     lines.push(`Todo cleared: (ID: ${t.id}) ${t.description}`);
+  }
+  for (const t of diff.descriptionUpdated) {
+    lines.push(`Todo updated: (ID: ${t.id}) ${t.description}`);
   }
   for (const t of diff.reminderUpdated) {
     lines.push(
@@ -188,17 +179,24 @@ class TodosExtension implements Extension {
   private readonly reminderTimers = new Map<string, ReminderTimer>();
   /** Detached reminder deliveries; awaited on close so restores persist. */
   private readonly pendingReminders = new Set<Promise<void>>();
+  /** Reminder time being delivered per todo, so syncs do not re-fire it. */
+  private readonly firingReminders = new Map<string, string>();
+  private detachList: (() => void) | null = null;
 
   constructor(
     private readonly deps: ExtensionDeps,
-    private readonly store: TodosStore,
+    private readonly todoList: TodoListHub,
     private readonly claimStartupTrigger: () => boolean,
   ) {}
 
   async onStart(): Promise<void> {
-    await this.store.start();
-    const todos = [...this.store.getTodos()];
-    for (const todo of todos) this.armReminder(todo);
+    await this.todoList.start();
+    if (this.closed) return;
+    this.detachList = this.todoList.attach((todos) =>
+      this.syncReminders(todos),
+    );
+    const todos = [...this.todoList.getTodos()];
+    this.syncReminders(todos);
     if (this.claimStartupTrigger() && todos.length > 0) {
       this.deps.inbox.sendMessage(
         {
@@ -217,10 +215,12 @@ class TodosExtension implements Extension {
 
   async onClose(): Promise<void> {
     this.closed = true;
+    this.detachList?.();
+    this.detachList = null;
     this.clearReminderTimers();
     await Promise.allSettled([...this.pendingReminders]);
     this.deps.logger.info(
-      { pendingTodos: this.store.getTodos().length },
+      { pendingTodos: this.todoList.getTodos().length },
       'Todos extension closed',
     );
   }
@@ -232,7 +232,7 @@ class TodosExtension implements Extension {
           description: z
             .string()
             .min(1)
-            .max(MAX_DESCRIPTION_LENGTH)
+            .max(MAX_TODO_DESCRIPTION_LENGTH)
             .describe(
               'Task. Include action, requester, conversation IDs, links, priority, and needed context.',
             ),
@@ -315,8 +315,8 @@ class TodosExtension implements Extension {
   async getProvisionalStepContext(
     history: readonly ExtendedUIMessage[],
   ): Promise<ProvisionalStepContext> {
-    await this.store.start();
-    const todos = [...this.store.getTodos()];
+    await this.todoList.start();
+    const todos = [...this.todoList.getTodos()];
     const existingParts = collectTodoParts(history);
     const previous = existingParts.at(-1)?.todos;
     if (previous && todosEqual(previous, todos)) return { parts: [] };
@@ -398,7 +398,7 @@ class TodosExtension implements Extension {
   };
 
   introspect(): Record<string, unknown> {
-    const todos = this.store.getTodos().map((todo) => ({
+    const todos = this.todoList.getTodos().map((todo) => ({
       id: todo.id,
       description: todo.description,
       reminderTime: todo.reminderTime,
@@ -422,52 +422,27 @@ class TodosExtension implements Extension {
     after: string | undefined,
     reminderTime: string | null,
   ): Promise<{ id: string; todos: Todo[] }> {
-    let id = '';
-    const todos = await this.store.update((current) => {
-      if (current.length >= MAX_TODOS) {
-        throw new Error(
-          `Maximum of ${MAX_TODOS} concurrent todos reached — clear one before creating a new one`,
-        );
-      }
-      id = generateTodoId(new Set(current.map((todo) => todo.id)));
-      const todo: Todo = { id, description, reminderTime };
-      if (after === undefined) {
-        current.push(todo);
-        return;
-      }
-      const index = current.findIndex((candidate) => candidate.id === after);
-      if (index === -1) {
-        throw new Error(
-          `Todo with id "${after}" not found — cannot insert after it`,
-        );
-      }
-      current.splice(index + 1, 0, todo);
+    const { todo, todos } = await this.todoList.create({
+      description,
+      reminderTime,
+      ...(after === undefined ? {} : { after }),
     });
-    const createdTodo = todos.find((todo) => todo.id === id);
-    if (createdTodo) this.armReminder(createdTodo);
+    this.syncReminders(todos);
     this.deps.logger.debug(
-      { id, description, after, reminderTime },
+      { id: todo.id, description, after, reminderTime },
       'Todo created',
     );
-    return { id, todos: [...todos] };
+    return { id: todo.id, todos };
   }
 
   private async clearTodo(id: string): Promise<{
     cancelled: boolean;
     todos: Todo[];
   }> {
-    let cancelled = false;
-    const todos = await this.store.update((current) => {
-      const index = current.findIndex((todo) => todo.id === id);
-      if (index === -1) return;
-      current.splice(index, 1);
-      cancelled = true;
-    });
-    if (cancelled) {
-      this.clearReminder(id);
-      this.deps.logger.debug({ id }, 'Todo cleared');
-    }
-    return { cancelled, todos: [...todos] };
+    const { deleted, todos } = await this.todoList.delete(id);
+    this.syncReminders(todos);
+    if (deleted) this.deps.logger.debug({ id }, 'Todo cleared');
+    return { cancelled: deleted, todos };
   }
 
   private normalizeReminder(
@@ -489,20 +464,35 @@ class TodosExtension implements Extension {
     id: string,
     reminderTime: string | null,
   ): Promise<{ updated: boolean; todos: Todo[] }> {
-    let updated = false;
-    const todos = await this.store.update((current) => {
-      const todo = current.find((candidate) => candidate.id === id);
-      if (!todo) return;
-      todo.reminderTime = reminderTime;
-      updated = true;
-    });
-    if (!updated) return { updated: false, todos: [...todos] };
-
-    this.clearReminder(id);
-    const updatedTodo = todos.find((todo) => todo.id === id);
-    if (updatedTodo) this.armReminder(updatedTodo);
+    const { todo, todos } = await this.todoList.update(id, { reminderTime });
+    this.syncReminders(todos);
+    if (!todo) return { updated: false, todos };
     this.deps.logger.debug({ id, reminderTime }, 'Todo reminder updated');
-    return { updated: true, todos: [...todos] };
+    return { updated: true, todos };
+  }
+
+  /**
+   * Aligns this instance's timers with the committed list. Runs after every
+   * write, including writes from other sessions and the admin API.
+   */
+  private syncReminders(todos: readonly Todo[]): void {
+    if (this.closed) return;
+    const reminders = new Map(
+      todos.map((todo) => [todo.id, todo.reminderTime]),
+    );
+    for (const [id, entry] of this.reminderTimers) {
+      if (reminders.get(id) !== entry.reminderTime) this.clearReminder(id);
+    }
+    for (const todo of todos) {
+      if (
+        !todo.reminderTime ||
+        this.reminderTimers.get(todo.id)?.reminderTime === todo.reminderTime ||
+        this.firingReminders.get(todo.id) === todo.reminderTime
+      ) {
+        continue;
+      }
+      this.armReminder(todo);
+    }
   }
 
   private armReminder(todo: Todo): void {
@@ -529,6 +519,7 @@ class TodosExtension implements Extension {
   }
 
   private runReminder(id: string, reminderTime: string): void {
+    this.firingReminders.set(id, reminderTime);
     const pending = this.fireReminder(id, reminderTime)
       .catch((error) => {
         this.deps.logger.error(
@@ -538,6 +529,8 @@ class TodosExtension implements Extension {
       })
       .finally(() => {
         this.pendingReminders.delete(pending);
+        if (this.firingReminders.get(id) === reminderTime)
+          this.firingReminders.delete(id);
       });
     this.pendingReminders.add(pending);
   }
@@ -546,7 +539,7 @@ class TodosExtension implements Extension {
     this.clearReminder(id, reminderTime);
     if (this.closed) return;
     let due = false;
-    const todos = await this.store.update((current) => {
+    const todos = await this.todoList.mutate((current) => {
       const todo = current.find((candidate) => candidate.id === id);
       if (todo?.reminderTime !== reminderTime) return;
       todo.reminderTime = null;
@@ -557,7 +550,7 @@ class TodosExtension implements Extension {
       // Closed between persisting and delivering (e.g. restart teardown):
       // restore the reminder so the next startup fires it instead of
       // losing it.
-      await this.store.update((current) => {
+      await this.todoList.mutate((current) => {
         const todo = current.find((candidate) => candidate.id === id);
         if (todo && todo.reminderTime === null)
           todo.reminderTime = reminderTime;
@@ -593,19 +586,21 @@ class TodosExtension implements Extension {
   }
 }
 
+export interface TodosExtOptions {
+  /** Agent-wide list shared by every session's todos extension. */
+  todoList: TodoListHub;
+}
+
 class TodosExtensionFactory implements ExtensionFactory {
   readonly identifier = 'io.stagewise/todos';
   readonly displayName = 'Todos';
-  private readonly stores = new Map<string, TodosStore>();
   private readonly claimedStartupTriggers = new Set<string>();
+
+  constructor(private readonly options: TodosExtOptions) {}
 
   create = (deps: ExtensionDeps): Extension => {
     const dataDirectory = deps.getDataDir(true);
-    let store = this.stores.get(dataDirectory);
-    if (!store) {
-      store = createTodosStore(dataDirectory);
-      this.stores.set(dataDirectory, store);
-    }
+    this.options.todoList.bind(dataDirectory);
     const claimStartupTrigger = (): boolean => {
       if (
         deps.sessionId !== DEFAULT_SESSION_ID ||
@@ -616,9 +611,11 @@ class TodosExtensionFactory implements ExtensionFactory {
       this.claimedStartupTriggers.add(dataDirectory);
       return true;
     };
-    return new TodosExtension(deps, store, claimStartupTrigger);
+    return new TodosExtension(deps, this.options.todoList, claimStartupTrigger);
   };
 }
 
 /** Adds durable todo management and default-session startup task recovery. */
-export const createTodosExt: ExtensionFactory = new TodosExtensionFactory();
+export function createTodosExt(options: TodosExtOptions): ExtensionFactory {
+  return new TodosExtensionFactory(options);
+}

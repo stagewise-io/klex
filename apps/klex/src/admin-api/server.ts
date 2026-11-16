@@ -11,6 +11,7 @@ import type { ModelCallLogger } from '@/model-call-logger';
 import type { ProviderRegistry } from '@/provider-registry';
 import type { EpisodeSummaryLog } from '@/session/chat/extensions/episode-summary/summary-log';
 import type { Soul } from '@/session/chat/extensions/soul';
+import type { TodoList } from '@/session/chat/extensions/todos/todo-list';
 import type { SessionHistory } from '@/session-history';
 import type { SkillRegistry } from '@/skills';
 
@@ -150,6 +151,16 @@ import {
   patchSoul,
   patchSoulRoute,
 } from './routes/v1/soul';
+import {
+  createTodo,
+  createTodoRoute,
+  deleteTodo,
+  deleteTodoRoute,
+  listTodos,
+  listTodosRoute,
+  updateTodo,
+  updateTodoRoute,
+} from './routes/v1/todos';
 import { getUsage, getUsageRoute } from './routes/v1/usage';
 
 export interface AdminAppDependencies {
@@ -163,6 +174,7 @@ export interface AdminAppDependencies {
   sessionHistory: SessionHistory;
   skillRegistry: SkillRegistry;
   episodeSummaryLog: EpisodeSummaryLog;
+  todoList: TodoList;
   soul: Soul;
   soulAbortSignal?: AbortSignal;
   logger: ModuleLogger;
@@ -233,6 +245,10 @@ export function createAdminApp(deps: AdminAppDependencies) {
     .openapi(updateLegacySkillRoute, updateLegacySkill(deps))
     .openapi(deleteLegacySkillRoute, deleteLegacySkill(deps))
     .openapi(listEpisodeSummariesRoute, listEpisodeSummaries(deps))
+    .openapi(listTodosRoute, listTodos(deps))
+    .openapi(createTodoRoute, createTodo(deps))
+    .openapi(updateTodoRoute, updateTodo(deps))
+    .openapi(deleteTodoRoute, deleteTodo(deps))
     .openapi(getProviderTypesRoute, getProviderTypes(deps))
     .openapi(canAddProviderRoute, canAddProvider(deps))
     .openapi(getProvidersRoute, getProviders(deps))

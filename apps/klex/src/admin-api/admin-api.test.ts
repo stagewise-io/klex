@@ -11,6 +11,7 @@ import type { ModelCallLogger } from '@/model-call-logger';
 import type { ProviderRegistry } from '@/provider-registry';
 import type { EpisodeSummaryLog } from '@/session/chat/extensions/episode-summary';
 import { type Soul, SoulError } from '@/session/chat/extensions/soul';
+import { createTodoList } from '@/session/chat/extensions/todos/todo-list';
 import type { SessionHistory } from '@/session-history';
 import type { SkillRegistry } from '@/skills';
 
@@ -70,6 +71,7 @@ const episodeSummaryLog: EpisodeSummaryLog = {
   isAvailable: () => false,
   list: async () => ({ items: [], nextCursor: null, hasMore: false }),
 };
+const todoList = createTodoList();
 
 describe('AdminApi', () => {
   describe('dangerous local port enabled', () => {
@@ -88,6 +90,7 @@ describe('AdminApi', () => {
         sessionHistory,
         skillRegistry,
         episodeSummaryLog,
+        todoList,
         soul,
         localPort: 19999,
         timezone: 'UTC',
@@ -124,6 +127,7 @@ describe('AdminApi', () => {
         sessionHistory,
         skillRegistry,
         episodeSummaryLog,
+        todoList,
         soul,
         localPort: undefined,
         timezone: 'UTC',
@@ -203,6 +207,7 @@ describe('AdminApi', () => {
         sessionHistory,
         skillRegistry,
         episodeSummaryLog,
+        todoList,
         soul: { ...soul, create },
         localPort: undefined,
         timezone: 'UTC',

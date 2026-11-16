@@ -190,7 +190,10 @@ vi.mock('@/session/chat/extensions/time', () => ({
   createTimeExt: vi.fn(),
   createTimeExtGod: vi.fn(),
 }));
-vi.mock('@/session/chat/extensions/todos', () => ({ createTodosExt: vi.fn() }));
+vi.mock('@/session/chat/extensions/todos', () => ({
+  createTodoList: vi.fn(),
+  createTodosExt: vi.fn(),
+}));
 vi.mock('@/skills', () => ({ createSkillRegistry: () => mocks.resource }));
 vi.mock('@/session/realtime', () => ({
   createProductionMediaTransportConnector: vi.fn(),

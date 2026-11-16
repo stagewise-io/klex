@@ -59,6 +59,7 @@ export class DesktopService {
   #probe: Promise<DesktopCapabilities> | undefined;
   #probedAt = 0;
   #probeTtl = 0;
+  #probing = false;
   #queue: Promise<unknown> = Promise.resolve();
 
   constructor(provider: DesktopProvider, options: DesktopServiceOptions = {}) {
@@ -78,25 +79,34 @@ export class DesktopService {
    * noticed without probing on every request.
    */
   capabilities(): Promise<DesktopCapabilities> {
-    if (!this.#probe || this.#now() - this.#probedAt >= this.#probeTtl) {
-      this.#probedAt = this.#now();
-      this.#probeTtl = PROBE_RETRY_MS;
-      this.#probe = this.#provider.probe().then(
-        (capabilities) => {
-          if (capabilities.computerUse && capabilities.stream) {
-            this.#probeTtl = PROBE_REFRESH_MS;
-          }
-          return capabilities;
-        },
-        () => NO_DESKTOP,
-      );
-    }
-    return this.#probe;
+    if (
+      this.#probe &&
+      (this.#probing || this.#now() - this.#probedAt < this.#probeTtl)
+    )
+      return this.#probe;
+    const probe: Promise<DesktopCapabilities> = this.#provider
+      .probe()
+      .catch(() => NO_DESKTOP)
+      .then((capabilities) => {
+        if (this.#probe === probe) {
+          this.#probing = false;
+          this.#probedAt = this.#now();
+          this.#probeTtl =
+            capabilities.computerUse && capabilities.stream
+              ? PROBE_REFRESH_MS
+              : PROBE_RETRY_MS;
+        }
+        return capabilities;
+      });
+    this.#probe = probe;
+    this.#probing = true;
+    return probe;
   }
 
   /** Drops the cached probe, for callers that just saw a capability fail. */
   invalidate(): void {
     this.#probe = undefined;
+    this.#probing = false;
   }
 
   /** Opens an RFB source for one viewer. */

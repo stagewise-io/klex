@@ -58,6 +58,7 @@ export class DesktopControlLease implements DesktopInputControl {
   }
 
   authorize(): void {
+    this.#expireIfDue();
     if (this.#state.mode !== 'human') return;
     const holder = this.#state.holder ?? UNNAMED_HOLDER;
     throw new DesktopInputDeniedError(
@@ -68,6 +69,7 @@ export class DesktopControlLease implements DesktopInputControl {
 
   /** Whether RFB input from this viewer stream reaches the desktop. */
   allowsStreamInput(streamId: string): boolean {
+    this.#expireIfDue();
     if (this.#state.mode !== 'human') return false;
     return !this.#state.streamId || this.#state.streamId === streamId;
   }
@@ -78,7 +80,12 @@ export class DesktopControlLease implements DesktopInputControl {
       update.mode === 'human' && update.expiresAt
         ? Date.parse(update.expiresAt)
         : Number.NaN;
-    if (update.mode === 'human' && expiresAt <= this.#now()) {
+    // A malformed expiry fails closed to the agent instead of an unbounded lease.
+    const expired =
+      update.mode === 'human' &&
+      !!update.expiresAt &&
+      !(expiresAt > this.#now());
+    if (expired) {
       this.#set({ mode: 'agent' }, 'expired');
       return;
     }
@@ -159,6 +166,14 @@ export class DesktopControlLease implements DesktopInputControl {
       Math.min(Math.max(0, delay), MAX_TIMER_MS),
     );
     this.#expiry.unref?.();
+  }
+
+  #expireIfDue(): void {
+    const { mode, expiresAt } = this.#state;
+    if (mode !== 'human' || !expiresAt) return;
+    if (Date.parse(expiresAt) > this.#now()) return;
+    this.#clearGrace();
+    this.#set({ mode: 'agent' }, 'expired');
   }
 
   #clearGrace(): void {

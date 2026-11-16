@@ -188,6 +188,24 @@ describe('X11DesktopBackend', () => {
     return { backend, calls };
   }
 
+  it('releases held modifiers when a click fails', async () => {
+    const calls: string[][] = [];
+    const backend = new X11DesktopBackend({
+      display: ':1',
+      env: {},
+      run: async (_file, args) => {
+        calls.push(args);
+        if (args.includes('click')) throw new Error('timed out');
+        return Buffer.from('');
+      },
+      launch: async () => ({ pid: 7 }),
+    });
+    await expect(
+      backend.click({ x: 1, y: 1 }, 'left', 1, ['ctrl']),
+    ).rejects.toThrow('timed out');
+    expect(calls.at(-1)).toEqual(['keyup', 'ctrl']);
+  });
+
   it('builds xdotool argument vectors without a shell', async () => {
     const { backend, calls } = backendWith();
     await backend.click({ x: 5, y: 6 }, 'right', 2, ['Ctrl', 'shift']);
@@ -196,13 +214,10 @@ describe('X11DesktopBackend', () => {
     await backend.scroll({ x: 1, y: 2 }, 'down', 4);
 
     expect(calls).toEqual([
+      ['xdotool', ['keydown', 'ctrl', 'keydown', 'shift']],
       [
         'xdotool',
         [
-          'keydown',
-          'ctrl',
-          'keydown',
-          'shift',
           'mousemove',
           '--sync',
           '5',
@@ -213,12 +228,9 @@ describe('X11DesktopBackend', () => {
           '--delay',
           '80',
           '3',
-          'keyup',
-          'shift',
-          'keyup',
-          'ctrl',
         ],
       ],
+      ['xdotool', ['keyup', 'shift', 'keyup', 'ctrl']],
       [
         'xdotool',
         ['type', '--clearmodifiers', '--delay', '12', '--', 'a; rm -rf / $(x)'],

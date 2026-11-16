@@ -89,7 +89,8 @@ function project(value: JSONValue, projection: Projection): JSONValue {
       }
     }
   }
-  const result: Record<string, JSONValue> = {};
+  // A null prototype keeps an own "__proto__" key as data.
+  const result: Record<string, JSONValue> = Object.create(null);
   for (const [key, item] of Object.entries(value)) {
     if (item !== undefined) result[key] = project(item, projection);
   }

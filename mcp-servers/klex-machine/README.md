@@ -104,10 +104,11 @@ The tools act with the daemon's OS user on that user's display. Anyone who can d
 pnpm --filter @klex/machine build
 docker build -f mcp-servers/klex-machine/examples/desktop/Dockerfile -t klex-desktop-spike mcp-servers/klex-machine
 docker run -d --name klex-desktop --memory 8g --cpus 4 --shm-size 1g klex-desktop-spike
+docker exec klex-desktop supervisorctl -c /etc/supervisor/desktop.conf start klex-machine-local
 docker exec klex-desktop node /opt/klex-machine/examples/smoke.mjs
 ```
 
-To enroll the container into Cloud, pipe the code from your setup command into `klex-machine cloud enroll --enrollment-code-file - --no-serve --cloud-base-url <url>` inside it. Supervisord then starts enrolled mode. The image disables Chrome's sandbox because Docker's default seccomp profile blocks its namespaces; treat the container as the boundary.
+To enroll the container into Cloud, run `klex-machine cloud enroll <code> --no-serve --cloud-base-url <url>` inside it as `user`. To keep the code out of process listings, pipe it in: `docker exec -i -u user klex-desktop sh -c 'read -r code; exec klex-machine cloud enroll "$code" --no-serve --cloud-base-url <url>'`. Supervisord then starts enrolled mode. The image disables Chrome's sandbox because Docker's default seccomp profile blocks its namespaces; treat the container as the boundary.
 
 ## Watchers and notifications
 

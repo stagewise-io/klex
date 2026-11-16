@@ -211,8 +211,7 @@ export class X11DesktopBackend implements DesktopBackend {
     modifiers: string[],
   ): Promise<void> {
     const held = modifiers.map(toXdotoolModifier);
-    await this.#xdotool([
-      ...held.flatMap((modifier) => ['keydown', modifier]),
+    const clickArgs = [
       ...moveArgs(point),
       'click',
       '--repeat',
@@ -220,8 +219,20 @@ export class X11DesktopBackend implements DesktopBackend {
       '--delay',
       '80',
       BUTTONS[button],
-      ...held.toReversed().flatMap((modifier) => ['keyup', modifier]),
-    ]);
+    ];
+    if (held.length === 0) {
+      await this.#xdotool(clickArgs);
+      return;
+    }
+    try {
+      await this.#xdotool(held.flatMap((modifier) => ['keydown', modifier]));
+      await this.#xdotool(clickArgs);
+    } finally {
+      // Release separately so a failed or timed-out click cannot leave keys held.
+      await this.#xdotool(
+        held.toReversed().flatMap((modifier) => ['keyup', modifier]),
+      ).catch(() => undefined);
+    }
   }
 
   async drag(from: Point, to: Point, button: MouseButton): Promise<void> {

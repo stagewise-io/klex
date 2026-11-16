@@ -690,7 +690,7 @@ export function ModelSelectionScreen({
           {models.length === 0 && (
             <EmptyState>
               {selectedPurpose === 'instincts'
-                ? 'No Instincts models configured. Uses Chat models via generation when available.'
+                ? 'No Instincts models configured. Uses Memory, then Compaction, then Chat models via generation when available.'
                 : 'No models configured for this purpose.'}
             </EmptyState>
           )}

@@ -81,6 +81,7 @@ import {
   executeInstinctClassification,
   type InstinctClassificationArgs,
   type InstinctRunner,
+  instinctFallbackMemory,
 } from './instinct';
 import type { ExtendedUIMessage } from './message-types';
 import { createTurn, type Turn, type TurnResult } from './turn';
@@ -649,21 +650,38 @@ class ChatSessionModule implements AgentSession {
     }
   }
 
-  /** Snapshot the configured candidates once; account each settled attempt. */
+  /**
+   * Snapshot the configured candidates once; account each settled attempt.
+   * Without Instincts entries, the first non-empty list of Memory,
+   * Compaction and Chat models is used via generation. Chat comes last
+   * because it is usually the most expensive and slowest selection.
+   */
   private async executeInstinctClassification(
     args: InstinctClassificationArgs,
   ): Promise<Map<string, InstinctClassificationOutcome>> {
     const configuredEntries =
       this.deps.config.getRuntime().modelSelection.instincts;
+    const fallbackEntries =
+      (['memory', 'compaction', 'chat'] as const)
+        .map((purpose) => this.deps.config.getModelSelection(purpose))
+        .find((selection) => selection.length > 0) ?? [];
     const entries =
       configuredEntries.length > 0
         ? configuredEntries
-        : this.deps.config.getModelSelection('chat').map((entry) => ({
+        : fallbackEntries.map((entry) => ({
             ...entry,
             api: 'generation' as const,
           }));
     const candidates =
       this.deps.modelResolver.resolveInstinctCandidates(entries);
+    const instinctConfig = this.deps.config.get().instinct;
+    const memoryKey = JSON.stringify(
+      entries.map(({ providerId, modelId, api }) => [providerId, modelId, api]),
+    );
+    const startIndex = instinctFallbackMemory.start(
+      memoryKey,
+      instinctConfig.fallbackResetIdleMs,
+    );
     const ctx = withExtensionIdentifier(
       context.active(),
       INSTINCT_CLASSIFIER_IDENTIFIER,
@@ -673,6 +691,10 @@ class ChatSessionModule implements AgentSession {
         candidates,
         sessionId: this.sessionId,
         functionId: `extension:${INSTINCT_CLASSIFIER_IDENTIFIER}`,
+        defaultAttemptTimeoutMs: instinctConfig.attemptTimeoutMs,
+        startIndex,
+        onSuccess: (index) =>
+          instinctFallbackMemory.succeeded(memoryKey, index),
         onUsage: (usage) =>
           this.recordExtensionUsage(
             INSTINCT_CLASSIFIER_IDENTIFIER,

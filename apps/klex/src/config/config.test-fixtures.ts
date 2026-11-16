@@ -13,8 +13,10 @@ export const emptyModelSelection: ModelSelection = {
 
 export const defaultInstinctConfig: KlexConfig['instinct'] = {
   enabled: true,
-  timeoutMs: 8_000,
-  classifierTimeoutMs: 4_000,
+  timeoutMs: 12_000,
+  classifierTimeoutMs: 10_000,
+  attemptTimeoutMs: 5_000,
+  fallbackResetIdleMs: 600_000,
   historyCharacterCap: 16_000,
   messageCharacterCap: 2_000,
   contextCharacterCap: 2_000,

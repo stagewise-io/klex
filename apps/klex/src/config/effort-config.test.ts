@@ -62,9 +62,17 @@ describe('effort config forward migration', () => {
     const migrated = JSON.parse(await readFile(file, 'utf8'));
     expect({ ...migrated, _klex: undefined }).toEqual({
       ...original,
+      // Schema 11 lifts the released instinct timer defaults.
+      instinct: {
+        ...original.instinct,
+        timeoutMs: 12_000,
+        classifierTimeoutMs: 10_000,
+        attemptTimeoutMs: 5_000,
+        fallbackResetIdleMs: 600_000,
+      },
       _klex: undefined,
     });
-    expect(migrated._klex.schemaVersion).toBe(11);
+    expect(migrated._klex.schemaVersion).toBe(12);
     const config = createConfig({
       logging,
       dataDirectory: dir,

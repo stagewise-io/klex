@@ -46,6 +46,23 @@ interface ExecutorOptions {
   readonly sessionId?: string;
   readonly functionId: string;
   readonly onUsage?: (usage: InstinctAttemptUsage) => void;
+  /** Per-model timer for entries without their own `attemptTimeoutMs`. */
+  readonly defaultAttemptTimeoutMs?: number;
+  /** Candidate index to try first; the rest follow in wrapped order. */
+  readonly startIndex?: number;
+  /** Called with the original index of the candidate that succeeded. */
+  readonly onSuccess?: (index: number) => void;
+}
+
+function rotated<T>(
+  items: readonly T[],
+  start: number,
+): { item: T; index: number }[] {
+  const offset = start > 0 && start < items.length ? start : 0;
+  return items.map((_, position) => {
+    const index = (position + offset) % items.length;
+    return { item: items[index] as T, index };
+  });
 }
 
 /** Observes late rejection and removes the listener when either side settles. */
@@ -144,13 +161,16 @@ export async function executeInstinctClassification(
   let attempted = false;
   let generationSchema: object | undefined;
   try {
-    for (const candidate of options.candidates) {
+    for (const { item: candidate, index } of rotated(
+      options.candidates,
+      options.startIndex ?? 0,
+    )) {
       const interruption = interrupted();
       if (interruption) return uniform(interruption);
       if (candidate.status === 'unavailable') continue;
       const { entry } = candidate;
       const budget = Math.min(
-        entry.attemptTimeoutMs ?? Infinity,
+        entry.attemptTimeoutMs ?? options.defaultAttemptTimeoutMs ?? Infinity,
         deadlineAt - performance.now(),
       );
       if (budget <= 0) return uniform({ status: 'timeout' });
@@ -291,7 +311,9 @@ export async function executeInstinctClassification(
           },
         );
         const interruption = interrupted();
-        return interruption ? uniform(interruption) : result;
+        if (interruption) return uniform(interruption);
+        options.onSuccess?.(index);
+        return result;
       } catch (error) {
         const interruption = interrupted();
         if (interruption) return uniform(interruption);

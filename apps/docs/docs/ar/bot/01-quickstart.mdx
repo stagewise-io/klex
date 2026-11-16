@@ -8,9 +8,11 @@ related:
 
 يوصي Klex معظم المستخدمين ببوت مستضاف على السحابة. يمكنك أيضاً تشغيل البوت على جهاز الكمبيوتر الخاص بك واختيار تسجيله في Klex Cloud أو عدم تسجيله. تحتاج إلى وصول إلى مزود نموذج؛ ويتطلب إعداد Cloud أيضاً حساب Klex Cloud.
 
-<a id="إنشاء-البوت-الخاص-بك"></a>
+<div className="hosting-quickstart">
+<Tabs inline hash sync={false}>
+<Tab title="مستضاف على السحابة" id="إنشاء-البوت-الخاص-بك">
 
-## إنشاء بوت مستضاف على السحابة
+## إعداد الاستضافة السحابية
 
 1. سجّل الدخول إلى [Klex Cloud](https://cloud.klex.bot) وابدأ إنشاء بوت.
 2. اختر الاستضافة السحابية واتبع التعليمات لإعداد اسم البوت و[‏Soul](/bot/concepts/soul) والمزود والنموذج.
@@ -18,18 +20,24 @@ related:
 
 أرسل رسالة إلى البوت في التطبيق المتصل للتحقق من استجابته. يمكنك عرض نشاطه في لوحة تحكم Cloud.
 
-<a id="التثبيت"></a>
+</Tab>
+<Tab title="مستضاف ذاتياً" id="التثبيت">
 
-## تثبيت Klex للاستضافة الذاتية
+## إعداد الاستضافة الذاتية
 
 لتشغيل البوت على جهاز الكمبيوتر الخاص بك، ثبّت Klex من الطرفية.
 
-<Tabs param="install">
-  <Tab title="macOS">`curl -fsSL https://klex.bot/install.sh | sh`</Tab>
-  <Tab title="Linux">`curl -fsSL https://klex.bot/install.sh | sh`</Tab>
-  <Tab title="Windows">`irm https://klex.bot/install.ps1 | iex`</Tab>
-  <Tab title="WSL">`curl -fsSL https://klex.bot/install.sh | sh`</Tab>
-</Tabs>
+**macOS أو Linux أو WSL:**
+
+```sh
+curl -fsSL https://klex.bot/install.sh | sh
+```
+
+**Windows (PowerShell):**
+
+```powershell
+irm https://klex.bot/install.ps1 | iex
+```
 
 ### الإعداد باستخدام Cloud
 
@@ -48,7 +56,30 @@ klex --no-cloud
 3. افتح **Settings → Soul** وأنشئ Soul يصف شخصية البوت وعمله.
 4. في **Settings → MCP Servers**، وصّل الخوادم المطلوبة. اضبط أذونات حساب البوت في التطبيقات المتصلة.
 
-لتلقي أحداث من قناة خارجية، وصّل خادم MCP يدعم تحديثات الموارد المعنية أو [امتداد إشعارات الدفع](https://github.com/stagewise-io/klex/tree/main/packages/mcp-extension-push-notifications) الخاص بـ Klex.
+لتلقي أحداث من قناة خارجية، وصّل خادم MCP يدعم تحديثات الموارد المعنية أو MCP Events أو [امتداد إشعارات الدفع](https://github.com/stagewise-io/klex/tree/main/packages/mcp-extension-push-notifications) الخاص بـ Klex.
 
+</Tab>
+</Tabs>
+</div>
 
-<a id="إنشاء-بوت-مستضاف-ذاتياً-دون-قائمة-الاختيار"></a>
+## إنشاء بوت مستضاف ذاتياً دون قائمة الاختيار
+
+لإنشاء بوت مسجّل في Cloud وتشغيله، استخدم رمز تسجيل من Klex Cloud:
+
+```sh
+klex --create-bot --cloud-enroll-token <token>
+```
+
+يمكنك تمرير الرمز عبر `KLEX_CLOUD_ENROLLMENT_TOKEN` بدلاً من وسيطة سطر الأوامر. أضف `--headless` للتشغيل دون واجهة الطرفية.
+
+لإنشاء بوت مستقل، أدخل اسماً:
+
+```sh
+klex --create-bot --no-cloud --bot-name Ada
+```
+
+لا يمكن الجمع بين الإنشاء و`--data-dir` أو `KLEX_DATA_DIR`؛ فهما يحددان بوتاً موجوداً. اضبط مزوداً ونموذج دردشة قبل أن يتمكن البوت من العمل.
+
+إذا لم يستجب البوت، راجع [خطوات استكشاف الأخطاء](/bot/guides/observability#if-a-bot-does-not-respond).
+
+<script src="/quickstart-tabs.js" defer></script>

@@ -39,6 +39,80 @@ const event = {
 };
 
 describe('EventsSource', () => {
+  it('reconciles a refresh requested during an in-flight catalogue fetch', async () => {
+    const h = harness();
+    let release!: (value: { name: string; delivery: ['poll'] }[]) => void;
+    vi.mocked(h.events.listEvents).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    h.poll.mockImplementation(() => new Promise(() => {}));
+    try {
+      const starting = h.source.start();
+      const refreshing = h.source.refresh();
+      release([]);
+      await Promise.all([starting, refreshing]);
+      expect(h.events.listEvents).toHaveBeenCalledTimes(2);
+      expect(h.poll).toHaveBeenCalledTimes(1);
+      expect(h.source.statuses()[0]?.reason).toBeUndefined();
+    } finally {
+      h.source.close();
+    }
+  });
+
+  it.each(['missing', 'arguments', 'schema', 'delivery'])(
+    'keeps a live poll, validator and cursor after a %s catalogue regression',
+    async (failure) => {
+      const h = harness();
+      h.poll.mockResolvedValueOnce({
+        events: [event],
+        cursor: 'handled',
+        hasMore: true,
+      });
+      h.poll.mockImplementation(() => new Promise(() => {}));
+      try {
+        await h.source.start();
+        await vi.waitFor(() => expect(h.source.hasUnsettled()).toBe(true));
+        const signal = h.poll.mock.calls[0]?.[1]?.request?.signal;
+        vi.mocked(h.events.listEvents).mockResolvedValue(
+          failure === 'missing'
+            ? []
+            : ([
+                {
+                  name: 'x',
+                  delivery: failure === 'delivery' ? ['webhook'] : ['poll'],
+                  ...(failure === 'arguments'
+                    ? {
+                        inputSchema: { type: 'object', required: ['required'] },
+                      }
+                    : {}),
+                  payloadSchema:
+                    failure === 'schema'
+                      ? { type: 'invalid' }
+                      : { type: 'string' },
+                },
+              ] as never),
+        );
+        await h.source.refresh();
+        expect(signal?.aborted).toBe(false);
+        expect(h.source.statuses()[0]?.status).toBe('active');
+        // A subsequent healthy catalogue must not restart the loop either.
+        vi.mocked(h.events.listEvents).mockResolvedValue([
+          { name: 'x', delivery: ['poll'] },
+        ]);
+        await h.source.refresh();
+        await h.source.settleDelivered();
+        await vi.waitFor(() => expect(h.poll).toHaveBeenCalledTimes(2));
+        expect(h.poll.mock.calls[1]?.[0].cursor).toBe('handled');
+        expect(h.published).toHaveLength(1);
+      } finally {
+        h.source.close();
+      }
+    },
+  );
+
   it('updates watches in place, preserves an unrelated poll and cancels removed delivery', async () => {
     const h = harness();
     vi.mocked(h.events.listEvents).mockResolvedValue([

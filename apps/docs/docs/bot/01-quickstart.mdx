@@ -56,13 +56,31 @@ klex --no-cloud
 3. Open **Settings → Soul** and create a soul describing the Bot’s character and work.
 4. In **Settings → MCP Servers**, connect the servers the Bot needs. Configure the permissions for its accounts in the connected apps.
 
-To receive events from an external channel, connect an MCP server that supports the relevant resource updates or Klex’s [push-notification extension](https://github.com/stagewise-io/klex/tree/main/packages/mcp-extension-push-notifications).
+To receive events from an external channel, connect an MCP server that supports the relevant resource updates, MCP Events, or Klex’s [push-notification extension](https://github.com/stagewise-io/klex/tree/main/packages/mcp-extension-push-notifications).
 
 </Tab>
 </Tabs>
 </div>
 
 <a id="create-a-self-hosted-bot-without-the-picker"></a>
+
+## Create a self-hosted Bot without the picker
+
+To create and start a Cloud-enrolled Bot, use an enrollment token from Klex Cloud:
+
+```sh
+klex --create-bot --cloud-enroll-token <token>
+```
+
+You can supply the token through `KLEX_CLOUD_ENROLLMENT_TOKEN` instead of a command-line argument. Add `--headless` to run without the terminal UI.
+
+To create a standalone Bot, provide a name:
+
+```sh
+klex --create-bot --no-cloud --bot-name Ada
+```
+
+Creation cannot be combined with `--data-dir` or `KLEX_DATA_DIR`; those select an existing Bot. Configure a provider and a chat model before the Bot can work.
 
 If the Bot does not respond, see [troubleshooting steps](/bot/guides/observability#if-a-bot-does-not-respond).
 

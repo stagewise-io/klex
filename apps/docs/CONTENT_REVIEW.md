@@ -67,6 +67,8 @@
 
 - **Reminders in Klex 0.30.1:** `session/chat/extensions/todos/todos.ts` implements one-shot reminder times; the system prompt directs the Bot to use calendars for official or recurring events (`todos/system-prompt.md`). The docs should not present built-in to-dos as recurring schedules or imply that a schedule guarantees task completion. Specific scheduling integrations and their available capabilities remain unconfirmed.
 
+- **Realtime calls on current main (`51b87ed9`):** `application/application.ts` and `session/realtime/realtime.ts` set up MCP realtime media and resolve a configured voice provider per call. `session/realtime/session-coordinator.ts` enables video only when negotiated with the server; `realtime.ts` enables Gemini Live video only for a model with image input. `session/realtime/vision/vision.ts` and `session/realtime/architecture.md` describe sampled camera/screen frames, with at most four tracks shown at once and preference given to screen shares. The encoder must also load, and server/transport capabilities matter. No named app integration or Cloud UI workflow was verified. The architecture document’s claim that an empty STS selection disables capability advertisement appears stale: current `application.ts` passes the production capability unconditionally, while provider resolution is still required for a call.
+
 ## Open questions: do not infer
 
 - Memory behavior beyond current skills and learnings: how memories are created or recalled, scope across chats/channels, and user/admin controls. Also unconfirmed: retention, deletion, backups, and exact file layout.

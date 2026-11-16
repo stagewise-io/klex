@@ -173,7 +173,8 @@ const launchProcess: ProcessLauncher = ({ command, args, cwd, env }) =>
 /**
  * X11 desktop: input and windows through xdotool, capture through ImageMagick
  * `import`, and the stream from a VNC server's Unix socket. Computer use needs
- * the display and both tools; streaming needs the display and a live socket.
+ * a reachable display and both tools; streaming needs only a live socket for
+ * the configured display.
  */
 export class X11DesktopProvider implements DesktopProvider {
   readonly #display: string | undefined;
@@ -194,13 +195,8 @@ export class X11DesktopProvider implements DesktopProvider {
 
   async probe(): Promise<DesktopCapabilities> {
     if (!this.#display) return NO_DESKTOP;
-    let screen: ScreenSize;
-    try {
-      screen = await this.screenSize();
-    } catch {
-      return NO_DESKTOP;
-    }
-    const [computerUse, stream] = await Promise.all([
+    const [screen, capture, stream] = await Promise.all([
+      this.screenSize().catch(() => undefined),
       this.#exec('import', ['-version']).then(
         () => true,
         () => false,
@@ -213,7 +209,11 @@ export class X11DesktopProvider implements DesktopProvider {
         () => false,
       ),
     ]);
-    return { computerUse, stream, screen };
+    return {
+      computerUse: screen !== undefined && capture,
+      stream,
+      ...(screen ? { screen } : {}),
+    };
   }
 
   async screenSize(): Promise<ScreenSize> {
@@ -227,7 +227,6 @@ export class X11DesktopProvider implements DesktopProvider {
 
   async openStream(): Promise<Duplex> {
     if (!this.#display) throw new Error('No X display is configured');
-    await this.screenSize();
     return this.#connectStream();
   }
 

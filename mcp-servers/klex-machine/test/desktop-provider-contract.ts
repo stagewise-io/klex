@@ -43,14 +43,14 @@ export function describeDesktopProviderContract(
         computerUse: capabilities.computerUse,
         stream: capabilities.stream,
       }).toEqual(expected);
-      if (expected.computerUse || expected.stream) {
+      if (expected.computerUse) {
         expect(capabilities.screen).toEqual({
           width: expect.any(Number),
           height: expect.any(Number),
         });
         expect(capabilities.screen?.width).toBeGreaterThan(0);
         expect(capabilities.screen?.height).toBeGreaterThan(0);
-      } else {
+      } else if (!expected.stream) {
         expect(capabilities.screen).toBeUndefined();
       }
       expect(await fixture.provider.probe()).toEqual(capabilities);

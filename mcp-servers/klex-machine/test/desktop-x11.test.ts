@@ -121,7 +121,7 @@ describeDesktopProviderContract(
 );
 describeDesktopProviderContract(
   'unreachable X display with a live VNC socket',
-  { computerUse: false, stream: false },
+  { computerUse: false, stream: true },
   () => fakeX11({ display: false, imagemagick: true, vnc: 'listening' }),
 );
 

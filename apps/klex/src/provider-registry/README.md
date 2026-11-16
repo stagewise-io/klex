@@ -34,6 +34,28 @@ The provider registry is the single integration point for language-model transpo
 
 This registry covers language-model transports only. Full Codex, Claude Code, and OpenCode agent runtimes are outside Klex's provider abstraction: Klex does not adopt their tool loop, process lifecycle, memory, or agent behavior. The ChatGPT Codex Subscription and OpenCode Go/Zen entries above remain supported because they expose model transports to Klex's own agent runtime.
 
+## Google tool input schemas
+
+The Google model wrapper adapts unrestricted recursive JSON-value unions in
+function declarations for Gemini, custom Google Generative endpoints, and Vertex.
+For example, Slack's `useSlackApi` declares both `body` and `parameters` using
+Zod's recursive JSON union. The SDK sends this as `parametersJsonSchema`; its
+object branch recurses through `additionalProperties`, which Gemini rejects as
+a required reference cycle.
+
+`google-input-schema.ts` recognizes only the exact six-branch union of string,
+number, boolean, null, arrays of itself, and objects with values of itself. It
+replaces the array items with `{}` and the object additional properties with
+`true`. These accept the same JSON values without recursive edges. It retains
+surrounding fields, constraints, definitions, and tool names. Native arguments,
+execution validation, and non-Google providers remain unchanged. Constrained
+recursive schemas are deliberately left intact; this is not a general recursive
+schema converter or a guarantee of support for every Gemini schema limitation.
+
+This declaration adaptation is separate from KLEX-61's mapping of JSON tool
+**results** containing `$ref` to inert text. Tests cover both through real SDK
+request serialization with stubbed network responses.
+
 ## Dynamic reasoning effort
 
 See [effort control evidence and contract](./effort-controls.md) for model-generation coverage, authoritative documentation, configuration, and current limitations. Capability resolution stays inside the registry; default-session policy supplies only a step-local intent. Default sessions use shadow mode when effort configuration is absent; shadow traces and classification cost can therefore occur without an explicit effort setting. Set `effort.mode: off` to disable it. Automatic control remains opt-in, and fixed native reasoning options always take precedence.

@@ -1,14 +1,18 @@
 import { readFile, writeFile } from 'node:fs/promises';
 
 import type {
+  JSONSchema7,
   LanguageModelV4,
   LanguageModelV4Prompt,
   LanguageModelV4ToolResultOutput,
 } from '@ai-sdk/provider';
-import { generateText, type ModelMessage, streamText } from 'ai';
+import { generateText, jsonSchema, type ModelMessage, streamText } from 'ai';
 import { afterEach, assert, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 
 import type { ProviderType } from '@/config';
+import { testLogger } from '@/session/chat/test-helpers';
+import { ToolExecutor } from '@/session/interaction/tool-executor';
 import { classifyGenerationError } from '@/utils/llm';
 
 import { builtInProviderDefinitions } from './providers/providers';
@@ -58,6 +62,227 @@ function model(type: ProviderType, modelId = 'gemini-2.5-pro') {
 }
 
 afterEach(() => vi.unstubAllGlobals());
+
+describe('Google recursive JSON input declarations (KLEX-89)', () => {
+  // Mirrors Slack's apiBodyFields + parameters record + identity fields.
+  // Separate z.json() instances preserve Slack's two recursive definitions.
+  const inputSchema = z.toJSONSchema(
+    z.strictObject({
+      method: z.string().max(200),
+      httpMethod: z.enum(['GET', 'POST']).default('POST'),
+      body: z.json().optional(),
+      'content-type': z.string().max(256).optional(),
+      bodyEncoding: z.enum(['utf8', 'base64']).optional(),
+      parameters: z.record(z.string(), z.json()).optional(),
+      identityId: z.uuid(),
+      workspaceId: z.string().min(1).optional(),
+    }),
+  ) as JSONSchema7;
+  const ordinarySchema: JSONSchema7 = {
+    type: 'object',
+    properties: { text: { type: 'string' } },
+    required: ['text'],
+  };
+  const args = {
+    identityId: '12345678-1234-4234-8234-123456789abc',
+    method: 'chat.postMessage',
+    httpMethod: 'POST',
+    body: { values: [null, false, 42, 'hello', [], { nested: true }] },
+    parameters: {
+      channel: 'C123',
+      text: 'hello',
+      blocks: [{ type: 'section', text: { type: 'mrkdwn', text: '*hello*' } }],
+      metadata: {
+        event_payload: { nested: [null, false, 42, { values: [] }] },
+      },
+    },
+  };
+
+  it('generates distinct self-recursive JSON definitions for body and parameters', () => {
+    expect(inputSchema.properties?.body).toEqual({
+      $ref: '#/$defs/__schema0',
+    });
+    expect(inputSchema.properties?.parameters).toEqual({
+      type: 'object',
+      propertyNames: { type: 'string' },
+      additionalProperties: { $ref: '#/$defs/__schema1' },
+    });
+    const defs = inputSchema.$defs as Record<string, unknown>;
+    expect(Object.keys(defs)).toEqual(['__schema0', '__schema1']);
+    for (const name of ['__schema0', '__schema1']) {
+      expect(defs[name]).toEqual({
+        anyOf: [
+          { type: 'string' },
+          { type: 'number' },
+          { type: 'boolean' },
+          { type: 'null' },
+          { type: 'array', items: { $ref: `#/$defs/${name}` } },
+          {
+            type: 'object',
+            propertyNames: { type: 'string' },
+            additionalProperties: { $ref: `#/$defs/${name}` },
+          },
+        ],
+      });
+    }
+  });
+
+  it.each(['google-gemini', 'google-generative', 'google-vertex'] as const)(
+    '%s serializes safe declarations and dispatches native args in generate and stream',
+    async (type) => {
+      const before = structuredClone(inputSchema);
+      const requests: {
+        tools: {
+          functionDeclarations: {
+            name: string;
+            parametersJsonSchema: JSONSchema7;
+          }[];
+        }[];
+      }[] = [];
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (url, init) => {
+          requests.push(JSON.parse(init.body));
+          const response = {
+            candidates: [
+              {
+                content: {
+                  role: 'model',
+                  parts: [{ functionCall: { name: 'useSlackApi', args } }],
+                },
+                finishReason: 'STOP',
+              },
+            ],
+            usageMetadata: {
+              promptTokenCount: 1,
+              candidatesTokenCount: 1,
+              totalTokenCount: 2,
+            },
+          };
+          return String(url).includes('streamGenerateContent')
+            ? new Response(`data: ${JSON.stringify(response)}\n\n`, {
+                headers: { 'content-type': 'text/event-stream' },
+              })
+            : Response.json(response);
+        }),
+      );
+      for (const streaming of [false, true]) {
+        const execute = vi.fn(async (input) => ({ ok: true, input }));
+        const tools = {
+          useSlackApi: { inputSchema: jsonSchema(inputSchema) },
+          ordinary: { inputSchema: jsonSchema(ordinarySchema) },
+        };
+        const options = {
+          model: model(type),
+          tools,
+          prompt: 'Send a Slack message',
+          maxRetries: 0,
+        };
+        const result = streaming
+          ? streamText(options)
+          : await generateText(options);
+        const calls = await result.toolCalls;
+        expect(calls).toHaveLength(1);
+        expect(calls[0]?.input).toEqual(args);
+        const executor = new ToolExecutor({
+          logger: testLogger,
+          tools: { useSlackApi: { ...tools.useSlackApi, execute } },
+          modelMessages: [],
+          sessionId: 'test',
+          validateInput: true,
+        });
+        const call = calls[0];
+        assert(call);
+        const dispatched = await executor.execute({
+          executionId: call.toolCallId,
+          name: call.toolName,
+          input: JSON.parse(JSON.stringify(call.input)),
+        });
+        expect(dispatched.status).toBe('success');
+        expect(execute.mock.calls[0]?.[0]).toEqual(args);
+        // Required original fields are still checked by the execution layer.
+        expect(
+          (
+            await executor.execute({
+              executionId: 'invalid',
+              name: call.toolName,
+              input: {},
+            })
+          ).status,
+        ).toBe('error');
+        expect(execute).toHaveBeenCalledTimes(1);
+      }
+      expect(requests).toHaveLength(2);
+      expect(inputSchema).toEqual(before);
+      for (const request of requests) {
+        const declarations = request.tools.flatMap(
+          (tool) => tool.functionDeclarations,
+        );
+        expect(declarations.map((tool) => tool.name)).toEqual([
+          'useSlackApi',
+          'ordinary',
+        ]);
+        expect(declarations[1]?.parametersJsonSchema).toEqual(ordinarySchema);
+        const sent = declarations[0]?.parametersJsonSchema;
+        assert(sent);
+        expect(sent.properties).toEqual(inputSchema.properties);
+        expect(sent.required).toEqual(inputSchema.required);
+        expect(sent.additionalProperties).toBe(false);
+        const defs = sent.$defs as Record<string, { anyOf: unknown[] }>;
+        expect(Object.keys(defs)).toEqual(['__schema0', '__schema1']);
+        for (const name of ['__schema0', '__schema1']) {
+          expect(defs[name]).toEqual({
+            anyOf: [
+              { type: 'string' },
+              { type: 'number' },
+              { type: 'boolean' },
+              { type: 'null' },
+              { type: 'array', items: {} },
+              {
+                type: 'object',
+                propertyNames: { type: 'string' },
+                additionalProperties: true,
+              },
+            ],
+          });
+        }
+        // All remaining refs lead into a definition containing no further refs:
+        // neither required nor optional reference cycles can survive on the wire.
+        expect(JSON.stringify(defs)).not.toContain('"$ref"');
+      }
+    },
+  );
+
+  it('keeps Anthropic recursive declarations and native arguments unchanged', async () => {
+    let request: { tools: { input_schema: unknown }[] } | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url, init) => {
+        request = JSON.parse(init.body);
+        return Response.json({
+          id: 'message',
+          type: 'message',
+          role: 'assistant',
+          model: 'claude-sonnet-4-5',
+          content: [
+            { type: 'tool_use', id: 'call', name: 'useSlackApi', input: args },
+          ],
+          stop_reason: 'tool_use',
+          stop_sequence: null,
+          usage: { input_tokens: 1, output_tokens: 1 },
+        });
+      }),
+    );
+    const result = await generateText({
+      model: model('anthropic', 'claude-sonnet-4-5'),
+      prompt: 'Send a Slack message',
+      maxRetries: 0,
+      tools: { useSlackApi: { inputSchema: jsonSchema(inputSchema) } },
+    });
+    expect(request?.tools[0]?.input_schema).toEqual(inputSchema);
+    expect(result.toolCalls[0]?.input).toEqual(args);
+  });
+});
 
 describe('Google JSON tool result references (KLEX-61)', () => {
   const ref = '#/$defs/__schema0';

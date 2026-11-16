@@ -1,3 +1,5 @@
+import type { Duplex } from 'node:stream';
+
 /**
  * Provider-independent desktop contract. Coordinates are physical screen
  * pixels; the service maps them to and from the model-facing screenshot space.
@@ -42,9 +44,30 @@ export interface LaunchOptions {
   cwd?: string;
 }
 
-export interface DesktopBackend {
-  /** Rejects when the display or required tooling is unavailable. */
-  probe(): Promise<ScreenSize>;
+/** What a desktop can do right now. Tools and streaming follow this alone. */
+export interface DesktopCapabilities {
+  /** Screenshots and input work: the desktop_* tools are offered. */
+  computerUse: boolean;
+  /** An RFB source can be opened: the desktop is offered to Cloud viewers. */
+  stream: boolean;
+  /** Physical screen size; set whenever either capability is. */
+  screen?: ScreenSize;
+}
+
+export const NO_DESKTOP: DesktopCapabilities = {
+  computerUse: false,
+  stream: false,
+};
+
+/**
+ * One platform's desktop: computer use and the stream source. Implementations
+ * must satisfy test/desktop-provider-contract.ts.
+ */
+export interface DesktopProvider {
+  /** Never rejects; an unusable desktop reports `NO_DESKTOP`. */
+  probe(): Promise<DesktopCapabilities>;
+  /** Current physical size, re-read before input so resolution changes apply. */
+  screenSize(): Promise<ScreenSize>;
   capture(options: CaptureOptions): Promise<Buffer>;
   click(
     point: Point,
@@ -64,4 +87,9 @@ export interface DesktopBackend {
   listWindows(): Promise<DesktopWindow[]>;
   focusWindow(id: string): Promise<void>;
   launch(options: LaunchOptions): Promise<{ pid: number }>;
+  /**
+   * Opens a new connection to an RFB 3.x server for one viewer. It must allow
+   * shared sessions and security type None. Rejects when `stream` is false.
+   */
+  openStream(): Promise<Duplex>;
 }

@@ -45,10 +45,16 @@ async function main(): Promise<void> {
     });
   }
   if (result.action === 'serve' && result.mode === 'local') {
-    const { startMachineServer } = await import('./server.js');
+    const [{ startMachineServer }, { desktopFromEnvironment }] =
+      await Promise.all([
+        import('./server.js'),
+        import('./desktop/platform/index.js'),
+      ]);
+    const desktop = desktopFromEnvironment();
     await startMachineServer(result.config, {
       dataDir: result.dataDir,
       omitHostDetails: result.omitHostDetails,
+      ...(desktop ? { desktop } : {}),
     });
     return;
   }
@@ -68,7 +74,7 @@ async function main(): Promise<void> {
     import('./cloud/runtime.js'),
     import('./cloud/state.js'),
     import('./mcp.js'),
-    import('./desktop/index.js'),
+    import('./desktop/platform/index.js'),
   ]);
   const desktop = desktopFromEnvironment();
   const enrollment = await loadMachineEnrollment(result.dataDir);
@@ -104,16 +110,7 @@ async function main(): Promise<void> {
     omitHostDetails: result.omitHostDetails,
     version: packageVersion(),
     logger,
-    ...(desktop
-      ? {
-          desktop: {
-            service: desktop,
-            ...(process.env.KLEX_MACHINE_VNC_SOCKET
-              ? { vncSocketPath: process.env.KLEX_MACHINE_VNC_SOCKET }
-              : {}),
-          },
-        }
-      : {}),
+    ...(desktop ? { desktop: { service: desktop } } : {}),
   }).catch(async (error: unknown) => {
     try {
       await router.close();

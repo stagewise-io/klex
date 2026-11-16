@@ -2,6 +2,7 @@ import { serve } from '@hono/node-server';
 import { createMcpHonoApp } from '@modelcontextprotocol/hono';
 
 import type { RuntimeConfig } from './config.js';
+import type { DesktopService } from './desktop/index.js';
 import { createMachineLogger, type MachineLogger } from './logger.js';
 import { createMachineMcp, type MachineMcp } from './mcp.js';
 import {
@@ -25,6 +26,7 @@ export interface MachineServerOptions {
   omitHostDetails?: boolean;
   /** Directory for persisted notification state. Memory-only when omitted. */
   dataDir?: string;
+  desktop?: DesktopService;
 }
 
 export function createMachineApp(mcp: MachineMcp, host = '127.0.0.1') {
@@ -52,6 +54,7 @@ export async function startMachineServer(
       notifications: store,
       logger,
       omitHostDetails: options.omitHostDetails,
+      ...(options.desktop ? { desktop: options.desktop } : {}),
     });
   }
   const app = createMachineApp(mcp, config.host);

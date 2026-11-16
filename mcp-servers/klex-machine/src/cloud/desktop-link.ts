@@ -1,4 +1,4 @@
-import { connect, type Socket } from 'node:net';
+import type { Duplex } from 'node:stream';
 
 import WebSocket from 'ws';
 
@@ -6,7 +6,6 @@ import type { DesktopService } from '../desktop/index.js';
 import { RfbClientFilter, RfbProtocolError } from '../desktop/index.js';
 import { type MachineLogger, silentMachineLogger } from '../logger.js';
 
-export const DEFAULT_VNC_SOCKET_PATH = '/run/klex/vnc.sock';
 export const MAX_DESKTOP_STREAMS = 4;
 
 const PROTOCOL_VERSION = 1;
@@ -38,11 +37,10 @@ export interface DesktopLinkOptions {
   invalidateToken(): void;
   desktop: DesktopService;
   machineVersion: string;
-  vncSocketPath?: string;
   logger?: MachineLogger;
   maxStreams?: number;
   /** Test seams. */
-  connectUnix?: (path: string) => Socket;
+  availabilityPollMs?: number;
   random?: () => number;
 }
 
@@ -59,14 +57,14 @@ interface Stream {
 /**
  * The daemon's outbound desktop link to Cloud: one control WebSocket for the
  * control lease and stream requests, and one WebSocket per viewer stream that
- * relays RFB to the local Xvnc Unix socket. See the desktop stream protocol.
+ * relays RFB to the provider's stream source. See the desktop stream protocol.
+ * The desktop is offered only while the provider reports `stream`.
  */
 export function startDesktopLink(options: DesktopLinkOptions): DesktopLink {
   const logger = options.logger ?? silentMachineLogger;
   const lease = options.desktop.lease;
   const maxStreams = options.maxStreams ?? MAX_DESKTOP_STREAMS;
-  const vncSocketPath = options.vncSocketPath ?? DEFAULT_VNC_SOCKET_PATH;
-  const connectUnix = options.connectUnix ?? ((path: string) => connect(path));
+  const availabilityPollMs = options.availabilityPollMs ?? AVAILABILITY_POLL_MS;
   const random = options.random ?? Math.random;
   const base = toWebSocketBase(options.cloudBaseUrl);
   const streams = new Map<string, Stream>();
@@ -95,16 +93,17 @@ export function startDesktopLink(options: DesktopLinkOptions): DesktopLink {
     return Math.round(ceiling / 2 + (random() * ceiling) / 2);
   };
 
+  /** Stops offering the desktop until a fresh probe reports `stream` again. */
+  const withdraw = () => {
+    options.desktop.invalidate();
+    control?.terminate();
+  };
+
   async function run(): Promise<void> {
     if (closed) return;
-    let screen: Awaited<ReturnType<DesktopService['screenSize']>>;
-    try {
-      screen = await options.desktop.screenSize();
-    } catch {
-      screen = undefined;
-    }
-    if (!screen) {
-      schedule(AVAILABILITY_POLL_MS);
+    const { stream, screen } = await options.desktop.capabilities();
+    if (!stream || !screen) {
+      schedule(availabilityPollMs);
       return;
     }
     let token: string;
@@ -237,7 +236,7 @@ export function startDesktopLink(options: DesktopLinkOptions): DesktopLink {
     if (streams.has(streamId)) return;
     if (streams.size >= maxStreams) return fail('too_many_streams');
     let finished = false;
-    let vnc: Socket | undefined;
+    let vnc: Duplex | undefined;
     let ws: WebSocket | undefined;
     let filter: RfbClientFilter | undefined;
     let markDone!: () => void;
@@ -269,23 +268,22 @@ export function startDesktopLink(options: DesktopLinkOptions): DesktopLink {
     };
     streams.set(streamId, { close, done });
 
-    if (!(await options.desktop.available().catch(() => false)))
-      return close(1000, 'desktop_unavailable');
-    if (finished) return;
     try {
-      vnc = await connectVnc(connectUnix, vncSocketPath);
+      vnc = await options.desktop.openStream();
     } catch (error) {
       logger.warn(
         { error: message(error) },
-        'Desktop VNC socket is unreachable',
+        'Desktop stream source is unreachable',
       );
-      return close(1000, 'desktop_unavailable');
+      close(1000, 'desktop_unavailable');
+      withdraw();
+      return;
     }
     if (finished) {
       vnc.destroy();
       return;
     }
-    // Keep reading until the stream opens so a dropped Xvnc is noticed; it only
+    // Keep reading until the stream opens so a dropped source is noticed; it only
     // sends its 12-byte version before the viewer answers.
     const early: Buffer[] = [];
     let earlyBytes = 0;
@@ -336,7 +334,7 @@ export function startDesktopLink(options: DesktopLinkOptions): DesktopLink {
     });
     socket.on('open', () => {
       clearTimeout(connectTimer);
-      const local = vnc as Socket;
+      const local = vnc as Duplex;
       const relay = new RfbClientFilter();
       filter = relay;
       logger.info({ streamId }, 'Desktop stream opened');
@@ -409,20 +407,6 @@ export function startDesktopLink(options: DesktopLinkOptions): DesktopLink {
       await Promise.all([loop, ...closingStreams]);
     },
   };
-}
-
-function connectVnc(
-  connectUnix: (path: string) => Socket,
-  path: string,
-): Promise<Socket> {
-  return new Promise((resolve, reject) => {
-    const socket = connectUnix(path);
-    socket.once('connect', () => {
-      socket.off('error', reject);
-      resolve(socket);
-    });
-    socket.once('error', reject);
-  });
 }
 
 function toWebSocketBase(cloudBaseUrl: string): string {

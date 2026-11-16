@@ -10,11 +10,7 @@ import {
   registerPushNotificationsServer,
 } from '@stagewise/mcp-extension-push-notifications';
 
-import {
-  type DesktopService,
-  desktopFromEnvironment,
-  registerDesktopTools,
-} from './desktop/index.js';
+import { type DesktopService, registerDesktopTools } from './desktop/index.js';
 import {
   FilesystemService,
   MachinePathResolver,
@@ -42,7 +38,7 @@ export interface MachineMcpOptions {
   logger?: MachineLogger;
   /** Skip device detection and advertise the generic machine icon. */
   omitHostDetails?: boolean;
-  /** Graphical desktop. Detected from `DISPLAY` when omitted; `null` disables it. */
+  /** Graphical desktop, from the platform provider the entry point picked. */
   desktop?: DesktopService | null;
 }
 
@@ -72,10 +68,7 @@ class MachineMcpModule implements MachineMcp {
     const logger = options.logger ?? silentMachineLogger;
     const store = options.notifications ?? createNotificationStore({ logger });
     this.#store = store;
-    this.#desktop =
-      options.desktop === null
-        ? undefined
-        : (options.desktop ?? desktopFromEnvironment());
+    this.#desktop = options.desktop ?? undefined;
     this.#ownsStore = !options.notifications;
     this.#unwatchDesktop =
       this.#desktop?.lease.onChange((change) => {
@@ -133,7 +126,7 @@ class MachineMcpModule implements MachineMcp {
         const pushNotifications =
           requestCapabilities.getStore()?.pushNotifications === true;
         const desktop =
-          this.#desktop && (await this.#desktop.available())
+          this.#desktop && (await this.#desktop.capabilities()).computerUse
             ? this.#desktop
             : undefined;
         const server = new McpServer(

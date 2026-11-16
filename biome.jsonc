@@ -66,6 +66,63 @@
       }
     }
   },
+  "overrides": [
+    {
+      // Desktop platform wall: only the entry point picks a provider.
+      "includes": [
+        "mcp-servers/klex-machine/src/**",
+        "!mcp-servers/klex-machine/src/index.ts",
+        "!mcp-servers/klex-machine/src/desktop/platform/**"
+      ],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["**/platform", "**/platform/**"],
+                    "message": "Desktop platform code is reached only through DesktopProvider; see mcp-servers/klex-machine/test/desktop-boundary.test.ts."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "mcp-servers/klex-machine/src/desktop/*.ts",
+        "mcp-servers/klex-machine/src/cloud/desktop-link.ts"
+      ],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": {
+                  "node:child_process": "Native desktop access belongs in src/desktop/platform/.",
+                  "node:net": "Native desktop access belongs in src/desktop/platform/.",
+                  "node:fs": "Native desktop access belongs in src/desktop/platform/.",
+                  "node:fs/promises": "Native desktop access belongs in src/desktop/platform/.",
+                  "node:os": "Native desktop access belongs in src/desktop/platform/."
+                },
+                "patterns": [
+                  {
+                    "group": ["**/platform", "**/platform/**"],
+                    "message": "Desktop platform code is reached only through DesktopProvider; see mcp-servers/klex-machine/test/desktop-boundary.test.ts."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
   "css": {
     "parser": {
       "tailwindDirectives": true

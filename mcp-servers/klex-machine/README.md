@@ -84,6 +84,27 @@ The template must provide Node.js 24 or newer, a writable owner-only data direct
 
 Relative filesystem paths and new shell sessions start from the configured working directory. Absolute paths remain unrestricted.
 
+## Desktop
+
+On Linux, when `DISPLAY` points at a reachable X server and `xdotool` and ImageMagick `import` are installed, the machine also advertises `desktop_*` tools: `desktop_screenshot`, `desktop_zoom`, `desktop_click`, `desktop_drag`, `desktop_move`, `desktop_scroll`, `desktop_type`, `desktop_key`, `desktop_list_windows`, `desktop_focus_window` and `desktop_launch`. The names and arguments are Klex-owned and provider-independent, so any vision model can drive them and another backend can implement the same contract. Set `KLEX_MACHINE_DESKTOP=off` to never advertise them. Without a display the tools are hidden; a failed probe is retried after 10 seconds.
+
+Screenshots fit a 1280×800 box and every coordinate uses screenshot pixels, so a larger screen is scaled transparently. Run the display at 1280×800 to avoid scaling. Screenshots are JPEG by default and come back as MCP image content plus `width`, `height` and the physical `screen` size. Action tools return a screenshot only when called with `screenshot: true`. Clients that cannot show images in tool results can read the `desktop://screen` resource instead.
+
+Input is serialized per display and passes through a `DesktopInputControl` hook before it runs. The default allows the agent. A human-takeover lease can reject with `DesktopInputDeniedError`, which tools report as `{"error":{"code":"desktop_controlled_by_user",...}}`. Screenshots, zoom and window lists are never gated. Commands run through `execFile` without a shell, and key names are validated before they reach `xdotool`.
+
+The tools act with the daemon's OS user on that user's display. Anyone who can drive the desktop can read everything that user can, including the machine identity in the data directory.
+
+`examples/desktop` contains a spike image: TigerVNC `Xvnc` on a Unix socket (no TCP listener), XFCE, Google Chrome, fonts, supervisord, and this package's build. `smoke.mjs` drives every tool against the local-mode daemon:
+
+```sh
+pnpm --filter @klex/machine build
+docker build -f mcp-servers/klex-machine/examples/desktop/Dockerfile -t klex-desktop-spike mcp-servers/klex-machine
+docker run -d --name klex-desktop --memory 8g --cpus 4 --shm-size 1g klex-desktop-spike
+docker exec klex-desktop node /opt/klex-machine/examples/smoke.mjs
+```
+
+To enroll the container into Cloud, pipe the code from your setup command into `klex-machine cloud enroll --enrollment-code-file - --no-serve --cloud-base-url <url>` inside it. Supervisord then starts enrolled mode. The image disables Chrome's sandbox because Docker's default seccomp profile blocks its namespaces; treat the container as the boundary.
+
 ## Watchers and notifications
 
 Clients that declare `io.stagewise/push-notifications` in per-request client capabilities can use `createWatcher`, `listWatchers`, and `cancelWatcher`. These tools and the `createShellSession.notifyOnExit` field are not advertised to other clients. The standard push extension remains discoverable by everyone.

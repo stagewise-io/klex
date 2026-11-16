@@ -17,5 +17,6 @@ export default defineConfig({
       ),
     },
   },
-  test: {},
+  // Keep tool lists deterministic on developer machines with a DISPLAY.
+  test: { env: { KLEX_MACHINE_DESKTOP: 'off' } },
 });

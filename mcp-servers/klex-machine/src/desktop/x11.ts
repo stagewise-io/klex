@@ -353,8 +353,10 @@ export class X11DesktopBackend implements DesktopBackend {
   }
 }
 
+// No --sync: it waits for pointer motion, so moving to the current position
+// blocks until the command times out. XTest keeps the move ahead of later input.
 function moveArgs(point: Point): string[] {
-  return ['mousemove', '--sync', String(point.x), String(point.y)];
+  return ['mousemove', String(point.x), String(point.y)];
 }
 
 function parseGeometry(output: string): DesktopWindow['bounds'] | undefined {

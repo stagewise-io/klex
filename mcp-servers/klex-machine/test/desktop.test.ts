@@ -217,18 +217,7 @@ describe('X11DesktopBackend', () => {
       ['xdotool', ['keydown', 'ctrl', 'keydown', 'shift']],
       [
         'xdotool',
-        [
-          'mousemove',
-          '--sync',
-          '5',
-          '6',
-          'click',
-          '--repeat',
-          '2',
-          '--delay',
-          '80',
-          '3',
-        ],
+        ['mousemove', '5', '6', 'click', '--repeat', '2', '--delay', '80', '3'],
       ],
       ['xdotool', ['keyup', 'shift', 'keyup', 'ctrl']],
       [
@@ -251,18 +240,7 @@ describe('X11DesktopBackend', () => {
       ],
       [
         'xdotool',
-        [
-          'mousemove',
-          '--sync',
-          '1',
-          '2',
-          'click',
-          '--repeat',
-          '4',
-          '--delay',
-          '30',
-          '5',
-        ],
+        ['mousemove', '1', '2', 'click', '--repeat', '4', '--delay', '30', '5'],
       ],
     ]);
   });

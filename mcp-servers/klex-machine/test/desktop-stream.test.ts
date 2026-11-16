@@ -69,6 +69,7 @@ describe('RfbClientFilter', () => {
     expect(out).toEqual(
       Buffer.concat([VERSION, Buffer.from([1]), Buffer.from([1]), UPDATE]),
     );
+    expect(filter.input).toEqual({ forwarded: 0, dropped: 3 });
   });
 
   it('forwards input while allowed and reassembles split messages', () => {
@@ -79,6 +80,7 @@ describe('RfbClientFilter', () => {
     for (const byte of stream)
       forwarded.push(filter.push(Buffer.from([byte]), true));
     expect(Buffer.concat(forwarded)).toEqual(stream);
+    expect(filter.input).toEqual({ forwarded: 2, dropped: 0 });
   });
 
   it('parses variable-length messages', () => {

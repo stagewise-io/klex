@@ -135,6 +135,7 @@ export function startDesktopLink(options: DesktopLinkOptions): DesktopLink {
     });
     socket.on('open', () => {
       openedAt = Date.now();
+      logger.info('Desktop control connected');
       ping = setInterval(() => {
         if (Date.now() - lastPong > PONG_TIMEOUT_MS) socket.terminate();
         else socket.ping();
@@ -163,9 +164,11 @@ export function startDesktopLink(options: DesktopLinkOptions): DesktopLink {
     socket.on('error', (error) => {
       logger.debug({ error: message(error) }, 'Desktop control socket error');
     });
-    socket.on('close', () => {
+    socket.on('close', (code) => {
       clearInterval(ping);
       if (control === socket) control = undefined;
+      if (openedAt !== undefined)
+        logger.info({ code }, 'Desktop control disconnected');
       lease.disconnected();
       if (
         openedAt !== undefined &&
@@ -206,7 +209,12 @@ export function startDesktopLink(options: DesktopLinkOptions): DesktopLink {
         expiresAt: typeof msg.expiresAt === 'string' ? msg.expiresAt : null,
       });
       // An already-expired human lease is not enforced, so it is not acknowledged.
-      if (lease.state.mode === mode && typeof msg.revision === 'number')
+      if (lease.state.mode !== mode) {
+        logger.warn({ revision: msg.revision }, 'Ignored an expired lease');
+        return;
+      }
+      logger.info({ revision: msg.revision, mode }, 'Desktop lease applied');
+      if (typeof msg.revision === 'number')
         send({ type: 'lease.applied', revision: msg.revision });
       return;
     }
@@ -228,11 +236,16 @@ export function startDesktopLink(options: DesktopLinkOptions): DesktopLink {
     let finished = false;
     let vnc: Socket | undefined;
     let ws: WebSocket | undefined;
+    let filter: RfbClientFilter | undefined;
     const close = (code = 1000, reason?: StreamFailureReason) => {
       if (finished) return;
       finished = true;
       streams.delete(streamId);
       if (reason) fail(reason);
+      logger.info(
+        { streamId, code, reason, input: filter?.input },
+        'Desktop stream closed',
+      );
       vnc?.destroy();
       if (ws && ws.readyState !== WebSocket.CLOSED) {
         if (ws.readyState === WebSocket.OPEN) ws.close(code);
@@ -309,7 +322,9 @@ export function startDesktopLink(options: DesktopLinkOptions): DesktopLink {
     socket.on('open', () => {
       clearTimeout(connectTimer);
       const local = vnc as Socket;
-      const filter = new RfbClientFilter();
+      const relay = new RfbClientFilter();
+      filter = relay;
+      logger.info({ streamId }, 'Desktop stream opened');
       let paused = false;
       local.off('data', buffer);
       for (const chunk of early.splice(0)) socket.send(chunk, { binary: true });
@@ -330,7 +345,7 @@ export function startDesktopLink(options: DesktopLinkOptions): DesktopLink {
         if (!isBinary) return;
         let forward: Buffer;
         try {
-          forward = filter.push(
+          forward = relay.push(
             toBuffer(data),
             lease.allowsStreamInput(streamId),
           );

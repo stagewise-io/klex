@@ -20,6 +20,8 @@ type Phase = 'version' | 'security' | 'init' | 'messages';
 export class RfbClientFilter {
   #phase: Phase = 'version';
   #buffer: Buffer = Buffer.alloc(0);
+  /** Input messages forwarded and dropped so far. */
+  readonly input = { forwarded: 0, dropped: 0 };
 
   push(chunk: Buffer, allowInput: boolean): Buffer {
     this.#buffer =
@@ -80,7 +82,13 @@ export class RfbClientFilter {
         // Never let a viewer disconnect other clients with a non-shared init.
         return Buffer.from([1]);
       case 'messages':
-        return allowInput || !isInput(message) ? message : undefined;
+        if (!isInput(message)) return message;
+        if (!allowInput) {
+          this.input.dropped++;
+          return undefined;
+        }
+        this.input.forwarded++;
+        return message;
     }
   }
 }

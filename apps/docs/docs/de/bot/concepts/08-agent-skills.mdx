@@ -16,6 +16,8 @@ Klex macht verfügbare Skills für den Bot auffindbar und weist ihn an, vor eine
 
 Ein Bot kann aus seiner Tätigkeit Skills lernen. Skills können auch aus anderen Quellen stammen, etwa aus Vorlagen. Jeder Bot speichert seine Skills in seinem eigenen [Datenverzeichnis](/bot/concepts/data-directory). Ein Namespace und ein Name kennzeichnen jeden Skill, zum Beispiel `learning/project-status`.
 
+Wenn der Bot seinen aktiven Gesprächskontext verdichtet, kann er die daraus entfernten Aktivitäten auswerten und hilfreiche Erkenntnisse in Skills umwandeln. Das Lernen läuft im Hintergrund und kann Zeit brauchen. Nicht jedes Gespräch führt zu einem Skill.
+
 Jeder Skill wird als Datei `SKILL.md` unter `skills/{namespace}/{name}/` gespeichert. Die Datei enthält einen Namen, eine Beschreibung und einen Markdown-Hauptteil.
 
 <a id="review-and-manage-skills"></a>

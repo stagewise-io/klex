@@ -25,7 +25,7 @@ RUN useradd --create-home --uid 1001 --shell /bin/bash user \
 
 COPY package.json /opt/klex-machine/package.json
 RUN cd /opt/klex-machine \
-  && node -e "const p=require('./package.json');require('fs').writeFileSync('package.json',JSON.stringify({name:'klex-machine-runtime',private:true,type:'module',dependencies:{'node-pty':p.dependencies['node-pty']}}))" \
+  && node -e "const p=require('./package.json');require('fs').writeFileSync('package.json',JSON.stringify({name:'klex-machine-runtime',version:p.version,private:true,type:'module',dependencies:{'node-pty':p.dependencies['node-pty']}}))" \
   && npm install --omit=dev --no-audit --no-fund
 COPY dist/ /opt/klex-machine/dist/
 RUN chmod 0755 /opt/klex-machine/dist/index.js \

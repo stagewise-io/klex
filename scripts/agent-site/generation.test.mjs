@@ -89,9 +89,9 @@ it('filters docs aggregates and removes Markdown mirrors without removing HTML p
     await save('docs/index.mdx', '# Introduction');
     await save('docs/01-quickstart.mdx', '# Quickstart');
     await save('docs/02-architecture.mdx', '# Architecture');
-    await save('docs/bot/concepts/cognitive-architecture.mdx', '# Sessions');
+    await save('docs/bot/concepts/12-cognitive-architecture.mdx', '# Sessions');
     await save(
-      'docs/de/bot/concepts/cognitive-architecture.mdx',
+      'docs/de/bot/concepts/01-cognitive-architecture.mdx',
       '# Sitzungen',
     );
     // Blume route groups do not appear in the published URL.

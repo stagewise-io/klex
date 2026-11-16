@@ -96,6 +96,7 @@ export function startDesktopLink(options: DesktopLinkOptions): DesktopLink {
   /** Stops offering the desktop until a fresh probe reports `stream` again. */
   const withdraw = () => {
     options.desktop.invalidate();
+    for (const stream of [...streams.values()]) stream.close(1001);
     control?.terminate();
   };
 

@@ -631,12 +631,13 @@ describe('desktop link', () => {
       let capabilities: DesktopCapabilities = offline;
       const probe = vi.fn(async () => capabilities);
       const getToken = vi.fn(async () => 'machine-token');
+      let now = 0;
       link = startDesktopLink({
         cloudBaseUrl: cloud.url,
         getToken,
         invalidateToken: () => undefined,
         desktop: new DesktopService(fakeProvider(undefined, probe), {
-          now: () => probe.mock.calls.length * 10_000,
+          now: () => (now += 10_000),
         }),
         machineVersion: '1.2.3',
         availabilityPollMs: 5,

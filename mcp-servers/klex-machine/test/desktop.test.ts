@@ -178,6 +178,30 @@ describe('DesktopService', () => {
     await desktop.capabilities();
     expect(probe).toHaveBeenCalledTimes(4);
   });
+
+  it('shares a slow probe and starts its cache period when it settles', async () => {
+    let now = 0;
+    let settle!: () => void;
+    const provider = fakeProvider();
+    const probe = vi.fn<DesktopProvider['probe']>(
+      () =>
+        new Promise((resolve) => {
+          settle = () => resolve(NO_DESKTOP);
+        }),
+    );
+    provider.probe = probe;
+    const desktop = new DesktopService(provider, { now: () => now });
+
+    const first = desktop.capabilities();
+    now = 15_000;
+    const second = desktop.capabilities();
+    expect(probe).toHaveBeenCalledTimes(1);
+    settle();
+    expect(await first).toEqual(await second);
+    now = 20_000;
+    await desktop.capabilities();
+    expect(probe).toHaveBeenCalledTimes(1);
+  });
 });
 
 interface RpcResult {

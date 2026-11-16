@@ -27,6 +27,8 @@ Por ejemplo: «Cada lunes a las 09:00 Europe/Berlin, resume las incidencias abie
 
 Un Bot puede utilizar sus tareas internas para trabajo a corto plazo y recordatorios puntuales. No son un calendario recurrente: utilice un servicio conectado adecuado para programaciones repetidas.
 
+Los administradores pueden listar y crear tareas con `GET` y `POST /v1/todos`, y modificar o eliminar una con `PATCH` o `DELETE /v1/todos/{id}`. La lista se comparte entre las sesiones del Bot; este ve los cambios en su siguiente paso. La hora de un recordatorio debe ser futura e incluir un desplazamiento UTC o `Z`. Compruebe la disponibilidad de las rutas en el documento OpenAPI del Bot y proteja el acceso como se describe en [Revisar la actividad del Bot](/bot/guides/observability#access-the-local-admin-api).
+
 Un Bot también puede aprender de la experiencia un procedimiento reutilizable como [Agent Skill](/bot/concepts/agent-skills). Revise su trabajo y corrija los errores; el aprendizaje no garantiza resultados correctos en ejecuciones posteriores.
 
 Mantenga disponibles el Bot y sus conexiones cuando llegue la hora prevista. Una programación no demuestra que se haya completado una tarea, así que compruebe los resultados importantes y siga su proceso habitual de supervisión o escalado.

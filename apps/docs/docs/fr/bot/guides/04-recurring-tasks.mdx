@@ -27,6 +27,8 @@ Par exemple : « Chaque lundi à 09:00 Europe/Berlin, résume les tickets ouvert
 
 Un Bot peut utiliser ses tâches internes pour le travail à court terme et les rappels ponctuels. Elles ne constituent pas un calendrier récurrent : utilisez un service connecté adapté pour les tâches répétées.
 
+Les administrateurs peuvent lister et créer des tâches avec `GET` et `POST /v1/todos`, puis modifier ou supprimer une tâche avec `PATCH` ou `DELETE /v1/todos/{id}`. La liste est partagée entre les sessions du Bot ; il voit les changements à sa prochaine étape. Une heure de rappel doit être future et inclure un décalage UTC ou `Z`. Vérifiez la disponibilité des routes dans le document OpenAPI du Bot et protégez l’accès comme indiqué dans [Examiner l’activité du Bot](/bot/guides/observability#access-the-local-admin-api).
+
 Un Bot peut aussi apprendre de son expérience une procédure réutilisable sous forme d’[Agent Skill](/bot/concepts/agent-skills). Examinez son travail et corrigez les erreurs : l’apprentissage ne garantit pas l’exactitude des exécutions futures.
 
 Gardez le Bot et ses connexions disponibles à l’heure prévue. Un calendrier ne prouve pas qu’une tâche a été accomplie : vérifiez les résultats importants et appliquez votre processus habituel de suivi ou d’escalade.

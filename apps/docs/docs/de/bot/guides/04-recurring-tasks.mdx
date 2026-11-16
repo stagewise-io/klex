@@ -27,6 +27,8 @@ Zum Beispiel: „Fasse jeden Montag um 09:00 Uhr Europe/Berlin die offenen Proje
 
 Ein Bot kann seine internen To-dos für kurzfristige Arbeit und einmalige Erinnerungen nutzen. Sie sind kein Kalender für wiederkehrende Termine: Verwenden Sie dafür einen geeigneten verbundenen Dienst.
 
+Administratoren können To-dos über `GET` und `POST /v1/todos` auflisten und erstellen sowie über `PATCH` oder `DELETE /v1/todos/{id}` ändern oder löschen. Die Liste wird von allen Sessions des Bots geteilt; Änderungen sieht er bei seinem nächsten Schritt. Eine Erinnerungszeit muss in der Zukunft liegen und einen UTC-Offset oder `Z` enthalten. Prüfen Sie im OpenAPI-Dokument des Bots, ob die Routen verfügbar sind, und sichern Sie den Zugriff wie unter [Bot-Aktivität prüfen](/bot/guides/observability#access-the-local-admin-api) beschrieben.
+
 Ein Bot kann aus Erfahrung auch ein wiederverwendbares Vorgehen als [Agent Skill](/bot/concepts/agent-skills) lernen. Prüfen Sie seine Arbeit und korrigieren Sie Fehler; Lernen garantiert keine korrekten Ergebnisse bei späteren Ausführungen.
 
 Halten Sie den Bot und seine Verbindungen zum geplanten Zeitpunkt verfügbar. Ein Zeitplan belegt nicht, dass eine Aufgabe abgeschlossen wurde. Prüfen Sie deshalb wichtige Ergebnisse und nutzen Sie Ihre üblichen Überwachungs- oder Eskalationswege.

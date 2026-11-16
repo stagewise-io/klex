@@ -25,6 +25,7 @@ import {
 
 export const MAX_PENDING_EVENTS_PER_PRINCIPAL = 256;
 export const PENDING_EVENT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+export const MAX_TRANSIENT_EVENTS_PER_PRINCIPAL = 32;
 const MAX_PAGE_SIZE = 1000;
 const DEFAULT_PAGE_SIZE = 100;
 const STATE_VERSION = 1;
@@ -53,6 +54,11 @@ export interface NotificationStore {
   track(item: TrackedItem): Promise<void>;
   /** Moves a running item to pending. Persists, then notifies listeners. */
   complete(id: string, event: PushNotification): Promise<void>;
+  /**
+   * Queues an event that only matters while this process runs. It is never
+   * persisted and is dropped on restart.
+   */
+  publish(principalId: string, event: PushNotification): void;
   /** Removes a record without emitting (cancel or explicit close). */
   forget(id: string): Promise<void>;
   pending(principalId: string, limit?: number): GetEventsResult;
@@ -88,6 +94,7 @@ class FileNotificationStore implements NotificationStore {
   readonly #directory: string | undefined;
   readonly #records = new Map<string, NotificationRecord>();
   readonly #listeners = new Map<string, Set<NotificationListener>>();
+  readonly #transient = new Map<string, PushNotification[]>();
   #writes: Promise<void> = Promise.resolve();
   #operations: Promise<void> = Promise.resolve();
   #lockPath: string | undefined;
@@ -120,7 +127,7 @@ class FileNotificationStore implements NotificationStore {
     if (this.#records.has(item.id))
       throw new Error(`Duplicate notification record: ${item.id}`);
     if (
-      this.#pendingFor(item.principalId).length >=
+      this.#pendingFor(item.principalId, false).length >=
       MAX_PENDING_EVENTS_PER_PRINCIPAL
     ) {
       throw new TooManyPendingNotificationsError();
@@ -159,7 +166,20 @@ class FileNotificationStore implements NotificationStore {
     }
     // Cancellation or acknowledgement during the write suppresses live delivery.
     if (this.#records.get(id) !== pending) return;
-    for (const listener of this.#listeners.get(record.principalId) ?? []) {
+    this.#notify(record.principalId, event);
+  }
+
+  publish(principalId: string, event: PushNotification): void {
+    this.#assertOpen();
+    const events = this.#transient.get(principalId) ?? [];
+    events.push(structuredClone(event));
+    if (events.length > MAX_TRANSIENT_EVENTS_PER_PRINCIPAL) events.shift();
+    this.#transient.set(principalId, events);
+    this.#notify(principalId, event);
+  }
+
+  #notify(principalId: string, event: PushNotification): void {
+    for (const listener of this.#listeners.get(principalId) ?? []) {
       try {
         listener(structuredClone(event));
       } catch (error) {
@@ -209,6 +229,12 @@ class FileNotificationStore implements NotificationStore {
     eventIds: readonly string[],
   ): Promise<void> {
     const ids = new Set(eventIds);
+    const transient = this.#transient.get(principalId);
+    if (transient) {
+      const kept = transient.filter((event) => !ids.has(event.eventId));
+      if (kept.length > 0) this.#transient.set(principalId, kept);
+      else this.#transient.delete(principalId);
+    }
     const removed = new Map<string, NotificationRecord>();
     for (const [id, record] of this.#records) {
       if (
@@ -258,6 +284,7 @@ class FileNotificationStore implements NotificationStore {
     await this.#operations;
     await this.#writes;
     this.#listeners.clear();
+    this.#transient.clear();
     if (this.#lockPath) {
       await rm(this.#lockPath, { force: true });
       this.#lockPath = undefined;
@@ -461,13 +488,18 @@ class FileNotificationStore implements NotificationStore {
     return join(this.#directory as string, 'state.json');
   }
 
-  #pendingFor(principalId: string): PushNotification[] {
+  #pendingFor(
+    principalId: string,
+    includeTransient = true,
+  ): PushNotification[] {
     const events: PushNotification[] = [];
     for (const record of this.#records.values()) {
       if (record.principalId === principalId && record.state === 'pending') {
         events.push(record.event);
       }
     }
+    if (includeTransient)
+      events.push(...(this.#transient.get(principalId) ?? []));
     return events.sort((left, right) =>
       left.createdAt.localeCompare(right.createdAt),
     );

@@ -8,11 +8,11 @@ import type {
   ScreenSize,
   ScrollDirection,
 } from './backend.js';
-import {
-  allowAgentDesktopInput,
-  type DesktopInputAction,
-  type DesktopInputControl,
+import type {
+  DesktopInputAction,
+  DesktopInputControl,
 } from './input-control.js';
+import { DesktopControlLease } from './lease.js';
 
 /** Screenshots fit this box so model-facing coordinates stay stable. */
 export const MAX_SCREENSHOT_SIZE: ScreenSize = { width: 1280, height: 800 };
@@ -35,6 +35,9 @@ export interface DesktopZoom extends DesktopScreenshot {
 }
 
 export interface DesktopServiceOptions {
+  /** Defaults to a fresh lease, which also gates agent input. */
+  lease?: DesktopControlLease;
+  /** Replaces the lease as the agent input gate. */
   inputControl?: DesktopInputControl;
   maxScreenshotSize?: ScreenSize;
   now?: () => number;
@@ -42,6 +45,7 @@ export interface DesktopServiceOptions {
 }
 
 export class DesktopService {
+  readonly lease: DesktopControlLease;
   readonly #backend: DesktopBackend;
   readonly #inputControl: DesktopInputControl;
   readonly #max: ScreenSize;
@@ -54,7 +58,8 @@ export class DesktopService {
 
   constructor(backend: DesktopBackend, options: DesktopServiceOptions = {}) {
     this.#backend = backend;
-    this.#inputControl = options.inputControl ?? allowAgentDesktopInput;
+    this.lease = options.lease ?? new DesktopControlLease();
+    this.#inputControl = options.inputControl ?? this.lease;
     this.#max = options.maxScreenshotSize ?? MAX_SCREENSHOT_SIZE;
     this.#now = options.now ?? Date.now;
     this.#sleep =
@@ -76,6 +81,11 @@ export class DesktopService {
       );
     }
     return (await this.#probe) !== undefined;
+  }
+
+  /** Physical screen size from the latest probe, if a display is reachable. */
+  async screenSize(): Promise<ScreenSize | undefined> {
+    return (await this.available()) ? this.#screen : undefined;
   }
 
   screenshot(format: ImageFormat = 'jpeg'): Promise<DesktopScreenshot> {

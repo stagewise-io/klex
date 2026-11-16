@@ -60,6 +60,7 @@ async function main(): Promise<void> {
     { startCloudMachineRuntime },
     { loadMachineEnrollment },
     { createMachineMcp },
+    { desktopFromEnvironment },
   ] = await Promise.all([
     import('./cloud/auth.js'),
     import('./cloud/principal-router.js'),
@@ -67,7 +68,9 @@ async function main(): Promise<void> {
     import('./cloud/runtime.js'),
     import('./cloud/state.js'),
     import('./mcp.js'),
+    import('./desktop/index.js'),
   ]);
+  const desktop = desktopFromEnvironment();
   const enrollment = await loadMachineEnrollment(result.dataDir);
   const protectedResource = await loadProtectedResourceConfiguration(
     enrollment.oauthProtectedResourceUrl,
@@ -93,6 +96,7 @@ async function main(): Promise<void> {
         principalId,
         notifications,
         omitHostDetails: result.omitHostDetails,
+        desktop: desktop ?? null,
       }),
   );
   const runtime = await startCloudMachineRuntime(result.dataDir, router, {
@@ -100,6 +104,16 @@ async function main(): Promise<void> {
     omitHostDetails: result.omitHostDetails,
     version: packageVersion(),
     logger,
+    ...(desktop
+      ? {
+          desktop: {
+            service: desktop,
+            ...(process.env.KLEX_MACHINE_VNC_SOCKET
+              ? { vncSocketPath: process.env.KLEX_MACHINE_VNC_SOCKET }
+              : {}),
+          },
+        }
+      : {}),
   }).catch(async (error: unknown) => {
     try {
       await router.close();

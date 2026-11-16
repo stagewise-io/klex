@@ -1,0 +1,29 @@
+---
+title: La mémoire d’un bot Klex
+sidebar:
+  label: Mémoire
+description: Ce que stocke la mémoire d’un bot Klex, où elle se trouve et comment les administrateurs y accèdent.
+related:
+  - /bot/concepts/data-directory
+  - /bot/concepts/how-bots-work
+  - /cloud/hosted-vs-local
+---
+
+La mémoire d’un bot Klex stocke des **skills et des apprentissages**. Elle est gérée dans l’environnement propre du bot, avec les sessions actives qui assurent son fonctionnement.
+
+<a id="where-chats-and-memory-are-stored"></a>
+
+## Où sont stockées les conversations et la mémoire
+
+Les conversations et la mémoire sont stockées dans le répertoire de données du bot :
+
+- Pour un **bot hébergé dans le Cloud**, le répertoire se trouve dans l’environnement hébergé.
+- Pour un **bot auto-hébergé**, il se trouve dans le dossier local utilisé pour ses données.
+
+Toutes les données des bots hébergés dans le Cloud, y compris leur mémoire, sont chiffrées en transit et au repos.
+
+<a id="how-administrators-access-them"></a>
+
+## Comment les administrateurs y accèdent
+
+Les administrateurs peuvent accéder aux conversations et à la mémoire par l’Admin API du bot. Le tableau de bord Klex Cloud sert d’interface et de proxy inverse pour l’Admin API de chaque bot. Pour en savoir plus, consultez le [répertoire de données](/bot/concepts/data-directory).

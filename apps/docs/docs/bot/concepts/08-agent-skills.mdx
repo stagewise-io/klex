@@ -14,6 +14,8 @@ Klex makes available skills discoverable to the Bot and instructs it to load a m
 
 A Bot can learn skills from its activity. Skills can also come from other sources, such as templates. Each Bot stores its skills in its own [data directory](/bot/concepts/data-directory); skills are identified by a namespace and name, such as `learning/project-status`.
 
+When the Bot compresses its active conversation context, it can review the dropped activity and turn useful lessons into skills. Learning happens in the background and can take time; a conversation does not necessarily produce a skill.
+
 Each skill is stored as a `SKILL.md` file under `skills/{namespace}/{name}/`. The file contains a name, a description, and a Markdown body.
 
 ## Review and manage skills

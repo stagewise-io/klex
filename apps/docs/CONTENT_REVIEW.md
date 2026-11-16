@@ -71,6 +71,8 @@
 
 - **Instincts and dynamic effort on current main (`51b87ed9`):** `session/chat/extensions/effort/effort.ts` defaults absent effort configuration to shadow and skips certain simple greetings; `config/schema.ts` enables Instinct by default, and the classifier uses ordered Chat models when no Instinct model is selected. `cli-ui/screens/model-selection.tsx` exposes the Instincts purpose and states the Chat fallback. `provider-registry/effort-controls.md` explains that shadow classification can incur model cost without applying a main-model effort change; explicit settings can turn it off or opt into automatic mode. Check model pricing and usage; do not imply a cost or quality guarantee.
 
+- **Learning on current main (`51b87ed9`):** `session/chat/extensions/learning/learning.ts` starts the learning worker for the default session and triggers it after a committed context checkpoint. `learning-worker.ts` reviews activity through the dropped-message boundary in the background and can create, update, or remove learned skills. A run may produce no changes or fail; do not promise immediate learning or a skill for every conversation.
+
 ## Open questions: do not infer
 
 - Memory behavior beyond current skills and learnings: how memories are created or recalled, scope across chats/channels, and user/admin controls. Also unconfirmed: retention, deletion, backups, and exact file layout.

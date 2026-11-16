@@ -11,6 +11,11 @@ import {
 } from '@stagewise/mcp-extension-push-notifications';
 
 import {
+  type DesktopService,
+  desktopFromEnvironment,
+  registerDesktopTools,
+} from './desktop/index.js';
+import {
   FilesystemService,
   MachinePathResolver,
   SearchService,
@@ -36,6 +41,8 @@ export interface MachineMcpOptions {
   logger?: MachineLogger;
   /** Skip device detection and advertise the generic machine icon. */
   omitHostDetails?: boolean;
+  /** Graphical desktop. Detected from `DISPLAY` when omitted; `null` disables it. */
+  desktop?: DesktopService | null;
 }
 
 export interface MachineMcp {
@@ -53,6 +60,7 @@ class MachineMcpModule implements MachineMcp {
   readonly #ownsStore: boolean;
   readonly #unsubscribe: () => void;
   readonly #shellTracking = new Set<string>();
+  readonly #desktop: DesktopService | undefined;
 
   constructor(defaultCwd: string, options: MachineMcpOptions) {
     const paths = new MachinePathResolver(defaultCwd);
@@ -62,6 +70,10 @@ class MachineMcpModule implements MachineMcp {
     const logger = options.logger ?? silentMachineLogger;
     const store = options.notifications ?? createNotificationStore({ logger });
     this.#store = store;
+    this.#desktop =
+      options.desktop === null
+        ? undefined
+        : (options.desktop ?? desktopFromEnvironment());
     this.#ownsStore = !options.notifications;
     this.#shell = new ShellService(paths, undefined, {
       onExit: (info, output) => {
@@ -110,6 +122,10 @@ class MachineMcpModule implements MachineMcp {
       async () => {
         const pushNotifications =
           requestCapabilities.getStore()?.pushNotifications === true;
+        const desktop =
+          this.#desktop && (await this.#desktop.available())
+            ? this.#desktop
+            : undefined;
         const server = new McpServer(
           {
             name: 'klex-machine',
@@ -120,7 +136,7 @@ class MachineMcpModule implements MachineMcp {
           },
           {
             capabilities: {},
-            instructions: `UNRESTRICTED MACHINE ACCESS. Filesystem and shell operations run with the permissions of the server OS user. Relative paths resolve from ${defaultCwd}. Operating system: ${process.platform}.${pushNotifications ? ' Watcher outcomes and requested shell-exit notifications arrive as push notifications.' : ''}`,
+            instructions: `UNRESTRICTED MACHINE ACCESS. Filesystem and shell operations run with the permissions of the server OS user. Relative paths resolve from ${defaultCwd}. Operating system: ${process.platform}.${desktop ? ' A graphical desktop is available through the desktop_* tools.' : ''}${pushNotifications ? ' Watcher outcomes and requested shell-exit notifications arrive as push notifications.' : ''}`,
           },
         );
 
@@ -129,6 +145,7 @@ class MachineMcpModule implements MachineMcp {
           acknowledgeEvents: ({ eventIds }) =>
             store.acknowledge(principalId, eventIds),
         });
+        if (desktop) registerDesktopTools(server, desktop, principalId);
         if (pushNotifications) {
           server.registerTool(
             'createWatcher',

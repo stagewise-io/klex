@@ -1,0 +1,32 @@
+---
+title: Automatizar tareas recurrentes
+sidebar:
+  label: Tareas recurrentes
+description: Configure tareas repetidas con un servicio de planificación conectado e instrucciones claras.
+related:
+  - /bot/concepts/memory
+  - /bot/concepts/agent-skills
+  - /bot/guides/control-and-limits
+---
+
+Para las tareas recurrentes, utilice un calendario o servicio de planificación conectado que pueda enviar eventos al Bot. El servicio debe admitir la programación que necesita y ofrecer las funciones necesarias mediante su conexión MCP.
+
+<a id="set-up-a-routine"></a>
+
+## Configurar una rutina
+
+1. Conecte el servicio de planificación y autorice la cuenta del Bot. Compruebe que puede crear la programación y recibir sus eventos.
+2. Indique al Bot qué debe hacer, con qué frecuencia, en qué zona horaria y dónde debe enviar el resultado. Déle acceso a las aplicaciones y los datos necesarios.
+3. Pida al Bot que cree la programación y revísela en el servicio de planificación. Pruebe el flujo de trabajo y revise el resultado antes de depender de él.
+
+Por ejemplo: «Cada lunes a las 09:00 Europe/Berlin, resume las incidencias abiertas del proyecto y publica el resumen en nuestro canal de proyecto». El Bot necesita acceso a la fuente de incidencias y al canal de destino, además de una programación que funcione.
+
+<a id="reminders-and-learned-procedures"></a>
+
+## Recordatorios y procedimientos aprendidos
+
+Un Bot puede utilizar sus tareas internas para trabajo a corto plazo y recordatorios puntuales. No son un calendario recurrente: utilice un servicio conectado adecuado para programaciones repetidas.
+
+Un Bot también puede aprender de la experiencia un procedimiento reutilizable como [Agent Skill](/bot/concepts/agent-skills). Revise su trabajo y corrija los errores; el aprendizaje no garantiza resultados correctos en ejecuciones posteriores.
+
+Mantenga disponibles el Bot y sus conexiones cuando llegue la hora prevista. Una programación no demuestra que se haya completado una tarea, así que compruebe los resultados importantes y siga su proceso habitual de supervisión o escalado.

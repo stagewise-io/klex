@@ -2,6 +2,23 @@
 
 All notable Klex changes are documented here.
 
+## 0.36.0 (2026-11-16)
+
+### Features
+
+- add admin API for bot todos (525c72f)
+- add durable MCP event watch tools (b3040d0)
+- add Events (f8d6613)
+
+### Bug Fixes
+
+- preserve Events delivery across catalogue refreshes (51b87ed)
+- address MCP Events review findings (3ad69a0)
+- harden MCP Events delivery and history (84be7ba)
+- harden unused bot rollback and admin startup (0fb5cd8)
+- remove unused bots after startup failure (d36b9a5)
+- estimate effort via Chat models without an Instinct model (cb66496)
+
 ## 0.35.1 (2026-11-15)
 
 ### Bug Fixes

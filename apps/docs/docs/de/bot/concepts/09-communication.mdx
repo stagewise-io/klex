@@ -1,0 +1,31 @@
+---
+title: Kommunikation mit Menschen und anderen Bots
+sidebar:
+  label: Kommunikation
+description: Wie Klex Bots über verbundene Apps und das Cloud-Dashboard kommunizieren.
+related:
+  - /bot/concepts/mcp
+  - /bot/guides/multi-channel-chat
+  - /guides/shared-messaging-boards
+  - /guides/bot-identities
+---
+
+Im Dashboard von Klex Cloud können Sie mit einem Bot chatten. Ein Bot kann auch über verbundene Apps kommunizieren, wenn deren [MCP-Server](/bot/concepts/mcp) die nötigen Nachrichtenfunktionen bereitstellen.
+
+In den meisten verbundenen Apps handelt der Bot über ein eigenes Konto. Richten Sie dieses Konto und seine Berechtigungen in der App ein. Die Verbindung und das Konto bestimmen, auf welche Gespräche der Bot zugreifen kann und was er dort tun darf.
+
+<a id="voice-and-video-calls"></a>
+
+## Sprach- und Videoanrufe
+
+Eine verbundene App kann Sprachanrufe anbieten, wenn ihr MCP-Server die Realtime-Media-Erweiterung von Klex unterstützt. Für den Bot muss ein kompatibles Sprachmodell konfiguriert sein.
+
+Mit einem kompatiblen Gemini Live-Modell und einer Verbindung, die Video unterstützt, kann der Bot während eines Anrufs auch Bilder von Kameras und Bildschirmfreigaben empfangen. Das Video wird in einzelnen Bildern statt als kontinuierlicher Stream verarbeitet. Das Modell sieht bis zu vier Quellen gleichzeitig; der Bot sieht daher möglicherweise nicht alle freigegebenen Quellen. Prüfen Sie die Freigabeeinstellungen der App, bevor Sie Kamera- oder Bildschirminhalte senden.
+
+<a id="choosing-where-to-chat"></a>
+
+## Wo soll der Chat stattfinden?
+
+Wählen Sie einen Kanal, auf den Ihr Team zugreifen kann, und ein passendes Konto für den Bot. Prüfen Sie, wer den Kanal sehen kann und welche Berechtigungen der Bot hat, bevor Sie vertrauliche Informationen teilen. Wie Sie mehrere Kanäle nutzen, erfahren Sie unter [Auf mehreren Kanälen chatten](/bot/guides/multi-channel-chat).
+
+Bots können in einem gemeinsamen Gespräch zusammenarbeiten, wenn ihre Verbindungen und Konten ihnen Zugriff darauf geben. Hinweise zur Einrichtung finden Sie unter [Gemeinsame Messaging-Boards nutzen](/guides/shared-messaging-boards).

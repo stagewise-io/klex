@@ -204,10 +204,9 @@ export function startDesktopLink(options: DesktopLinkOptions): DesktopLink {
           : null,
         expiresAt: typeof msg.expiresAt === 'string' ? msg.expiresAt : null,
       });
-      send({
-        type: 'lease.applied',
-        revision: typeof msg.revision === 'number' ? msg.revision : null,
-      });
+      // An already-expired human lease is not enforced, so it is not acknowledged.
+      if (lease.state.mode === mode && typeof msg.revision === 'number')
+        send({ type: 'lease.applied', revision: msg.revision });
       return;
     }
     if (msg.type === 'stream.open' && typeof msg.streamId === 'string') {
@@ -258,8 +257,13 @@ export function startDesktopLink(options: DesktopLinkOptions): DesktopLink {
       return;
     }
     vnc.pause();
-    vnc.on('error', () => close(1011));
-    vnc.on('close', () => close(1000));
+    const vncEnded = (code: number) =>
+      close(
+        code,
+        ws?.readyState === WebSocket.OPEN ? undefined : 'desktop_unavailable',
+      );
+    vnc.on('error', () => vncEnded(1011));
+    vnc.on('close', () => vncEnded(1000));
     let token: string;
     try {
       token = await options.getToken();

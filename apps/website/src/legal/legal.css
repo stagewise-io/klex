@@ -189,6 +189,11 @@
   border: 1px solid var(--border);
   text-align: left;
 }
+.legal-prose :is(th, td):first-child {
+  width: 25%;
+  min-width: 7rem;
+  overflow-wrap: break-word;
+}
 .legal-main hr {
   border: 0;
   border-top: 1px solid var(--border);
@@ -227,6 +232,13 @@
 @media (max-width: 767px) {
   .legal-main {
     padding-bottom: 3rem;
+  }
+  .legal-prose th,
+  .legal-prose td {
+    padding: 0.5rem 0.75rem;
+  }
+  .legal-prose :is(th, td):first-child {
+    hyphens: auto;
   }
 }
 @media print {

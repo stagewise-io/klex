@@ -8,6 +8,10 @@ related:
 
 Для большинства пользователей Klex рекомендует облачное размещение бота. Также можно запустить бота на собственном компьютере с регистрацией в Klex Cloud или без неё. Вам понадобится доступ к поставщику моделей; для облачной настройки также нужна учётная запись Klex Cloud.
 
+<div className="hosting-quickstart">
+<Tabs inline hash sync={false}>
+<Tab title="Облачное размещение" id="облачное-размещение">
+
 <a id="создание-вашего-бота"></a>
 
 ## Создание облачного бота
@@ -18,18 +22,26 @@ related:
 
 Отправьте боту сообщение в подключённом приложении, чтобы проверить ответ. Его активность можно просмотреть в панели Cloud.
 
+</Tab>
+<Tab title="Самостоятельное размещение" id="самостоятельное-размещение">
+
 <a id="установка"></a>
 
 ## Установка Klex для самостоятельного размещения
 
 Чтобы запустить бота на собственном компьютере, установите Klex в терминале:
 
-<Tabs param="install">
-  <Tab title="macOS">`curl -fsSL https://klex.bot/install.sh | sh`</Tab>
-  <Tab title="Linux">`curl -fsSL https://klex.bot/install.sh | sh`</Tab>
-  <Tab title="Windows">`irm https://klex.bot/install.ps1 | iex`</Tab>
-  <Tab title="WSL">`curl -fsSL https://klex.bot/install.sh | sh`</Tab>
-</Tabs>
+**macOS, Linux или WSL:**
+
+```sh
+curl -fsSL https://klex.bot/install.sh | sh
+```
+
+**Windows (PowerShell):**
+
+```powershell
+irm https://klex.bot/install.ps1 | iex
+```
 
 ### Настройка с помощью Cloud
 
@@ -48,7 +60,33 @@ klex --no-cloud
 3. Откройте **Settings → Soul** и создайте душу, описывающую характер и работу бота.
 4. В **Settings → MCP Servers** подключите необходимые боту серверы. Настройте права его учётных записей в подключённых приложениях.
 
-Чтобы получать события из внешнего канала, подключите MCP-сервер, поддерживающий соответствующие обновления ресурсов или [расширение push-уведомлений](https://github.com/stagewise-io/klex/tree/main/packages/mcp-extension-push-notifications) Klex.
+Чтобы получать события из внешнего канала, подключите MCP-сервер, поддерживающий соответствующие обновления ресурсов, MCP Events или [расширение push-уведомлений](https://github.com/stagewise-io/klex/tree/main/packages/mcp-extension-push-notifications) Klex.
 
+
+</Tab>
+</Tabs>
+</div>
 
 <a id="создание-самостоятельно-размещённого-бота-без-меню-выбора"></a>
+
+## Создание бота без меню выбора
+
+Чтобы создать и запустить бота, зарегистрированного в Cloud, используйте токен регистрации из Klex Cloud:
+
+```sh
+klex --create-bot --cloud-enroll-token <token>
+```
+
+Вместо аргумента командной строки можно передать токен через `KLEX_CLOUD_ENROLLMENT_TOKEN`. Добавьте `--headless`, чтобы запустить бота без интерфейса терминала.
+
+Чтобы создать автономного бота, укажите имя:
+
+```sh
+klex --create-bot --no-cloud --bot-name Ada
+```
+
+При создании нельзя использовать `--data-dir` или `KLEX_DATA_DIR`: они выбирают существующего бота. Прежде чем бот сможет работать, настройте поставщика и модель для чата.
+
+Если бот не отвечает, см. [инструкции по устранению неполадок](/bot/guides/observability#if-a-bot-does-not-respond) (на английском языке).
+
+<script src="/quickstart-tabs.js" defer></script>

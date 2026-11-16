@@ -91,9 +91,7 @@ class EffortExt implements Extension {
   getInstinctClassificationRequest(input: InstinctInput) {
     const config = this.deps.config.get().effort ?? defaultConfig;
     if (config.mode === 'off') return null;
-    // Do not create an expensive classification solely for effort when no cheap Instinct model is selected.
-    if (this.deps.config.getModelSelection('instincts').length === 0)
-      return null;
+    // Core classifies with the ordered Chat models when no Instinct model is selected.
     const last = input.history.at(-1);
     if (
       last?.role === 'user' &&

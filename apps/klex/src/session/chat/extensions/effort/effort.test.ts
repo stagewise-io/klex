@@ -13,8 +13,9 @@ function fixture(
   instincts: unknown[] = [{}],
 ) {
   const config = { effort: { mode, floor: 'low', ceiling: 'high' } };
+  const getModelSelection = vi.fn(() => instincts);
   const deps = {
-    config: { get: () => config, getModelSelection: () => instincts },
+    config: { get: () => config, getModelSelection },
     getHistory: () => [],
   } as unknown as ExtensionDeps;
   const ext = createEffortExt.create(deps);
@@ -30,7 +31,7 @@ function fixture(
     deadline: Date.now() + 1000,
     prepare: { setEffort },
   } as unknown as InstinctContext;
-  return { ext, config, input, context, setEffort };
+  return { ext, config, input, context, setEffort, getModelSelection };
 }
 
 describe('effort extension', () => {
@@ -49,15 +50,18 @@ describe('effort extension', () => {
       }),
     );
   });
-  it('does nothing when off and avoids expensive implicit chat-model classification', () => {
+  it('does nothing when off', () => {
     const off = fixture('off');
     expect(off.ext.getInstinctClassificationRequest?.(off.input)).toBeNull();
     off.ext.onInstinct?.(off.context);
     expect(off.setEffort).not.toHaveBeenCalled();
-    const noCheapModel = fixture('shadow', []);
+  });
+  it('requests classification without an Instinct model so core can fall back to Chat models', () => {
+    const f = fixture('shadow', []);
     expect(
-      noCheapModel.ext.getInstinctClassificationRequest?.(noCheapModel.input),
-    ).toBeNull();
+      f.ext.getInstinctClassificationRequest?.(f.input)?.keys,
+    ).toHaveProperty('demand');
+    expect(f.getModelSelection).not.toHaveBeenCalled();
   });
   it.each([false, true])(
     'commits hysteresis only after usable generation (aborted=%s)',

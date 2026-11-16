@@ -187,6 +187,23 @@ describe('DesktopControlLease', () => {
     ]);
   });
 
+  it('checks the lease after the screen refresh that precedes input', async () => {
+    const backend = fakeBackend();
+    const click = vi.fn(async () => undefined);
+    const desktop = new DesktopService({
+      ...backend,
+      click,
+      probe: async () => {
+        desktop.lease.apply({ mode: 'human', holder: { name: 'Julian' } });
+        return { width: 1280, height: 800 };
+      },
+    });
+    await expect(
+      desktop.click('bot', { x: 1, y: 1 }, 'left', 1, []),
+    ).rejects.toBeInstanceOf(DesktopInputDeniedError);
+    expect(click).not.toHaveBeenCalled();
+  });
+
   it('cancels the disconnect grace when Cloud resends the lease', () => {
     vi.useFakeTimers();
     const lease = new DesktopControlLease();
@@ -432,6 +449,81 @@ describe('desktop link', () => {
     );
     control.send(JSON.stringify({ type: 'stream.close', streamId: STREAM_ID }));
     await closed;
+  });
+
+  it('does not acknowledge a human lease that already expired', async () => {
+    cloud = await startCloud();
+    const desktop = new DesktopService(fakeBackend());
+    link = startDesktopLink({
+      cloudBaseUrl: cloud.url,
+      getToken: async () => 'machine-token',
+      invalidateToken: () => undefined,
+      desktop,
+      machineVersion: '1.2.3',
+      vncSocketPath: join(dir, 'missing.sock'),
+    });
+    const { socket: control } = await cloud.control;
+    await cloud.next('hello');
+    for (const [revision, mode, expiresAt] of [
+      [1, 'human', new Date(Date.now() - 1000).toISOString()],
+      [2, 'agent', null],
+    ] as const)
+      control.send(
+        JSON.stringify({
+          type: 'lease',
+          revision,
+          mode,
+          holder: mode === 'human' ? { name: 'Julian' } : null,
+          expiresAt,
+        }),
+      );
+    expect(await cloud.next('lease.applied')).toEqual({
+      type: 'lease.applied',
+      revision: 2,
+    });
+    expect(desktop.lease.state.mode).toBe('agent');
+  });
+
+  it('reports a stream as failed when Xvnc drops before the stream connects', async () => {
+    cloud = await startCloud();
+    const socketPath =
+      process.platform === 'win32'
+        ? `\\.pipeklex-machine-vnc-${randomUUID()}`
+        : join(dir, 'vnc.sock');
+    const accepted = new Promise<Socket>((resolve) => {
+      const server = createServer(resolve);
+      server.listen(socketPath);
+      vnc = {
+        bytes: async () => Buffer.alloc(0),
+        close: () => new Promise<void>((done) => server.close(() => done())),
+      };
+    });
+    let releaseToken!: () => void;
+    const tokenGate = new Promise<void>((resolve) => {
+      releaseToken = resolve;
+    });
+    let tokens = 0;
+    link = startDesktopLink({
+      cloudBaseUrl: cloud.url,
+      getToken: async () => {
+        if (tokens++ > 0) await tokenGate;
+        return 'machine-token';
+      },
+      invalidateToken: () => undefined,
+      desktop: new DesktopService(fakeBackend()),
+      machineVersion: '1.2.3',
+      vncSocketPath: socketPath,
+    });
+    const { socket: control } = await cloud.control;
+    await cloud.next('hello');
+    control.send(JSON.stringify({ type: 'stream.open', streamId: STREAM_ID }));
+    (await accepted).destroy();
+    expect(await cloud.next('stream.failed')).toEqual({
+      type: 'stream.failed',
+      streamId: STREAM_ID,
+      reason: 'desktop_unavailable',
+    });
+    releaseToken();
   });
 
   it('refuses streams when the VNC socket is unreachable', async () => {

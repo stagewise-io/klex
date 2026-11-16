@@ -247,10 +247,11 @@ export class DesktopService {
     operation: (toScreen: (point: Point) => Point) => Promise<T>,
   ): Promise<T> {
     return this.#serial(async () => {
-      // Authorize when the action runs, not when it was queued.
-      await this.#inputControl.authorize({ action, principalId });
       const screen = await this.#refreshScreen();
       const space = this.#space(screen);
+      // Authorize when the action runs, not when it was queued, and after the
+      // last await so a takeover cannot land between the check and the input.
+      await this.#inputControl.authorize({ action, principalId });
       return operation((point) => {
         assertPoint(point, space);
         return {

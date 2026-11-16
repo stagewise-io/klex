@@ -37,6 +37,7 @@ Review any diagnostics for sensitive information before sharing them. Do not inc
 Administrators using the Admin API can:
 
 - List persisted session instances with `GET /v1/sessions`, then retrieve a session's messages with `GET /v1/sessions/{instanceId}/messages`. Follow `nextCursor` to retrieve older pages. Some older messages may have been trimmed; check `trimmedMessageCount`.
+- Inspect live session activity with `GET /v1/introspect/sessions`. Session information can include `childSessions`, such as active memory-retrieval, learning, or consultation sessions. Terminated children are omitted, so this is not a complete history.
 - Query recorded model-call usage with `GET /v1/usage`. Results can be grouped by model or provider and aggregated over time. Token totals may be incomplete when a provider does not report usage; check `tokenUsageUnreportedCount`.
 
 Use `GET /v1/openapi.json` for the API's available routes and query parameters. Session messages and tool outputs can contain sensitive information; limit who can access and retain them.

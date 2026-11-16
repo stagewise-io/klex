@@ -58,6 +58,25 @@ function emptyRecord(): Recorded {
 }
 
 describe('runtime composition', () => {
+  it('reports failed rollback without replacing the startup error', async () => {
+    const modules = createModules({
+      recorded: emptyRecord(),
+      failing: 'cloud-connectivity',
+    });
+    modules.adminApi.close = vi
+      .fn()
+      .mockRejectedValue(new Error('Still writing'));
+    const onRollbackError = vi.fn();
+    await expect(
+      startRuntime({
+        logging: createLoggingMock(),
+        modules,
+        onRollbackError,
+      }),
+    ).rejects.toThrow('cloud-connectivity failed');
+    expect(onRollbackError).toHaveBeenCalledOnce();
+  });
+
   it('starts the session host before realtime and MCP', () => {
     const order = runtimeStartupOrder(
       createModules({ recorded: emptyRecord() }),

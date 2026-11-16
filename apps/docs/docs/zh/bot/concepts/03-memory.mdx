@@ -1,0 +1,29 @@
+---
+title: Klex Bot 记忆
+sidebar:
+  label: 记忆
+description: Klex Bot 记忆存储的内容、存储位置以及管理员如何访问。
+related:
+  - /bot/concepts/data-directory
+  - /bot/concepts/how-bots-work
+  - /cloud/hosted-vs-local
+---
+
+Klex Bot 记忆存储**技能和学习内容**。记忆在 Bot 自身的环境中管理，维持 Bot 运行的活跃会话也在该环境中。
+
+<a id="where-chats-and-memory-are-stored"></a>
+
+## 聊天记录和记忆存储在哪里？
+
+聊天记录和记忆存储在 Bot 的数据目录中：
+
+- 对于 **Cloud 托管的 Bot**，目录位于托管环境中。
+- 对于**自托管的 Bot**，目录位于用于存放 Bot 数据的本地文件夹中。
+
+Cloud 托管的 Bot 的所有数据，包括记忆，在传输和静态存储时都会加密。
+
+<a id="how-administrators-access-them"></a>
+
+## 管理员如何访问？
+
+管理员可以通过 Bot 的 Admin API 访问聊天记录和记忆。Klex Cloud 控制台是每个 Bot 的 Admin API 的前端和反向代理。有关存储的详细信息，请参阅[数据目录](/bot/concepts/data-directory)。

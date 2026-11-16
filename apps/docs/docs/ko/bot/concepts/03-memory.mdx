@@ -1,0 +1,29 @@
+---
+title: Klex Bot 메모리
+sidebar:
+  label: 메모리
+description: Klex Bot 메모리에 저장되는 내용과 저장 위치, 관리자의 접근 방법을 알아봅니다.
+related:
+  - /bot/concepts/data-directory
+  - /bot/concepts/how-bots-work
+  - /cloud/hosted-vs-local
+---
+
+Klex Bot 메모리는 **스킬과 학습 내용**을 저장합니다. 메모리는 Bot의 작동을 유지하는 활성 세션과 함께 Bot 자체 환경에서 관리됩니다.
+
+<a id="where-chats-and-memory-are-stored"></a>
+
+## 채팅과 메모리는 어디에 저장되나요?
+
+채팅과 메모리는 Bot의 데이터 디렉터리에 저장됩니다.
+
+- **Cloud 호스팅 Bot**의 디렉터리는 호스팅 환경에 있습니다.
+- **셀프 호스팅 Bot**의 디렉터리는 Bot 데이터에 사용하는 로컬 폴더에 있습니다.
+
+메모리를 포함한 모든 Cloud 호스팅 Bot 데이터는 전송 중과 저장 시에 암호화됩니다.
+
+<a id="how-administrators-access-them"></a>
+
+## 관리자는 어떻게 접근하나요?
+
+관리자는 Bot의 Admin API를 통해 채팅과 메모리에 접근할 수 있습니다. Klex Cloud 대시보드는 각 Bot의 Admin API를 위한 프런트엔드이자 리버스 프록시입니다. 저장 위치에 관한 자세한 내용은 [데이터 디렉터리](/bot/concepts/data-directory)를 참고하세요.

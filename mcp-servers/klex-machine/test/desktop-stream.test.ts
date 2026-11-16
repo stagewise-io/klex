@@ -528,6 +528,24 @@ describe('desktop link', () => {
     releaseToken();
   });
 
+  it('closes promptly when Cloud never answers the close frame', async () => {
+    cloud = await startCloud();
+    link = startDesktopLink({
+      cloudBaseUrl: cloud.url,
+      getToken: async () => 'machine-token',
+      invalidateToken: () => undefined,
+      desktop: new DesktopService(fakeBackend()),
+      machineVersion: '1.2.3',
+      vncSocketPath: join(dir, 'missing.sock'),
+    });
+    const { request } = await cloud.control;
+    await cloud.next('hello');
+    request.socket.pause();
+    const started = Date.now();
+    await link.close();
+    expect(Date.now() - started).toBeLessThan(4000);
+  });
+
   it('refuses streams when the VNC socket is unreachable', async () => {
     cloud = await startCloud();
     link = startDesktopLink({

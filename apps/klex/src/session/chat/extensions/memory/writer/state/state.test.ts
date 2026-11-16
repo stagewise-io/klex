@@ -9,10 +9,7 @@ import { createLogger } from '@stagewise/logger';
 import { createLocalData } from '@/local-data';
 import { KLEX_LOCAL_DATA_STORES } from '@/local-data-registry';
 
-import {
-  createWriterState,
-  MEMORY_WRITER_STORE_DEFINITION,
-} from './writer-state';
+import { createWriterState, MEMORY_WRITER_STORE_DEFINITION } from './state';
 
 const directories: string[] = [];
 const logging = createLogger({ name: 'writer-state-test' });

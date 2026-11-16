@@ -77,6 +77,42 @@ describe('line renderer', () => {
     ]);
   });
 
+  it('preserves literal content without HTML/XML escaping or decoding', () => {
+    const content = `"quotes" & <tag attr='value'>\n&quot; &amp; </new-activities>`;
+    const rendered = renderLineMessage(
+      message([
+        { kind: 'text', text: content },
+        { kind: 'reasoning', text: content },
+        { kind: 'summary', text: content },
+        { kind: 'data', label: 'event', value: content },
+        {
+          kind: 'tool',
+          name: 'test',
+          status: 'failed',
+          input: content,
+          output: content,
+          error: content,
+        },
+        {
+          kind: 'context',
+          source: 'test',
+          metadata: content,
+          items: [
+            { kind: 'text', text: content },
+            { kind: 'resource', uri: 'test://resource', text: content },
+          ],
+        },
+      ]),
+    );
+    const quoted = content
+      .split('\n')
+      .map((line) => `¦${line}`)
+      .join('\n');
+    expect(rendered?.text.split(quoted)).toHaveLength(11);
+    expect(rendered?.text).not.toContain('&lt;');
+    expect(rendered?.text).not.toContain('&amp;quot;');
+  });
+
   it('sanitizes header words from external sources', () => {
     const rendered = renderLineMessage(
       message([

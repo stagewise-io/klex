@@ -731,6 +731,7 @@ class ApplicationModule implements Application {
       createMemoryExt({ activities }),
       createMemoryWriterExt({
         activities,
+        skillReader: skillRegistry,
         legacyLearningDirectory: join(
           dataDirectory,
           'extensions',

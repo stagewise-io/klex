@@ -21,7 +21,7 @@ const stateSchema = z
 export const MEMORY_WRITER_STORE_DEFINITION: JsonStoreDefinition = {
   kind: 'json',
   id: 'memory-writer-state',
-  relativePath: 'extensions/io.stagewise/memory-writer/writer-state.json',
+  relativePath: 'extensions/io.stagewise/memory/writer-state.json',
   required: false,
   schemaVersion: 1,
   compatibilityVersion: 1,

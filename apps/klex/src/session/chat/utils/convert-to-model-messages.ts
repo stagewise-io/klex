@@ -12,6 +12,7 @@ import type { ContextDataUIPart } from '@/session/inbox';
 import type { DataPartTransformers } from '../extensions/extension-api';
 import type { ExtendedUIMessage, GodMessageDataUIPart } from '../message-types';
 import { quote } from './history-view/lines';
+import { projectSandboxToolMedia } from './project-sandbox-media';
 
 /**
  * Converts UI messages into the format expected by the model.
@@ -54,9 +55,11 @@ export const convertToModelMessagesExtended = async (
   }
 
   if (lastUserMsgIdx === -1) {
-    return convertToModelMessages<ExtendedUIMessage>(materialized, {
-      convertDataPart: makeConvertDataPart(transformers),
-    });
+    return projectSandboxToolMedia(
+      await convertToModelMessages<ExtendedUIMessage>(materialized, {
+        convertDataPart: makeConvertDataPart(transformers),
+      }),
+    );
   }
 
   // Determine whether the last user message's signal part is needed.
@@ -91,9 +94,11 @@ export const convertToModelMessagesExtended = async (
     return [msg];
   });
 
-  return convertToModelMessages<ExtendedUIMessage>(filtered, {
-    convertDataPart: makeConvertDataPart(transformers),
-  });
+  return projectSandboxToolMedia(
+    await convertToModelMessages<ExtendedUIMessage>(filtered, {
+      convertDataPart: makeConvertDataPart(transformers),
+    }),
+  );
 };
 
 // ---------------------------------------------------------------------------

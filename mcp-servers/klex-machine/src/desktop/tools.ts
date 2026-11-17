@@ -2,7 +2,14 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod/v4';
 
 import { DesktopInputDeniedError } from './input-control.js';
-import type { DesktopScreenshot, DesktopService } from './service.js';
+import {
+  DEFAULT_TREE_DEPTH,
+  DEFAULT_TREE_NODES,
+  type DesktopScreenshot,
+  type DesktopService,
+  MAX_TREE_DEPTH,
+  MAX_TREE_NODES,
+} from './service.js';
 
 export const DESKTOP_SCREEN_RESOURCE_URI = 'desktop://screen';
 
@@ -29,11 +36,22 @@ const afterAction = {
 
 type AfterAction = { screenshot?: boolean; settleMs?: number };
 
+const ref = z
+  .string()
+  .regex(/^r\d+$/)
+  .describe('Element ref from desktop_accessibility_tree, such as "r12".');
+
+export interface DesktopToolOptions {
+  /** Offer the accessibility tree and clicks by ref. */
+  accessibility?: boolean;
+}
+
 export function registerDesktopTools(
   server: McpServer,
   desktop: DesktopService,
   principalId: string,
   resolvePath: (path: string) => string = (path) => path,
+  options: DesktopToolOptions = {},
 ): void {
   const action = async (
     input: AfterAction,
@@ -130,29 +148,96 @@ export function registerDesktopTools(
       }
     },
   );
-  server.registerTool(
-    'desktop_click',
-    {
-      description: `Move the pointer and click. ${COORDINATES} Use count 2 for a double click. Modifiers are held during the click (ctrl, shift, alt, super).`,
-      inputSchema: z.object({
-        ...point,
-        button: button.optional(),
-        count: z.number().int().min(1).max(3).optional(),
-        modifiers: z.array(z.string().min(1).max(16)).max(4).optional(),
-        ...afterAction,
-      }),
-    },
-    (input) =>
-      action(input, () =>
-        desktop.click(
-          principalId,
-          { x: input.x, y: input.y },
-          input.button ?? 'left',
-          input.count ?? 1,
-          input.modifiers ?? [],
+  const clickOptions = {
+    button: button.optional(),
+    count: z.number().int().min(1).max(3).optional(),
+    modifiers: z.array(z.string().min(1).max(16)).max(4).optional(),
+    ...afterAction,
+  };
+  const clickDescription = `Move the pointer and click. ${COORDINATES} Use count 2 for a double click. Modifiers are held during the click (ctrl, shift, alt, super).`;
+  if (options.accessibility) {
+    server.registerTool(
+      'desktop_click',
+      {
+        description: `${clickDescription} Pass either x and y, or the ref of an element from desktop_accessibility_tree to click its centre; a ref fails if the element is gone or off screen.`,
+        inputSchema: z.object({
+          x: coordinate.optional(),
+          y: coordinate.optional(),
+          ref: ref.optional(),
+          ...clickOptions,
+        }),
+      },
+      (input) => {
+        const byPoint = input.x !== undefined && input.y !== undefined;
+        const anyPoint = input.x !== undefined || input.y !== undefined;
+        if (input.ref === undefined ? !byPoint : anyPoint) {
+          return errorResult(new Error('Pass either x and y, or ref'));
+        }
+        const elementRef = input.ref;
+        return action(input, () =>
+          elementRef === undefined
+            ? desktop.click(
+                principalId,
+                { x: input.x ?? 0, y: input.y ?? 0 },
+                input.button ?? 'left',
+                input.count ?? 1,
+                input.modifiers ?? [],
+              )
+            : desktop.clickElement(
+                principalId,
+                elementRef,
+                input.button ?? 'left',
+                input.count ?? 1,
+                input.modifiers ?? [],
+              ),
+        );
+      },
+    );
+    server.registerTool(
+      'desktop_accessibility_tree',
+      {
+        description: `Read the accessibility tree of the focused window as text, one element per line: ref, role, quoted name, value, bounds as @x,y widthxheight in screenshot coordinates, and states. Pass window (from desktop_list_windows) for another window, or ref to read one subtree. For standard apps it is usually cheaper than a screenshot and gives refs that desktop_click accepts. Refs stay valid while their element exists. Canvas, video, games and some apps expose little or nothing; use desktop_screenshot there and to check visual results. Defaults: interactiveOnly true, maxDepth ${DEFAULT_TREE_DEPTH}, maxNodes ${DEFAULT_TREE_NODES}.`,
+        inputSchema: z.object({
+          window: z.string().regex(/^\d+$/).optional(),
+          ref: ref.optional(),
+          interactiveOnly: z
+            .boolean()
+            .optional()
+            .describe(
+              'Only controls you can act on. Set false to include labels, headings and text.',
+            ),
+          maxDepth: z.number().int().min(1).max(MAX_TREE_DEPTH).optional(),
+          maxNodes: z.number().int().min(1).max(MAX_TREE_NODES).optional(),
+        }),
+      },
+      async (input) => {
+        try {
+          const tree = await desktop.accessibilityTree(input);
+          return { content: [{ type: 'text' as const, text: tree.text }] };
+        } catch (error) {
+          return errorResult(error);
+        }
+      },
+    );
+  } else {
+    server.registerTool(
+      'desktop_click',
+      {
+        description: clickDescription,
+        inputSchema: z.object({ ...point, ...clickOptions }),
+      },
+      (input) =>
+        action(input, () =>
+          desktop.click(
+            principalId,
+            { x: input.x, y: input.y },
+            input.button ?? 'left',
+            input.count ?? 1,
+            input.modifiers ?? [],
+          ),
         ),
-      ),
-  );
+    );
+  }
   server.registerTool(
     'desktop_drag',
     {

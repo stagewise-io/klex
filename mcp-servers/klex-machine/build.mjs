@@ -13,7 +13,9 @@ await build({
   format: 'esm',
   target: 'node24',
   outfile: outputFile,
-  external: ['node-pty'],
+  // dbus-next loads these only for transports and bus discovery klex-machine
+  // never uses; it always connects to an explicit unix:socket address.
+  external: ['node-pty', 'usocket', 'x11'],
   alias: {
     '@stagewise/mcp-extension-client': resolve(
       packageRoot,

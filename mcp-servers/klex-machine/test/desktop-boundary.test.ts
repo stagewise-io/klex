@@ -22,7 +22,7 @@ const PLATFORM_IMPORT =
 const NATIVE_IMPORT =
   /(?:from\s+|import\s*\(\s*|require\s*\(\s*)['"](?:node:)?(?:child_process|net|fs|fs\/promises|os|dgram|worker_threads)['"]/;
 const PLATFORM_DETAIL =
-  /\b(?:xdotool|wmctrl|xwininfo|Xvnc|DISPLAY|KLEX_MACHINE_VNC_SOCKET)\b|vnc\.sock|['"]import['"]/;
+  /\b(?:xdotool|wmctrl|xwininfo|xprop|Xvnc|DISPLAY|KLEX_MACHINE_VNC_SOCKET|AT_SPI_BUS(?:_ADDRESS)?|atspi|dbus)\b|org\.a11y|vnc\.sock|['"]import['"]/;
 
 async function sources(): Promise<Map<string, string>> {
   const files = new Map<string, string>();

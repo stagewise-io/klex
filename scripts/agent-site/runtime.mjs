@@ -170,7 +170,8 @@ class AgentSite {
         page.markdown === null ? 0 : this.quality(accept, 'text/markdown');
       const html = this.quality(accept, 'text/html');
       // Ties (including browser */*) keep HTML; explicit q=0 excludes a representation.
-      if (markdown === 0 && html === 0) {
+      // Explicit .md mirrors always serve Markdown, regardless of Accept.
+      if (!explicitMarkdown && markdown === 0 && html === 0) {
         status = 406;
         headers['Content-Type'] = 'application/json; charset=utf-8';
         body = JSON.stringify({

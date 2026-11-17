@@ -7,9 +7,13 @@ import { type Connect, createServer, defineConfig, type Plugin } from 'vite';
 import { createLegalPlugin } from './src/legal/node/index.ts';
 import { staticMascots } from './static-mascot-plugin.ts';
 
-async function renderMarketingLocale(
-  locale = 'en',
-): Promise<Record<string, string>> {
+interface MarketingRender {
+  /** Supported locales from `src/i18n/i18n.ts`, English included. */
+  locales: readonly string[];
+  pages: Record<string, string>;
+}
+
+async function renderMarketingLocale(locale = 'en'): Promise<MarketingRender> {
   const server = await createServer({
     configFile: false,
     root: fileURLToPath(new URL('.', import.meta.url)),
@@ -24,7 +28,7 @@ async function renderMarketingLocale(
     build: { assetsInlineLimit: 0 },
   });
   try {
-    const { i18n } = await server.ssrLoadModule('/src/i18n/i18n.ts');
+    const { i18n, locales } = await server.ssrLoadModule('/src/i18n/i18n.ts');
     await i18n.changeLanguage(locale);
     const { prerenderLandingPage } = await server.ssrLoadModule(
       '/src/new/prerender.tsx',
@@ -33,9 +37,12 @@ async function renderMarketingLocale(
       '/src/new/resources/page-markup.ts',
     );
     return {
-      '/index.html': prerenderLandingPage(),
-      '/brand/index.html': resourceMarkup(false),
-      '/press/index.html': resourceMarkup(true),
+      locales,
+      pages: {
+        '/index.html': prerenderLandingPage(),
+        '/brand/index.html': resourceMarkup(false),
+        '/press/index.html': resourceMarkup(true),
+      },
     };
   } finally {
     await server.close();
@@ -47,12 +54,36 @@ function devMarkdown(): Plugin {
     name: 'klex-dev-markdown',
     apply: 'serve',
     configureServer(server) {
-      let variants = new Map<string, Promise<Record<string, string>>>();
+      let variants = new Map<string, Promise<MarketingRender>>();
       server.watcher.on('change', () => {
         variants = new Map();
       });
+      const render = (locale: string) => {
+        let rendered = variants.get(locale);
+        if (!rendered) {
+          const cache = variants;
+          rendered = renderMarketingLocale(locale);
+          cache.set(locale, rendered);
+          rendered.catch(() => cache.delete(locale));
+        }
+        return rendered;
+      };
       server.middlewares.use(async (request, response, next) => {
-        const url = new URL(request.url ?? '/', 'http://localhost');
+        // Keep the real host, port and protocol so canonical URLs, Markdown
+        // links and Link headers point at the running dev server or tunnel.
+        const forwarded = String(request.headers['x-forwarded-proto'] ?? '')
+          .split(',')[0]
+          ?.trim();
+        const protocol =
+          forwarded === 'https' || forwarded === 'http'
+            ? forwarded
+            : 'encrypted' in request.socket && request.socket.encrypted
+              ? 'https'
+              : 'http';
+        const url = new URL(
+          request.url ?? '/',
+          `${protocol}://${request.headers.host ?? 'localhost'}`,
+        );
         const route =
           url.pathname.replace(/\/index\.html$/, '/').replace(/\/$/, '') || '/';
         const markdownRoute =
@@ -92,30 +123,12 @@ function devMarkdown(): Plugin {
             ),
           );
           if (!policy.includes('markdown', markdownRoute)) return next();
+          const { locales } = await render('en');
           const languages = Object.fromEntries(
-            [
-              'en',
-              'zh',
-              'ja',
-              'ko',
-              'de',
-              'fr',
-              'es',
-              'pt',
-              'hi',
-              'uk',
-              'ru',
-              'ar',
-            ].map((locale) => [locale, true]),
+            locales.map((locale) => [locale, true]),
           );
           const locale = negotiation.language(request, languages);
-          let rendered = variants.get(locale);
-          if (!rendered) {
-            rendered = renderMarketingLocale(locale);
-            variants.set(locale, rendered);
-            rendered.catch(() => variants.delete(locale));
-          }
-          const markup = (await rendered)[
+          const markup = (await render(locale)).pages[
             markdownRoute === '/'
               ? '/index.html'
               : `${markdownRoute}/index.html`
@@ -151,26 +164,17 @@ function devMarkdown(): Plugin {
 }
 
 function prerenderPages(): Plugin {
-  let pages: Promise<Record<string, string>> | undefined;
+  let english: Promise<MarketingRender> | undefined;
   return {
     name: 'klex-prerender-pages',
     apply: 'build',
     async generateBundle() {
+      english ??= renderMarketingLocale();
+      const { locales } = await english;
       const localized: Record<string, Record<string, string>> = {};
-      for (const locale of [
-        'zh',
-        'ja',
-        'ko',
-        'de',
-        'fr',
-        'es',
-        'pt',
-        'hi',
-        'uk',
-        'ru',
-        'ar',
-      ]) {
-        localized[locale] = await renderMarketingLocale(locale);
+      for (const locale of locales) {
+        if (locale === 'en') continue;
+        localized[locale] = (await renderMarketingLocale(locale)).pages;
       }
       this.emitFile({
         type: 'asset',
@@ -182,8 +186,8 @@ function prerenderPages(): Plugin {
       order: 'pre',
       async handler(html, context) {
         if (context.path === '/legal/index.html') return html;
-        pages ??= renderMarketingLocale();
-        const markup = (await pages)[context.path];
+        english ??= renderMarketingLocale();
+        const markup = (await english).pages[context.path];
         if (!markup)
           throw new Error(`No prerendered markup for ${context.path}`);
         const rendered = html.replace(

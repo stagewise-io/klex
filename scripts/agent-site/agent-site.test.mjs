@@ -120,6 +120,16 @@ describe('representation negotiation', () => {
   });
   it('rejects unsupported representations', () =>
     expect(request('/', 'application/pdf').status).toBe(406));
+  it.each(['/index.md', '/brand.md', '/press.md'])(
+    'always serves Markdown at explicit mirror %s',
+    (url) => {
+      for (const accept of ['application/json', 'text/plain', 'image/png']) {
+        const result = request(url, accept);
+        expect(result.status).toBe(200);
+        expect(result.headers['Content-Type']).toContain('text/markdown');
+      }
+    },
+  );
   it.each(['/brand', '/brand/', '/brand/index.html', '/press?source=test'])(
     'preserves noindex on %s',
     (url) =>

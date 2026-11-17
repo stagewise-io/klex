@@ -24,6 +24,9 @@ export const MACOS_HELPER_NAME = 'klex-desktop-helper';
 const SCREENCAPTURE = '/usr/sbin/screencapture';
 const SIPS = '/usr/bin/sips';
 const COMMAND_TIMEOUT_MS = 15_000;
+// Longer than the helper's own 30 second wait for Launch Services, so a slow
+// cold start reports the helper's error instead of being killed mid-launch.
+const LAUNCH_TIMEOUT_MS = 45_000;
 const MAX_CAPTURE_BYTES = 32 * 1024 * 1024;
 const MAX_WINDOWS = 50;
 const TYPE_CHUNK_CHARACTERS = 200;
@@ -175,9 +178,13 @@ function toMacosKey(part: string): string {
   if (modifier) return `code:${MODIFIER_KEY_CODES[modifier]}`;
   const named = NAMED_KEY_CODES[lower];
   if (named !== undefined) return `code:${named}`;
-  const functionKey = /^f([1-9]|1[0-9]|20)$/i.exec(part);
+  const functionKey = /^f([1-9]|1[0-9]|2[0-4])$/i.exec(part);
   if (functionKey) {
-    return `code:${FUNCTION_KEY_CODES[Number(functionKey[1]) - 1]}`;
+    const code = FUNCTION_KEY_CODES[Number(functionKey[1]) - 1];
+    if (code === undefined) {
+      throw new Error(`macOS has no ${part.toUpperCase()} key; F1 to F20 work`);
+    }
+    return `code:${code}`;
   }
   const character = CHARACTER_NAMES[lower] ?? part;
   if (/^[\x21-\x7e]$/.test(character)) return `char:${character.toLowerCase()}`;
@@ -489,11 +496,11 @@ export class MacosDesktopProvider implements DesktopProvider {
     if (!/\.app\/?$/i.test(options.command)) {
       return this.#launch({ ...options, env: this.#env });
     }
-    const output = await this.#helperRun([
-      'launch-app',
-      options.command.replace(/\/$/, ''),
-      ...options.args,
-    ]);
+    const output = await this.#exec(
+      await this.#requireHelper(),
+      ['launch-app', options.command.replace(/\/$/, ''), ...options.args],
+      { timeoutMs: LAUNCH_TIMEOUT_MS },
+    );
     const { pid } = JSON.parse(output) as { pid?: unknown };
     if (typeof pid !== 'number' || !Number.isInteger(pid) || pid <= 0) {
       throw new Error(`${options.command} opened without a process id`);
@@ -543,15 +550,23 @@ export class MacosDesktopProvider implements DesktopProvider {
   }
 
   async #helperRun(args: string[], input?: string): Promise<string> {
-    return this.#exec(await this.#requireHelper(), args, input);
+    return this.#exec(
+      await this.#requireHelper(),
+      args,
+      input !== undefined ? { input } : {},
+    );
   }
 
-  async #exec(file: string, args: string[], input?: string): Promise<string> {
+  async #exec(
+    file: string,
+    args: string[],
+    options: { input?: string; timeoutMs?: number } = {},
+  ): Promise<string> {
     const output = await this.#run(file, args, {
       env: this.#env,
-      timeoutMs: COMMAND_TIMEOUT_MS,
+      timeoutMs: options.timeoutMs ?? COMMAND_TIMEOUT_MS,
       maxBuffer: file === SCREENCAPTURE ? MAX_CAPTURE_BYTES : 1024 * 1024,
-      ...(input !== undefined ? { input } : {}),
+      ...(options.input !== undefined ? { input: options.input } : {}),
     });
     return output.toString('utf8');
   }

@@ -214,7 +214,8 @@ func tapKey(_ code: CGKeyCode, flags: CGEventFlags = []) {
 
 struct KeyStroke {
   let code: CGKeyCode
-  let shift: Bool
+  /** Modifiers the layout needs to produce the character, such as shift for `+` on US. */
+  let modifiers: [String]
 }
 
 // US ANSI positions, used when the current layout cannot be read.
@@ -228,18 +229,21 @@ let ansiKeys: [String: KeyStroke] = {
     ("i", 34), ("p", 35), ("l", 37), ("j", 38), ("'", 39), ("k", 40), (";", 41), ("\\", 42),
     (",", 43), ("/", 44), ("n", 45), ("m", 46), (".", 47), ("`", 50),
   ]
-  for (character, code) in unshifted { keys[character] = KeyStroke(code: code, shift: false) }
+  for (character, code) in unshifted { keys[character] = KeyStroke(code: code, modifiers: []) }
   let shifted: [(String, CGKeyCode)] = [
     ("!", 18), ("@", 19), ("#", 20), ("$", 21), ("^", 22), ("%", 23), ("+", 24), ("(", 25),
     ("&", 26), ("_", 27), ("*", 28), (")", 29), ("}", 30), ("{", 33), ("\"", 39), (":", 41),
     ("|", 42), ("<", 43), ("?", 44), (">", 47), ("~", 50),
   ]
-  for (character, code) in shifted { keys[character] = KeyStroke(code: code, shift: true) }
+  for (character, code) in shifted {
+    keys[character] = KeyStroke(code: code, modifiers: ["shift"])
+  }
   return keys
 }()
 
 // Characters to key codes for the current layout, so shortcuts such as cmd+z
-// hit the key labelled Z on non-US layouts too.
+// hit the key labelled Z on non-US layouts too. Plain keys win over Shift,
+// Shift over Option (AltGr), so `@` on a German layout is Option+L.
 func layoutKeys() -> [String: KeyStroke] {
   var keys: [String: KeyStroke] = [:]
   guard let source = TISCopyCurrentKeyboardLayoutInputSource()?.takeRetainedValue(),
@@ -249,8 +253,12 @@ func layoutKeys() -> [String: KeyStroke] {
   guard let bytes = CFDataGetBytePtr(data) else { return keys }
   let layout = UnsafeRawPointer(bytes).assumingMemoryBound(to: UCKeyboardLayout.self)
   let keyboardType = UInt32(LMGetKbdType())
-  for shift in [false, true] {
-    let modifierState: UInt32 = shift ? UInt32((shiftKey >> 8) & 0xFF) : 0
+  let shift = UInt32((shiftKey >> 8) & 0xFF)
+  let option = UInt32((optionKey >> 8) & 0xFF)
+  let states: [(UInt32, [String])] = [
+    (0, []), (shift, ["shift"]), (option, ["alt"]), (shift | option, ["alt", "shift"]),
+  ]
+  for (modifierState, modifiers) in states {
     for code in 0..<128 {
       var deadKeyState: UInt32 = 0
       var length = 0
@@ -261,7 +269,9 @@ func layoutKeys() -> [String: KeyStroke] {
         &characters)
       guard status == 0, length > 0 else { continue }
       let text = String(utf16CodeUnits: characters, count: length)
-      if keys[text] == nil { keys[text] = KeyStroke(code: CGKeyCode(code), shift: shift) }
+      if keys[text] == nil {
+        keys[text] = KeyStroke(code: CGKeyCode(code), modifiers: modifiers)
+      }
     }
   }
   return keys
@@ -283,7 +293,9 @@ func parseChord(_ spec: String, layout: [String: KeyStroke]) -> Chord {
   if key.hasPrefix("char:") {
     let character = String(key.dropFirst(5))
     if let stroke = layout[character] ?? ansiKeys[character] {
-      if stroke.shift && !modifiers.contains("shift") { modifiers.append("shift") }
+      for modifier in stroke.modifiers where !modifiers.contains(modifier) {
+        modifiers.append(modifier)
+      }
       return Chord(modifiers: modifiers, code: stroke.code)
     }
   }
@@ -329,7 +341,9 @@ func windowBounds(_ entry: [String: Any]) -> CGRect? {
   return CGRect(dictionaryRepresentation: dictionary as CFDictionary)
 }
 
+// Only windows on the main display, the one the provider captures and drives.
 func listWindows() -> [[String: Any]] {
+  let screen = CGDisplayBounds(CGMainDisplayID())
   let frontmost = NSWorkspace.shared.frontmostApplication?.processIdentifier
   var focusedSeen = false
   var windows: [[String: Any]] = []
@@ -343,6 +357,7 @@ func listWindows() -> [[String: Any]] {
     if let alpha = entry[kCGWindowAlpha as String] as? Double, alpha <= 0 { continue }
     let focused = !focusedSeen && frontmost == pid_t(pid)
     if focused { focusedSeen = true }
+    if !bounds.intersects(screen) { continue }
     windows.append([
       "id": String(number),
       "pid": pid,
@@ -403,13 +418,21 @@ func focusWindow(_ id: String) {
   let app = AXUIElementCreateApplication(pid_t(pid))
   AXUIElementSetAttributeValue(app, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
   NSRunningApplication(processIdentifier: pid_t(pid))?.activate(options: [.activateIgnoringOtherApps])
-  if let bounds = windowBounds(entry),
+  guard let bounds = windowBounds(entry),
     let window = matchingWindow(
       app, bounds: bounds, title: entry[kCGWindowName as String] as? String ?? "")
-  {
-    AXUIElementSetAttributeValue(window, kAXMainAttribute as CFString, kCFBooleanTrue)
-    AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+  else { fail("Window \(id) exposes no accessibility element to raise") }
+  AXUIElementSetAttributeValue(window, kAXMainAttribute as CFString, kCFBooleanTrue)
+  let raised = AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+  if raised != .success { fail("Could not raise window \(id) (AXError \(raised.rawValue))") }
+  // Activation is asynchronous; report failure rather than letting later input
+  // land in another app.
+  let deadline = Date().addingTimeInterval(2)
+  while Date() < deadline {
+    if attribute(app, kAXFrontmostAttribute) as? Bool == true { return }
+    RunLoop.main.run(until: Date().addingTimeInterval(0.05))
   }
+  fail("Window \(id) did not come to the front")
 }
 
 // MARK: Launch

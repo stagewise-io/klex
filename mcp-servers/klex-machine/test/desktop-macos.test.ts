@@ -47,6 +47,7 @@ interface Call {
   file: string;
   args: string[];
   input?: string;
+  timeoutMs?: number;
 }
 
 /** A macOS provider whose helper, screencapture, sips and launcher are fakes. */
@@ -69,11 +70,12 @@ async function fakeMac(
   const display = fake.display ?? RETINA;
   const calls: Call[] = [];
   const warnings: string[] = [];
-  const run: MacosCommandRunner = async (file, args, { input }) => {
+  const run: MacosCommandRunner = async (file, args, { input, timeoutMs }) => {
     calls.push({
       file,
       args: [...args],
       ...(input !== undefined ? { input } : {}),
+      ...(timeoutMs !== 15_000 ? { timeoutMs } : {}),
     });
     if (file === '/usr/sbin/screencapture') {
       await writeFile(args.at(-1) ?? '', PNG);
@@ -457,7 +459,8 @@ describe('MacosDesktopProvider keyboard and launch', () => {
     expect(() => toMacosChord('ctrl+')).toThrow('Invalid key combo');
     expect(() => toMacosChord('ctrl+$(x)')).toThrow('Unsupported key name');
     expect(() => toMacosChord('ctrl+é')).toThrow('Unsupported key name');
-    expect(() => toMacosChord('f21')).toThrow('Unsupported key name');
+    expect(() => toMacosChord('f21')).toThrow('macOS has no F21 key');
+    expect(() => toMacosChord('f25')).toThrow('Unsupported key name');
     expect(() => toMacosChord('a+b')).toThrow('Unsupported modifier');
   });
 
@@ -509,11 +512,11 @@ describe('MacosDesktopProvider keyboard and launch', () => {
           args: ['https://example.com'],
         }),
       ).toEqual({ pid: 31 });
-      expect(fixture.calls.at(-1)?.args).toEqual([
-        'launch-app',
-        '/Applications/Safari.app',
-        'https://example.com',
-      ]);
+      expect(fixture.calls.at(-1)).toEqual({
+        file: fixture.helper,
+        args: ['launch-app', '/Applications/Safari.app', 'https://example.com'],
+        timeoutMs: 45_000,
+      });
       expect(
         await fixture.provider.launch({
           command: 'open',

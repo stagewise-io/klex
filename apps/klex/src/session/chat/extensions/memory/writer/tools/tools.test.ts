@@ -694,8 +694,19 @@ describe('memory writer tools', () => {
       { when: 'Deploying acme/web, except on Fridays' },
       '"except" is a negation',
     );
+    await reject(
+      { when: "Deploying acme/web when CI can't run" },
+      `"can't" is a negation`,
+    );
+    await reject(
+      { when: 'Deploying acme/web if staging cannot start' },
+      '"cannot" is a negation',
+    );
     expect(
       await update({ when: 'Deploying acme/web. Keeps staging in sync.' }),
+    ).toMatchObject({ status: 'updated' });
+    expect(
+      await update({ when: 'Spotting a no-op deploy of acme/web.' }),
     ).toMatchObject({ status: 'updated' });
     expect(skills.get(name)?.body).toContain('Push, then open the PR');
     await skills.put('legacy', { description: 'Old', body: 'Prose body.' });

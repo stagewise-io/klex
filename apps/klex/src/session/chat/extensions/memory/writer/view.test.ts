@@ -50,6 +50,18 @@ describe('memory writer view', () => {
     expect(text).not.toMatch(/\[\?2004l|\[1m|\\u001b|\\r|"text"|ghs_/);
   });
 
+  it('keeps the tail when an unterminated escape sits in the omitted middle', () => {
+    const [text] = render([
+      tool(
+        'runCommand',
+        {},
+        `HEAD${'a'.repeat(9_000)}\u001b]${'b'.repeat(30_000)}TAIL`,
+      ),
+    ]);
+    expect(text).toContain('HEAD');
+    expect(text).toContain('TAIL');
+  });
+
   it('bounds tool input and output', () => {
     const [text] = render([
       tool('runCommand', { code: 'Q'.repeat(3_000) }, 'J'.repeat(3_000)),

@@ -45,16 +45,19 @@ const TERMINAL_CODES =
 // Far above the view's own caps; bounds work on huge raw tool values.
 const RAW_STRING_LIMIT = 20_000;
 
+function strip(text: string): string {
+  return text.replace(TERMINAL_CODES, '').replace(/\r\n?/g, '\n');
+}
+
 /** Terminal colours, cursor codes and carriage returns cost tokens and carry no facts. */
 function clean(value: unknown): unknown {
   if (typeof value === 'string') {
     const half = RAW_STRING_LIMIT / 2;
-    const bounded =
-      value.length > RAW_STRING_LIMIT
-        ? `${value.slice(0, half)}…${value.slice(-half)}`
-        : value;
+    // Strip each half alone: an escape cut open at the gap must not eat the tail.
     return maskSecrets(
-      bounded.replace(TERMINAL_CODES, '').replace(/\r\n?/g, '\n'),
+      value.length > RAW_STRING_LIMIT
+        ? `${strip(value.slice(0, half))}…${strip(value.slice(-half))}`
+        : strip(value),
     );
   }
   if (Array.isArray(value)) return value.map(clean);

@@ -505,7 +505,6 @@ describe('desktop MCP tools', () => {
   });
 
   it.each([
-    ['darwin', ':0'],
     ['win32', ':0'],
     ['linux', undefined],
     ['linux', ':99'],
@@ -547,6 +546,27 @@ describe('desktop MCP tools', () => {
     });
     const { tools } = await rpc(mcp, 'tools/list');
     expect(tools?.some(({ name }) => name.startsWith('desktop_'))).toBe(false);
+  });
+
+  it('tells the agent how to turn the desktop on when the provider knows', async () => {
+    const backend = fakeProvider();
+    backend.probe = async () => ({
+      ...NO_DESKTOP,
+      hint: 'Grant Screen Recording to Terminal.',
+    });
+    mcp = createMachineMcp(cwd, {
+      omitHostDetails: true,
+      desktop: new DesktopService(backend),
+    });
+    const init = await rpc(mcp, 'initialize', {
+      protocolVersion: '2025-06-18',
+      capabilities: {},
+      clientInfo: { name: 'test', version: '1' },
+    });
+    expect(init?.instructions).toContain(
+      'The graphical desktop tools are unavailable. If the user asks for computer use, tell them: Grant Screen Recording to Terminal.',
+    );
+    expect(init?.instructions).not.toContain('desktop_*');
   });
 
   it('returns screenshots as image content and as a resource', async () => {

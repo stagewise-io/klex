@@ -1,7 +1,9 @@
 import type { DesktopProvider } from '../provider.js';
 import { DesktopService, type DesktopServiceOptions } from '../service.js';
+import { MacosDesktopProvider } from './macos.js';
 import { X11DesktopProvider } from './x11.js';
 
+export { MacosDesktopProvider, toMacosChord } from './macos.js';
 export {
   DEFAULT_VNC_SOCKET_PATH,
   toXdotoolCombo,
@@ -19,6 +21,8 @@ export function createDesktopProvider(
 ): DesktopProvider | undefined {
   if (env.KLEX_MACHINE_DESKTOP?.toLowerCase() === 'off') return undefined;
   switch (platform) {
+    case 'darwin':
+      return new MacosDesktopProvider({ env });
     case 'linux':
       return new X11DesktopProvider({
         env,

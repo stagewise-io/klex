@@ -98,6 +98,8 @@ export interface DesktopCapabilities {
   accessibility?: boolean;
   /** Physical screen size; always set with `computerUse`, when known otherwise. */
   screen?: ScreenSize;
+  /** Why computer use is off and how the user can turn it on, when known. */
+  hint?: string;
 }
 
 export const NO_DESKTOP: DesktopCapabilities = {

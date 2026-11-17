@@ -30,23 +30,40 @@ try {
   if (!metadata?.filename || !Array.isArray(metadata.files)) {
     throw new Error('npm pack did not return package metadata');
   }
-  const allowed = new Set([
+  const macosHelper = 'dist/macos/klex-desktop-helper';
+  // The build adds the helper on macOS or from a prebuilt copy; a Linux or
+  // Windows development build packs without it.
+  const macosHelperRequired =
+    process.platform === 'darwin' ||
+    Boolean(process.env.KLEX_MACHINE_MACOS_HELPER_PREBUILT);
+  const required = new Set([
     'LICENSE',
     'README.md',
     'dist/index.js',
     'dist/index.js.map',
     'package.json',
+    ...(macosHelperRequired ? [macosHelper] : []),
   ]);
+  const allowed = new Set([...required, macosHelper]);
   const unexpected = metadata.files
     .map((file) => file.path)
     .filter((path) => !allowed.has(path));
   if (unexpected.length > 0) {
     throw new Error(`Unexpected packed files: ${unexpected.join(', ')}`);
   }
-  for (const required of allowed) {
-    if (!metadata.files.some((file) => file.path === required)) {
-      throw new Error(`Packed file is missing: ${required}`);
+  for (const path of required) {
+    if (!metadata.files.some((file) => file.path === path)) {
+      throw new Error(`Packed file is missing: ${path}`);
     }
+  }
+  const macosHelperMetadata = metadata.files.find(
+    (file) => file.path === macosHelper,
+  );
+  if (
+    macosHelperMetadata &&
+    (!macosHelperMetadata.mode || (macosHelperMetadata.mode & 0o111) === 0)
+  ) {
+    throw new Error('Packed macOS desktop helper is not executable');
   }
 
   const executable = join(packageRoot, 'dist', 'index.js');
@@ -98,6 +115,21 @@ try {
   );
   if (!help.includes('klex-machine serve [options]')) {
     throw new Error('Installed CLI help is incomplete');
+  }
+  if (process.platform === 'darwin') {
+    const installedHelper = join(
+      dirname(installedEntry),
+      'macos',
+      'klex-desktop-helper',
+    );
+    const helperVersion = JSON.parse(
+      await run(installedHelper, ['version'], consumer),
+    );
+    if (typeof helperVersion.version !== 'string') {
+      throw new Error(
+        'Installed macOS desktop helper did not report a version',
+      );
+    }
   }
 
   child = spawn(

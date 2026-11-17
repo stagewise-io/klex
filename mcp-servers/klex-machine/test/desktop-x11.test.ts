@@ -157,7 +157,7 @@ describeDesktopProviderContract(
 );
 
 describe('createDesktopProvider', () => {
-  it.each(['darwin', 'win32', 'freebsd'] as const)(
+  it.each(['win32', 'freebsd'] as const)(
     'has no provider on %s',
     (platform) => {
       expect(

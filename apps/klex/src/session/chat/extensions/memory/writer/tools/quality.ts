@@ -122,6 +122,18 @@ export function checkSkillItem(text: string, field: string): void {
     );
 }
 
+const NEGATION =
+  /\b(not|never|no|don'?t|doesn'?t|isn'?t|except|unless|instead of|avoid)\b/i;
+
+/** The description says when a skill applies; exclusions confuse loaders. */
+export function checkSkillWhen(text: string): void {
+  const hit = NEGATION.exec(text)?.[0];
+  if (hit)
+    throw new Error(
+      `when: "${hit}" is a negation. Say only when it applies and what for, in short positive sentences. e.g. "Opening a GitHub PR from a sandbox. Gets branch, push and PR call right."`,
+    );
+}
+
 export interface StructuredSkill {
   steps: string[];
   pitfalls: string[];

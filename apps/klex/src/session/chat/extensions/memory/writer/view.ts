@@ -22,15 +22,16 @@ const historyView = createHistoryView({
     skipMessage: isMemoryResultMessage,
     text: {
       roles: ['user', 'assistant'],
-      limit: { max: 500, truncate: 'middle' },
+      limit: { max: 1_000, truncate: 'middle' },
     },
     tools: {
       ...(ACTIVITY_HISTORY_FILTER.tools as Exclude<
         typeof ACTIVITY_HISTORY_FILTER.tools,
         false
       >),
-      input: { max: 200, truncate: 'end', json: 'lines' },
-      output: { max: 300, truncate: 'middle', json: 'plain' },
+      // Wide enough to learn how the product works from what self read and ran.
+      input: { max: 400, truncate: 'end', json: 'lines' },
+      output: { max: 1_200, truncate: 'middle', json: 'plain' },
       skip: (name) => HIDDEN_TOOLS.has(name),
     },
   },

@@ -35,6 +35,7 @@ import {
   checkCopied,
   checkFact,
   checkSkill,
+  checkSkillWhen,
   copiedValues,
   MAX_WRITER_FACT,
   parseSkillBody,
@@ -371,7 +372,7 @@ const skillParts = {
     .min(10)
     .max(150)
     .describe(
-      'Trigger: when to use, and when not if confusable. e.g. "Replying to a Linear agent session event; not plain issue comments".',
+      'Skill description: one or two short positive sentences on when it applies and what for. No steps, no exclusions. e.g. "Opening a GitHub PR from a sandbox. Gets branch, push and PR call right."',
     ),
   steps: z
     .array(
@@ -1216,6 +1217,7 @@ class WriterToolsModule implements WriterTools {
           async (input: z.infer<typeof skillCreateSchema>) => {
             const skill = structured(input);
             rejectSecrets(input, [input.when, ...skillTexts(skill)]);
+            checkSkillWhen(input.when);
             checkSkill(skill);
             checkShape(Object.create(null), [], input.loadOn);
             if (options.evidenceText !== undefined)
@@ -1278,6 +1280,7 @@ class WriterToolsModule implements WriterTools {
               verify: input.verify ?? current?.verify ?? '',
             };
             rejectSecrets(input, [input.when ?? '', ...skillTexts(skill)]);
+            if (input.when !== undefined) checkSkillWhen(input.when);
             checkSkill(skill);
             checkShape(Object.create(null), [], input.loadOn);
             if (options.evidenceText !== undefined)

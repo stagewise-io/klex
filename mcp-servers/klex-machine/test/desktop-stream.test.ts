@@ -303,6 +303,8 @@ interface CloudFake {
   messages: unknown[];
   /** Control connections accepted so far. */
   controls(): number;
+  /** Stream connections accepted so far. */
+  streams(): number;
   next(type: string): Promise<Record<string, unknown>>;
   close(): Promise<void>;
 }
@@ -313,6 +315,7 @@ async function startCloud(): Promise<CloudFake> {
   const messages: unknown[] = [];
   const waiters: Array<() => void> = [];
   let controls = 0;
+  let streams = 0;
   let resolveControl!: (value: {
     socket: WebSocket;
     request: IncomingMessage;
@@ -339,7 +342,10 @@ async function startCloud(): Promise<CloudFake> {
         for (const waiter of waiters.splice(0)) waiter();
       });
       resolveControl({ socket, request });
-    } else resolveStream({ socket, request });
+    } else {
+      streams += 1;
+      resolveStream({ socket, request });
+    }
   });
   const address = server.address() as { port: number };
   return {
@@ -348,6 +354,7 @@ async function startCloud(): Promise<CloudFake> {
     stream,
     messages,
     controls: () => controls,
+    streams: () => streams,
     async next(type) {
       for (;;) {
         const index = messages.findIndex(
@@ -369,8 +376,13 @@ async function startVnc(path: string) {
   const received: Buffer[] = [];
   let client: Socket | undefined;
   const changed: Array<() => void> = [];
+  let markDisconnected!: () => void;
+  const disconnected = new Promise<void>((resolve) => {
+    markDisconnected = resolve;
+  });
   const server: Server = createServer((socket) => {
     client = socket;
+    socket.on('close', () => markDisconnected());
     socket.write(VERSION);
     socket.on('data', (chunk: Buffer) => {
       received.push(chunk);
@@ -379,6 +391,8 @@ async function startVnc(path: string) {
   });
   await new Promise<void>((resolve) => server.listen(path, resolve));
   return {
+    /** Settles once the first client connection closes. */
+    disconnected,
     async bytes(length: number): Promise<Buffer> {
       while (Buffer.concat(received).length < length)
         await new Promise<void>((resolve) => changed.push(resolve));
@@ -540,6 +554,7 @@ describe('desktop link', () => {
       const server = createServer(resolve);
       server.listen(socketPath);
       vnc = {
+        disconnected: Promise.resolve(),
         bytes: async () => Buffer.alloc(0),
         close: () => new Promise<void>((done) => server.close(() => done())),
       };
@@ -616,6 +631,74 @@ describe('desktop link', () => {
     const started = Date.now();
     await link.close();
     expect(Date.now() - started).toBeLessThan(4000);
+  });
+
+  it('frees the stream source and slot when Cloud stops answering pings', async () => {
+    cloud = await startCloud();
+    const socketPath =
+      process.platform === 'win32'
+        ? `\\\\.\\pipe\\klex-machine-vnc-${randomUUID()}`
+        : join(dir, 'vnc.sock');
+    vnc = await startVnc(socketPath);
+    link = startDesktopLink({
+      cloudBaseUrl: cloud.url,
+      getToken: async () => 'machine-token',
+      invalidateToken: () => undefined,
+      desktop: new DesktopService(fakeProvider(socketPath)),
+      machineVersion: '1.2.3',
+      maxStreams: 1,
+      pingMs: 20,
+      pongTimeoutMs: 100,
+    });
+    const { socket: control } = await cloud.control;
+    await cloud.next('hello');
+    control.send(JSON.stringify({ type: 'stream.open', streamId: STREAM_ID }));
+    const { socket: viewer, request } = await cloud.stream;
+    await nextBinary(viewer);
+    // The control link keeps answering; only the stream's peer goes silent.
+    request.socket.pause();
+    await vnc.disconnected;
+
+    control.send(
+      JSON.stringify({ type: 'stream.open', streamId: randomUUID() }),
+    );
+    await vi.waitFor(() => expect(cloud?.streams()).toBe(2));
+    expect(
+      cloud.messages.some(
+        (message) => (message as { type?: string }).type === 'stream.failed',
+      ),
+    ).toBe(false);
+  });
+
+  it('closes live streams when the control link drops, then reconnects', async () => {
+    cloud = await startCloud();
+    const socketPath =
+      process.platform === 'win32'
+        ? `\\\\.\\pipe\\klex-machine-vnc-${randomUUID()}`
+        : join(dir, 'vnc.sock');
+    vnc = await startVnc(socketPath);
+    link = startDesktopLink({
+      cloudBaseUrl: cloud.url,
+      getToken: async () => 'machine-token',
+      invalidateToken: () => undefined,
+      desktop: new DesktopService(fakeProvider(socketPath)),
+      machineVersion: '1.2.3',
+      random: () => 0,
+    });
+    const { socket: control } = await cloud.control;
+    await cloud.next('hello');
+    control.send(JSON.stringify({ type: 'stream.open', streamId: STREAM_ID }));
+    const { socket: viewer } = await cloud.stream;
+    await nextBinary(viewer);
+    const viewerClosed = new Promise<number>((resolve) =>
+      viewer.once('close', (code) => resolve(code)),
+    );
+
+    control.terminate();
+    expect(await viewerClosed).toBe(1001);
+    await vnc.disconnected;
+    await cloud.next('hello');
+    expect(cloud.controls()).toBe(2);
   });
 
   it.each([

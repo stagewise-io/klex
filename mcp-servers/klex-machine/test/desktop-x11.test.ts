@@ -538,6 +538,71 @@ describe('X11 accessibility', () => {
     }
   });
 
+  it('treats hidden elements and children of removed ones as gone', async () => {
+    const { app, save } = sampleApplication();
+    const atspi = fakeAtspi([app]);
+    const fixture = await fakeX11({ display: true, imagemagick: true, atspi });
+    try {
+      const tree = await fixture.provider.accessibilityTree?.(query);
+      const handleOf = (name: string) =>
+        tree?.nodes.find((node) => node.name === name)?.handle ?? '';
+      atspi.hide(save);
+      expect(
+        await fixture.provider.accessibilityElement?.(handleOf('Save')),
+      ).toBeUndefined();
+      const panel = app.windows[0]?.children?.[0];
+      if (!panel) throw new Error('sample has no panel');
+      atspi.remove(panel);
+      expect(
+        await fixture.provider.accessibilityElement?.(handleOf('Search')),
+      ).toBeUndefined();
+    } finally {
+      await fixture.close?.();
+    }
+  });
+
+  it('stops walking once maxNodes elements are kept', async () => {
+    const atspi = fakeAtspi([sampleApplication().app]);
+    const fixture = await fakeX11({ display: true, imagemagick: true, atspi });
+    try {
+      await fixture.provider.accessibilityTree?.({ ...query, maxNodes: 1 });
+      const roleReads = atspi.calls.filter(
+        ({ member }) => member === 'GetRoleName',
+      ).length;
+      expect(roleReads).toBeLessThan(4);
+    } finally {
+      await fixture.close?.();
+    }
+  });
+
+  it('gives up on a session bus launcher that never answers', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    try {
+      const provider = new X11DesktopProvider({
+        display: ':1',
+        env: { DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/1000/bus' },
+        vncSocketPath: '/nonexistent/vnc.sock',
+        connect: () => {
+          throw new Error('no socket');
+        },
+        connectBus: async () => ({
+          closed: false,
+          call: () => new Promise<never>(() => undefined),
+          close() {},
+        }),
+        run: async (file) => {
+          if (file === 'xprop') throw new Error('no property');
+          return Buffer.from(file === 'xdotool' ? '1280 800\n' : '');
+        },
+      });
+      const probe = provider.probe();
+      await vi.advanceTimersByTimeAsync(2_500);
+      expect(await probe).not.toHaveProperty('accessibility');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('finds the bus from the root window, then from the session bus', async () => {
     const atspi = fakeAtspi([sampleApplication().app], {
       a11yAddress: 'unix:path=/run/user/1000/at-spi/bus_1',

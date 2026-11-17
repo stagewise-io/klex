@@ -17,7 +17,12 @@ import {
   type ScreenSize,
   type ScrollDirection,
 } from '../provider.js';
-import { AtspiClient, type AtspiConnector, connectAtspiBus } from './atspi.js';
+import {
+  AtspiClient,
+  type AtspiConnector,
+  connectAtspiBus,
+  withTimeout,
+} from './atspi.js';
 
 export const DEFAULT_VNC_SOCKET_PATH = '/run/klex/vnc.sock';
 const STREAM_CONNECT_TIMEOUT_MS = 2_000;
@@ -293,11 +298,9 @@ export class X11DesktopProvider implements DesktopProvider {
     if (!session) throw new Error('No accessibility bus was found');
     const bus = await connectBus(session);
     try {
-      const [address] = await bus.call(
-        'org.a11y.Bus',
-        '/org/a11y/bus',
-        'org.a11y.Bus',
-        'GetAddress',
+      const [address] = await withTimeout(
+        bus.call('org.a11y.Bus', '/org/a11y/bus', 'org.a11y.Bus', 'GetAddress'),
+        'The accessibility bus launcher did not answer',
       );
       if (typeof address !== 'string' || address === '') {
         throw new Error('The accessibility bus launcher returned no address');

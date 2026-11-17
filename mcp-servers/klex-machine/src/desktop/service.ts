@@ -387,12 +387,23 @@ export class DesktopService {
   #refFor(element: AccessibilityElement): string {
     const known = this.#refByHandle.get(element.handle);
     if (known) {
-      this.#refs.set(known, { handle: element.handle, role: element.role });
-      return known;
+      const entry = this.#refs.get(known);
+      this.#refs.delete(known);
+      // A ref keeps the role it was issued with, so a handle whose element
+      // changed role gets a new ref and the old one reads as stale.
+      if (entry?.role === element.role) {
+        this.#refs.set(known, entry);
+        return known;
+      }
     }
-    if (this.#refs.size >= MAX_REFS) {
-      this.#refs.clear();
-      this.#refByHandle.clear();
+    // Refs are kept in least-recently-printed order; evicting from the front
+    // never drops one printed in the same response.
+    while (this.#refs.size >= MAX_REFS) {
+      const [oldest, entry] = this.#refs.entries().next().value ?? [];
+      if (oldest === undefined || !entry) break;
+      this.#refs.delete(oldest);
+      if (this.#refByHandle.get(entry.handle) === oldest)
+        this.#refByHandle.delete(entry.handle);
     }
     const ref = `r${this.#nextRef++}`;
     this.#refs.set(ref, { handle: element.handle, role: element.role });
@@ -425,7 +436,8 @@ export class DesktopService {
       length += line.length + 1;
       count += 1;
     }
-    if (wholeWindow && tree.nodes.length <= 1) lines.push(FRAME_ONLY_HINT);
+    if (wholeWindow && !truncated && tree.nodes.length <= 1)
+      lines.push(FRAME_ONLY_HINT);
     if (truncated) {
       lines.push(
         '[truncated: pass a ref to read one subtree, or lower maxDepth]',

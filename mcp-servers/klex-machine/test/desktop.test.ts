@@ -284,6 +284,53 @@ describe('DesktopService', () => {
     expect(tree.text).toContain('desktop_screenshot');
   });
 
+  it('issues a new ref when an element changes role, leaving the old one stale', async () => {
+    const backend = accessibleProvider();
+    const desktop = new DesktopService(backend);
+    await desktop.accessibilityTree();
+    backend.update('app|/save', { role: 'label' });
+    backend.accessibilityTree = async () => ({
+      nodes: [
+        {
+          ...(backend.live.get('app|/save') as AccessibilityElement),
+          depth: 0,
+        },
+      ],
+      truncated: false,
+    });
+    const tree = await desktop.accessibilityTree();
+    expect(tree.text).toContain('r4 label "Save"');
+    await expect(
+      desktop.clickElement('local', 'r2', 'left', 1, []),
+    ).rejects.toThrow('r2 is stale or unknown');
+    expect(
+      await desktop.clickElement('local', 'r4', 'left', 1, []),
+    ).toMatchObject({
+      ref: 'r4',
+    });
+  });
+
+  it('does not call a truncated one-node tree frame-only', async () => {
+    const backend = accessibleProvider();
+    backend.accessibilityTree = async () => ({
+      nodes: [
+        {
+          handle: 'app|/frame',
+          role: 'frame',
+          name: 'Editor',
+          states: [],
+          depth: 0,
+        },
+      ],
+      truncated: true,
+    });
+    const tree = await new DesktopService(backend).accessibilityTree({
+      maxNodes: 1,
+    });
+    expect(tree.text).not.toContain('Only the window itself is exposed');
+    expect(tree.text).toContain('[truncated');
+  });
+
   it('clicks an element by ref at its live centre', async () => {
     const backend = accessibleProvider();
     const desktop = new DesktopService(backend);

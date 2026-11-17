@@ -13,6 +13,7 @@ import {
   MAX_DESCRIPTION_LENGTH,
   MAX_NAME_LENGTH,
   MAX_REFERENCE_LENGTH,
+  SKILL_NAME_PATTERN,
 } from '@/skills';
 
 // Extend Zod with .openapi() metadata support for spec generation.
@@ -1108,10 +1109,16 @@ const skillIdParamsSchema = z.object({
 });
 
 const skillReferenceParamsSchema = skillIdParamsSchema.extend({
-  reference: z.string().min(1).openapi({
-    description: 'Reference file name without `.md`',
-    example: 'examples',
-  }),
+  reference: z
+    .string()
+    .min(1)
+    .max(MAX_NAME_LENGTH)
+    .regex(SKILL_NAME_PATTERN)
+    .openapi({
+      description:
+        'Reference file name without `.md`, same slug rules as skill names',
+      example: 'examples',
+    }),
 });
 
 const skillReferenceSchema = z

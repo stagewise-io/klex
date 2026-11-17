@@ -5,7 +5,10 @@ const SECRET_PATTERN = new RegExp(
     String.raw`\bgithub_pat_[A-Za-z0-9_]{20,}`,
     String.raw`\bxox[abp]-[A-Za-z0-9-]{10,}`,
     String.raw`\bsk-[A-Za-z0-9_-]{20,}`,
-    String.raw`\bBearer\s+[A-Za-z0-9._~+/=-]{20,}`,
+    String.raw`\b[Bb][Ee][Aa][Rr][Ee][Rr]\s+[A-Za-z0-9._~+/=-]{20,}`,
+    // AWS access key IDs, and 40-character secrets next to their usual labels.
+    String.raw`\b(?:AKIA|ASIA)[A-Z0-9]{16}\b`,
+    String.raw`(?:aws_?secret(?:_access)?_?key|secretAccessKey)\W{0,4}[A-Za-z0-9/+=]{40}\b`,
     String.raw`\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}`,
   ].join('|'),
   'g',

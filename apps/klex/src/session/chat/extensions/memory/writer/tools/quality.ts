@@ -122,8 +122,9 @@ export function checkSkillItem(text: string, field: string): void {
     );
 }
 
+// Whole words only: hyphenated compounds such as `no-op` are not negations.
 const NEGATION =
-  /\b(not|never|no|don'?t|doesn'?t|isn'?t|except|unless|instead of|avoid)\b/i;
+  /(?<![\w'’-])(not|never|no|cannot|(?:can|won|don|doesn|isn|aren|shouldn)['’]?t|except|unless|instead of|avoid)(?![\w'’-])/i;
 
 /** The description says when a skill applies; exclusions confuse loaders. */
 export function checkSkillWhen(text: string): void {

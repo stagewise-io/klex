@@ -422,6 +422,8 @@ describe('PowerShellDesktopHelper', () => {
       expect(shells[0]?.killed).toBe(true);
       expect(await helper.request('size', [])).toBe('fine');
       expect(shells).toHaveLength(2);
+      // The replacement first lets go of keys and buttons the killed one held.
+      expect(shells[1]?.received.slice(1)).toEqual(['release', 'size']);
     } finally {
       helper.close();
     }
@@ -442,9 +444,25 @@ describe('PowerShellDesktopHelper', () => {
       );
       expect(await helper.request('size', [])).toBe('back');
       expect(shells).toHaveLength(2);
+      expect(shells[1]?.received.slice(1)).toEqual(['release', 'size']);
     } finally {
       helper.close();
     }
+  });
+
+  it('releases nothing after close() or a reported error', async () => {
+    const { spawn, shells } = fakeSpawner((line) =>
+      line === 'hang' ? undefined : `err\t${b64('no')}`,
+    );
+    const helper = new PowerShellDesktopHelper({ env: {}, spawn });
+    await expect(helper.request('click', [])).rejects.toThrow('no');
+    const hung = helper.request('hang', []);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    helper.close();
+    await expect(hung).rejects.toThrow('stopped');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(shells).toHaveLength(1);
+    expect(shells[0]?.received.slice(1)).toEqual(['click', 'hang']);
   });
 
   it('fails startup when PowerShell is missing', async () => {

@@ -27,6 +27,7 @@ const STARTUP_TIMEOUT_MS = 30_000;
 const REQUEST_TIMEOUT_MS = 15_000;
 const TYPE_CHUNK_CHARACTERS = 200;
 const STDERR_LIMIT = 4_096;
+const RELEASE_REQUEST = 'release';
 
 /** Sends one request to the desktop helper and resolves its payload. */
 export type WindowsDesktopHelper = (
@@ -417,6 +418,7 @@ export class PowerShellDesktopHelper {
   readonly #requestTimeoutMs: number;
   #connection: HelperConnection | undefined;
   #queue: Promise<unknown> = Promise.resolve();
+  #generation = 0;
 
   constructor(options: PowerShellDesktopHelperOptions = {}) {
     this.#env = options.env ?? process.env;
@@ -434,6 +436,7 @@ export class PowerShellDesktopHelper {
   }
 
   close(): void {
+    this.#generation += 1;
     this.#connection?.kill();
     this.#connection = undefined;
   }
@@ -447,6 +450,7 @@ export class PowerShellDesktopHelper {
       }
     }
     const connection = await this.#connect();
+    const generation = this.#generation;
     try {
       connection.write([request, ...args].join('\t'));
       const line = await connection.nextLine(this.#requestTimeoutMs);
@@ -460,6 +464,17 @@ export class PowerShellDesktopHelper {
       throw new Error(
         `Unexpected desktop helper output: ${line.slice(0, 200)}`,
       );
+    } catch (error) {
+      // A helper killed or crashed mid-request never ran its cleanup, so keys
+      // or buttons it pressed may still be down.
+      if (
+        connection.closed &&
+        request !== RELEASE_REQUEST &&
+        generation === this.#generation
+      ) {
+        this.request(RELEASE_REQUEST, []).catch(() => undefined);
+      }
+      throw error;
     } finally {
       connection.unref();
     }

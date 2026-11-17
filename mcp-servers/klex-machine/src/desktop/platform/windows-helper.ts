@@ -48,6 +48,7 @@ namespace KlexMachine
         [DllImport("user32.dll", SetLastError = true)] static extern bool SetCursorPos(int x, int y);
         [DllImport("user32.dll")] static extern int GetSystemMetrics(int index);
         [DllImport("user32.dll")] static extern short VkKeyScanW(char ch);
+        [DllImport("user32.dll")] static extern short GetAsyncKeyState(int vk);
         [DllImport("user32.dll")] static extern uint MapVirtualKeyW(uint code, uint mapType);
         [DllImport("user32.dll")] static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
         [DllImport("user32.dll")] static extern bool IsWindow(IntPtr hWnd);
@@ -101,6 +102,7 @@ namespace KlexMachine
         const ushort VK_TAB = 0x09;
         const ushort VK_UNASSIGNED = 0xE8;
         const int MAX_WINDOWS = 50;
+        static readonly ushort[] HELD_KEYS = { 0x10, 0x11, 0x12, 0x5B, 0x5C, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5 };
         const string READY = "klex-desktop-ready";
 
         static string dpiAwareness = "unaware";
@@ -173,6 +175,7 @@ namespace KlexMachine
                 case "key": Keys(request); return "";
                 case "windows": return Windows();
                 case "focus": Focus(Arg(request, 1)); return "";
+                case "release": Release(); return "";
                 default: throw new ArgumentException("Unknown desktop request: " + request[0]);
             }
         }
@@ -575,6 +578,7 @@ namespace KlexMachine
         {
             List<string> records = new List<string>();
             IntPtr foreground = GetForegroundWindow();
+            int screenWidth = ScreenWidth(), screenHeight = ScreenHeight();
             EnumWindowsProc visit = delegate(IntPtr hWnd, IntPtr unused)
             {
                 if (records.Count >= MAX_WINDOWS) return false;
@@ -586,9 +590,11 @@ namespace KlexMachine
                 GetWindowTextW(hWnd, title, title.Capacity);
                 RECT rect;
                 if (!Bounds(hWnd, out rect)) return true;
-                int width = rect.Right - rect.Left, height = rect.Bottom - rect.Top;
+                // Capture and input cover the primary monitor only, so clip to it.
+                int left = Math.Max(rect.Left, 0), top = Math.Max(rect.Top, 0);
+                int width = Math.Min(rect.Right, screenWidth) - left, height = Math.Min(rect.Bottom, screenHeight) - top;
                 if (width <= 1 || height <= 1) return true;
-                records.Add(hWnd.ToInt64().ToString(CultureInfo.InvariantCulture) + "," + Text(rect.Left) + "," + Text(rect.Top) + ","
+                records.Add(hWnd.ToInt64().ToString(CultureInfo.InvariantCulture) + "," + Text(left) + "," + Text(top) + ","
                     + Text(width) + "," + Text(height) + "," + (hWnd == foreground ? "1" : "0") + "," + Base64(title.ToString()));
                 return true;
             };
@@ -643,6 +649,19 @@ namespace KlexMachine
                 TrySend(Key(VK_MENU, true));
             }
             if (!IsForeground(hWnd)) throw new InvalidOperationException("Windows kept window " + id + " in the background");
+        }
+
+        // A killed helper skips its finally blocks; a new one lets go of what it may have held.
+        static void Release()
+        {
+            foreach (ushort vk in HELD_KEYS)
+            {
+                if ((GetAsyncKeyState(vk) & 0x8000) != 0) TrySend(Key(vk, true));
+            }
+            // GetAsyncKeyState reads physical buttons, which is what SendInput sends.
+            if ((GetAsyncKeyState(0x01) & 0x8000) != 0) TrySend(Mouse(MOUSE_LEFTUP, 0, 0, 0));
+            if ((GetAsyncKeyState(0x02) & 0x8000) != 0) TrySend(Mouse(MOUSE_RIGHTUP, 0, 0, 0));
+            if ((GetAsyncKeyState(0x04) & 0x8000) != 0) TrySend(Mouse(MOUSE_MIDDLEUP, 0, 0, 0));
         }
 
         static string Arg(string[] request, int index)

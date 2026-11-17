@@ -28,6 +28,7 @@ import {
   MAX_FACT_HISTORY,
   type MemoryEntity,
   mergedEntity,
+  type Relation,
   relationSchema,
   sectionNameSchema,
 } from '../entities';
@@ -649,32 +650,45 @@ class WriterToolsModule implements WriterTools {
           throw new Error(
             `Invalid reference: entity "${targetId}" does not exist`,
           );
-      for (const targetId of targets) {
-        if (targetId === id) continue;
-        const relation = next.find(
-          ({ target: t }) => t.kind === 'entity' && t.id === targetId,
-        );
-        // Read and write the target inside the store queue, so a concurrent
-        // edit of its relations is merged, never overwritten.
-        await options.entities.mutateRelations(targetId, (relations) => {
-          const others = relations.filter(
-            ({ target: t }) => !(t.kind === 'entity' && t.id === id),
+      // Undo log: on failure every target written so far gets its relations back.
+      const written: { targetId: string; before: Relation[] }[] = [];
+      try {
+        for (const targetId of targets) {
+          if (targetId === id) continue;
+          const relation = next.find(
+            ({ target: t }) => t.kind === 'entity' && t.id === targetId,
           );
-          const existing = relations.find(
-            ({ target: t }) => t.kind === 'entity' && t.id === id,
-          );
-          const label = relation?.inverse ?? existing?.relationship;
-          return relation && label
-            ? [
-                ...others,
-                {
-                  target: { kind: 'entity' as const, id },
-                  strength: relation.strength,
-                  relationship: label,
-                },
-              ]
-            : others;
-        });
+          // Read and write the target inside the store queue, so a concurrent
+          // edit of its relations is merged, never overwritten.
+          let before: Relation[] = [];
+          await options.entities.mutateRelations(targetId, (relations) => {
+            before = relations;
+            const others = relations.filter(
+              ({ target: t }) => !(t.kind === 'entity' && t.id === id),
+            );
+            const existing = relations.find(
+              ({ target: t }) => t.kind === 'entity' && t.id === id,
+            );
+            const label = relation?.inverse ?? existing?.relationship;
+            return relation && label
+              ? [
+                  ...others,
+                  {
+                    target: { kind: 'entity' as const, id },
+                    strength: relation.strength,
+                    relationship: label,
+                  },
+                ]
+              : others;
+          });
+          written.push({ targetId, before });
+        }
+      } catch (error) {
+        for (const { targetId, before } of written.reverse())
+          await options.entities
+            .mutateRelations(targetId, () => before)
+            .catch(() => undefined);
+        throw error;
       }
     };
     this.tools = {
@@ -1001,7 +1015,7 @@ class WriterToolsModule implements WriterTools {
           if (fields.relatedTo) {
             try {
               await syncInverses(
-                id,
+                updated.id,
                 fields.relatedTo,
                 entity.frontmatter.RelatedTo,
               );
@@ -1010,7 +1024,7 @@ class WriterToolsModule implements WriterTools {
               const reason =
                 error instanceof Error ? error.message : String(error);
               const restored = await options.entities
-                .mutateRelations(id, () => entity.frontmatter.RelatedTo)
+                .mutateRelations(updated.id, () => entity.frontmatter.RelatedTo)
                 .then(
                   () => true,
                   () => false,
@@ -1061,6 +1075,19 @@ class WriterToolsModule implements WriterTools {
               throw new Error('Never merge into or from self');
             const merged = mergedEntity(keep, drop);
             checkShape(merged.sections, Object.keys(merged.sections), [], []);
+            const {
+              RelatedTo,
+              LinkedIdentities,
+              MergedFrom = [],
+            } = merged.frontmatter;
+            if (
+              RelatedTo.length > 100 ||
+              LinkedIdentities.length > 30 ||
+              MergedFrom.length > 100
+            )
+              throw new Error(
+                `Merged entity would exceed limits (relations ${RelatedTo.length}/100, linked identities ${LinkedIdentities.length}/30, merged IDs ${MergedFrom.length}/100). Remove weak relations or stale identities with updateEntity first`,
+              );
             if (options.signal.aborted) throw new Error('Writer closed');
             const result = await options.entities.merge(
               keepId,

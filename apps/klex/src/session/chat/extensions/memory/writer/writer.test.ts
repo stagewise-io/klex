@@ -150,6 +150,13 @@ async function fixture(completion: 'normal' | 'failed' | 'skip' = 'normal') {
       const handle = {
         ...child,
         sessionId: `memory-child-${children.length}`,
+        // Own inbox per child, so a reused child would be visible.
+        inbox: {
+          sendMessage: vi.fn(
+            (...args: Parameters<ChildSessionHandle['inbox']['sendMessage']>) =>
+              child.inbox.sendMessage(...args),
+          ),
+        },
         getSessionInfo: () => ({ status: closed ? 'terminated' : 'active' }),
         close: vi.fn(async () => {
           closed = true;
@@ -349,7 +356,10 @@ describe('oldest-first memory writer', () => {
       'memory-child-2',
       'memory-child-3',
     ]);
-    for (const child of f.children) expect(child.close).toHaveBeenCalledOnce();
+    for (const child of f.children) {
+      expect(child.close).toHaveBeenCalledOnce();
+      expect(child.inbox.sendMessage).toHaveBeenCalledOnce();
+    }
     expect(f.child.inbox.sendMessage).toHaveBeenCalledTimes(4);
     expect((await f.extension.introspect?.())?.childSessionId).toBeNull();
     const options = f.createChildSession.mock.calls[0]?.[0] as unknown as {

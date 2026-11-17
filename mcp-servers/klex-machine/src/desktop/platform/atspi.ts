@@ -249,6 +249,7 @@ export class AtspiClient {
     const deadline = this.#now() + WALK_DEADLINE_MS;
     const nodes: AccessibilityNode[] = [];
     let visited = 0;
+    let kept = 0;
     let truncated = false;
     let running = 0;
     const waiting: (() => void)[] = [];
@@ -274,7 +275,13 @@ export class AtspiClient {
       printedDepth: number,
       root: boolean,
     ): Promise<Out | undefined> => {
-      if (visited >= MAX_VISITED || this.#now() > deadline) {
+      // Parallel siblings mean a stopped walk may skip nodes before the last
+      // kept one; the result is then marked truncated.
+      if (
+        visited >= MAX_VISITED ||
+        kept >= options.maxNodes ||
+        this.#now() > deadline
+      ) {
         truncated = true;
         return undefined;
       }
@@ -296,7 +303,10 @@ export class AtspiClient {
         const element = await limited(() => this.#element(raw)).catch(
           () => undefined,
         );
-        if (element) out.node = { ...element, depth: printedDepth };
+        if (element) {
+          out.node = { ...element, depth: printedDepth };
+          kept += 1;
+        }
       }
       if (depth >= options.maxDepth) {
         if (raw.children.length > 0) truncated = true;
@@ -342,7 +352,8 @@ export class AtspiClient {
   async element(handle: string): Promise<AccessibilityElement | undefined> {
     const [bus, path] = decodeHandle(handle);
     const raw = await this.#raw(bus, path).catch(() => undefined);
-    if (!raw || raw.states.has(STATE.defunct)) return undefined;
+    if (!raw || raw.states.has(STATE.defunct) || !raw.states.has(STATE.showing))
+      return undefined;
     return this.#element(raw);
   }
 
@@ -467,20 +478,10 @@ export class AtspiClient {
     body?: unknown[],
   ): Promise<unknown[]> {
     const connection = await this.#connection();
-    let timer: NodeJS.Timeout | undefined;
-    try {
-      return await Promise.race([
-        connection.call(destination, path, iface, member, signature, body),
-        new Promise<never>((_, reject) => {
-          timer = setTimeout(
-            () => reject(new Error(`${member} timed out`)),
-            CALL_TIMEOUT_MS,
-          );
-        }),
-      ]);
-    } finally {
-      clearTimeout(timer);
-    }
+    return withTimeout(
+      connection.call(destination, path, iface, member, signature, body),
+      `${member} timed out`,
+    );
   }
 
   async #connection(): Promise<AtspiBus> {
@@ -538,6 +539,25 @@ function toRegion(value: unknown): Region | undefined {
   )
     return undefined;
   return { x: x ?? 0, y: y ?? 0, width, height };
+}
+
+/** Rejects with `message` when `promise` takes longer than a D-Bus call may. */
+export async function withTimeout<T>(
+  promise: Promise<T>,
+  message: string,
+  ms = CALL_TIMEOUT_MS,
+): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export function encodeHandle(bus: string, path: string): string {

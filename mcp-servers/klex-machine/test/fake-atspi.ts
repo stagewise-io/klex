@@ -134,7 +134,16 @@ export function fakeAtspi(
     calls,
     connections,
     remove(element: FakeElement) {
-      removed.add(element);
+      const pending = [element];
+      for (let current = pending.pop(); current; current = pending.pop()) {
+        removed.add(current);
+        pending.push(...(current.children ?? []));
+      }
+    },
+    hide(element: FakeElement) {
+      element.states = (element.states ?? []).filter(
+        (state) => state !== 'showing',
+      );
     },
     async connect(address: string): Promise<AtspiBus> {
       connections.push(address);

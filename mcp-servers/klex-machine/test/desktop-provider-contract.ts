@@ -12,6 +12,8 @@ export interface DesktopProviderFixture {
 export interface ExpectedCapabilities {
   computerUse: boolean;
   stream: boolean;
+  /** Defaults to false: accessibility is opt-in. */
+  accessibility?: boolean;
 }
 
 const RFB_VERSION = /^RFB 003\.00[378]\n$/;
@@ -42,7 +44,8 @@ export function describeDesktopProviderContract(
       expect({
         computerUse: capabilities.computerUse,
         stream: capabilities.stream,
-      }).toEqual(expected);
+        accessibility: capabilities.accessibility ?? false,
+      }).toEqual({ accessibility: false, ...expected });
       if (expected.computerUse) {
         expect(capabilities.screen).toEqual({
           width: expect.any(Number),
@@ -99,6 +102,62 @@ export function describeDesktopProviderContract(
         if (windows[0]) await provider.focusWindow(windows[0].id);
         const { pid } = await provider.launch({ command: 'true', args: [] });
         expect(pid).toBeGreaterThan(0);
+      },
+    );
+
+    it.runIf(expected.accessibility)(
+      'reads a bounded pre-order tree and re-reads its elements',
+      async () => {
+        const { provider } = fixture;
+        const { accessibilityTree, accessibilityElement } = provider;
+        if (!accessibilityTree || !accessibilityElement) {
+          throw new Error('accessibility reported without its methods');
+        }
+        const query = { interactiveOnly: false, maxDepth: 10, maxNodes: 50 };
+        const tree = await accessibilityTree.call(provider, query);
+        expect(tree.nodes.length).toBeGreaterThan(0);
+        expect(tree.nodes.length).toBeLessThanOrEqual(query.maxNodes);
+        expect(tree.truncated).toBeTypeOf('boolean');
+        expect(tree.nodes[0]?.depth).toBe(0);
+        let previous = 0;
+        for (const node of tree.nodes) {
+          expect(node).toMatchObject({
+            handle: expect.any(String),
+            role: expect.any(String),
+            name: expect.any(String),
+            states: expect.any(Array),
+          });
+          expect(node.depth).toBeLessThanOrEqual(previous + 1);
+          previous = node.depth;
+        }
+
+        const [root] = tree.nodes;
+        if (!root) throw new Error('empty tree');
+        const element = await accessibilityElement.call(provider, root.handle);
+        expect(element).toMatchObject({ handle: root.handle, role: root.role });
+        const subtree = await accessibilityTree.call(provider, {
+          ...query,
+          root: root.handle,
+          maxNodes: 1,
+        });
+        expect(subtree.nodes).toHaveLength(1);
+        expect(subtree.nodes[0]?.handle).toBe(root.handle);
+      },
+    );
+
+    it.runIf(!expected.accessibility)(
+      'rejects accessibility reads when it does not report them',
+      async () => {
+        const { provider } = fixture;
+        if (provider.accessibilityTree) {
+          await expect(
+            provider.accessibilityTree({
+              interactiveOnly: true,
+              maxDepth: 5,
+              maxNodes: 5,
+            }),
+          ).rejects.toThrow();
+        }
       },
     );
 

@@ -6,6 +6,9 @@ import type {
 } from './input-control.js';
 import { DesktopControlLease } from './lease.js';
 import {
+  type AccessibilityElement,
+  type AccessibilityQuery,
+  type AccessibilityTree,
   type DesktopCapabilities,
   type DesktopProvider,
   type DesktopWindow,
@@ -24,6 +27,14 @@ const PROBE_RETRY_MS = 10_000;
 const PROBE_REFRESH_MS = 60_000;
 const DEFAULT_SETTLE_MS = 300;
 const MAX_SETTLE_MS = 5_000;
+export const DEFAULT_TREE_DEPTH = 30;
+export const MAX_TREE_DEPTH = 60;
+export const DEFAULT_TREE_NODES = 300;
+export const MAX_TREE_NODES = 1_000;
+const MAX_TREE_CHARACTERS = 24_000;
+const MAX_REFS = 10_000;
+const FRAME_ONLY_HINT =
+  'Only the window itself is exposed. The app may not support accessibility, or, for Chrome and Electron apps, was started without --force-renderer-accessibility. Use desktop_screenshot.';
 
 export interface DesktopScreenshot {
   data: Buffer;
@@ -38,6 +49,43 @@ export interface DesktopScreenshot {
 export interface DesktopZoom extends DesktopScreenshot {
   region: Region;
 }
+
+export interface DesktopAccessibilityTreeOptions {
+  /** Window id from `listWindows()`; the focused window when omitted. */
+  window?: string;
+  /** A ref from an earlier tree, to read only its subtree. */
+  ref?: string;
+  interactiveOnly?: boolean;
+  maxDepth?: number;
+  maxNodes?: number;
+}
+
+export interface DesktopAccessibilityTree {
+  /** One line per element: ref, role, name, value, bounds and states. */
+  text: string;
+  nodes: number;
+  truncated: boolean;
+}
+
+export interface DesktopElementClick {
+  ref: string;
+  /** Where the click landed, in screenshot coordinates. */
+  x: number;
+  y: number;
+}
+
+/** A ref the model holds that no longer matches a live element. */
+export class StaleElementRefError extends Error {
+  constructor(ref: string) {
+    super(
+      `${ref} is stale or unknown. Read the tree again with desktop_accessibility_tree.`,
+    );
+    this.name = 'StaleElementRefError';
+  }
+}
+
+type AccessibleProvider = DesktopProvider &
+  Required<Pick<DesktopProvider, 'accessibilityTree' | 'accessibilityElement'>>;
 
 export interface DesktopServiceOptions {
   /** Defaults to a fresh lease, which also gates agent input. */
@@ -61,6 +109,11 @@ export class DesktopService {
   #probeTtl = 0;
   #probing = false;
   #queue: Promise<unknown> = Promise.resolve();
+  // Refs are short names for provider handles. They are never reused, so a
+  // ref the model still holds cannot silently point at another element.
+  readonly #refs = new Map<string, { handle: string; role: string }>();
+  readonly #refByHandle = new Map<string, string>();
+  #nextRef = 1;
 
   constructor(provider: DesktopProvider, options: DesktopServiceOptions = {}) {
     this.#provider = provider;
@@ -231,6 +284,157 @@ export class DesktopService {
   }
 
   /**
+   * The accessibility tree of a window or of an earlier ref's subtree, as
+   * text with refs and bounds in screenshot coordinates.
+   */
+  accessibilityTree(
+    options: DesktopAccessibilityTreeOptions = {},
+  ): Promise<DesktopAccessibilityTree> {
+    return this.#serial(async () => {
+      const provider = this.#accessible();
+      const root = options.ref ? this.#refEntry(options.ref).handle : undefined;
+      const space = this.#space(await this.#refreshScreen());
+      const query: AccessibilityQuery = {
+        interactiveOnly: options.interactiveOnly ?? true,
+        maxDepth: clampInt(
+          options.maxDepth,
+          DEFAULT_TREE_DEPTH,
+          MAX_TREE_DEPTH,
+        ),
+        maxNodes: clampInt(
+          options.maxNodes,
+          DEFAULT_TREE_NODES,
+          MAX_TREE_NODES,
+        ),
+        ...(options.window ? { window: options.window } : {}),
+        ...(root ? { root } : {}),
+      };
+      let tree: AccessibilityTree;
+      try {
+        tree = await provider.accessibilityTree(query);
+      } catch (error) {
+        if (options.ref && /gone/i.test(String(error))) {
+          throw new StaleElementRefError(options.ref);
+        }
+        throw error;
+      }
+      return this.#formatTree(tree, space.scale, !root);
+    });
+  }
+
+  /**
+   * Click the centre of an element from an earlier tree. The element is
+   * re-read first, so a ref whose element went away or moved off screen fails
+   * instead of clicking whatever is now at its old position.
+   */
+  clickElement(
+    principalId: string,
+    ref: string,
+    button: MouseButton,
+    count: number,
+    modifiers: string[],
+  ): Promise<DesktopElementClick> {
+    return this.#serial(async () => {
+      const provider = this.#accessible();
+      const entry = this.#refEntry(ref);
+      const screen = await this.#refreshScreen();
+      const space = this.#space(screen);
+      const element = await provider.accessibilityElement(entry.handle);
+      if (!element || element.role !== entry.role) {
+        throw new StaleElementRefError(ref);
+      }
+      const center = elementCenter(element);
+      if (!center) {
+        throw new Error(
+          `${ref} has no on-screen position. Use desktop_screenshot and click by coordinates.`,
+        );
+      }
+      if (
+        center.x < 0 ||
+        center.y < 0 ||
+        center.x >= screen.width ||
+        center.y >= screen.height
+      ) {
+        throw new Error(
+          `${ref} is off screen. Scroll it into view, then read the tree again.`,
+        );
+      }
+      // Same rule as #input: authorize after the last await.
+      await this.#inputControl.authorize({ action: 'click', principalId });
+      await this.#provider.click(center, button, count, modifiers);
+      return {
+        ref,
+        x: Math.min(space.width - 1, Math.round(center.x * space.scale)),
+        y: Math.min(space.height - 1, Math.round(center.y * space.scale)),
+      };
+    });
+  }
+
+  #accessible(): AccessibleProvider {
+    const provider = this.#provider;
+    if (!provider.accessibilityTree || !provider.accessibilityElement) {
+      throw new Error('Accessibility is not available on this desktop');
+    }
+    return provider as AccessibleProvider;
+  }
+
+  #refEntry(ref: string): { handle: string; role: string } {
+    const entry = this.#refs.get(ref);
+    if (!entry) throw new StaleElementRefError(ref);
+    return entry;
+  }
+
+  #refFor(element: AccessibilityElement): string {
+    const known = this.#refByHandle.get(element.handle);
+    if (known) {
+      this.#refs.set(known, { handle: element.handle, role: element.role });
+      return known;
+    }
+    if (this.#refs.size >= MAX_REFS) {
+      this.#refs.clear();
+      this.#refByHandle.clear();
+    }
+    const ref = `r${this.#nextRef++}`;
+    this.#refs.set(ref, { handle: element.handle, role: element.role });
+    this.#refByHandle.set(element.handle, ref);
+    return ref;
+  }
+
+  #formatTree(
+    tree: AccessibilityTree,
+    scale: number,
+    wholeWindow: boolean,
+  ): DesktopAccessibilityTree {
+    const header = [
+      tree.window !== undefined ? `window ${JSON.stringify(tree.window)}` : '',
+      tree.application ? `application ${JSON.stringify(tree.application)}` : '',
+    ]
+      .filter(Boolean)
+      .join(', ');
+    const lines = header ? [header] : [];
+    let length = header.length;
+    let truncated = tree.truncated;
+    let count = 0;
+    for (const node of tree.nodes) {
+      const line = formatNode(node, this.#refFor(node), scale);
+      if (length + line.length + 1 > MAX_TREE_CHARACTERS) {
+        truncated = true;
+        break;
+      }
+      lines.push(line);
+      length += line.length + 1;
+      count += 1;
+    }
+    if (wholeWindow && tree.nodes.length <= 1) lines.push(FRAME_ONLY_HINT);
+    if (truncated) {
+      lines.push(
+        '[truncated: pass a ref to read one subtree, or lower maxDepth]',
+      );
+    }
+    return { text: lines.join('\n'), nodes: count, truncated };
+  }
+
+  /**
    * Run an action, wait for the UI to settle, then capture, with no other
    * desktop operation in between. `operation` must call one of this service's
    * methods synchronously so its job is queued ahead of the capture.
@@ -311,6 +515,39 @@ export class DesktopService {
     this.#queue = result.catch(() => undefined);
     return result;
   }
+}
+
+function formatNode(
+  node: AccessibilityTree['nodes'][number],
+  ref: string,
+  scale: number,
+): string {
+  const parts = [`${'  '.repeat(node.depth)}${ref} ${node.role}`];
+  parts.push(JSON.stringify(node.name));
+  if (node.value !== undefined)
+    parts.push(`value=${JSON.stringify(node.value)}`);
+  if (node.bounds) {
+    const { x, y, width, height } = node.bounds;
+    parts.push(
+      `@${Math.round(x * scale)},${Math.round(y * scale)} ${Math.max(1, Math.round(width * scale))}x${Math.max(1, Math.round(height * scale))}`,
+    );
+  }
+  if (node.states.length > 0) parts.push(`[${node.states.join(', ')}]`);
+  return parts.join(' ');
+}
+
+function elementCenter(element: AccessibilityElement): Point | undefined {
+  const bounds = element.bounds;
+  if (!bounds || bounds.width <= 0 || bounds.height <= 0) return undefined;
+  return {
+    x: Math.round(bounds.x + bounds.width / 2),
+    y: Math.round(bounds.y + bounds.height / 2),
+  };
+}
+
+function clampInt(value: number | undefined, fallback: number, max: number) {
+  if (value === undefined || !Number.isFinite(value)) return fallback;
+  return Math.min(max, Math.max(1, Math.floor(value)));
 }
 
 function mimeType(format: ImageFormat): string {

@@ -352,6 +352,92 @@ describe('memory writer tools', () => {
     ).toHaveLength(1);
   });
 
+  it('merges entities and resolves the dropped ID in later relations', async () => {
+    const { tools, entities } = await fixture();
+    const keep = await entities.create(
+      { title: 'Alex Smith', entityType: 'person' },
+      { General: [fact('Engineer')] },
+    );
+    const drop = await entities.create(
+      { title: 'Alex Smith', entityType: 'person' },
+      { General: [fact('Owns billing')] },
+    );
+    const input = {
+      keepId: keep.id,
+      keepRevision: entityRevision(keep),
+      dropId: drop.id,
+      dropRevision: entityRevision(drop),
+    };
+    await expect(
+      call(tools, 'mergeEntities', { ...input, dropId: keep.id }),
+    ).resolves.toMatchObject({
+      status: 'rejected',
+      reason: expect.stringContaining('same entity'),
+    });
+    await expect(call(tools, 'mergeEntities', input)).resolves.toMatchObject({
+      status: 'merged',
+      id: keep.id,
+    });
+    expect(entities.list()).toHaveLength(1);
+    const created = (await call(tools, 'createEntity', {
+      fields: {
+        title: 'Billing',
+        entityType: 'team',
+        relatedTo: [
+          {
+            target: { kind: 'entity', id: drop.id },
+            strength: 50,
+            relationship: 'member',
+            inverse: 'member of',
+          },
+        ],
+      },
+      sections: [
+        {
+          name: 'General',
+          facts: [{ text: 'Handles invoices', sourceIds: [source] }],
+        },
+      ],
+    })) as { id: string };
+    expect(entities.get(created.id)?.frontmatter.RelatedTo[0]?.target).toEqual({
+      kind: 'entity',
+      id: keep.id,
+    });
+    expect(entities.get(keep.id)?.frontmatter.RelatedTo[0]?.target).toEqual({
+      kind: 'entity',
+      id: created.id,
+    });
+  });
+
+  it('rejects a merge whose result exceeds the section limits', async () => {
+    const { tools, entities } = await fixture();
+    const many = (prefix: string) =>
+      Object.fromEntries([
+        ['General', [fact(`${prefix} general`)]],
+        ...[1, 2, 3].map((n) => [`${prefix} ${n}`, [fact('Detail')]]),
+      ]);
+    const keep = await entities.create(
+      { title: 'Alex Smith', entityType: 'person' },
+      many('Keep'),
+    );
+    const drop = await entities.create(
+      { title: 'Alex Smith', entityType: 'person' },
+      many('Drop'),
+    );
+    await expect(
+      call(tools, 'mergeEntities', {
+        keepId: keep.id,
+        keepRevision: entityRevision(keep),
+        dropId: drop.id,
+        dropRevision: entityRevision(drop),
+      }),
+    ).resolves.toMatchObject({
+      status: 'rejected',
+      reason: expect.stringContaining('sections besides General'),
+    });
+    expect(entities.list()).toHaveLength(2);
+  });
+
   it('supersedes, rewords, merges, restores, moves and removes facts by read address', async () => {
     const { tools, entities } = await fixture();
     await call(tools, 'createEntity', {

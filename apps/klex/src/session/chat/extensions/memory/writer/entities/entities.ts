@@ -21,7 +21,13 @@ import {
   randomLowTokenID,
 } from '@/utils/random-low-token-id';
 
-import { type Fact, formatFacts, parseFacts } from './facts';
+import {
+  capSources,
+  type Fact,
+  formatFacts,
+  MAX_FACT_HISTORY,
+  parseFacts,
+} from './facts';
 
 const wordIdSchema = z
   .string()
@@ -189,7 +195,7 @@ export const entityFieldsSchema = z
         'Short canonical name, key or handle. Not a description; not a trigger.',
       ),
     entityType: entityTypeSchema.describe(
-      'Lowercase kebab-case kind the thing actually is. Reuse fitting existing type, else new. Update moves file; ID kept.',
+      'Lowercase kebab-case kind the thing actually is. Reuse fitting existing type, else new. Wrong type: change it with updateEntity; ID and relations kept.',
     ),
     loadOn: z
       .array(loadMatcherSchema)
@@ -231,6 +237,8 @@ const currentFrontmatterSchema = z.object({
   RelatedTo: z.array(relationSchema).max(100),
   TrustScore: z.literal(2),
   AuthorityScore: z.literal(5),
+  /** IDs of entities merged into this one; they resolve here. Omitted when empty. */
+  MergedFrom: z.array(entityIdSchema).min(1).max(100).optional(),
 });
 
 // Preserve existing UUID documents without rewriting their identities or references.
@@ -294,6 +302,17 @@ export interface EntityStore {
   mutateRelations(
     id: string,
     mutate: (relations: Relation[]) => Relation[],
+  ): Promise<MemoryEntity>;
+  /**
+   * Folds `dropId` into `keepId` (see `mergedEntity`), repoints every
+   * relation targeting `dropId`, deletes its file and records it as an alias
+   * of `keepId`. Restores all written files on failure.
+   */
+  merge(
+    keepId: string,
+    dropId: string,
+    keepRevision: string,
+    dropRevision: string,
   ): Promise<MemoryEntity>;
   /** Environment-only API. Never exposed to the writer's tools. */
   recordRead(id: string): Promise<void>;
@@ -362,6 +381,101 @@ function dedupeIdentities(
     seen.add(key);
     return true;
   });
+}
+
+/** One relation per target, keeping the strongest; never to `exclude`. */
+function combineRelations(
+  relations: readonly Relation[],
+  exclude: readonly string[] = [],
+): Relation[] {
+  const byTarget = new Map<string, Relation>();
+  for (const relation of relations) {
+    const { kind, id } = relation.target;
+    if (kind === 'entity' && exclude.includes(id)) continue;
+    const key = `${kind}:${id}`;
+    const existing = byTarget.get(key);
+    if (!existing || relation.strength > existing.strength)
+      byTarget.set(key, relation);
+  }
+  return [...byTarget.values()];
+}
+
+/** Relations with `from` targets pointing at `to` instead. */
+function repoint(
+  relations: readonly Relation[],
+  from: string,
+  to: string,
+  self: string,
+): Relation[] {
+  return combineRelations(
+    relations.map((relation) =>
+      relation.target.kind === 'entity' && relation.target.id === from
+        ? { ...relation, target: { kind: 'entity', id: to } }
+        : relation,
+    ),
+    [self],
+  );
+}
+
+/**
+ * `keep` after absorbing `drop`: sections joined by name, equal facts
+ * combined (sources and `was:` history kept within caps), identities,
+ * matchers and relations unioned. Relations between the two vanish; for a
+ * shared target the stronger relation wins. Type, title and dates stay.
+ */
+export function mergedEntity(
+  keep: MemoryEntity,
+  drop: MemoryEntity,
+): MemoryEntity {
+  const sections: Record<string, Fact[]> = Object.assign(
+    Object.create(null),
+    structuredClone(keep.sections),
+  );
+  for (const [name, facts] of Object.entries(structuredClone(drop.sections))) {
+    const target = sections[name] ?? [];
+    sections[name] = target;
+    for (const fact of facts) {
+      const same = target.find((existing) => existing.text === fact.text);
+      if (!same) {
+        target.push(fact);
+        continue;
+      }
+      same.sources = capSources([...same.sources, ...fact.sources]);
+      same.history = [...same.history, ...fact.history].slice(
+        0,
+        MAX_FACT_HISTORY,
+      );
+    }
+  }
+  const { frontmatter } = keep;
+  const identities = dedupeIdentities([
+    ...frontmatter.LinkedIdentities,
+    ...drop.frontmatter.LinkedIdentities,
+  ]);
+  return {
+    ...keep,
+    sections,
+    frontmatter: {
+      ...frontmatter,
+      LinkedIdentities: identities,
+      LoadOn: dedupeLoadOn(
+        [...frontmatter.LoadOn, ...drop.frontmatter.LoadOn],
+        frontmatter.Title,
+        identities,
+      ),
+      RelatedTo: combineRelations(
+        [...frontmatter.RelatedTo, ...drop.frontmatter.RelatedTo],
+        [keep.id, drop.id],
+      ),
+      MergedFrom: [
+        ...new Set([
+          ...(frontmatter.MergedFrom ?? []),
+          drop.id,
+          ...(drop.frontmatter.MergedFrom ?? []),
+        ]),
+      ],
+    },
+  };
 }
 
 function validateSections(sections: Record<string, Fact[]>): void {
@@ -437,9 +551,15 @@ class EntityStoreModule implements EntityStore {
   list(): MemoryEntity[] {
     return structuredClone([...this.entities.values()]);
   }
+  /** Merged IDs resolve to the entity they were merged into. */
   get(id: string): MemoryEntity | null {
     entityIdSchema.parse(id);
-    return structuredClone(this.entities.get(id) ?? null);
+    const entity =
+      this.entities.get(id) ??
+      [...this.entities.values()].find((candidate) =>
+        candidate.frontmatter.MergedFrom?.includes(id),
+      );
+    return structuredClone(entity ?? null);
   }
 
   create(
@@ -540,6 +660,74 @@ class EntityStoreModule implements EntityStore {
     });
   }
 
+  merge(
+    keepId: string,
+    dropId: string,
+    keepRevision: string,
+    dropRevision: string,
+  ): Promise<MemoryEntity> {
+    return this.enqueue(async () => {
+      const keep = this.get(keepId);
+      const drop = this.get(dropId);
+      if (!keep || !drop) throw new Error('Unknown entity');
+      if (keep.id === drop.id)
+        throw new Error('Cannot merge an entity into itself');
+      if (
+        entityRevision(keep) !== keepRevision ||
+        entityRevision(drop) !== dropRevision
+      )
+        throw new Error('Entity changed; read both again before merging');
+      const merged = mergedEntity(keep, drop);
+      merged.frontmatter.LastUpdatedAt = new Date().toISOString();
+      const referrers = [...this.entities.values()]
+        .filter(
+          (entity) =>
+            entity.id !== keep.id &&
+            entity.id !== drop.id &&
+            entity.frontmatter.RelatedTo.some(
+              ({ target }) => target.kind === 'entity' && target.id === drop.id,
+            ),
+        )
+        .map((entity) => structuredClone(entity));
+      // Kept entity first: once it lists the alias, every reference to the
+      // dropped ID resolves even if the steps below are interrupted.
+      const written: MemoryEntity[] = [];
+      try {
+        await this.persist(merged);
+        written.push(keep);
+        for (const referrer of referrers) {
+          await this.persist({
+            ...referrer,
+            frontmatter: {
+              ...referrer.frontmatter,
+              RelatedTo: repoint(
+                referrer.frontmatter.RelatedTo,
+                drop.id,
+                keep.id,
+                referrer.id,
+              ),
+              LastUpdatedAt: new Date().toISOString(),
+            },
+          });
+          written.push(referrer);
+        }
+        await rm(this.file(drop));
+        this.entities.delete(drop.id);
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        const failed: string[] = [];
+        for (const original of written.reverse())
+          await this.persist(original).catch(() => failed.push(original.id));
+        throw new Error(
+          failed.length
+            ? `Merge failed (${reason}) and could not be undone for ${failed.join(', ')}; read those entities and fix them`
+            : `Merge failed (${reason}); nothing changed`,
+        );
+      }
+      return structuredClone(merged);
+    });
+  }
+
   async recordRead(id: string): Promise<void> {
     await this.enqueue(async () => {
       const entity = this.get(id);
@@ -573,10 +761,13 @@ class EntityStoreModule implements EntityStore {
     // Called only inside the store's serialized creation queue.
     for (let attempt = 0; attempt < 100; attempt++) {
       const id = randomLowTokenID();
+      // Merged IDs stay taken: old references resolve to the kept entity.
+      const taken = [...this.entities.values()].flatMap((entity) => [
+        entity.id,
+        ...(entity.frontmatter.MergedFrom ?? []),
+      ]);
       if (
-        ![...this.entities.keys()].some(
-          (existing) => existing.toLowerCase() === id.toLowerCase(),
-        )
+        !taken.some((existing) => existing.toLowerCase() === id.toLowerCase())
       )
         return id;
     }
@@ -597,6 +788,14 @@ class EntityStoreModule implements EntityStore {
     await mkdir(this.directory, { recursive: true, mode: 0o700 });
     if (!(await lstat(this.directory)).isDirectory())
       throw new Error('Entity root must be a plain directory');
+  }
+
+  private file(entity: MemoryEntity): string {
+    return join(
+      this.directory,
+      entityTypeSchema.parse(entity.entityType),
+      `${entity.id}.md`,
+    );
   }
 
   private async persist(entity: MemoryEntity): Promise<void> {
@@ -689,6 +888,18 @@ class EntityStoreModule implements EntityStore {
         throw new Error('Ontology folder must be a plain directory');
       }
     }
+    // A merge interrupted before deleting the dropped file left it next to
+    // the kept entity, which already holds its content: finish the merge.
+    const merged = new Set(
+      documents.flatMap(({ entity }) => entity.frontmatter.MergedFrom ?? []),
+    );
+    for (const { file, entity } of documents)
+      if (merged.has(entity.id)) await rm(file);
+    documents.splice(
+      0,
+      documents.length,
+      ...documents.filter(({ entity }) => !merged.has(entity.id)),
+    );
     // One external identity belongs to exactly one entity; files edited by hand
     // must not break that before any note is converted or served.
     const owners = new Map<string, string>();

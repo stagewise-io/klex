@@ -27,6 +27,7 @@ import {
   loadMatcherSchema,
   MAX_FACT_HISTORY,
   type MemoryEntity,
+  mergedEntity,
   relationSchema,
   sectionNameSchema,
 } from '../entities';
@@ -64,6 +65,23 @@ const writerPatchSchema = entityPatchSchema.extend({
 });
 const stripInverse = (relations: readonly WriterRelation[]) =>
   relations.map(({ inverse: _inverse, ...relation }) => relation);
+/** Merged IDs resolve to the kept entity; store and link its own ID. */
+const canonical = (
+  entities: EntityStore,
+  relations: readonly WriterRelation[],
+): WriterRelation[] =>
+  relations.map((relation) =>
+    relation.target.kind === 'entity'
+      ? {
+          ...relation,
+          target: {
+            kind: 'entity',
+            id: entities.get(relation.target.id)?.id ?? relation.target.id,
+          },
+        }
+      : relation,
+  );
+// `bot` stays for entities written before bots were filed as people.
 const PEOPLE = new Set(['person', 'bot', 'team']);
 const WORK_ITEMS = new Set(['issue', 'pull-request']);
 
@@ -606,11 +624,11 @@ class WriterToolsModule implements WriterTools {
       ).length;
       if (WORK_ITEMS.has(type) && people < 1)
         throw new Error(
-          'Link who requested, owns or reviews it: add a relatedTo person or bot with inverse, e.g. relationship "requested by" / inverse "requested". Create the person first if missing',
+          'Link who requested, owns or reviews it: add a relatedTo person with inverse, e.g. relationship "requested by" / inverse "requested". Create the person first if missing',
         );
       if (type === 'event' && people < 2)
         throw new Error(
-          'An event links everyone involved: add at least two relatedTo people or bots with inverse "took part in"',
+          'An event links everyone involved: add at least two relatedTo people with inverse "took part in"',
         );
     };
     /** Writes or removes the reverse side of entity relations of `id`. */
@@ -714,7 +732,8 @@ class WriterToolsModule implements WriterTools {
           const { Title, LinkedIdentities, LoadOn, RelatedTo } =
             entity.frontmatter;
           return {
-            id,
+            // Merged IDs resolve to the kept entity; show its own ID.
+            id: entity.id,
             title: Title,
             entityType: entity.entityType,
             linkedIdentities: LinkedIdentities,
@@ -737,7 +756,11 @@ class WriterToolsModule implements WriterTools {
             sections: z.array(sectionSchema).min(1).max(5),
           })
           .strict(),
-        execute: guarded(async ({ fields, sections: input }) => {
+        execute: guarded(async ({ fields: raw, sections: input }) => {
+          const fields = {
+            ...raw,
+            relatedTo: canonical(options.entities, raw.relatedTo),
+          };
           const texts = (input as z.infer<typeof sectionSchema>[]).flatMap(
             (section) => section.facts.map(({ text }) => text),
           );
@@ -801,13 +824,21 @@ class WriterToolsModule implements WriterTools {
             operations: z.array(operationSchema).max(50).default([]),
           })
           .strict(),
-        execute: guarded(async ({ id, revision, fields, operations }) => {
+        execute: guarded(async (input) => {
+          const { revision, operations } = input;
+          const fields = {
+            ...input.fields,
+            relatedTo:
+              input.fields.relatedTo &&
+              canonical(options.entities, input.fields.relatedTo),
+          };
           rejectSecrets(
             [fields, operations],
             (operations as { text: string }[]).map(({ text }) => text),
           );
-          const entity = options.entities.get(id);
+          const entity = options.entities.get(input.id);
           if (!entity) throw new Error('Unknown entity');
+          const id = entity.id;
           if (entityRevision(entity) !== revision)
             throw new Error('Entity changed; read it again before editing');
           const nextRelations: WriterRelation[] =
@@ -999,6 +1030,51 @@ class WriterToolsModule implements WriterTools {
             ),
           };
         }),
+      },
+      mergeEntities: {
+        description:
+          'Fold a duplicate into the entity to keep. Only when clearly the same identity. Read both first. Facts, IDs and relations move over; dropped ID becomes an alias. Not undoable.',
+        inputSchema: z
+          .object({
+            keepId: entityIdSchema,
+            keepRevision: z.string().regex(/^[a-f0-9]{16}$/),
+            dropId: entityIdSchema,
+            dropRevision: z.string().regex(/^[a-f0-9]{16}$/),
+          })
+          .strict(),
+        execute: guarded(
+          async ({ keepId, keepRevision, dropId, dropRevision }) => {
+            const keep = options.entities.get(keepId);
+            const drop = options.entities.get(dropId);
+            if (!keep || !drop) throw new Error('Unknown entity');
+            if (keep.id === drop.id)
+              throw new Error('Both IDs are the same entity');
+            const self = options.selfName?.trim().toLowerCase();
+            if (
+              self &&
+              [keep, drop].some(
+                (entity) =>
+                  entity.frontmatter.Title.trim().toLowerCase() === self,
+              )
+            )
+              throw new Error('Never merge into or from self');
+            const merged = mergedEntity(keep, drop);
+            checkShape(merged.sections, Object.keys(merged.sections), [], []);
+            if (options.signal.aborted) throw new Error('Writer closed');
+            const result = await options.entities.merge(
+              keepId,
+              dropId,
+              keepRevision,
+              dropRevision,
+            );
+            return {
+              status: 'merged',
+              id: result.id,
+              revision: entityRevision(result),
+              sections: Object.keys(result.sections),
+            };
+          },
+        ),
       },
       listSkills: {
         description:

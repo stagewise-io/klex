@@ -104,8 +104,21 @@ class MemoryWriterExtension implements Extension {
     this.entities = createEntityStore(join(this.dataDirectory, 'entities'));
   }
 
+  // Memory is not worth an outage: bad notes or a failed import pause the
+  // writer instead of failing the session start.
   async onStart(): Promise<void> {
     if (this.ready || this.closed) return;
+    try {
+      await this.startWriter();
+    } catch (error) {
+      this.deps.logger.error(
+        { error },
+        'Memory writer failed to start; paused until next start',
+      );
+    }
+  }
+
+  private async startWriter(): Promise<void> {
     if (!this.deps.skills)
       throw new Error('Memory writer requires the learning namespace');
     await this.state.start();
@@ -266,6 +279,9 @@ class MemoryWriterExtension implements Extension {
         this.abort?.abort();
         this.tools = {};
         this.running = false;
+        // A wake that arrived after the last loop check must not be dropped.
+        if (this.wakePending && !this.retry && !this.closed)
+          queueMicrotask(() => this.wake());
       }
     })();
   }

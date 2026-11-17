@@ -158,14 +158,12 @@ class SkillDocumentStoreModule implements SkillDocumentStore {
     await this.serialize(async () => {
       const existing = this.references.get(name);
       if (!existing?.has(reference)) return;
-      await rm(
-        join(
-          this.skillDirectory(name),
-          REFERENCES_DIRECTORY,
-          `${reference}.md`,
-        ),
-        { force: true },
-      );
+      const directory = join(this.skillDirectory(name), REFERENCES_DIRECTORY);
+      if (!(await lstat(directory)).isDirectory())
+        throw new Error(
+          `References folder is not a plain directory: "${name}"`,
+        );
+      await rm(join(directory, `${reference}.md`), { force: true });
       existing.delete(reference);
       deleted = true;
     });
@@ -229,13 +227,35 @@ class SkillDocumentStoreModule implements SkillDocumentStore {
   /** Invalid or oversized reference files are skipped, never deleted. */
   private async loadReferences(name: string): Promise<void> {
     const directory = join(this.root, name, REFERENCES_DIRECTORY);
-    const entries = await readdir(directory, { withFileTypes: true }).catch(
-      () => [],
+    // A symlinked folder would expose and let deletes reach files outside the root.
+    const info = await lstat(directory).catch(
+      (error: NodeJS.ErrnoException) => {
+        if (error.code !== 'ENOENT') throw error;
+        return null;
+      },
+    );
+    if (!info) return;
+    if (!info.isDirectory()) {
+      this.logger.warn(
+        { skill: name },
+        'Skipping references folder that is not a plain directory',
+      );
+      return;
+    }
+    const entries = (await readdir(directory, { withFileTypes: true })).sort(
+      (left, right) => left.name.localeCompare(right.name),
     );
     const loaded = new Map<string, string>();
     for (const entry of entries) {
       const reference = entry.name.replace(/\.md$/, '');
       if (!entry.isFile() || reference === entry.name) continue;
+      if (loaded.size >= MAX_REFERENCES_PER_SKILL) {
+        this.logger.warn(
+          { skill: name, reference: entry.name },
+          'Skipping skill reference beyond the per-skill limit',
+        );
+        continue;
+      }
       try {
         const content = (
           await readRegularFile(join(directory, entry.name))

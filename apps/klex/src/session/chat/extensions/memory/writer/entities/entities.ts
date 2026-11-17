@@ -287,9 +287,19 @@ export interface EntityStore {
     removeSections?: string[],
     expectedRevision?: string,
   ): Promise<MemoryEntity>;
+  /**
+   * Read-modify-write of one entity's relations inside the store queue, so
+   * concurrent edits cannot be overwritten by a stale copy.
+   */
+  mutateRelations(
+    id: string,
+    mutate: (relations: Relation[]) => Relation[],
+  ): Promise<MemoryEntity>;
   /** Environment-only API. Never exposed to the writer's tools. */
   recordRead(id: string): Promise<void>;
 }
+export type Relation = z.infer<typeof relationSchema>;
+const relationsSchema = z.array(relationSchema).max(100);
 
 /** Main-session view: current facts only, no citations or superseded versions. */
 export function renderEntity(
@@ -512,6 +522,24 @@ class EntityStoreModule implements EntityStore {
     });
   }
 
+  mutateRelations(
+    id: string,
+    mutate: (relations: Relation[]) => Relation[],
+  ): Promise<MemoryEntity> {
+    entityIdSchema.parse(id);
+    return this.enqueue(async () => {
+      const entity = this.get(id);
+      if (!entity) throw new Error('Unknown entity');
+      entity.frontmatter = {
+        ...entity.frontmatter,
+        RelatedTo: relationsSchema.parse(mutate(entity.frontmatter.RelatedTo)),
+        LastUpdatedAt: new Date().toISOString(),
+      };
+      await this.persist(entity);
+      return structuredClone(entity);
+    });
+  }
+
   async recordRead(id: string): Promise<void> {
     await this.enqueue(async () => {
       const entity = this.get(id);
@@ -661,6 +689,19 @@ class EntityStoreModule implements EntityStore {
         throw new Error('Ontology folder must be a plain directory');
       }
     }
+    // One external identity belongs to exactly one entity; files edited by hand
+    // must not break that before any note is converted or served.
+    const owners = new Map<string, string>();
+    for (const { entity } of documents)
+      for (const identity of entity.frontmatter.LinkedIdentities) {
+        const key = identityKey(identity);
+        const owner = owners.get(key);
+        if (owner && owner !== entity.id)
+          throw new Error(
+            `Linked identity "${formatIdentity(identity)}" belongs to both ${owner} and ${entity.id}; remove it from one`,
+          );
+        owners.set(key, entity.id);
+      }
     // Validate all notes before converting any. Renaming before rewriting lets
     // startup resume a conversion interrupted between those two atomic steps.
     for (const { file, entity, legacy } of documents) {

@@ -192,20 +192,20 @@ export function similarSkills(
     metadata: Record<string, unknown>;
   }[],
 ): string[] {
-  const triggers = new Set(
-    loadOn.map(
-      (matcher) => matcher.toolName ?? matcher.mcpServer ?? matcher.server,
-    ),
-  );
+  // Content patterns have no tool or server; they must not all look alike.
+  const trigger = (matcher: (typeof loadOn)[number]) =>
+    matcher.toolName ?? matcher.mcpServer ?? matcher.server;
+  const triggers = new Set(loadOn.map(trigger).filter(Boolean));
   const words = nameWords(name);
   return existing
     .filter((skill) => {
       const other = Array.isArray(skill.metadata.loadOn)
         ? (skill.metadata.loadOn as typeof loadOn)
         : [];
-      const sharedTrigger = other.some((matcher) =>
-        triggers.has(matcher.toolName ?? matcher.mcpServer ?? matcher.server),
-      );
+      const sharedTrigger = other.some((matcher) => {
+        const key = trigger(matcher);
+        return key !== undefined && triggers.has(key);
+      });
       const shared = [...nameWords(skill.name)].filter((word) =>
         words.has(word),
       ).length;

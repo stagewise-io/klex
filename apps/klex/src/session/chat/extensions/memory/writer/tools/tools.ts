@@ -624,39 +624,38 @@ class WriterToolsModule implements WriterTools {
           .filter(({ target }) => target.kind === 'entity')
           .map(({ target }) => target.id),
       );
+      // Preflight: every target must exist before anything is written.
+      for (const targetId of targets)
+        if (targetId !== id && !options.entities.get(targetId))
+          throw new Error(
+            `Invalid reference: entity "${targetId}" does not exist`,
+          );
       for (const targetId of targets) {
         if (targetId === id) continue;
-        const target = options.entities.get(targetId);
-        if (!target) continue;
         const relation = next.find(
           ({ target: t }) => t.kind === 'entity' && t.id === targetId,
         );
-        const others = target.frontmatter.RelatedTo.filter(
-          ({ target: t }) => !(t.kind === 'entity' && t.id === id),
-        );
-        const existing = target.frontmatter.RelatedTo.find(
-          ({ target: t }) => t.kind === 'entity' && t.id === id,
-        );
-        const label = relation?.inverse ?? existing?.relationship;
-        const reverse =
-          relation && label
+        // Read and write the target inside the store queue, so a concurrent
+        // edit of its relations is merged, never overwritten.
+        await options.entities.mutateRelations(targetId, (relations) => {
+          const others = relations.filter(
+            ({ target: t }) => !(t.kind === 'entity' && t.id === id),
+          );
+          const existing = relations.find(
+            ({ target: t }) => t.kind === 'entity' && t.id === id,
+          );
+          const label = relation?.inverse ?? existing?.relationship;
+          return relation && label
             ? [
+                ...others,
                 {
                   target: { kind: 'entity' as const, id },
                   strength: relation.strength,
                   relationship: label,
                 },
               ]
-            : [];
-        if (
-          JSON.stringify(existing ? [existing] : []) === JSON.stringify(reverse)
-        )
-          continue;
-        await options.entities.update(
-          targetId,
-          { relatedTo: [...others, ...reverse] },
-          {},
-        );
+            : others;
+        });
       }
     };
     this.tools = {
@@ -763,7 +762,23 @@ class WriterToolsModule implements WriterTools {
             { ...fields, relatedTo: stripInverse(fields.relatedTo) },
             content,
           );
-          await syncInverses(entity.id, fields.relatedTo, []);
+          try {
+            await syncInverses(entity.id, fields.relatedTo, []);
+          } catch (error) {
+            const reason =
+              error instanceof Error ? error.message : String(error);
+            const cleared = await options.entities
+              .mutateRelations(entity.id, () => [])
+              .then(
+                () => true,
+                () => false,
+              );
+            throw new Error(
+              cleared
+                ? `Entity ${entity.id} was created without relations because linking failed (${reason}). Add the relations with updateEntity`
+                : `Entity ${entity.id} was created but linking failed (${reason}); some relations may be one-sided. Read it and fix RelatedTo with updateEntity`,
+            );
+          }
           return {
             status: 'created',
             id: entity.id,
@@ -951,12 +966,30 @@ class WriterToolsModule implements WriterTools {
             ),
             revision,
           );
-          if (fields.relatedTo)
-            await syncInverses(
-              id,
-              fields.relatedTo,
-              entity.frontmatter.RelatedTo,
-            );
+          if (fields.relatedTo) {
+            try {
+              await syncInverses(
+                id,
+                fields.relatedTo,
+                entity.frontmatter.RelatedTo,
+              );
+            } catch (error) {
+              // Keep both sides consistent: restore the relations we replaced.
+              const reason =
+                error instanceof Error ? error.message : String(error);
+              const restored = await options.entities
+                .mutateRelations(id, () => entity.frontmatter.RelatedTo)
+                .then(
+                  () => true,
+                  () => false,
+                );
+              throw new Error(
+                restored
+                  ? `Relations were not changed because linking the other side failed (${reason}); other updates in this call were saved`
+                  : `Linking the other side failed (${reason}) and relations could not be restored; some may be one-sided. Read the entity and fix RelatedTo`,
+              );
+            }
+          }
           return {
             status: 'updated',
             id,
@@ -1032,11 +1065,23 @@ class WriterToolsModule implements WriterTools {
               input.content,
             );
             if (!skill) throw new Error('Unknown learned skill');
+            const previous = Array.isArray(skill.metadata.sourceEpisodes)
+              ? skill.metadata.sourceEpisodes.filter(
+                  (id): id is string => typeof id === 'string',
+                )
+              : [];
+            const recorded = await options.skills.setMetadata(input.name, {
+              ...skill.metadata,
+              sourceEpisodes: [
+                ...new Set([...previous, ...input.sourceIds]),
+              ].slice(-20),
+            });
+            const current = recorded ?? skill;
             return {
               status: 'written',
-              id: skill.id,
-              references: skill.references,
-              revision: skillRevision(skill),
+              id: current.id,
+              references: current.references,
+              revision: skillRevision(current),
             };
           },
         ),

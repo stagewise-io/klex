@@ -107,6 +107,8 @@ class SkillsExtension implements Extension {
     const content = this.registry.readReference(id, reference);
     if (content === null)
       return `Unknown reference "${reference}" of "${id}". Available: ${skill.references.join(', ') || '(none)'}`;
+    // Reference reads count as using the skill for recency and read counts.
+    this.recordRead(id);
     return content;
   }
 

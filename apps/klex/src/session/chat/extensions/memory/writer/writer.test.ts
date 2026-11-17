@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -295,6 +295,22 @@ describe('oldest-first memory writer', () => {
     expect(f.registry.get('templates/deploy')).not.toBeNull();
     await f.extension.onClose?.();
     expect(await f.registry.delete('templates/deploy')).toBe(true);
+  });
+  it('pauses instead of failing the session when stored notes are invalid', async () => {
+    const f = await fixture();
+    const folder = join(
+      f.root,
+      'extensions/io.stagewise/memory/entities/person',
+    );
+    await mkdir(folder, { recursive: true });
+    await writeFile(join(folder, 'broken.md'), 'not an entity');
+    await expect(f.extension.onStart?.()).resolves.toBeUndefined();
+    expect(f.logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.any(Error) }),
+      'Memory writer failed to start; paused until next start',
+    );
+    expect((await f.extension.introspect?.())?.ready).toBe(false);
+    expect(f.createChildSession).not.toHaveBeenCalled();
   });
   it('catches up oldest-first with one fresh child and one input per chunk', async () => {
     const f = await fixture();

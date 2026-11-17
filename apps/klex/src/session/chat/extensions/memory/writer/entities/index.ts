@@ -9,6 +9,7 @@ export {
   linkedIdentitySchema,
   loadMatcherSchema,
   type MemoryEntity,
+  type Relation,
   relationSchema,
   renderEntity,
   sectionNameSchema,

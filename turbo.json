@@ -24,7 +24,8 @@
     "@klex/machine#build": {
       "dependsOn": ["^build"],
       "outputs": ["dist/**", "src/generated/**"],
-      "env": ["KLEX_MACHINE_MACOS_HELPER_PREBUILT"]
+      "env": ["KLEX_MACHINE_MACOS_HELPER_PREBUILT"],
+      "cache": false
     },
     "build:admin-api-types": {
       "dependsOn": ["^build"],

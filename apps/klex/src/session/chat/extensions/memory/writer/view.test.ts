@@ -50,11 +50,12 @@ describe('memory writer view', () => {
     expect(text).not.toMatch(/\[\?2004l|\[1m|\\u001b|\\r|"text"|ghs_/);
   });
 
-  it('bounds tool input and output tighter than the shared view', () => {
+  it('bounds tool input and output', () => {
     const [text] = render([
-      tool('runCommand', { code: 'Q'.repeat(1_000) }, 'J'.repeat(1_000)),
+      tool('runCommand', { code: 'Q'.repeat(3_000) }, 'J'.repeat(3_000)),
     ]);
-    expect(text?.match(/Q/g)?.length).toBeLessThan(200);
-    expect(text?.match(/J/g)?.length).toBeLessThan(300);
+    expect(text?.match(/Q/g)?.length).toBeLessThan(400);
+    expect(text?.match(/J/g)?.length).toBeGreaterThan(500);
+    expect(text?.match(/J/g)?.length).toBeLessThan(1_200);
   });
 });

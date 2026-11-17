@@ -77,7 +77,7 @@ const fact = (text: string) => ({
 });
 const skillInput = (name: string, extra: object = {}) => ({
   name,
-  when: 'Use when deploying acme/web to staging; not production',
+  when: 'Deploying acme/web to staging. Gets the release order right.',
   steps: ['Push head branch first'],
   sourceIds: [source],
   ...extra,
@@ -690,6 +690,13 @@ describe('memory writer tools', () => {
       });
     await reject({ steps: ['Free disk space this run'] }, 'ties it to one run');
     await reject({ steps: ['Push'], verify: 'Push' }, 'verify repeats a step');
+    await reject(
+      { when: 'Deploying acme/web, except on Fridays' },
+      '"except" is a negation',
+    );
+    expect(
+      await update({ when: 'Deploying acme/web. Keeps staging in sync.' }),
+    ).toMatchObject({ status: 'updated' });
     expect(skills.get(name)?.body).toContain('Push, then open the PR');
     await skills.put('legacy', { description: 'Old', body: 'Prose body.' });
     const legacy = (await call(tools, 'readSkill', {

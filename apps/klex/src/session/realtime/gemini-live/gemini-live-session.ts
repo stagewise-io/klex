@@ -1,4 +1,4 @@
-import type { JSONValue } from '@ai-sdk/provider';
+import type { JSONSchema7, JSONValue } from '@ai-sdk/provider';
 import {
   type Counter,
   type Histogram,
@@ -24,6 +24,7 @@ import {
 } from '@/media-transport/async-queue';
 import { createPcmAudioMixer } from '@/media-transport/pcm-audio-mixer';
 import { createPcmResampler } from '@/media-transport/pcm-resampler';
+import { googleInputSchema } from '@/provider-registry/google-input-schema';
 import {
   type InteractionToolResult,
   type InteractionUpdateEnvelope,
@@ -511,7 +512,11 @@ export class GeminiLiveSession implements RealtimeModelSession {
                 ...(tool.description !== undefined && {
                   description: tool.description,
                 }),
-                parametersJsonSchema: tool.inputSchema,
+                // Gemini Live rejects the same required ref loops as
+                // generateContent, so declare tools the same safe way.
+                parametersJsonSchema: googleInputSchema(
+                  tool.inputSchema as JSONSchema7,
+                ),
               })),
             },
           ],

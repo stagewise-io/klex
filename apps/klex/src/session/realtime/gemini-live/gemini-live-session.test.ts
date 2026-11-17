@@ -183,6 +183,41 @@ describe('Gemini live processor', () => {
     await expect(harness.promise).resolves.toBeDefined();
   });
 
+  it('declares recursive JSON-value tool inputs without required ref loops', async () => {
+    // Slack's useSlackApi body field, as z.json() emits it.
+    const json = {
+      anyOf: [
+        { type: 'string' },
+        { type: 'number' },
+        { type: 'boolean' },
+        { type: 'null' },
+        { type: 'array', items: { $ref: '#/$defs/__schema0' } },
+        {
+          type: 'object',
+          propertyNames: { type: 'string' },
+          additionalProperties: { $ref: '#/$defs/__schema0' },
+        },
+      ],
+    };
+    const inputSchema = {
+      type: 'object',
+      properties: { body: { $ref: '#/$defs/__schema0' } },
+      $defs: { __schema0: json },
+    };
+    const { setupMsg, processor } = await activate({
+      tools: [{ name: 'useSlackApi', inputSchema }],
+    });
+    const declaration = setupMsg.setup.tools[0].functionDeclarations[0];
+    expect(
+      declaration.parametersJsonSchema.$defs.__schema0.anyOf,
+    ).toContainEqual({ type: 'array', items: {} });
+    expect(JSON.stringify(declaration.parametersJsonSchema)).not.toContain(
+      '"additionalProperties":{"$ref"',
+    );
+    expect(inputSchema.$defs.__schema0).toBe(json);
+    await processor.close();
+  });
+
   it('includes voice visibility rules without a prepared context', async () => {
     const socket = new FakeSocket();
     const factory = createGeminiLiveProcessorFactory({

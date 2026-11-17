@@ -28,6 +28,7 @@ const REQUEST_TIMEOUT_MS = 15_000;
 const TYPE_CHUNK_CHARACTERS = 200;
 const STDERR_LIMIT = 4_096;
 const RELEASE_REQUEST = 'release';
+const VK_MENU = 0x12;
 
 /** Sends one request to the desktop helper and resolves its payload. */
 export type WindowsDesktopHelper = (
@@ -410,6 +411,9 @@ export interface PowerShellDesktopHelperOptions {
  * One long-lived `powershell.exe` running the C# helper. Requests are
  * serialized; a timeout, crash or protocol error kills the process and the
  * next request starts a fresh one. While idle it never keeps Node alive.
+ *
+ * A helper lost mid-request never ran its cleanup, so before anything else
+ * runs, a fresh helper lets go of the keys and buttons that request held.
  */
 export class PowerShellDesktopHelper {
   readonly #env: NodeJS.ProcessEnv;
@@ -430,18 +434,48 @@ export class PowerShellDesktopHelper {
   }
 
   request(request: string, args: readonly string[]): Promise<string> {
-    const result = this.#queue.then(() => this.#exchange(request, args));
+    const generation = this.#generation;
+    const result = this.#queue.then(() => this.#run(generation, request, args));
     this.#queue = result.catch(() => undefined);
     return result;
   }
 
+  /** Stops the helper and fails queued requests; later requests start anew. */
   close(): void {
     this.#generation += 1;
     this.#connection?.kill();
     this.#connection = undefined;
   }
 
-  async #exchange(request: string, args: readonly string[]): Promise<string> {
+  async #run(
+    generation: number,
+    request: string,
+    args: readonly string[],
+  ): Promise<string> {
+    try {
+      return await this.#exchange(generation, request, args);
+    } catch (error) {
+      const release =
+        error instanceof HelperLostError
+          ? releaseArgs(request, args)
+          : undefined;
+      if (release) {
+        await this.#exchange(generation, RELEASE_REQUEST, release).catch(
+          () => undefined,
+        );
+      }
+      throw error;
+    }
+  }
+
+  async #exchange(
+    generation: number,
+    request: string,
+    args: readonly string[],
+  ): Promise<string> {
+    if (generation !== this.#generation) {
+      throw new Error('The desktop helper was stopped');
+    }
     for (const value of [request, ...args]) {
       if (/[\t\r\n]/.test(value)) {
         throw new Error(
@@ -450,7 +484,6 @@ export class PowerShellDesktopHelper {
       }
     }
     const connection = await this.#connect();
-    const generation = this.#generation;
     try {
       connection.write([request, ...args].join('\t'));
       const line = await connection.nextLine(this.#requestTimeoutMs);
@@ -465,14 +498,10 @@ export class PowerShellDesktopHelper {
         `Unexpected desktop helper output: ${line.slice(0, 200)}`,
       );
     } catch (error) {
-      // A helper killed or crashed mid-request never ran its cleanup, so keys
-      // or buttons it pressed may still be down.
-      if (
-        connection.closed &&
-        request !== RELEASE_REQUEST &&
-        generation === this.#generation
-      ) {
-        this.request(RELEASE_REQUEST, []).catch(() => undefined);
+      if (connection.closed) {
+        throw new HelperLostError(
+          error instanceof Error ? error.message : String(error),
+        );
       }
       throw error;
     } finally {
@@ -485,19 +514,16 @@ export class PowerShellDesktopHelper {
       this.#connection.ref();
       return this.#connection;
     }
-    const systemRoot =
-      this.#env.SystemRoot ?? this.#env.SYSTEMROOT ?? 'C:\\Windows';
+    const system32 = win32.join(
+      this.#env.SystemRoot ?? this.#env.SYSTEMROOT ?? 'C:\\Windows',
+      'System32',
+    );
     const connection = new HelperConnection(
       this.#spawn(
-        win32.join(
-          systemRoot,
-          'System32',
-          'WindowsPowerShell',
-          'v1.0',
-          'powershell.exe',
-        ),
+        win32.join(system32, 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
         ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', '-'],
-        { env: this.#env, windowsHide: true },
+        // Not the daemon's cwd: an orphaned helper would keep it locked.
+        { cwd: system32, env: this.#env, windowsHide: true },
       ),
     );
     this.#connection = connection;
@@ -515,6 +541,42 @@ export class PowerShellDesktopHelper {
       throw error;
     }
     return connection;
+  }
+}
+
+/** The helper died or was killed while a request was in flight. */
+class HelperLostError extends Error {}
+
+/**
+ * What a lost request may have left pressed, as `release` arguments: key
+ * tokens and mouse buttons. Clicks hold modifiers, drags a button, key combos
+ * their keys and focus Alt; other requests send atomic down-up pairs.
+ */
+function releaseArgs(
+  request: string,
+  args: readonly string[],
+): string[] | undefined {
+  switch (request) {
+    case 'click': {
+      const modifiers = args[4] ?? '-';
+      return [
+        modifiers === '-'
+          ? '-'
+          : modifiers
+              .split(',')
+              .map((key) => `v${key}`)
+              .join('+'),
+        args[2] ?? '-',
+      ];
+    }
+    case 'drag':
+      return ['-', args[4] ?? '-'];
+    case 'key':
+      return args.length > 0 ? [args.join('+'), '-'] : undefined;
+    case 'focus':
+      return [`v${VK_MENU}`, '-'];
+    default:
+      return undefined;
   }
 }
 

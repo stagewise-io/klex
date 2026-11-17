@@ -2,6 +2,7 @@ import { createRoute, type RouteHandler } from '@hono/zod-openapi';
 
 import {
   formatSkillId,
+  parseSkillId,
   type Skill,
   type SkillRegistry,
   SkillValidationError,
@@ -14,8 +15,10 @@ import {
   replaceTemplateSkillsBodySchema,
   skillDetailSchema,
   skillIdParamsSchema,
+  skillListQuerySchema,
   skillListResponseSchema,
   skillNameParamsSchema,
+  skillPageResponseSchema,
   updateSkillBodySchema,
 } from './schemas';
 
@@ -66,14 +69,16 @@ export const listSkillsRoute = createRoute({
   tags: ['Skills'],
   summary: 'List skills',
   description:
-    "Lists the agent's skills of every namespace with description, source, usage bookkeeping and metadata. Bodies are omitted; fetch a single skill for its body.",
+    "Lists the agent's skills of every namespace with description, source, usage bookkeeping and metadata. Pass limit and cursor to paginate, and search to filter descriptions before pagination. Without limit, all matches are returned. Bodies are omitted; fetch a single skill for its body.",
+  request: { query: skillListQuerySchema },
   responses: {
     200: {
       content: {
-        'application/json': { schema: skillListResponseSchema },
+        'application/json': { schema: skillPageResponseSchema },
       },
       description: 'Skill summaries, sorted by id',
     },
+    400: errorResponse('Invalid query parameters'),
     500: errorResponse('Internal server error'),
   },
 });
@@ -81,14 +86,46 @@ export const listSkillsRoute = createRoute({
 export function listSkills(
   deps: SkillsRouteDependencies,
 ): RouteHandler<typeof listSkillsRoute> {
-  return (c) =>
-    c.json(
+  return (c) => {
+    const { limit, cursor, search } = c.req.valid('query');
+    const after = cursor === undefined ? null : parseSkillId(cursor);
+    if (cursor !== undefined && !after)
+      return c.json(
+        { error: `Invalid cursor: ${cursor}`, code: 'validation_failed' },
+        400,
+      );
+    const query = search?.toLowerCase() ?? '';
+    // The cursor skill may have been deleted since, so compare positions
+    // instead of looking it up.
+    const matches = deps.skillRegistry
+      .list()
+      .filter(
+        (skill) =>
+          (!after || compareSkillPosition(skill, after) > 0) &&
+          skill.description.toLowerCase().includes(query),
+      );
+    const page = matches.slice(0, limit);
+    const nextCursor =
+      matches.length > page.length ? (page.at(-1)?.id ?? null) : null;
+    return c.json(
       {
-        skills: deps.skillRegistry.list().map(toSummary),
+        skills: page.map(toSummary),
         currentTurn: deps.skillRegistry.currentTurn(),
+        nextCursor,
       },
       200,
     );
+  };
+}
+
+/** Orders like `SkillRegistry.list()`: by namespace, then by name. */
+function compareSkillPosition(
+  skill: Pick<Skill, 'namespace' | 'name'>,
+  other: { namespace: string; name: string },
+): number {
+  if (skill.namespace !== other.namespace)
+    return skill.namespace < other.namespace ? -1 : 1;
+  return skill.name.localeCompare(other.name);
 }
 
 export const getSkillRoute = createRoute({

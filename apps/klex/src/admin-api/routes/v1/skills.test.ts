@@ -129,6 +129,54 @@ describe('skills routes', () => {
     expect(json.skills[1]).not.toHaveProperty('body');
   });
 
+  it('paginates matches across namespaces and continues after a deleted cursor skill', async () => {
+    const registry = await seededRegistry();
+    const learning = registry.forNamespace('learning');
+    await learning.put('alpha', {
+      description: 'Verify FRONTEND changes.',
+      body: 'A.',
+    });
+    await learning.put('beta', { description: 'Backend changes.', body: 'B.' });
+    await learning.put('gamma', { description: 'Frontend copy.', body: 'G.' });
+    await registry
+      .forNamespace('notes')
+      .put('delta', { description: 'Frontend notes.', body: 'D.' });
+    const app = createApp(registry);
+
+    const all = await app.request('/v1/skills');
+    expect(await all.json()).toMatchObject({ nextCursor: null });
+    const first = await app.request('/v1/skills?limit=2&search=%20frontend%20');
+    expect(first.status).toBe(200);
+    expect(await first.json()).toMatchObject({
+      skills: [{ id: 'learning/alpha' }, { id: 'learning/gamma' }],
+      nextCursor: 'learning/gamma',
+    });
+    await registry.delete('learning/gamma');
+    const last = await app.request(
+      '/v1/skills?limit=2&search=frontend&cursor=learning/gamma',
+    );
+    expect(await last.json()).toMatchObject({
+      skills: [{ id: 'notes/delta' }],
+      nextCursor: null,
+    });
+    const empty = await app.request('/v1/skills?limit=2&search=missing');
+    expect(await empty.json()).toMatchObject({ skills: [], nextCursor: null });
+  });
+
+  it.each([
+    'limit=0',
+    'limit=101',
+    'limit=1.5',
+    'limit=nope',
+    'cursor=',
+    'cursor=bare-name',
+  ])('rejects invalid pagination parameters: %s', async (query) => {
+    const response = await createApp(await seededRegistry()).request(
+      `/v1/skills?${query}`,
+    );
+    expect(response.status).toBe(400);
+  });
+
   it('returns a qualified skill with body and deprecated fields', async () => {
     const app = createApp(await seededRegistry());
     const learned = await app.request(

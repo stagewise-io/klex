@@ -102,7 +102,6 @@ namespace KlexMachine
         const ushort VK_TAB = 0x09;
         const ushort VK_UNASSIGNED = 0xE8;
         const int MAX_WINDOWS = 50;
-        static readonly ushort[] HELD_KEYS = { 0x10, 0x11, 0x12, 0x5B, 0x5C, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5 };
         const string READY = "klex-desktop-ready";
 
         static string dpiAwareness = "unaware";
@@ -175,7 +174,7 @@ namespace KlexMachine
                 case "key": Keys(request); return "";
                 case "windows": return Windows();
                 case "focus": Focus(Arg(request, 1)); return "";
-                case "release": Release(); return "";
+                case "release": Release(request); return "";
                 default: throw new ArgumentException("Unknown desktop request: " + request[0]);
             }
         }
@@ -517,6 +516,20 @@ namespace KlexMachine
 
         static void PressCombo(string combo)
         {
+            List<ushort> keys = ComboKeys(combo);
+            int pressed = 0;
+            try
+            {
+                for (; pressed < keys.Count; pressed++) Send(Key(keys[pressed], false));
+            }
+            finally
+            {
+                for (int i = pressed - 1; i >= 0; i--) TrySend(Key(keys[i], true));
+            }
+        }
+
+        static List<ushort> ComboKeys(string combo)
+        {
             List<ushort> keys = new List<ushort>();
             foreach (string token in combo.Split('+'))
             {
@@ -542,15 +555,7 @@ namespace KlexMachine
                     throw new ArgumentException("Invalid key token: " + token);
                 }
             }
-            int pressed = 0;
-            try
-            {
-                for (; pressed < keys.Count; pressed++) Send(Key(keys[pressed], false));
-            }
-            finally
-            {
-                for (int i = pressed - 1; i >= 0; i--) TrySend(Key(keys[i], true));
-            }
+            return keys;
         }
 
         static bool Cloaked(IntPtr hWnd)
@@ -651,17 +656,31 @@ namespace KlexMachine
             if (!IsForeground(hWnd)) throw new InvalidOperationException("Windows kept window " + id + " in the background");
         }
 
-        // A killed helper skips its finally blocks; a new one lets go of what it may have held.
-        static void Release()
+        // A killed helper skips its finally blocks. Its replacement releases
+        // the keys and buttons the lost request held, where they are still down.
+        static void Release(string[] request)
         {
-            foreach (ushort vk in HELD_KEYS)
+            string keys = Arg(request, 1), buttons = Arg(request, 2);
+            if (keys != "-")
             {
-                if ((GetAsyncKeyState(vk) & 0x8000) != 0) TrySend(Key(vk, true));
+                List<ushort> held = ComboKeys(keys);
+                for (int i = held.Count - 1; i >= 0; i--)
+                {
+                    if (IsDown(held[i])) TrySend(Key(held[i], true));
+                }
             }
-            // GetAsyncKeyState reads physical buttons, which is what SendInput sends.
-            if ((GetAsyncKeyState(0x01) & 0x8000) != 0) TrySend(Mouse(MOUSE_LEFTUP, 0, 0, 0));
-            if ((GetAsyncKeyState(0x02) & 0x8000) != 0) TrySend(Mouse(MOUSE_RIGHTUP, 0, 0, 0));
-            if ((GetAsyncKeyState(0x04) & 0x8000) != 0) TrySend(Mouse(MOUSE_MIDDLEUP, 0, 0, 0));
+            if (buttons == "-") return;
+            foreach (string name in buttons.Split(','))
+            {
+                uint up = Button(name)[1];
+                int vk = up == MOUSE_LEFTUP ? 0x01 : up == MOUSE_RIGHTUP ? 0x02 : 0x04;
+                if (IsDown(vk)) TrySend(Mouse(up, 0, 0, 0));
+            }
+        }
+
+        static bool IsDown(int vk)
+        {
+            return (GetAsyncKeyState(vk) & 0x8000) != 0;
         }
 
         static string Arg(string[] request, int index)

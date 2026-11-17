@@ -320,9 +320,9 @@ function fakeSpawner(
   banner?: string,
 ) {
   const shells: FakePowerShell[] = [];
-  const spawns: { file: string; args: readonly string[] }[] = [];
-  const spawn: HelperSpawner = (file, args) => {
-    spawns.push({ file, args });
+  const spawns: { file: string; args: readonly string[]; cwd?: unknown }[] = [];
+  const spawn: HelperSpawner = (file, args, options) => {
+    spawns.push({ file, args, cwd: options.cwd });
     const shell = new FakePowerShell(reply, banner);
     shells.push(shell);
     return shell as unknown as ChildProcessWithoutNullStreams;
@@ -347,6 +347,7 @@ describe('PowerShellDesktopHelper', () => {
         {
           file: 'D:\\Win\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
           args: ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', '-'],
+          cwd: 'D:\\Win\\System32',
         },
       ]);
       expect(shells[0]?.received).toEqual([
@@ -423,7 +424,7 @@ describe('PowerShellDesktopHelper', () => {
       expect(await helper.request('size', [])).toBe('fine');
       expect(shells).toHaveLength(2);
       // The replacement first lets go of keys and buttons the killed one held.
-      expect(shells[1]?.received.slice(1)).toEqual(['release', 'size']);
+      expect(shells[1]?.received.slice(1)).toEqual(['size']);
     } finally {
       helper.close();
     }
@@ -444,25 +445,65 @@ describe('PowerShellDesktopHelper', () => {
       );
       expect(await helper.request('size', [])).toBe('back');
       expect(shells).toHaveLength(2);
-      expect(shells[1]?.received.slice(1)).toEqual(['release', 'size']);
+      expect(shells[1]?.received.slice(1)).toEqual(['size']);
     } finally {
       helper.close();
     }
   });
 
-  it('releases nothing after close() or a reported error', async () => {
+  it('releases what a lost request held before queued requests run', async () => {
     const { spawn, shells } = fakeSpawner((line) =>
-      line === 'hang' ? undefined : `err\t${b64('no')}`,
+      line.startsWith('click') || line.startsWith('key')
+        ? undefined
+        : 'ok\tfine',
+    );
+    const helper = new PowerShellDesktopHelper({
+      env: {},
+      spawn,
+      requestTimeoutMs: 50,
+    });
+    try {
+      const click = helper.request('click', ['1', '2', 'right', '1', '17,16']);
+      const size = helper.request('size', []);
+      await expect(click).rejects.toThrow('did not answer');
+      expect(await size).toBe('fine');
+      expect(shells[1]?.received.slice(1)).toEqual([
+        'release\tv17+v16\tright',
+        'size',
+      ]);
+
+      await expect(helper.request('key', ['v17+c43', 'v13'])).rejects.toThrow(
+        'did not answer',
+      );
+      expect(shells[2]?.received.slice(1)).toEqual(['release\tv17+c43+v13\t-']);
+    } finally {
+      helper.close();
+    }
+  });
+
+  it('starts nothing after close() and releases nothing for reported errors', async () => {
+    const { spawn, shells } = fakeSpawner((line) =>
+      line.startsWith('drag') ? undefined : `err\t${b64('no')}`,
     );
     const helper = new PowerShellDesktopHelper({ env: {}, spawn });
-    await expect(helper.request('click', [])).rejects.toThrow('no');
-    const hung = helper.request('hang', []);
+    await expect(
+      helper.request('click', ['1', '1', 'left', '1', '17']),
+    ).rejects.toThrow('no');
+    const drag = helper.request('drag', ['1', '1', '2', '2', 'left']);
+    const queued = helper.request('size', []);
     await new Promise((resolve) => setTimeout(resolve, 10));
     helper.close();
-    await expect(hung).rejects.toThrow('stopped');
+    await expect(drag).rejects.toThrow('stopped');
+    await expect(queued).rejects.toThrow('stopped');
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(shells).toHaveLength(1);
-    expect(shells[0]?.received.slice(1)).toEqual(['click', 'hang']);
+    expect(shells[0]?.received.slice(1)).toEqual([
+      'click\t1\t1\tleft\t1\t17',
+      'drag\t1\t1\t2\t2\tleft',
+    ]);
+    await expect(helper.request('size', [])).rejects.toThrow('no');
+    expect(shells).toHaveLength(2);
+    helper.close();
   });
 
   it('fails startup when PowerShell is missing', async () => {

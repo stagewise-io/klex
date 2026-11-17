@@ -203,7 +203,7 @@ class AgentBuild {
       } else markdown = this.content.markdown(html, canonical);
       const markdownLocales = { en: markdown };
       for (const [locale, markup] of Object.entries(localized)) {
-        const translated = markup[`/${entry.file}`];
+        const translated = markup[`/${entry.file.replaceAll('\\', '/')}`];
         if (!translated || !markdownEnabled || entry.route.startsWith('/legal'))
           continue;
         markdownLocales[locale] = this.content.markdown(

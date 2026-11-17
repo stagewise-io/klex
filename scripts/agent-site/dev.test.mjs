@@ -68,6 +68,12 @@ it('serves negotiated and explicit translated Markdown from live Vite', async ()
   });
   expect(head.headers.get('content-language')).toBe('de');
   expect(await head.text()).toBe('');
+  const json = await fetch(`${origin}/brand.md`, {
+    headers: { Accept: 'application/json' },
+  });
+  expect(json.status).toBe(200);
+  expect(json.headers.get('content-type')).toContain('text/markdown');
+  expect(json.headers.get('link')).toContain(`<${origin}/brand>`);
   const html = await fetch(origin, { headers: { Accept: 'text/html' } });
   expect(html.headers.get('content-type')).toContain('text/html');
 }, 60000);

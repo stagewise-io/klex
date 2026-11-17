@@ -1,5 +1,6 @@
 import { randomInt } from 'node:crypto';
 import {
+  chmod,
   mkdir,
   mkdtemp,
   readFile,
@@ -17,6 +18,7 @@ import {
   createEntityStore,
   entityFieldsSchema,
   entityIdSchema,
+  entityRevision,
   loadMatcherSchema,
   renderEntity,
 } from './entities';
@@ -502,6 +504,210 @@ describe('factual entities', () => {
       createEntityStore(join(directory, 'entities')).start(),
     ).rejects.toThrow('plain directory');
   });
+  it('retypes person to bot keeping ID, inbound relations, identities and facts', async () => {
+    const { store, directory } = await fixture();
+    const identity = { server: 'slack', match: { user: 'U123' } };
+    const entity = await store.create(
+      { ...fields(), linkedIdentities: [identity] },
+      sections({ General: 'Deploy helper', Style: 'Terse' }),
+    );
+    const relation = {
+      target: { kind: 'entity' as const, id: entity.id },
+      strength: 50,
+      relationship: 'works with',
+    };
+    const peer = await store.create(
+      { ...fields(), title: 'Sam Lee', relatedTo: [relation] },
+      sections({ General: 'Engineer' }),
+    );
+    const retyped = await store.update(entity.id, { entityType: 'bot' }, {});
+    const restored = createEntityStore(join(directory, 'entities'));
+    await restored.start();
+    expect(restored.get(entity.id)).toEqual(retyped);
+    expect(retyped).toMatchObject({
+      id: entity.id,
+      entityType: 'bot',
+      sections: entity.sections,
+      frontmatter: { LinkedIdentities: [identity] },
+    });
+    expect(restored.get(peer.id)?.frontmatter.RelatedTo).toEqual([relation]);
+  });
+  it('merges two entities, repoints relations and resolves the dropped ID', async () => {
+    const { store, directory } = await fixture();
+    const keep = await store.create(
+      {
+        ...fields(),
+        linkedIdentities: [{ server: 'slack', match: { user: 'U1' } }],
+        loadOn: [{ type: 'contentPattern', pattern: 'alex' }],
+      },
+      {
+        General: [fact('Engineer', 'a')],
+        Style: [fact('Terse', 'a')],
+      },
+    );
+    const drop = await store.create(
+      {
+        ...fields(),
+        linkedIdentities: [{ server: 'linear', match: { userId: 'L1' } }],
+        loadOn: [{ type: 'contentPattern', pattern: 'alex' }],
+      },
+      {
+        General: [fact('Engineer', 'b'), fact('Owns billing', 'b')],
+        Work: [fact('Ships Fridays', 'b')],
+      },
+    );
+    const toEntity = (id: string, strength: number, relationship: string) => ({
+      target: { kind: 'entity' as const, id },
+      strength,
+      relationship,
+    });
+    const peer = await store.create(
+      {
+        ...fields(),
+        title: 'Sam Lee',
+        relatedTo: [
+          toEntity(keep.id, 80, 'manages'),
+          toEntity(drop.id, 20, 'knows'),
+        ],
+      },
+      sections({ General: 'Manager' }),
+    );
+    const team = await store.create(
+      {
+        title: 'Billing',
+        entityType: 'team',
+        relatedTo: [toEntity(drop.id, 50, 'member')],
+      },
+      sections({ General: 'Billing team' }),
+    );
+    await store.update(
+      keep.id,
+      { relatedTo: [toEntity(drop.id, 30, 'same as')] },
+      {},
+    );
+    await store.update(
+      drop.id,
+      { relatedTo: [toEntity(team.id, 50, 'member of')] },
+      {},
+    );
+    const revision = (id: string) => {
+      const entity = store.get(id);
+      if (!entity) throw new Error('Missing entity');
+      return entityRevision(entity);
+    };
+    const stale = revision(keep.id);
+    await store.update(keep.id, { title: 'Alex Smith' }, {});
+    await expect(
+      store.merge(keep.id, drop.id, stale, revision(drop.id)),
+    ).rejects.toThrow('read both again');
+
+    const merged = await store.merge(
+      keep.id,
+      drop.id,
+      revision(keep.id),
+      revision(drop.id),
+    );
+    expect(
+      merged.sections.General?.map(({ text, sources }) => [
+        text,
+        sources.map(({ id }) => id),
+      ]),
+    ).toEqual([
+      ['Engineer', ['a', 'b']],
+      ['Owns billing', ['b']],
+    ]);
+    expect(Object.keys(merged.sections)).toEqual(['General', 'Style', 'Work']);
+    expect(merged.frontmatter.LinkedIdentities).toHaveLength(2);
+    expect(merged.frontmatter.LoadOn).toEqual([
+      { type: 'contentPattern', pattern: 'alex' },
+    ]);
+    expect(merged.frontmatter.RelatedTo).toEqual([
+      toEntity(team.id, 50, 'member of'),
+    ]);
+    expect(merged.frontmatter.MergedFrom).toEqual([drop.id]);
+    await expect(
+      readFile(join(directory, 'entities', 'person', `${drop.id}.md`)),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+
+    const restored = createEntityStore(join(directory, 'entities'));
+    await restored.start();
+    expect(restored.list()).toHaveLength(3);
+    expect(restored.get(drop.id)?.id).toBe(keep.id);
+    expect(restored.get(peer.id)?.frontmatter.RelatedTo).toEqual([
+      toEntity(keep.id, 80, 'manages'),
+    ]);
+    expect(restored.get(team.id)?.frontmatter.RelatedTo).toEqual([
+      toEntity(keep.id, 50, 'member'),
+    ]);
+    await expect(restored.merge(keep.id, drop.id, 'x', 'y')).rejects.toThrow(
+      'into itself',
+    );
+  });
+  it('finishes a merge interrupted before the dropped file was deleted', async () => {
+    const { store, directory } = await fixture();
+    const keep = await store.create(
+      fields(),
+      sections({ General: 'Engineer' }),
+    );
+    const drop = await store.create(fields(), sections({ General: 'Copy' }));
+    const dropFile = join(directory, 'entities', 'person', `${drop.id}.md`);
+    const dropped = await readFile(dropFile, 'utf8');
+    await store.merge(
+      keep.id,
+      drop.id,
+      entityRevision(keep),
+      entityRevision(drop),
+    );
+    await writeFile(dropFile, dropped);
+    const restored = createEntityStore(join(directory, 'entities'));
+    await restored.start();
+    expect(restored.list().map(({ id }) => id)).toEqual([keep.id]);
+    await expect(readFile(dropFile)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+  it.skipIf(process.getuid?.() === 0)(
+    'restores written files when a merge step fails',
+    async () => {
+      const { store, directory } = await fixture();
+      const keep = await store.create(
+        fields(),
+        sections({ General: 'Engineer' }),
+      );
+      const drop = await store.create(fields(), sections({ General: 'Copy' }));
+      await store.create(
+        {
+          title: 'Billing',
+          entityType: 'team',
+          relatedTo: [
+            {
+              target: { kind: 'entity', id: drop.id },
+              strength: 50,
+              relationship: 'member',
+            },
+          ],
+        },
+        sections({ General: 'Billing team' }),
+      );
+      const keepFile = join(directory, 'entities', 'person', `${keep.id}.md`);
+      const before = await readFile(keepFile, 'utf8');
+      const teamFolder = join(directory, 'entities', 'team');
+      await chmod(teamFolder, 0o500);
+      try {
+        await expect(
+          store.merge(
+            keep.id,
+            drop.id,
+            entityRevision(keep),
+            entityRevision(drop),
+          ),
+        ).rejects.toThrow('nothing changed');
+      } finally {
+        await chmod(teamFolder, 0o700);
+      }
+      expect(await readFile(keepFile, 'utf8')).toBe(before);
+      expect(store.get(keep.id)).toEqual(keep);
+      expect(store.get(drop.id)).toEqual(drop);
+    },
+  );
   it('rejects symlinked entity roots', async () => {
     const { directory } = await fixture();
     const linked = join(directory, 'linked');

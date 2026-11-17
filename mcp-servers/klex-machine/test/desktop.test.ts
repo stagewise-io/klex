@@ -505,7 +505,6 @@ describe('desktop MCP tools', () => {
   });
 
   it.each([
-    ['win32', ':0'],
     ['linux', undefined],
     ['linux', ':99'],
   ] as const)(

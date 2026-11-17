@@ -32,10 +32,12 @@ import { createWriterTools } from './tools';
 import { writerView } from './view';
 
 // Enabling memory on an existing bot must not replay its whole history on the user's budget.
-const FIRST_RUN_MAX_AGE_MS = 7 * 24 * 60 * 60_000;
-const FIRST_RUN_MAX_MESSAGES = 1_000;
+const FIRST_RUN_MAX_AGE_MS = 21 * 24 * 60 * 60_000;
+const FIRST_RUN_MAX_MESSAGES = 3_000;
+// New history per chunk; the fixed prompt and tools dominate smaller chunks.
+const CHUNK_CHARACTERS = 60_000;
 
-/** Starting cursor for a first activation: only the newest week, at most 1,000 messages. */
+/** Starting cursor for a first activation: only the newest 21 days, at most 3,000 messages. */
 export function firstRunStart(
   sources: readonly { id: string; persistedAt: string }[],
   now: number,
@@ -304,7 +306,7 @@ class MemoryWriterExtension implements Extension {
       const batch = await activities.readRange(
         cursor,
         pendingThrough,
-        12_000,
+        CHUNK_CHARACTERS,
         true,
         writerView,
       );

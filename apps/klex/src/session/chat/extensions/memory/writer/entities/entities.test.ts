@@ -664,6 +664,67 @@ describe('factual entities', () => {
     expect(restored.list().map(({ id }) => id)).toEqual([keep.id]);
     await expect(readFile(dropFile)).rejects.toMatchObject({ code: 'ENOENT' });
   });
+  it('repoints relations a merge left on a dropped ID at startup', async () => {
+    const { store, directory } = await fixture();
+    const keep = await store.create(
+      fields(),
+      sections({ General: 'Engineer' }),
+    );
+    const drop = await store.create(fields(), sections({ General: 'Copy' }));
+    const team = await store.create(
+      {
+        title: 'Billing',
+        entityType: 'team',
+        relatedTo: [
+          {
+            target: { kind: 'entity', id: drop.id },
+            strength: 50,
+            relationship: 'member',
+          },
+        ],
+      },
+      sections({ General: 'Billing team' }),
+    );
+    const teamFile = join(directory, 'entities', 'team', `${team.id}.md`);
+    const unrepointed = await readFile(teamFile, 'utf8');
+    await store.merge(
+      keep.id,
+      drop.id,
+      entityRevision(keep),
+      entityRevision(drop),
+    );
+    await writeFile(teamFile, unrepointed);
+    const restored = createEntityStore(join(directory, 'entities'));
+    await restored.start();
+    expect(restored.get(team.id)?.frontmatter.RelatedTo).toEqual([
+      {
+        target: { kind: 'entity', id: keep.id },
+        strength: 50,
+        relationship: 'member',
+      },
+    ]);
+  });
+  it('updates a merged entity through its dropped ID', async () => {
+    const { store } = await fixture();
+    const identity = { server: 'slack', match: { user: 'U1' } };
+    const keep = await store.create(
+      { ...fields(), linkedIdentities: [identity] },
+      sections({ General: 'Engineer' }),
+    );
+    const drop = await store.create(fields(), sections({ General: 'Copy' }));
+    await store.merge(
+      keep.id,
+      drop.id,
+      entityRevision(keep),
+      entityRevision(drop),
+    );
+    const updated = await store.update(
+      drop.id,
+      { linkedIdentities: [identity] },
+      {},
+    );
+    expect(updated.id).toBe(keep.id);
+  });
   it.skipIf(process.getuid?.() === 0)(
     'restores written files when a merge step fails',
     async () => {

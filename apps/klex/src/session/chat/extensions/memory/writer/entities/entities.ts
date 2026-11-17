@@ -623,7 +623,8 @@ class EntityStoreModule implements EntityStore {
       const identities = patch.linkedIdentities
         ? dedupeIdentities(patch.linkedIdentities)
         : previous.LinkedIdentities;
-      this.checkIdentities(identities, id);
+      // `id` may be a merged alias; the resolved entity is the owner.
+      this.checkIdentities(identities, entity.id);
       const title = patch.title ?? previous.Title;
       entity.frontmatter = {
         ...previous,
@@ -927,6 +928,23 @@ class EntityStoreModule implements EntityStore {
       } else {
         this.entities.set(entity.id, entity);
       }
+    }
+    // A merge interrupted while repointing left relations to dropped IDs.
+    const owner = new Map<string, string>();
+    for (const entity of this.entities.values())
+      for (const alias of entity.frontmatter.MergedFrom ?? [])
+        owner.set(alias, entity.id);
+    for (const entity of [...this.entities.values()]) {
+      let relations = entity.frontmatter.RelatedTo;
+      for (const { target } of entity.frontmatter.RelatedTo) {
+        const to = target.kind === 'entity' && owner.get(target.id);
+        if (to) relations = repoint(relations, target.id, to, entity.id);
+      }
+      if (relations !== entity.frontmatter.RelatedTo)
+        await this.persist({
+          ...entity,
+          frontmatter: { ...entity.frontmatter, RelatedTo: relations },
+        });
     }
   }
 }

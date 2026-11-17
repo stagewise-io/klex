@@ -42,12 +42,21 @@ const TERMINAL_CODES =
   // biome-ignore lint/suspicious/noControlCharactersInRegex: matching terminal escape sequences is the purpose.
   /(?:\u001b[\]PX^_]|[\u0090\u0098\u009d-\u009f])[\s\S]*?(?:\u0007|\u001b\\|\u009c|$)|(?:\u001b\[|\u009b)[0-?]*[ -/]*[@-~]|\u001b[@-Z\\-_=>]|\u009c/g;
 
+// Far above the view's own caps; bounds work on huge raw tool values.
+const RAW_STRING_LIMIT = 20_000;
+
 /** Terminal colours, cursor codes and carriage returns cost tokens and carry no facts. */
 function clean(value: unknown): unknown {
-  if (typeof value === 'string')
+  if (typeof value === 'string') {
+    const half = RAW_STRING_LIMIT / 2;
+    const bounded =
+      value.length > RAW_STRING_LIMIT
+        ? `${value.slice(0, half)}…${value.slice(-half)}`
+        : value;
     return maskSecrets(
-      value.replace(TERMINAL_CODES, '').replace(/\r\n?/g, '\n'),
+      bounded.replace(TERMINAL_CODES, '').replace(/\r\n?/g, '\n'),
     );
+  }
   if (Array.isArray(value)) return value.map(clean);
   if (
     typeof value === 'object' &&

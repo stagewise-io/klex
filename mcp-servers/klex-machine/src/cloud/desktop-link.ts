@@ -41,6 +41,8 @@ export interface DesktopLinkOptions {
   maxStreams?: number;
   /** Test seams. */
   availabilityPollMs?: number;
+  pingMs?: number;
+  pongTimeoutMs?: number;
   random?: () => number;
 }
 
@@ -66,6 +68,8 @@ export function startDesktopLink(options: DesktopLinkOptions): DesktopLink {
   const maxStreams = options.maxStreams ?? MAX_DESKTOP_STREAMS;
   const availabilityPollMs = options.availabilityPollMs ?? AVAILABILITY_POLL_MS;
   const random = options.random ?? Math.random;
+  const pingMs = options.pingMs ?? PING_MS;
+  const pongTimeoutMs = options.pongTimeoutMs ?? PONG_TIMEOUT_MS;
   const base = toWebSocketBase(options.cloudBaseUrl);
   const streams = new Map<string, Stream>();
   let control: WebSocket | undefined;
@@ -125,8 +129,7 @@ export function startDesktopLink(options: DesktopLinkOptions): DesktopLink {
     });
     control = socket;
     let openedAt: number | undefined;
-    let lastPong = Date.now();
-    let ping: ReturnType<typeof setInterval> | undefined;
+    let stopKeepAlive: (() => void) | undefined;
     socket.on('unexpected-response', (_request, response) => {
       if (response.statusCode === 401 || response.statusCode === 403)
         options.invalidateToken();
@@ -139,10 +142,7 @@ export function startDesktopLink(options: DesktopLinkOptions): DesktopLink {
     socket.on('open', () => {
       openedAt = Date.now();
       logger.info('Desktop control connected');
-      ping = setInterval(() => {
-        if (Date.now() - lastPong > PONG_TIMEOUT_MS) socket.terminate();
-        else socket.ping();
-      }, PING_MS);
+      stopKeepAlive = keepAlive(socket, pingMs, pongTimeoutMs);
       send({
         type: 'hello',
         v: PROTOCOL_VERSION,
@@ -152,9 +152,6 @@ export function startDesktopLink(options: DesktopLinkOptions): DesktopLink {
         machineVersion: options.machineVersion,
         capabilities: ['stream', 'lease', 'rfb-input-filter'],
       });
-    });
-    socket.on('pong', () => {
-      lastPong = Date.now();
     });
     socket.on('message', (data, isBinary) => {
       if (isBinary) return;
@@ -170,10 +167,13 @@ export function startDesktopLink(options: DesktopLinkOptions): DesktopLink {
       logger.debug({ error: message(error) }, 'Desktop control socket error');
     });
     socket.on('close', (code) => {
-      clearInterval(ping);
+      stopKeepAlive?.();
       if (control === socket) control = undefined;
       if (openedAt !== undefined)
         logger.info({ code }, 'Desktop control disconnected');
+      // Cloud routes stream requests over this link and reopens them after a
+      // reconnect, so streams must not outlive it.
+      for (const stream of [...streams.values()]) stream.close(1001);
       lease.disconnected();
       if (
         openedAt !== undefined &&
@@ -331,12 +331,17 @@ export function startDesktopLink(options: DesktopLinkOptions): DesktopLink {
         socket.readyState === WebSocket.OPEN ? undefined : 'connect_failed',
       );
     });
+    let stopKeepAlive: (() => void) | undefined;
     socket.on('close', () => {
       clearTimeout(connectTimer);
+      stopKeepAlive?.();
       close(1000);
     });
     socket.on('open', () => {
       clearTimeout(connectTimer);
+      // A static desktop sends nothing, so without pings a vanished Cloud pod
+      // would hold the stream source and its slot indefinitely.
+      stopKeepAlive = keepAlive(socket, pingMs, pongTimeoutMs);
       const local = vnc as Duplex;
       const relay = new RfbClientFilter();
       filter = relay;
@@ -409,6 +414,27 @@ export function startDesktopLink(options: DesktopLinkOptions): DesktopLink {
       }
       await Promise.all([loop, ...closingStreams]);
     },
+  };
+}
+
+/** Pings the peer and terminates the socket once it stops answering. */
+function keepAlive(
+  socket: WebSocket,
+  pingMs: number,
+  pongTimeoutMs: number,
+): () => void {
+  let lastPong = Date.now();
+  const onPong = () => {
+    lastPong = Date.now();
+  };
+  socket.on('pong', onPong);
+  const timer = setInterval(() => {
+    if (Date.now() - lastPong > pongTimeoutMs) socket.terminate();
+    else socket.ping();
+  }, pingMs);
+  return () => {
+    clearInterval(timer);
+    socket.off('pong', onPong);
   };
 }
 

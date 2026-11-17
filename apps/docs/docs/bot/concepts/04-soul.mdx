@@ -14,7 +14,9 @@ The soul describes a Bot’s personality, voice, purpose, and priorities. It is 
 
 ## Create or update a soul
 
-In the self-hosted Klex app, open **Settings → Soul**. You can view the saved soul, create one from instructions, update it, or re-create it from scratch. Generation uses your configured chat models and saves successful output. Without a non-empty soul, regular sessions skip new work and discard newly added session history. Skipped work is not queued for later. Save a soul before sending new input.
+When you create a Bot in Klex Cloud, choose its character traits using the suggested defaults or your own preferences.
+
+In the self-hosted Klex app, open **Settings → Soul**. You can view the saved soul, create one from instructions, update it, or re-create it from scratch. Generation uses your configured chat models and saves successful output. Save a soul before sending the Bot new work.
 
 For example, instructions might describe the Bot’s job, preferred tone, and how it should approach decisions. Review the generated soul and update it if it does not reflect what you intended.
 
@@ -23,3 +25,7 @@ Klex also supports [god messages](/bot/concepts/god-messages), which can request
 ## Storage and access
 
 The soul is stored in the Bot’s [data directory](/bot/concepts/data-directory). The Bot’s Admin API can read the soul and generate a new or updated one from administrator instructions. The regular session does not provide a soul-writing tool.
+
+## If the Bot has no soul
+
+A Bot needs a non-empty soul to handle regular work. Without one, it skips new work and discards the newly added session history; skipped work is not queued. Create a soul before sending new input.

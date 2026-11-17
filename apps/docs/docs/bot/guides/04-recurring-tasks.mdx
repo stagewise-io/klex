@@ -25,6 +25,6 @@ A Bot can use its internal to-dos for short-term work and one-time reminders. Th
 
 Administrators can list and create to-dos through `GET` and `POST /v1/todos`, and update or delete one through `PATCH` or `DELETE /v1/todos/{id}`. The list is shared across the Bot’s sessions; changes appear on its next step. A reminder time must be in the future and include a UTC offset or `Z`. Check the Bot’s OpenAPI document for route availability, and secure access as described in [Review Bot activity](/bot/guides/observability#access-the-local-admin-api).
 
-A Bot may also learn a reusable procedure from experience as an [Agent Skill](/bot/concepts/agent-skills). Review its work and correct mistakes; learning does not guarantee that future runs will be correct.
+A Bot can also learn a reusable procedure from experience as an [Agent Skill](/bot/concepts/agent-skills), helping it carry out familiar work.
 
-Keep the Bot and its connections available when the routine is due. A schedule is not proof that a task completed, so check important results and use your normal monitoring or escalation process.
+Keep the Bot and its connections available when the routine is due, and use your normal monitoring or escalation process for important results.

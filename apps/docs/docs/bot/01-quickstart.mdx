@@ -1,12 +1,14 @@
 ---
 title: Quickstart
-description: Create a Klex Bot with Cloud hosting or run it on your own computer.
+description: Create a Klex Bot in the Cloud or run it on your own computer.
 related:
   - /cloud/hosted-vs-local
   - /bot/concepts/brain-and-computers
 ---
 
-Klex recommends a Cloud-hosted Bot for most users. You can also run a Bot on your own computer, with or without Klex Cloud enrollment. You’ll need access to a model provider; Cloud setup also requires a Klex Cloud account.
+Create a Klex Bot to work alongside you. Klex recommends Cloud hosting for most users; you can also run a Bot on your own computer.
+
+<a id="creating-your-bot"></a>
 
 <div className="hosting-quickstart">
 <Tabs inline hash sync={false}>
@@ -14,11 +16,14 @@ Klex recommends a Cloud-hosted Bot for most users. You can also run a Bot on you
 
 ## Cloud-hosted setup
 
-1. Sign in to [Klex Cloud](https://cloud.klex.bot) and start creating a Bot.
-2. Choose Cloud hosting and follow the setup prompts to name the Bot, define its [soul](/bot/concepts/soul), and configure its model providers and models.
-3. Connect the apps or computers the Bot needs. See [Connections](/bot/concepts/brain-and-computers) for how to manage access.
+1. Sign in to [Klex Cloud](https://cloud.klex.bot) and click **Create a new Bot**.
+2. Give your Bot a job, or choose a suggested one, and customize its appearance.
+3. Click **Create Bot in the Klex Cloud**.
+4. Configure its character traits. Start with the suggested defaults or change them to make the Bot behave the way you want.
+5. Choose the models the Bot should use, or import model configuration from another Bot in your Cloud account.
+6. Your Bot starts and sends you a message. Reply to get started.
 
-Send the Bot a message in a connected app to check that it responds. You can review its activity in the Cloud dashboard.
+You can connect the apps and computers your Bot needs for its work. See [Connections](/bot/concepts/brain-and-computers).
 
 </Tab>
 <Tab title="Self-hosted" id="install-klex-for-self-hosting">
@@ -27,63 +32,24 @@ Send the Bot a message in a connected app to check that it responds. You can rev
 
 ## Self-hosted setup
 
-To run the Bot on your own computer, install Klex from a system shell:
+1. Sign in to [Klex Cloud](https://cloud.klex.bot), click **Create a new Bot**, and choose its job and appearance.
+2. Choose the self-hosted option and follow the setup flow. Copy the complete command provided by Klex Cloud, paste it into a terminal on the computer where the Bot should run, and execute it.
+3. Follow the setup instructions to configure the Bot's character and models.
 
-**macOS, Linux, or WSL:**
-
-```sh
-curl -fsSL https://klex.bot/install.sh | sh
-```
-
-**Windows (PowerShell):**
-
-```powershell
-irm https://klex.bot/install.ps1 | iex
-```
-
-### Cloud-assisted setup
-
-Start a self-hosted Bot from the Cloud setup flow and follow the enrollment instructions. The Bot runs on your computer; the Cloud provides a management interface.
-
-### Standalone setup
-
-To run without Cloud enrollment, start the interactive app:
+Keep the Bot running on your computer so it can work. To restart it, run the following command in a terminal and select your Bot:
 
 ```sh
-klex --no-cloud
+klex
 ```
 
-1. Press `a` to create a Bot and enter its name.
-2. In **Settings → Providers & Endpoints**, configure a model provider. In **Model Selection**, select a valid chat model.
-3. Open **Settings → Soul** and create a soul describing the Bot’s character and work.
-4. In **Settings → MCP Servers**, connect the servers the Bot needs. Configure the permissions for its accounts in the connected apps.
+### Run without Cloud
 
-To receive events from an external channel, connect an MCP server that supports the relevant resource updates, MCP Events, or Klex’s [push-notification extension](https://github.com/stagewise-io/klex/tree/main/packages/mcp-extension-push-notifications).
+Cloud enrollment is optional. To configure a Bot directly in the Klex app, follow the [standalone setup guide](/bot/guides/standalone-setup).
 
 </Tab>
 </Tabs>
 </div>
 
-<a id="creating-your-bot"></a>
-
-## Create a self-hosted Bot without the picker
-
-To create and start a Cloud-enrolled Bot, use an enrollment token from Klex Cloud:
-
-```sh
-klex --create-bot --cloud-enroll-token <token>
-```
-
-You can supply the token through `KLEX_CLOUD_ENROLLMENT_TOKEN` instead of a command-line argument. Add `--headless` to run without the terminal UI.
-
-To create a standalone Bot, provide a name:
-
-```sh
-klex --create-bot --no-cloud --bot-name Ada
-```
-
-Creation cannot be combined with `--data-dir` or `KLEX_DATA_DIR`; those select an existing Bot. Configure a provider and a chat model before the Bot can work.
-
-If the Bot does not respond, see [troubleshooting steps](/bot/guides/observability#if-a-bot-does-not-respond).
+If the Bot does not respond, see [troubleshooting](/bot/guides/observability#if-a-bot-does-not-respond).
 
 <script src="/quickstart-tabs.js" defer></script>

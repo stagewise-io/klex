@@ -26,10 +26,10 @@ For example, to open a Bot whose data directory is already known:
 klex --data-dir /path/to/bot
 ```
 
-Replace the example path with the Bot’s actual directory. See the [quickstart](/bot/quickstart) for creating a new Bot and for headless setup.
+Replace the example path with the Bot’s actual directory. See the [standalone setup guide](/bot/guides/standalone-setup) to create a Bot without Cloud or run it headlessly.
 
 ## Protect the data
 
 The directory can contain sensitive information, including configuration and credentials. Restrict access using your operating system’s permissions, and protect any copies you make. Klex requests owner-only permissions when creating the directory on systems that support Unix modes; it does not change permissions on an existing directory. Windows uses access control lists instead.
 
-Check your backup and recovery procedures before deleting or moving data. This page does not specify a supported migration or restore procedure, retention rules, or third-party data processing.
+Check your backup and recovery procedures before deleting or moving data.

@@ -209,26 +209,26 @@ async function fixture(completion: 'normal' | 'failed' | 'skip' = 'normal') {
 }
 
 describe('oldest-first memory writer', () => {
-  it('limits a first run to the newest week and 1,000 messages', () => {
+  it('limits a first run to the newest 21 days and 3,000 messages', () => {
     const now = Date.parse('2026-11-16T12:00:00Z');
     const sources = (ages: number[]) =>
       ages.map((days, index) => ({
         id: id(index),
         persistedAt: new Date(now - days * 86_400_000).toISOString(),
       }));
-    expect(firstRunStart(sources([6, 0]), now)).toEqual({
+    expect(firstRunStart(sources([20, 0]), now)).toEqual({
       cursor: null,
       skipped: 0,
     });
-    expect(firstRunStart(sources([9, 8, 6, 0]), now)).toEqual({
+    expect(firstRunStart(sources([23, 22, 20, 0]), now)).toEqual({
       cursor: id(1),
       skipped: 2,
     });
-    expect(firstRunStart(sources(Array(1_002).fill(0)), now)).toEqual({
+    expect(firstRunStart(sources(Array(3_002).fill(0)), now)).toEqual({
       cursor: id(1),
       skipped: 2,
     });
-    expect(firstRunStart(sources([9]), now)).toEqual({
+    expect(firstRunStart(sources([22]), now)).toEqual({
       cursor: id(0),
       skipped: 1,
     });
@@ -459,7 +459,7 @@ describe('oldest-first memory writer', () => {
     expect(f.activities.readRange).toHaveBeenCalledWith(
       null,
       id(4),
-      12_000,
+      60_000,
       true,
       expect.any(Function),
     );

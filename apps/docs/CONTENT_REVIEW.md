@@ -14,7 +14,7 @@
 
 - **Connections:** A machine is connected through MCP. An MCP server can expose a full machine or an app; Klex offers built-in MCP servers and supports connecting other MCP servers.
 - **Connection and identity:** An MCP connection is either connected or not. For most MCPs, a Bot acts through its own account or identity, configured per Bot with permissions and access grants. Do not invent a separate MCP-level permission model.
-- **Current Memory:** Klex Bot Memory currently stores skills and learnings. Facts, individual people, and trust are planned, not confirmed as current capabilities.
+- **Memory, 30 Oct:** Glenn confirmed skills and learnings. Later source review found activity recall; see the current-main evidence below. Do not infer a separate people or trust store.
 - **Page structure and diagrams:** Keep Connections as its own page. Glenn approved the V4 Overview art style and colors as a reference for future docs illustrations; the vertical arrangement is not a prescribed layout. Use editable SVGs where appropriate.
 
 ## Additional confirmations from Glenn (9 Nov 2026)
@@ -79,9 +79,11 @@
 
 - **Learning on current main (`51b87ed9`):** `session/chat/extensions/learning/learning.ts` starts the learning worker for the default session and triggers it after a committed context checkpoint. `learning-worker.ts` reviews activity through the dropped-message boundary in the background and can create, update, or remove learned skills. A run may produce no changes or fail; do not promise immediate learning or a skill for every conversation.
 
+- **Activity recall on main `c032f2f7`:** `application/application.ts` installs the memory extension on the default session. `session/chat/extensions/memory/memory.ts` exposes background `recall` and observes current activity; `retrieval/activity-reader.ts` reads canonical activity history. The retrieval coordinator can return explicit results and surface relevant context without a request. Scope is a context hint, not an enforced filter or authorization boundary (`memory.ts`, `retrieval/retrieval-prompt.md`). Recall can return no result or fail; do not promise complete, accurate recall, automatic access isolation, retention, or a separate store of people and trust. This updates the 30 Oct Memory scope above.
+
 ## Open questions: do not infer
 
-- Memory behavior beyond current skills and learnings: how memories are created or recalled, scope across chats/channels, and user/admin controls. Also unconfirmed: retention, deletion, backups, and exact file layout.
+- Memory controls and guarantees: retention, deletion, backups, precise user/admin controls, and how reliably relevant context is recalled across chats or channels remain unconfirmed. A recall scope hint is not an authorization boundary.
 - Cloud staff access outside the confirmed support-debugging scope, exact user-facing log interface, third-party/model-provider processing beyond the legal documents, provider credential storage, encryption details beyond the confirmed Cloud-hosted scope, and other security guarantees.
 - Detailed limits or guarantees around sessions, identity, channel access, and connector permissions; how the Bot identifies the exact person speaking; channel recommendations; and how existing customers use Bots.
 - Recommended model configuration, including primary/fallback or task-specific choices.

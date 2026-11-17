@@ -235,6 +235,8 @@ export function startDesktopLink(options: DesktopLinkOptions): DesktopLink {
   async function openStream(streamId: string): Promise<void> {
     const fail = (reason: StreamFailureReason) =>
       send({ type: 'stream.failed', streamId, reason });
+    // Shutdown snapshots the open streams, so none may start after it.
+    if (closed) return;
     if (!STREAM_ID.test(streamId)) return fail('invalid_stream_id');
     if (streams.has(streamId)) return;
     if (streams.size >= maxStreams) return fail('too_many_streams');

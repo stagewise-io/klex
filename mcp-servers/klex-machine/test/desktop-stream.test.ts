@@ -616,6 +616,37 @@ describe('desktop link', () => {
     await viewerClosed;
   });
 
+  it('refuses streams requested while the link shuts down', async () => {
+    cloud = await startCloud();
+    const socketPath =
+      process.platform === 'win32'
+        ? `\\\\.\\pipe\\klex-machine-vnc-${randomUUID()}`
+        : join(dir, 'vnc.sock');
+    vnc = await startVnc(socketPath);
+    const openStream = vi.fn();
+    const desktop = new DesktopService(fakeProvider(socketPath));
+    const original = desktop.openStream.bind(desktop);
+    desktop.openStream = async () => {
+      openStream();
+      return original();
+    };
+    link = startDesktopLink({
+      cloudBaseUrl: cloud.url,
+      getToken: async () => 'machine-token',
+      invalidateToken: () => undefined,
+      desktop,
+      machineVersion: '1.2.3',
+    });
+    const { socket: control } = await cloud.control;
+    await cloud.next('hello');
+    const closing = link.close();
+    control.send(JSON.stringify({ type: 'stream.open', streamId: STREAM_ID }));
+    await closing;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(openStream).not.toHaveBeenCalled();
+    expect(cloud.streams()).toBe(0);
+  });
+
   it('closes promptly when Cloud never answers the close frame', async () => {
     cloud = await startCloud();
     link = startDesktopLink({

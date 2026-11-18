@@ -45,11 +45,8 @@ export interface WindowsDesktopProviderOptions {
   /** Replaces the persistent PowerShell helper, for tests. */
   helper?: WindowsDesktopHelper;
   launch?: WindowsProcessLauncher;
-}
-
-/** Probe result plus, when the desktop is unusable, why. */
-export interface WindowsDesktopCapabilities extends DesktopCapabilities {
-  hint?: string;
+  /** Receives each new hint from `probe()`. Defaults to stderr. */
+  warn?: (hint: string) => void;
 }
 
 const VIRTUAL_KEYS: Record<string, number> = {
@@ -173,7 +170,9 @@ export class WindowsDesktopProvider implements DesktopProvider {
   readonly #launch: WindowsProcessLauncher;
   readonly #ownHelper: PowerShellDesktopHelper | undefined;
   /** Set once the session can never have a desktop, so probes stop asking. */
-  #permanent: WindowsDesktopCapabilities | undefined;
+  #permanent: DesktopCapabilities | undefined;
+  readonly #warn: (hint: string) => void;
+  #lastHint: string | undefined;
 
   constructor(options: WindowsDesktopProviderOptions = {}) {
     this.#env = options.env ?? process.env;
@@ -185,10 +184,21 @@ export class WindowsDesktopProvider implements DesktopProvider {
       this.#helper = (request, args) => helper.request(request, args);
     }
     this.#launch = options.launch ?? launchProcess;
+    this.#warn =
+      options.warn ??
+      ((hint) => process.stderr.write(`klex-machine desktop: ${hint}\n`));
   }
 
-  async probe(): Promise<WindowsDesktopCapabilities> {
-    if (this.#permanent) return this.#permanent;
+  async probe(): Promise<DesktopCapabilities> {
+    const capabilities = this.#permanent ?? (await this.#check());
+    if (capabilities.hint && capabilities.hint !== this.#lastHint) {
+      this.#warn(capabilities.hint);
+    }
+    this.#lastHint = capabilities.hint;
+    return capabilities;
+  }
+
+  async #check(): Promise<DesktopCapabilities> {
     let info: Map<string, string>;
     try {
       info = parseFields(await this.#helper('probe', []));
@@ -228,7 +238,7 @@ export class WindowsDesktopProvider implements DesktopProvider {
     return { computerUse: true, stream: false, screen: { width, height } };
   }
 
-  #unavailableForever(hint: string): WindowsDesktopCapabilities {
+  #unavailableForever(hint: string): DesktopCapabilities {
     this.#permanent = unavailable(hint);
     this.#ownHelper?.close();
     return this.#permanent;
@@ -359,7 +369,7 @@ export class WindowsDesktopProvider implements DesktopProvider {
   }
 }
 
-function unavailable(hint: string): WindowsDesktopCapabilities {
+function unavailable(hint: string): DesktopCapabilities {
   return { ...NO_DESKTOP, hint };
 }
 

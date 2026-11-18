@@ -104,7 +104,7 @@ function countUrlMedia(value: unknown, depth = 0): number {
   if (
     typeof url === 'string' &&
     /^[a-z][a-z0-9+.-]*:/i.test(url) &&
-    !url.startsWith('data:') &&
+    !/^data:/i.test(url) &&
     (typeof record.mediaType === 'string' ||
       (typeof record.type === 'string' && MEDIA_TYPES.has(record.type)))
   )

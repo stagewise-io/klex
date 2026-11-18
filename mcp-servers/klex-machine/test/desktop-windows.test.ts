@@ -79,6 +79,7 @@ function fakeWindows(fake: FakeWindows = {}): DesktopProviderFixture {
       env: {},
       helper: fakeHelper(fake).helper,
       launch: async () => ({ pid: 4242 }),
+      warn: () => undefined,
     }),
   };
 }
@@ -123,23 +124,30 @@ describe('createDesktopProvider on Windows', () => {
 describe('WindowsDesktopProvider', () => {
   function provider(fake: FakeWindows = {}) {
     const { helper, calls } = fakeHelper(fake);
+    const warnings: string[] = [];
     return {
       calls,
+      warnings,
       backend: new WindowsDesktopProvider({
         env: {},
         helper,
         launch: async () => ({ pid: 7 }),
+        warn: (hint) => warnings.push(hint),
       }),
     };
   }
 
   it('explains Session 0 and stops asking the helper', async () => {
-    const { backend, calls } = provider({ session: '0', interactive: false });
+    const { backend, calls, warnings } = provider({
+      session: '0',
+      interactive: false,
+    });
     const first = await backend.probe();
     expect(first).toMatchObject({ computerUse: false, stream: false });
     expect(first.hint).toMatch(/Session 0.*signed-in user's session/);
     expect(await backend.probe()).toEqual(first);
     expect(calls).toEqual([['probe']]);
+    expect(warnings).toEqual([first.hint]);
   });
 
   it('explains a non-interactive window station', async () => {
@@ -149,7 +157,7 @@ describe('WindowsDesktopProvider', () => {
 
   it('reports the lock screen and UAC prompts, then recovers', async () => {
     const fake: FakeWindows = { desktop: 'Winlogon' };
-    const { backend } = provider(fake);
+    const { backend, warnings } = provider(fake);
     expect((await backend.probe()).hint).toMatch(
       /"Winlogon".*locked.*UAC prompt.*cannot be captured or driven/,
     );
@@ -161,6 +169,10 @@ describe('WindowsDesktopProvider', () => {
       stream: false,
       screen: { width: 1920, height: 1080 },
     });
+    fake.desktop = 'Winlogon';
+    await backend.probe();
+    expect(warnings).toHaveLength(3);
+    expect(warnings[2]).toBe(warnings[0]);
   });
 
   it('reports failed captures and helpers that do not start', async () => {

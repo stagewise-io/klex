@@ -157,14 +157,9 @@ describeDesktopProviderContract(
 );
 
 describe('createDesktopProvider', () => {
-  it.each(['freebsd'] as const)(
-    'has no provider on %s',
-    (platform) => {
-      expect(
-        createDesktopProvider({ DISPLAY: ':0' }, platform),
-      ).toBeUndefined();
-    },
-  );
+  it.each(['freebsd'] as const)('has no provider on %s', (platform) => {
+    expect(createDesktopProvider({ DISPLAY: ':0' }, platform)).toBeUndefined();
+  });
 
   it('uses X11 on Linux unless the desktop is turned off', () => {
     expect(createDesktopProvider({}, 'linux')).toBeInstanceOf(

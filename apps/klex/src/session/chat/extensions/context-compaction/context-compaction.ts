@@ -82,13 +82,45 @@ export const RAW_TAIL_CHARS_PER_TOKEN = 4;
  */
 export const RAW_TAIL_MEDIA_TOKENS = 1_500;
 
+const MEDIA_TYPES = new Set([
+  'file',
+  'image',
+  'media',
+  'image-url',
+  'file-url',
+]);
+
+/** Counts media referenced by URL anywhere in a part, including tool outputs. */
+function countUrlMedia(value: unknown, depth = 0): number {
+  if (depth > 20 || typeof value !== 'object' || value === null) return 0;
+  if (Array.isArray(value))
+    return value.reduce<number>(
+      (sum, item) => sum + countUrlMedia(item, depth + 1),
+      0,
+    );
+  const record = value as Record<string, unknown>;
+  let count = 0;
+  const url = record.url ?? record.image;
+  if (
+    typeof url === 'string' &&
+    /^[a-z][a-z0-9+.-]*:/i.test(url) &&
+    !url.startsWith('data:') &&
+    (typeof record.mediaType === 'string' ||
+      (typeof record.type === 'string' && MEDIA_TYPES.has(record.type)))
+  )
+    count++;
+  for (const child of Object.values(record))
+    count += countUrlMedia(child, depth + 1);
+  return count;
+}
+
 function estimateMessageChars(message: ExtendedUIMessage): number {
-  let chars = JSON.stringify(message).length;
-  for (const part of message.parts) {
-    if (part.type === 'file' && !part.url.startsWith('data:'))
-      chars += RAW_TAIL_MEDIA_TOKENS * RAW_TAIL_CHARS_PER_TOKEN;
-  }
-  return chars;
+  return (
+    JSON.stringify(message).length +
+    countUrlMedia(message.parts) *
+      RAW_TAIL_MEDIA_TOKENS *
+      RAW_TAIL_CHARS_PER_TOKEN
+  );
 }
 
 /**

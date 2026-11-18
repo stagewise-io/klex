@@ -1050,6 +1050,27 @@ describe('selectCheckpointAnchor', () => {
         0,
       ),
     ).toEqual({ anchorIndex: 0 });
+    expect(
+      selectCheckpointAnchor(
+        windowWith(
+          makeToolCallMessage(
+            'screenshot',
+            {},
+            {
+              type: 'content',
+              value: [
+                {
+                  type: 'image-url',
+                  url: 'https://example.com/screenshot.png',
+                },
+              ],
+            },
+          ),
+        ),
+        budget,
+        0,
+      ),
+    ).toEqual({ anchorIndex: 2 });
   });
 });
 

@@ -677,6 +677,22 @@ describe('GenerationRunner — error finish reason with model fallback', () => {
     });
   });
 
+  it('reports a context overflow that falls back as a model error', async () => {
+    vi.mocked(runStreamedGeneration).mockResolvedValue(
+      makeGenResult(makeAssistantMessage(), 'error', {
+        type: 'error',
+        error: { code: 'context_length_exceeded', message: 'Too long' },
+      }),
+    );
+
+    const result = await new GenerationRunner(
+      makeDeps({ fallbackManager: makeFallbackManager(['a', 'b']) }),
+    ).run();
+
+    expect(result.requestRejected).toBe(false);
+    expect(result.contextOverflow).toBe(true);
+  });
+
   it('triggers fallback when error is null (no details)', async () => {
     // 1 model: fallback wraps around but no longer terminates —
     // the session loop handles retry limits via backoff.

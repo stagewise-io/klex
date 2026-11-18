@@ -539,7 +539,7 @@ export class GenerationRunner {
       toolCalls,
       modelFallbackOccurred,
       requestRejected: salvagedRejection,
-      ...(salvagedRejection && contextOverflow && { contextOverflow: true }),
+      ...(contextOverflow && { contextOverflow: true }),
     };
   }
 

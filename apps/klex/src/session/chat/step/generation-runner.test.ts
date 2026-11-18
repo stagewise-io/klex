@@ -3,9 +3,9 @@ import { randomUUID } from 'node:crypto';
 import { trace } from '@opentelemetry/api';
 import {
   APICallError,
-  NoOutputGeneratedError,
   type LanguageModel,
   type ModelMessage,
+  NoOutputGeneratedError,
 } from 'ai';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -653,6 +653,28 @@ describe('GenerationRunner — error finish reason with model fallback', () => {
       generation: null,
     });
     expect(messages).toHaveLength(0);
+    expect(result.contextOverflow).toBeUndefined();
+  });
+
+  it('reports a context-window rejection as a context overflow', async () => {
+    vi.mocked(runStreamedGeneration).mockResolvedValue(
+      makeGenResult(
+        makeAssistantMessage(),
+        'error',
+        makeApiError({
+          message: 'Your input exceeds the context window of this model.',
+          statusCode: 400,
+        }),
+      ),
+    );
+
+    const result = await new GenerationRunner(makeDeps()).run();
+
+    expect(result).toMatchObject({
+      requestRejected: true,
+      contextOverflow: true,
+      modelFallbackOccurred: false,
+    });
   });
 
   it('triggers fallback when error is null (no details)', async () => {

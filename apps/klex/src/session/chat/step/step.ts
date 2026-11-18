@@ -741,6 +741,9 @@ class StepModule implements Step {
             if (result.requestRejected) {
               stepSpan.setAttribute('step.requestRejected', true);
             }
+            if (result.contextOverflow) {
+              stepSpan.setAttribute('step.contextOverflow', true);
+            }
             // Notify extensions that a step completed. The handler catches
             // per-extension errors and runs all hooks in parallel, so this
             // won't break the turn.

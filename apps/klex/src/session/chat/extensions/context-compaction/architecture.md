@@ -66,6 +66,20 @@ valid facts; undetected or paraphrased non-answers remain a limitation. Rejectio
 logs contain only the model ID and reason, not generated responses or prompts.
 No storage contract or checkpoint format changes are required.
 
+## Compaction triggers and raw tail
+
+Compaction normally triggers from the provider-reported `inputTokens` of a
+successful step, which already includes the system prompt, tool schemas and
+media. A step whose request was rejected for exceeding the context window
+reports no usage, so compaction also runs, and is awaited, when the step
+event carries `contextOverflow`.
+
+The raw tail kept after the checkpoint is sized by serialized characters per
+token, plus a fixed allowance for file parts referenced by URL. It extends back
+to the latest substantive user input only while that tail stays within half of
+the compaction threshold. A longer autonomous run since that input is
+summarized together with it.
+
 ## Extension identity
 
 Every extension has a unique **identifier** in reverse-domain notation (e.g. `"io.stagewise/context-compaction"`). This is a machine-readable ID, not a human-readable label. The handler enforces uniqueness at registration time — duplicate identifiers throw before any extension is instantiated.

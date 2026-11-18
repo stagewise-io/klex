@@ -402,6 +402,11 @@ export interface StepCompleteEvent {
    */
   requestRejected: boolean;
   /**
+   * True when the provider reported that the request exceeded the model's
+   * context window. Context compaction compacts before the turn retries.
+   */
+  contextOverflow?: boolean;
+  /**
    * Summary of the step's instinct phase. Absent when instinct did not
    * run (skipped step, no participating extension, or instinct disabled).
    */

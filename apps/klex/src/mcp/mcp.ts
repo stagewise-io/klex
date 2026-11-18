@@ -1313,7 +1313,10 @@ class McpModule implements Mcp {
         runtime.lastError = undefined;
         this.clearRetry(runtime);
         this.publishRegistry();
-        if (connection.supportsPushNotifications)
+        if (
+          connection.supportsPushNotifications &&
+          connection.metadata.protocolEra === 'modern'
+        )
           this.startEventWorker(connection);
         if (connection.supportsEvents) {
           const source = createEventsSource({

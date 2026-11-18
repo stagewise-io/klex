@@ -168,6 +168,24 @@ describe('Push Notifications client', () => {
     expect(client.request).not.toHaveBeenCalled();
   });
 
+  it('delivers legacy unsolicited notifications without starting a subscription', async () => {
+    const { client, handlers } = fakeClient({ era: 'legacy' });
+    const onEvent = vi.fn();
+    const klex = registerPushNotificationsClient(client, { onEvent });
+    expect(await klex.serverSupportsPushNotifications()).toBe(true);
+
+    const handler = handlers.get('io.stagewise/push-notifications/event');
+    expect(handler).toBeDefined();
+    await handler?.({ event });
+
+    expect(onEvent).toHaveBeenCalledExactlyOnceWith({
+      jsonrpc: '2.0',
+      method: 'io.stagewise/push-notifications/event',
+      params: { event },
+    });
+    expect(client.request).not.toHaveBeenCalled();
+  });
+
   it('rejects duplicate notification registration', () => {
     const { client } = fakeClient();
     registerPushNotificationsClient(client);

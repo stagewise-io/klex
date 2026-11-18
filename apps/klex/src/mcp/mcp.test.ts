@@ -226,6 +226,7 @@ function pushNotificationConnection(
 ): McpConnection {
   return {
     ...connection('chat'),
+    metadata: { protocolEra: 'modern' },
     supportsPushNotifications: true,
     pushNotifications,
   } as unknown as McpConnection;
@@ -454,6 +455,38 @@ function pendingQueueServer(events: PushNotification[]) {
 }
 
 describe('MCP Push Notification worker', () => {
+  it.each(['modern', 'legacy', undefined] as const)(
+    'starts subscriptions/listen only for the modern era (era=%s)',
+    async (protocolEra) => {
+      const listen = vi.fn(async () => ({
+        closed: new Promise<void>(() => undefined),
+      }));
+      const getEvents = vi.fn(async () => ({ events: [], hasMore: false }));
+      const server = pushNotificationConnection({ listen, getEvents });
+      server.metadata.protocolEra = protocolEra;
+      if (protocolEra === 'legacy')
+        server.metadata.protocolVersion = '2025-11-25';
+      const { mcp } = setup(
+        { chat: { url: 'https://chat.example/mcp' } },
+        async () => server,
+      );
+
+      try {
+        await mcp.start();
+        await waitForNamespace(mcp, 'chat');
+        if (protocolEra === 'modern') {
+          await vi.waitFor(() => expect(getEvents).toHaveBeenCalledOnce());
+          expect(listen).toHaveBeenCalledOnce();
+        } else {
+          expect(listen).not.toHaveBeenCalled();
+          expect(getEvents).not.toHaveBeenCalled();
+        }
+      } finally {
+        await mcp.close();
+      }
+    },
+  );
+
   it('subscribes before draining and acknowledges only after the flush', async () => {
     const order: string[] = [];
     const closed = deferred<void>();

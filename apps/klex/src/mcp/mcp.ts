@@ -1313,10 +1313,7 @@ class McpModule implements Mcp {
         runtime.lastError = undefined;
         this.clearRetry(runtime);
         this.publishRegistry();
-        if (
-          connection.supportsPushNotifications &&
-          connection.metadata.protocolEra === 'modern'
-        )
+        if (connection.supportsPushNotifications)
           this.startEventWorker(connection);
         if (connection.supportsEvents) {
           const source = createEventsSource({
@@ -1486,10 +1483,14 @@ class McpModule implements Mcp {
       try {
         worker.recovered = false;
         worker.listenerAddedDuringRecovery = false;
-        const subscription = await worker.connection.pushNotifications.listen(
-          undefined,
-          { request: { signal: worker.controller.signal } },
-        );
+        // Only listen is era-gated; pending recovery and ACKs are negotiated
+        // through the push capability, including on legacy connections.
+        const subscription =
+          worker.connection.metadata.protocolEra === 'modern'
+            ? await worker.connection.pushNotifications.listen(undefined, {
+                request: { signal: worker.controller.signal },
+              })
+            : undefined;
         await this.recoverEvents(worker);
         worker.recovered = true;
         // A listener registered mid-recovery may have missed skipped events.
@@ -1498,6 +1499,7 @@ class McpModule implements Mcp {
           this.scheduleRecovery(worker);
         }
         this.drainNotifications(worker);
+        if (!subscription) return;
         attempt = 0;
         await subscription.closed;
         await worker.queue;
@@ -1508,7 +1510,7 @@ class McpModule implements Mcp {
         if (!this.isCurrentWorker(worker)) return;
         this.deps.logger.warn(
           { error, namespace: worker.connection.namespace },
-          'Push Notifications subscription failed',
+          'Push Notifications subscription or recovery failed',
         );
         attempt += 1;
         await abortableDelay(

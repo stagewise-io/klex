@@ -960,7 +960,7 @@ describe('Step — provisional step context', () => {
     const compaction = createContextCompactionExt.create({
       logger,
       config: { getModelSelection: () => ['test:model'] },
-      modelResolver: { resolveModelInfo: () => ({ contextSize: 1_000 }) },
+      modelResolver: { resolveModelInfo: () => ({ contextSize: 20_000 }) },
       getHistory: () => messages,
       checkpoints: manager,
       generateText: vi.fn(async () => ({

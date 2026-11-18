@@ -680,7 +680,7 @@ describe('compaction media adaptation', () => {
       const window = [
         ...(header ? [makeHeader('Earlier summary')] : []),
         makeTextMessage('user', 'Keep this active instruction'),
-        ...Array.from({ length: 25 }, (_, i) =>
+        ...Array.from({ length: 15 }, (_, i) =>
           makeToolCallMessage('read', { i }, 'result'.repeat(100)),
         ),
       ];
@@ -989,6 +989,122 @@ describe('selectCheckpointAnchor', () => {
       makeTextMessage('user', '<todo-reminder>continue</todo-reminder>'),
     ];
     expect(selectCheckpointAnchor(window, 0)).toEqual({ anchorIndex: 0 });
+  });
+
+  it('summarizes the latest user input once its turn exceeds the pinned budget', () => {
+    const instruction = makeTextMessage('user', 'Keep testing');
+    const run = Array.from({ length: 40 }, (_, i) =>
+      makeToolCallMessage('read', { i }, 'x'.repeat(200)),
+    );
+    const reminders = Array.from({ length: 3 }, () =>
+      makeTextMessage('user', '<todo-reminder>continue</todo-reminder>'),
+    );
+    const window = [
+      makeHeader('Earlier summary'),
+      instruction,
+      ...run.slice(0, 20),
+      reminders[0]!,
+      ...run.slice(20),
+      ...reminders.slice(1),
+    ];
+    const total = window
+      .slice(1)
+      .reduce((sum, message) => sum + JSON.stringify(message).length, 0);
+
+    expect(selectCheckpointAnchor(window, 1_000, total)).toBeNull();
+
+    const selection = selectCheckpointAnchor(window, 1_000, total - 1);
+    if (!selection) throw new Error('Missing checkpoint anchor');
+    expect(selection.anchorIndex).toBeGreaterThan(1);
+    const tailChars = window
+      .slice(selection.anchorIndex + 1)
+      .reduce((sum, message) => sum + JSON.stringify(message).length, 0);
+    expect(tailChars).toBeLessThanOrEqual(2_000);
+  });
+
+  it('counts URL-referenced media toward the tail budget', () => {
+    const image = (url: string): ExtendedUIMessage =>
+      ({
+        id: randomUUID(),
+        role: 'user',
+        parts: [{ type: 'file', mediaType: 'image/png', url }],
+      }) as ExtendedUIMessage;
+    const windowWith = (media: ExtendedUIMessage) => [
+      makeTextMessage('user', 'x'.repeat(3_000)),
+      makeTextMessage('assistant', 'a1'),
+      media,
+      makeTextMessage('assistant', 'a2'),
+    ];
+    const budget = 2_000;
+    expect(
+      selectCheckpointAnchor(
+        windowWith(image('https://example.com/screenshot.png')),
+        budget,
+        0,
+      ),
+    ).toEqual({ anchorIndex: 2 });
+    expect(
+      selectCheckpointAnchor(
+        windowWith(image('data:image/png;base64,aW1n')),
+        budget,
+        0,
+      ),
+    ).toEqual({ anchorIndex: 0 });
+  });
+});
+
+describe('ContextCompactionExt — context window overflow', () => {
+  function overflowResult(): StepCompleteEvent {
+    return {
+      ...makeResult(null),
+      requestRejected: true,
+      contextOverflow: true,
+    };
+  }
+
+  it('compacts after a rejected request and awaits the commit', async () => {
+    const window = [
+      makeHeader('Earlier summary'),
+      makeTextMessage('user', 'Keep testing'),
+      ...Array.from({ length: 60 }, (_, i) =>
+        makeToolCallMessage('read', { i }, 'x'.repeat(400)),
+      ),
+    ];
+    const deps = makeWindowDeps(window);
+    vi.mocked(deps.generateText).mockResolvedValue(genSuccess('Summary'));
+    const ext = createContextCompactionExt.create(deps);
+
+    await ext.onStepComplete!(overflowResult());
+
+    expect(deps.generateText).toHaveBeenCalledOnce();
+    expect(deps.checkpoints.commit).toHaveBeenCalledOnce();
+    const anchorId =
+      deps.checkpoints.commit.mock.calls[0]?.[0].coversThroughMessageId;
+    expect(
+      window.findIndex((message) => message.id === anchorId),
+    ).toBeGreaterThan(1);
+  });
+
+  it('does not compact again while its checkpoint is pending', async () => {
+    const window = conversation();
+    const deps = makeWindowDeps(window);
+    vi.mocked(deps.generateText).mockResolvedValue(genSuccess('Summary'));
+    const ext = createContextCompactionExt.create(deps);
+
+    await ext.onStepComplete!(overflowResult());
+    await ext.onStepComplete!(overflowResult());
+
+    expect(deps.checkpoints.commit).toHaveBeenCalledOnce();
+  });
+
+  it('ignores request rejections that are not context overflows', async () => {
+    const deps = makeWindowDeps(conversation());
+    const ext = createContextCompactionExt.create(deps);
+
+    await ext.onStepComplete!({ ...makeResult(null), requestRejected: true });
+    await flushMicrotasks();
+
+    expect(deps.generateText).not.toHaveBeenCalled();
   });
 });
 

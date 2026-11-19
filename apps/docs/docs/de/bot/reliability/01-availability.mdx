@@ -1,0 +1,40 @@
+---
+title: Verfügbarkeit
+description: Was einen Klex Bot verfügbar hält und wie Sie geplante Aufgaben vorbereiten.
+related:
+  - /bot/reliability/updates
+  - /bot/guides/recurring-tasks
+  - /cloud/hosted-vs-local
+---
+
+Ein Klex Bot kann rund um die Uhr verfügbar sein, solange seine Hosting-Umgebung läuft. Zwischen Aufgaben kann er inaktiv sein, statt ständig Antworten zu erzeugen. Neue Ereignisse eines verbundenen MCP-Servers oder eine einmalige Erinnerung können ihn dazu veranlassen, die Arbeit fortzusetzen.
+
+Verfügbarkeit garantiert nicht, dass jede Aufgabe ausgeführt wird oder gelingt. Der Bot benötigt außerdem funktionierenden Modellzugriff und die für seine Aufgabe erforderlichen Verbindungen. Die Zustellung von Ereignissen hängt vom verbundenen Dienst und MCP-Server ab.
+
+Halten Sie für geplante Aufgaben den Bot und seine Verbindungen zum vorgesehenen Zeitpunkt verfügbar und prüfen Sie wichtige Ergebnisse. Nutzen Sie für wiederkehrende Aufgaben einen geeigneten verbundenen Planungsdienst. Interne Erinnerungen sind einmalig. Siehe [Wiederkehrende Aufgaben automatisieren](/bot/guides/recurring-tasks).
+
+Ein selbst gehosteter Bot stoppt, wenn Sie seine App schließen. Bei einem Bot im Headless-Betrieb erfahren Sie unter [Headless-Bot stoppen](/bot/guides/control-and-limits#stop-a-headless-bot), wie Sie ihn beenden. Einen in der Cloud gehosteten Bot können Sie im Dashboard mit der Schaltfläche Stop stoppen.
+
+<a id="monitor-a-self-hosted-bot"></a>
+
+## Einen selbst gehosteten Bot überwachen
+
+Klex kann für die Überwachung einen separaten HTTP-Health-Listener bereitstellen. Er ist standardmäßig deaktiviert. Starten Sie zum Beispiel in einer POSIX-Shell einen vorhandenen Bot mit einem Listener, der an den lokalen Computer gebunden ist:
+
+```sh
+KLEX_HEALTH_HOST=127.0.0.1 klex --headless --data-dir /path/to/bot --health-port 8080
+```
+
+Ersetzen Sie den Pfad durch das Verzeichnis Ihres Bots. Wenn Sie den Port ändern, verwenden Sie denselben Port in den folgenden Prüfungen. Prüfen Sie die Endpunkte vom selben Computer aus:
+
+```sh
+curl -i http://127.0.0.1:8080/livez
+curl -i http://127.0.0.1:8080/readyz
+```
+
+- `GET /livez` gibt HTTP 200 zurück, solange der Listener läuft.
+- `GET /readyz` gibt HTTP 200 zurück, sobald Klex seine Laufzeitmodule gestartet hat. Während des Starts und beim Herunterfahren gibt der Endpunkt 503 zurück. Ein gestoppter Listener kann nicht antworten.
+
+Diese Prüfungen bestätigen nicht, dass ein Modellanbieter, ein verbundener Dienst oder eine einzelne Aufgabe funktioniert. Überwachen Sie diese separat.
+
+Der Listener ist nicht authentifiziert und verwendet bei Aktivierung standardmäßig `0.0.0.0`. Beschränken Sie den Netzwerkzugriff oder setzen Sie `KLEX_HEALTH_HOST` auf eine geeignete Bind-Adresse. Der Listener stellt nicht die Admin API bereit. Den Port können Sie auch mit `KLEX_HEALTH_PORT` setzen; `--health-port` hat Vorrang.

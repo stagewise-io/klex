@@ -1,0 +1,29 @@
+---
+title: Agent Skills
+description: Comment les Klex Bots utilisent et stockent des Agent Skills pour les tâches récurrentes.
+related:
+  - /bot/concepts/memory
+  - /bot/concepts/data-directory
+---
+
+Un Agent Skill est un ensemble d’instructions réutilisable pour une tâche récurrente. Par exemple, un skill peut décrire comment préparer un point d’avancement de projet. Sa description indique quand les instructions s’appliquent ; son contenu explique la procédure.
+
+Klex permet au Bot de découvrir les skills disponibles et lui demande de charger un skill adapté avant d’agir. Un skill guide le Bot : il ne garantit pas un résultat précis et ne remplace pas les autorisations des comptes.
+
+<a id="where-skills-come-from"></a>
+
+## D’où viennent les skills ?
+
+Un Bot peut apprendre des skills à partir de son activité. Ils peuvent aussi provenir d’autres sources, comme des modèles. Chaque Bot stocke ses skills dans son propre [répertoire de données](/bot/concepts/data-directory). Un espace de noms et un nom identifient chaque skill, par exemple `learning/project-status`.
+
+Lorsque le Bot compresse son contexte de conversation actif, il peut examiner les activités retirées et transformer les enseignements utiles en skills. L’apprentissage se déroule en arrière-plan et peut prendre du temps ; une conversation ne produit pas nécessairement un skill.
+
+Chaque skill est stocké dans un fichier `SKILL.md` sous `skills/{namespace}/{name}/`. Le fichier contient un nom, une description et un corps en Markdown.
+
+<a id="review-and-manage-skills"></a>
+
+## Examiner et gérer les skills
+
+L’Admin API du Bot permet de lister les skills, de lire leur contenu, de les modifier ou de les supprimer. Utilisez `GET /v1/skills` pour les lister et `GET /v1/skills/{namespace}/{name}` pour en lire un. Ce même chemin prend en charge `PATCH` et `DELETE`.
+
+Vérifiez l’exactitude des skills appris. L’apprentissage peut les modifier ou les supprimer au fil du temps, y compris ceux qu’une personne administratrice a modifiés. Une modification ne protège pas un skill appris contre des changements ultérieurs.

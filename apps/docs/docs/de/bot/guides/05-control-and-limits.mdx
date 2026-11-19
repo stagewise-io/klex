@@ -1,0 +1,46 @@
+---
+title: Ihren Klex Bot steuern
+sidebar:
+  label: Steuerung
+description: Einen Klex Bot stoppen und seinen Zugriff auf verbundene Computer und Apps verwalten.
+related:
+  - /bot/guides/observability
+  - /bot/concepts/brain-and-computers
+  - /guides/secure-bot-usage
+---
+
+Sie können einen Klex Bot stoppen und über seine Verbindungen und Konten steuern, worauf er zugreifen kann.
+
+<a id="run-a-self-hosted-bot-without-the-picker"></a>
+<a id="stop-a-bot"></a>
+
+## Einen Bot stoppen
+
+- **Cloud-gehosteter Bot:** Verwenden Sie **Stop** im Dashboard von Klex Cloud.
+- **Selbst gehosteter Bot in der App:** Schließen Sie die App.
+
+<a id="stop-a-headless-bot"></a>
+
+### Einen Bot im Headless-Modus stoppen
+
+Senden Sie auf POSIX-Systemen `SIGTERM` an den Klex-Prozess oder verwenden Sie den Stoppbefehl Ihrer Dienstverwaltung. Wird der Prozess überwacht, konfigurieren Sie den Dienst so, dass er den Bot nicht sofort neu startet.
+
+Beim ersten `SIGTERM` beginnt für einen laufenden Bot im Headless-Modus eine Drain-Phase: Klex nimmt keine neue Arbeit mehr an und wartet vor dem Herunterfahren, bis die laufende Arbeit abgeschlossen ist. Das Zeitlimit für diese Phase beträgt standardmäßig fünf Minuten. Es garantiert nicht, dass die Arbeit abgeschlossen wird.
+
+Setzen Sie vor dem Start von Klex `KLEX_DRAIN_TIMEOUT_MS`, um das Zeitlimit in Millisekunden zu ändern. Gültige Werte liegen zwischen `0` und `3600000`; `0` deaktiviert die Drain-Phase. Ein zweites `SIGTERM` oder `SIGINT`, zum Beispiel durch Strg+C, überspringt die verbleibende Wartezeit und startet das Herunterfahren. Wenn der Prozess noch startet, fährt er ohne die Drain-Phase des laufenden Bots herunter.
+
+Geben Sie Ihrer Dienstverwaltung oder Ihrem Orchestrator genügend Zeit für die Drain-Phase und die anschließenden Aufräumarbeiten, bevor die Beendigung erzwungen wird. Das standardmäßige Zeitlimit für die Aufräumarbeiten beträgt 15 Sekunden und gilt zusätzlich zum Drain-Zeitlimit. Bei den Standardwerten bietet beispielsweise ein Kubernetes-Wert von `terminationGracePeriodSeconds: 330` einen Puffer über beide Zeitlimits hinaus. Passen Sie ihn an, wenn Sie die Zeitlimits ändern. Während der Drain-Phase gibt die optionale Bereitschaftsprüfung 503 zurück. Siehe [Verfügbarkeit](/bot/reliability/availability#monitor-a-self-hosted-bot).
+
+<a id="manage-access"></a>
+
+## Zugriff verwalten
+
+Verbinden oder trennen Sie die MCP-Server eines Bots im Cloud-Dashboard.
+
+In der selbst gehosteten App können Sie unter **Settings → MCP Servers** einen Server prüfen, bearbeiten oder entfernen. Die Schritte und einen Hinweis zum Widerruf von OAuth finden Sie unter [MCP und Klex Bots](/bot/concepts/mcp#add-a-remote-server-in-the-self-hosted-app).
+
+Konfigurieren Sie die Berechtigungen für die Konten und Apps des Bots direkt in den jeweiligen Konten und Apps. Unter [Verbindungen zu Computern und Apps](/bot/concepts/brain-and-computers) erfahren Sie, wie Verbindungen und Kontoberechtigungen zusammenhängen.
+
+Klex unterstützt derzeit keine Freigaben oder Einschränkungen für einzelne Aktionen. Richten Sie die Berechtigungen der Konten und Apps des Bots entsprechend ein.
+
+Sie können außerdem die [Aktivität des Bots prüfen](/bot/guides/observability).

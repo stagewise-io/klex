@@ -1,0 +1,28 @@
+{
+  "repo": "stagewise-io/klex",
+  "requestedBranch": "narrow-diagram",
+  "commit": "b6546653601dffa5e6f6c78ced8c627e2ac274fd",
+  "checkedAt": "2026-11-10T11:40:51.475Z",
+  "files": [
+    {
+      "path": "bot/concepts/01-how-bots-work.mdx",
+      "url": "https://raw.githubusercontent.com/stagewise-io/klex/b6546653601dffa5e6f6c78ced8c627e2ac274fd/apps/docs/docs/bot/concepts/01-how-bots-work.mdx",
+      "bytes": 2732
+    },
+    {
+      "path": "bot/concepts/07-mcp.mdx",
+      "url": "https://raw.githubusercontent.com/stagewise-io/klex/b6546653601dffa5e6f6c78ced8c627e2ac274fd/apps/docs/docs/bot/concepts/07-mcp.mdx",
+      "bytes": 3037
+    },
+    {
+      "path": "bot/concepts/10-data-directory.mdx",
+      "url": "https://raw.githubusercontent.com/stagewise-io/klex/b6546653601dffa5e6f6c78ced8c627e2ac274fd/apps/docs/docs/bot/concepts/10-data-directory.mdx",
+      "bytes": 1763
+    },
+    {
+      "path": "cloud/01-hosted-vs-local.mdx",
+      "url": "https://raw.githubusercontent.com/stagewise-io/klex/b6546653601dffa5e6f6c78ced8c627e2ac274fd/apps/docs/docs/cloud/01-hosted-vs-local.mdx",
+      "bytes": 1958
+    }
+  ]
+}

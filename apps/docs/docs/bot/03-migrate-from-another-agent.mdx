@@ -1,0 +1,48 @@
+---
+title: Migrate from another agent
+description: Gather your existing agent's knowledge and routines, then bring its work to a Klex Bot.
+related:
+  - /bot/quickstart
+  - /bot/concepts/soul
+  - /bot/concepts/brain-and-computers
+  - /guides/secure-bot-usage
+---
+
+Bring your existing agent's job and useful knowledge to a Klex Bot. Start by gathering what it does, what it knows, and the resources it uses.
+
+<a id="prepare-the-workflow"></a>
+
+## Gather the essentials
+
+Ask your current agent for a handover document. The prompt below is a starting point; adapt it to the work you want to move.
+
+```text
+I'm moving your work to a new AI agent. Create one handover document that a new agent and its administrator can use to continue your work.
+
+Include the following, using clear headings and practical details:
+
+1. Role and priorities: your purpose, responsibilities, preferred working style, and the people or teams you work with.
+2. Knowledge and context: important facts, terminology, decisions, preferences, and relevant background you have learned. Identify where supporting information can be found.
+3. Routines and schedules: recurring tasks, timing and time zones, triggers, expected outputs, and where results go.
+4. Typical processes: step-by-step workflows, decision points, handoffs, examples, and how to check the results.
+5. Skills and learnings: reusable procedures, lessons from past work, and common problems and how to handle them.
+6. Connections and access: apps, accounts, resources, and capabilities needed for each workflow. Describe required access without including credentials.
+7. Open work: current tasks, pending decisions, deadlines, and the next action for each.
+
+Use the information available to you. Mark anything you cannot access or are uncertain about, rather than guessing. Do not include passwords, tokens, API keys, or other secrets. Identify sensitive information so I can decide what to share. Return the handover as one structured document.
+```
+
+Review the handover for accuracy and sensitive information. Add anything the old agent could not access, such as schedules or instructions stored elsewhere.
+
+## Set up your Klex Bot
+
+1. [Create a Klex Bot](/bot/quickstart). Use the handover to describe its job and character.
+2. Give the Bot the relevant handover content and tell it which work to take on. Use [Agent Skills](/bot/concepts/agent-skills) for reusable procedures.
+3. [Connect the apps and computers](/bot/concepts/brain-and-computers) needed for its work, and configure the Bot account's access in each service.
+4. Set up recurring work with a connected scheduling service. See [Automate recurring tasks](/bot/guides/recurring-tasks).
+
+<a id="test-before-switching-over"></a>
+
+## Check the handover
+
+Try a representative task and review the result. Check that the Bot can reach its resources, reports to the right place, and receives scheduled work. Once the new workflow is working, remove old agent access and schedules you no longer need.

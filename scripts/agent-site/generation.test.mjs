@@ -31,6 +31,13 @@ it('discovers new emitted marketing pages and applies each exclusion independent
       }),
     );
     await createAgentBuild({ kind: 'marketing', directory }).build();
+    const guidance = await readFile(join(directory, 'dist/llms.txt'), 'utf8');
+    expect(guidance).toContain('https://docs.klex.bot/bot/quickstart.md');
+    expect(guidance).toContain(
+      'https://docs.klex.bot/bot/concepts/how-bots-work.md',
+    );
+    expect(guidance).not.toContain('https://docs.klex.bot/quickstart.md');
+    expect(guidance).not.toContain('https://docs.klex.bot/architecture.md');
     const manifest = JSON.parse(
       await readFile(
         join(directory, '.vercel/output/functions/site.func/manifest.json'),
@@ -71,7 +78,15 @@ it('filters docs aggregates and removes Markdown mirrors without removing HTML p
     );
   };
   try {
-    const pages = ['/', '/quickstart', '/architecture'].map((route) => ({
+    const pages = [
+      '/',
+      '/bot/quickstart',
+      '/bot/concepts/how-bots-work',
+      '/de/bot/quickstart',
+      '/bot/concepts/cognitive-architecture',
+      '/de/bot/concepts/cognitive-architecture',
+      '/guides/limit-blast-radius',
+    ].map((route) => ({
       route,
       title: route === '/' ? 'Introduction' : route.slice(1),
       url: `https://docs.klex.bot${route}`,
@@ -80,12 +95,23 @@ it('filters docs aggregates and removes Markdown mirrors without removing HTML p
       locale: 'en',
     }));
     await save('docs/index.mdx', '# Introduction');
-    await save('docs/01-quickstart.mdx', '# Quickstart');
-    await save('docs/02-architecture.mdx', '# Architecture');
+    await save('docs/bot/01-quickstart.mdx', '# Quickstart');
+    await save('docs/de/bot/01-quickstart.mdx', '# Schnellstart');
+    await save('docs/bot/concepts/01-how-bots-work.mdx', '# Architecture');
+    await save('docs/bot/concepts/12-cognitive-architecture.mdx', '# Sessions');
+    await save(
+      'docs/de/bot/concepts/01-cognitive-architecture.mdx',
+      '# Sitzungen',
+    );
+    // Blume route groups do not appear in the published URL.
+    await save(
+      'docs/guides/(security)/limit-blast-radius.mdx',
+      '# Limit blast radius',
+    );
     await save('discovery.config.json', {
-      sitemap: ['/architecture'],
-      agents: ['/quickstart'],
-      markdown: ['/architecture'],
+      sitemap: ['/bot/concepts/how-bots-work'],
+      agents: ['/bot/quickstart'],
+      markdown: ['/bot/concepts/how-bots-work'],
     });
     await save('dist/agent-readability.json', {
       description: 'Docs',
@@ -116,28 +142,44 @@ it('filters docs aggregates and removes Markdown mirrors without removing HTML p
     }
     await createAgentBuild({ kind: 'docs', directory }).build();
     const llms = await readFile(join(directory, 'dist/llms.txt'), 'utf8');
-    expect(llms).not.toContain('/quickstart');
+    expect(llms).not.toContain('https://docs.klex.bot/bot/quickstart');
+    expect(llms).toContain('/guides/limit-blast-radius');
     expect(llms).toContain(
-      '[architecture](https://docs.klex.bot/architecture)',
+      '[bot/concepts/how-bots-work](https://docs.klex.bot/bot/concepts/how-bots-work)',
     );
     const full = await readFile(join(directory, 'dist/llms-full.txt'), 'utf8');
-    expect(full).not.toContain('Unique body for quickstart');
-    expect(full).toContain('Unique body for architecture');
+    expect(full).not.toContain('Unique body for bot/quickstart');
+    expect(full).toContain('Unique body for bot/concepts/how-bots-work');
     await expect(
-      readFile(join(directory, 'dist/architecture.md')),
+      readFile(join(directory, 'dist/bot/concepts/how-bots-work.md')),
     ).rejects.toThrow();
     expect(
-      await readFile(join(directory, 'dist/architecture/index.html'), 'utf8'),
+      await readFile(
+        join(directory, 'dist/bot/concepts/how-bots-work/index.html'),
+        'utf8',
+      ),
     ).not.toContain('type="text/markdown"');
     expect(
       await readFile(join(directory, 'dist/sitemap.xml'), 'utf8'),
-    ).not.toContain('/architecture');
+    ).not.toContain('/bot/concepts/how-bots-work');
     const routes = JSON.parse(
       await readFile(join(directory, '.vercel/output/config.json'), 'utf8'),
     ).routes;
     expect(
-      routes.some((route) => route.dest === '/architecture/index.html'),
+      routes.some(
+        (route) => route.dest === '/bot/concepts/how-bots-work/index.html',
+      ),
     ).toBe(true);
+    for (const prefix of ['', '/de']) {
+      expect(routes).toContainEqual({
+        src: `^${prefix}/quickstart/?$`,
+        dest: `${prefix}/quickstart/index.html`,
+      });
+      expect(routes).toContainEqual({
+        src: `^${prefix}/concepts/cognitive-architecture/?$`,
+        dest: `${prefix}/concepts/cognitive-architecture/index.html`,
+      });
+    }
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

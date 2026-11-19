@@ -1,0 +1,55 @@
+---
+title: Quickstart
+description: Create a Klex Bot in the Cloud or run it on your own computer.
+related:
+  - /cloud/hosted-vs-local
+  - /bot/concepts/brain-and-computers
+---
+
+Create a Klex Bot to work alongside you. Klex recommends Cloud hosting for most users; you can also run a Bot on your own computer.
+
+<a id="creating-your-bot"></a>
+
+<div className="hosting-quickstart">
+<Tabs inline hash sync={false}>
+<Tab title="Cloud-hosted" id="create-a-cloud-hosted-bot">
+
+## Cloud-hosted setup
+
+1. Sign in to [Klex Cloud](https://cloud.klex.bot) and click **Create a new Bot**.
+2. Give your Bot a job, or choose a suggested one, and customize its appearance.
+3. Click **Create Bot in the Klex Cloud**.
+4. Configure its character traits. Start with the suggested defaults or change them to make the Bot behave the way you want.
+5. Choose the models the Bot should use, or import model configuration from another Bot in your Cloud account.
+6. Your Bot starts and sends you a message. Reply to get started.
+
+You can connect the apps and computers your Bot needs for its work. See [Connections](/bot/concepts/brain-and-computers).
+
+</Tab>
+<Tab title="Self-hosted" id="install-klex-for-self-hosting">
+
+<a id="installation"></a>
+
+## Self-hosted setup
+
+1. Sign in to [Klex Cloud](https://cloud.klex.bot), click **Create a new Bot**, and choose its job and appearance.
+2. Choose the self-hosted option and follow the setup flow. Copy the complete command provided by Klex Cloud, paste it into a terminal on the computer where the Bot should run, and execute it.
+3. Follow the setup instructions to configure the Bot's character and models.
+
+Keep the Bot running on your computer so it can work. To restart it, run the following command in a terminal and select your Bot:
+
+```sh
+klex
+```
+
+### Run without Cloud
+
+Cloud enrollment is optional. To configure a Bot directly in the Klex app, follow the [standalone setup guide](/bot/guides/standalone-setup).
+
+</Tab>
+</Tabs>
+</div>
+
+If the Bot does not respond, see [troubleshooting](/bot/guides/observability#if-a-bot-does-not-respond).
+
+<script src="/quickstart-tabs.js" defer></script>

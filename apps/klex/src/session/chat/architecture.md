@@ -365,6 +365,7 @@ On startup, any instance that has no end marker is marked as ended with reason `
 - **Model errors** (5xx, 408, 429, 401/403, timeouts, no output) → fallback to next model, retry
 - **Stalls** — a `GenerationStallError` is a model error. Before the first usable part, the message holds at most empty parts and is discarded; after it, the partial message is salvaged
 - **Request rejections** (other 4xx, including 400 and 404) → no fallback within the step; extensions degrade injected content, the turn retries within its failure budget, then ends without session backoff
+- **Context-window rejections** → a request rejection flagged `contextOverflow`; context compaction summarizes the window inside the awaited step-complete hook, so the checkpoint applies at the step boundary before the turn's retry
 - **Fatal errors** (invalid prompt, raised locally before any request) → terminate session
 - **Salvage** — partial content with repairable issues → push to history, force next step; a salvaged request rejection is still reported as `requestRejected`
 - **Backoff** — all models exhausted, no new input → exponential backoff; new inbox input interrupts

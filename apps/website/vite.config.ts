@@ -36,12 +36,16 @@ async function renderMarketingLocale(locale = 'en'): Promise<MarketingRender> {
     const { resourceMarkup } = await server.ssrLoadModule(
       '/src/new/resources/page-markup.ts',
     );
+    const { comparisonMarkup } = await server.ssrLoadModule(
+      '/src/new/comparison/page-markup.ts',
+    );
     return {
       locales,
       pages: {
         '/index.html': prerenderLandingPage(),
         '/brand/index.html': resourceMarkup(false),
         '/press/index.html': resourceMarkup(true),
+        '/compare/rerun/index.html': comparisonMarkup(),
       },
     };
   } finally {
@@ -88,7 +92,10 @@ function devMarkdown(): Plugin {
           url.pathname.replace(/\/index\.html$/, '/').replace(/\/$/, '') || '/';
         const markdownRoute =
           route === '/index.md' ? '/' : route.replace(/\.md$/, '');
-        if (!['/', '/brand', '/press'].includes(markdownRoute)) return next();
+        if (
+          !['/', '/brand', '/press', '/compare/rerun'].includes(markdownRoute)
+        )
+          return next();
         try {
           const { createAgentSite } = await import(
             '../../scripts/agent-site/runtime.mjs'
@@ -214,7 +221,7 @@ const servePageRoutes: Connect.NextHandleFunction = (
     response.end();
     return;
   }
-  if (['/brand', '/press'].includes(route)) {
+  if (['/brand', '/press', '/compare/rerun'].includes(route)) {
     request.url = `${route}/index.html${url.search}`;
   }
   next();
@@ -306,6 +313,9 @@ export default defineConfig({
         main: fileURLToPath(new URL('./index.html', import.meta.url)),
         brand: fileURLToPath(new URL('./brand/index.html', import.meta.url)),
         press: fileURLToPath(new URL('./press/index.html', import.meta.url)),
+        rerun: fileURLToPath(
+          new URL('./compare/rerun/index.html', import.meta.url),
+        ),
       },
     },
   },

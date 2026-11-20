@@ -1,0 +1,20 @@
+.comparison-heading {
+  max-width: 64rem;
+}
+
+.comparison-heading > .comparison-eyebrow {
+  margin: 0 0 1.5rem;
+  color: var(--foreground);
+  font-size: 0.875rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.comparison-heading > p + p {
+  margin-top: 1.5rem;
+}
+
+.comparison-heading h1 {
+  font-size: clamp(2.75rem, 5vw, 4.5rem);
+}

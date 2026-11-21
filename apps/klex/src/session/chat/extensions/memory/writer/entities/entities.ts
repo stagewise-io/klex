@@ -5,6 +5,7 @@ import {
   mkdir,
   open,
   readdir,
+  readFile,
   rename,
   rm,
   writeFile,
@@ -16,14 +17,17 @@ import { z } from 'zod';
 
 import { parseSkillId } from '@/skills';
 import {
+  isDictionaryLowTokenID,
   LOW_TOKEN_ID_MAX_LENGTH,
   LOW_TOKEN_ID_MIN_LENGTH,
   randomLowTokenID,
+  seededLowTokenID,
 } from '@/utils/random-low-token-id';
 
 import {
   capSources,
   type Fact,
+  type FactVersion,
   formatFacts,
   MAX_FACT_HISTORY,
   parseFacts,
@@ -839,10 +843,50 @@ class EntityStoreModule implements EntityStore {
     }
   }
 
+  /**
+   * One-time job: every word-ID document not made of current capitalized
+   * dictionary words (removed words, legacy lowercase IDs) gets a new ID, and
+   * every reference to the old ID is rewritten: relations, whole-ID mentions
+   * in facts, and `MergedFrom` aliases. No trace of the old ID is kept. The
+   * mapping is journaled before the first change, so an interrupted run
+   * resumes with the same IDs; the journal is deleted when the run completes.
+   */
+  private async retireRemovedWordIds(
+    documents: LoadedDocument[],
+  ): Promise<void> {
+    const journal = join(this.directory, RETIRED_ID_JOURNAL);
+    for (const name of await readdir(this.directory))
+      if (name.startsWith(`${RETIRED_ID_JOURNAL}.`) && name.endsWith('.tmp'))
+        await rm(join(this.directory, name));
+    let replacements = await readRetiredIdJournal(journal);
+    if (!replacements) {
+      replacements = retiredIdReplacements(
+        documents.map(({ entity }) => entity),
+      );
+      if (!replacements.size) return;
+      await writeRetiredIdJournal(journal, replacements);
+    }
+    for (const document of documents) {
+      const { entity, legacy } = document;
+      const scrubbed = scrubRetiredIds(entity, replacements);
+      document.entity = scrubbed;
+      // Legacy flat notes are UUID documents; conversion persists them next.
+      if (legacy) continue;
+      if (scrubbed.id !== entity.id) {
+        // Filenames are the identity, so the rename is one atomic step.
+        const target = this.file(scrubbed);
+        await rename(document.file, target);
+        document.file = target;
+      }
+      if (JSON.stringify(scrubbed) !== JSON.stringify(entity))
+        await this.persist(scrubbed);
+    }
+    await rm(journal);
+  }
+
   private async load(): Promise<void> {
     await this.ensureDirectory();
-    const documents: { file: string; entity: MemoryEntity; legacy: boolean }[] =
-      [];
+    const documents: LoadedDocument[] = [];
     const ids = new Set<string>();
     const readDocument = async (
       file: string,
@@ -914,6 +958,7 @@ class EntityStoreModule implements EntityStore {
           );
         owners.set(key, entity.id);
       }
+    await this.retireRemovedWordIds(documents);
     // Validate all notes before converting any. Renaming before rewriting lets
     // startup resume a conversion interrupted between those two atomic steps.
     for (const { file, entity, legacy } of documents) {
@@ -947,6 +992,161 @@ class EntityStoreModule implements EntityStore {
         });
     }
   }
+}
+
+interface LoadedDocument {
+  file: string;
+  entity: MemoryEntity;
+  legacy: boolean;
+}
+
+/** Old-to-new ID mapping of an unfinished retired-ID run. */
+const RETIRED_ID_JOURNAL = '.retired-ids.json';
+const retiredIdJournalSchema = z.array(
+  z.tuple([entityIdSchema, entityIdSchema]),
+);
+
+async function readRetiredIdJournal(
+  file: string,
+): Promise<Map<string, string> | undefined> {
+  let content: string;
+  try {
+    content = await readFile(file, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw error;
+  }
+  return new Map(retiredIdJournalSchema.parse(JSON.parse(content)));
+}
+
+async function writeRetiredIdJournal(
+  file: string,
+  replacements: ReadonlyMap<string, string>,
+): Promise<void> {
+  const temporary = `${file}.${randomUUID()}.tmp`;
+  const handle = await open(temporary, 'wx', 0o600);
+  try {
+    await handle.writeFile(JSON.stringify([...replacements]));
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  await rename(temporary, file);
+}
+
+/**
+ * `entity` with retired IDs replaced: its own ID, relation targets, whole-ID
+ * mentions in fact text, labels and older versions. Retired `MergedFrom`
+ * aliases are dropped. Applying it again changes nothing.
+ */
+function scrubRetiredIds(
+  entity: MemoryEntity,
+  replacements: ReadonlyMap<string, string>,
+): MemoryEntity {
+  const id = replacements.get(entity.id) ?? entity.id;
+  const pattern = new RegExp(
+    `(?<![A-Za-z0-9])(?:${[...replacements.keys()]
+      .sort((a, b) => b.length - a.length)
+      .join('|')})(?![A-Za-z0-9])`,
+    'g',
+  );
+  const replace = (text: string) =>
+    text.replace(pattern, (match) => replacements.get(match) ?? match);
+  const version = ({ text, sources }: FactVersion): FactVersion => ({
+    text: replace(text),
+    sources: sources.map((source) => ({
+      ...source,
+      label: replace(source.label),
+    })),
+  });
+  const sections: Record<string, Fact[]> = Object.create(null);
+  for (const [name, facts] of Object.entries(entity.sections))
+    sections[name] = facts.map((fact) => ({
+      ...version(fact),
+      history: fact.history.map(version),
+    }));
+  const { MergedFrom, RelatedTo, ...frontmatter } = entity.frontmatter;
+  const aliases = MergedFrom?.filter((alias) => !replacements.has(alias));
+  return {
+    ...entity,
+    id,
+    sections,
+    frontmatter: {
+      ...frontmatter,
+      RelatedTo: RelatedTo.some(
+        ({ target }) => target.kind === 'entity' && replacements.has(target.id),
+      )
+        ? combineRelations(
+            RelatedTo.map((relation) =>
+              relation.target.kind === 'entity' &&
+              replacements.has(relation.target.id)
+                ? {
+                    ...relation,
+                    target: {
+                      kind: 'entity',
+                      id: replacements.get(relation.target.id)!,
+                    },
+                  }
+                : relation,
+            ),
+            [id],
+          )
+        : RelatedTo,
+      ...(aliases?.length ? { MergedFrom: aliases } : {}),
+    },
+  };
+}
+
+/** True for word IDs that must be retired: removed words or legacy lowercase. */
+function isRetiredId(id: string): boolean {
+  return !z.uuid().safeParse(id).success && !isDictionaryLowTokenID(id);
+}
+
+/**
+ * Old-to-new IDs for loaded entities (after interrupted merges are dropped):
+ * retired entity IDs get a new ID, retired `MergedFrom` aliases map to the
+ * (new) ID of the entity holding them.
+ */
+function retiredIdReplacements(
+  entities: readonly Pick<MemoryEntity, 'id' | 'frontmatter'>[],
+): Map<string, string> {
+  const replacements = replacementIds(
+    entities.map(({ id }) => id).filter(isRetiredId),
+    entities.flatMap(({ id, frontmatter }) => [
+      id,
+      ...(frontmatter.MergedFrom ?? []),
+    ]),
+  );
+  const renamed = new Map(replacements);
+  for (const { id, frontmatter } of entities)
+    for (const alias of frontmatter.MergedFrom ?? [])
+      if (isRetiredId(alias) && !replacements.has(alias))
+        replacements.set(alias, renamed.get(id) ?? id);
+  return replacements;
+}
+
+/**
+ * Retired IDs get a random replacement (seeded by a random UUID). Taken IDs
+ * and aliases are skipped case-insensitively. The journal keeps the mapping
+ * stable if a run is interrupted.
+ */
+export function replacementIds(
+  retired: readonly string[],
+  taken: readonly string[],
+): Map<string, string> {
+  const used = new Set(taken.map((id) => id.toLowerCase()));
+  const replacements = new Map<string, string>();
+  for (const id of new Set(retired)) {
+    for (let attempt = 0; !replacements.has(id); attempt++) {
+      if (attempt === 1000)
+        throw new Error(`Could not allocate a replacement ID for ${id}`);
+      const candidate = seededLowTokenID();
+      if (used.has(candidate.toLowerCase())) continue;
+      used.add(candidate.toLowerCase());
+      replacements.set(id, candidate);
+    }
+  }
+  return replacements;
 }
 
 export function createEntityStore(directory: string): EntityStore {

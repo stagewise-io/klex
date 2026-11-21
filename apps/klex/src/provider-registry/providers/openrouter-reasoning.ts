@@ -145,7 +145,7 @@ function restoreMessages(
             part?.providerOptions?.google?.thoughtSignature;
           const signed = entries.some(
             (entry) =>
-              (entry.id == null || entry.id === call.id) &&
+              entry.id === call.id &&
               ((entry.type === 'reasoning.encrypted' &&
                 typeof entry.data === 'string' &&
                 entry.data.length > 0) ||

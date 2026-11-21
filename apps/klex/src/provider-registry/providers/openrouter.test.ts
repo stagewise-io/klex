@@ -130,6 +130,7 @@ describe('OpenRouter reasoning replay', () => {
         expect.objectContaining({
           role: 'assistant',
           reasoning_details: [signature],
+          tool_calls: [toolCall],
         }),
       ]),
     );
@@ -269,6 +270,60 @@ describe('OpenRouter reasoning replay', () => {
       );
     }
   });
+
+  it.each([{}, { id: null }])(
+    'does not treat id-less encrypted metadata %j as a tool-call signature',
+    async (identity) => {
+      let body: Record<string, unknown> = {};
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (_url, init: RequestInit) => {
+          body = JSON.parse(String(init.body));
+          return completion({ content: 'done' });
+        }),
+      );
+      const entry = {
+        type: 'reasoning.encrypted',
+        format: 'google-gemini-v1',
+        data: 'unassociated-encrypted-metadata',
+        ...identity,
+      };
+      await createLanguageModel(instance, modelId).doGenerate({
+        prompt: [
+          {
+            role: 'assistant',
+            providerOptions: { openrouter: { reasoning_details: [entry] } },
+            content: [
+              {
+                type: 'tool-call',
+                toolCallId: 'call-1',
+                toolName: 'lookup',
+                input: {},
+              },
+            ],
+          },
+        ],
+      });
+      expect(body.messages).toEqual([
+        expect.objectContaining({
+          reasoning_details: [
+            entry,
+            { ...signature, data: 'skip_thought_signature_validator' },
+          ],
+          tool_calls: [
+            {
+              ...toolCall,
+              extra_content: {
+                google: {
+                  thought_signature: 'skip_thought_signature_validator',
+                },
+              },
+            },
+          ],
+        }),
+      ]);
+    },
+  );
 
   it('deduplicates message and part metadata, filters unsigned text, and keeps existing signatures', async () => {
     let body: Record<string, unknown> = {};

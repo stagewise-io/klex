@@ -249,10 +249,10 @@ describe('oldest-first memory writer', () => {
       join(f.root, 'extensions/io.stagewise/memory/entities'),
     );
     await store.start();
-    const missing = '00000000-0000-4000-8000-000000000000';
+    const missing = 'project/Missing';
     const entity = await store.create(
       {
-        title: 'Project',
+        name: 'Project',
         entityType: 'project',
         loadOn: [],
         relatedTo: [

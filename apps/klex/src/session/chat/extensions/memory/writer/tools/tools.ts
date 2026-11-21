@@ -67,7 +67,7 @@ const writerPatchSchema = entityPatchSchema.extend({
 });
 const stripInverse = (relations: readonly WriterRelation[]) =>
   relations.map(({ inverse: _inverse, ...relation }) => relation);
-/** Merged IDs resolve to the kept entity; store and link its own ID. */
+/** Resolve case-insensitive lookups to the exact stored path. */
 const canonical = (
   entities: EntityStore,
   relations: readonly WriterRelation[],
@@ -268,7 +268,7 @@ const searchableText = (value: string) =>
 function searchEntity(entity: MemoryEntity, query: string) {
   const terms = [...new Set(query.toLowerCase().split(/\s+/).filter(Boolean))];
   const { id, entityType } = entity;
-  const title = entity.frontmatter.Title;
+  const title = entity.name;
   const lines = [
     { section: 'Title', line: 1, text: title, boost: searchWeights.title },
     { section: 'Folder', line: 1, text: entityType, boost: 0 },
@@ -318,7 +318,7 @@ function searchEntity(entity: MemoryEntity, query: string) {
     (query && body.includes(query.toLowerCase()) ? searchWeights.phrase : 0);
   return {
     id,
-    title,
+    name: title,
     entityType,
     score,
     general,
@@ -694,7 +694,7 @@ class WriterToolsModule implements WriterTools {
     this.tools = {
       listEntities: {
         description:
-          'Find entities. Search before create; same title can mean different identities.',
+          'Find entities. Search before create; Names are unique within each type; disambiguate different identities.',
         inputSchema: z
           .object({
             query: z
@@ -715,7 +715,7 @@ class WriterToolsModule implements WriterTools {
             .sort(
               (a, b) =>
                 b.score - a.score ||
-                a.title.localeCompare(b.title) ||
+                a.name.localeCompare(b.name) ||
                 a.id.localeCompare(b.id),
             );
           return {
@@ -744,12 +744,10 @@ class WriterToolsModule implements WriterTools {
         execute: guarded(({ id, sections: names }) => {
           const entity = options.entities.get(id);
           if (!entity) return { status: 'not-found' };
-          const { Title, LinkedIdentities, LoadOn, RelatedTo } =
-            entity.frontmatter;
+          const { LinkedIdentities, LoadOn, RelatedTo } = entity.frontmatter;
           return {
-            // Merged IDs resolve to the kept entity; show its own ID.
             id: entity.id,
-            title: Title,
+            name: entity.name,
             entityType: entity.entityType,
             linkedIdentities: LinkedIdentities,
             loadOn: LoadOn,
@@ -781,7 +779,7 @@ class WriterToolsModule implements WriterTools {
           );
           rejectSecrets([fields, input], texts);
           checkEntity(
-            fields.title,
+            fields.name,
             fields.entityType,
             fields.linkedIdentities,
             fields.relatedTo,
@@ -859,7 +857,7 @@ class WriterToolsModule implements WriterTools {
           const nextRelations: WriterRelation[] =
             fields.relatedTo ?? entity.frontmatter.RelatedTo;
           checkEntity(
-            fields.title ?? entity.frontmatter.Title,
+            fields.name ?? entity.name,
             fields.entityType ?? entity.entityType,
             fields.linkedIdentities ?? entity.frontmatter.LinkedIdentities,
             nextRelations,
@@ -1038,7 +1036,7 @@ class WriterToolsModule implements WriterTools {
           }
           return {
             status: 'updated',
-            id,
+            id: updated.id,
             revision: entityRevision(updated),
             changedSections: [...changed].filter((name) =>
               Object.hasOwn(draft, name),
@@ -1048,7 +1046,7 @@ class WriterToolsModule implements WriterTools {
       },
       mergeEntities: {
         description:
-          'Fold a duplicate into the entity to keep. Only when clearly the same identity. Read both first. Facts, IDs and relations move over; dropped ID becomes an alias. Not undoable.',
+          'Fold a duplicate into the entity to keep. Only when clearly the same identity. Read both first. Facts, identities and references move over; dropped name is removed without an alias. Not undoable.',
         inputSchema: z
           .object({
             keepId: entityIdSchema,
@@ -1068,25 +1066,16 @@ class WriterToolsModule implements WriterTools {
             if (
               self &&
               [keep, drop].some(
-                (entity) =>
-                  entity.frontmatter.Title.trim().toLowerCase() === self,
+                (entity) => entity.name.trim().toLowerCase() === self,
               )
             )
               throw new Error('Never merge into or from self');
             const merged = mergedEntity(keep, drop);
             checkShape(merged.sections, Object.keys(merged.sections), [], []);
-            const {
-              RelatedTo,
-              LinkedIdentities,
-              MergedFrom = [],
-            } = merged.frontmatter;
-            if (
-              RelatedTo.length > 100 ||
-              LinkedIdentities.length > 30 ||
-              MergedFrom.length > 100
-            )
+            const { RelatedTo, LinkedIdentities } = merged.frontmatter;
+            if (RelatedTo.length > 100 || LinkedIdentities.length > 30)
               throw new Error(
-                `Merged entity would exceed limits (relations ${RelatedTo.length}/100, linked identities ${LinkedIdentities.length}/30, merged IDs ${MergedFrom.length}/100). Remove weak relations or stale identities with updateEntity first`,
+                `Merged entity would exceed limits (relations ${RelatedTo.length}/100, linked identities ${LinkedIdentities.length}/30). Remove weak relations or stale identities with updateEntity first`,
               );
             if (options.signal.aborted) throw new Error('Writer closed');
             const result = await options.entities.merge(

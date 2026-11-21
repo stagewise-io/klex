@@ -83,7 +83,7 @@ const skillInput = (name: string, extra: object = {}) => ({
   ...extra,
 });
 const create = (id = source, text = 'Project owner') => ({
-  fields: { title: 'Alex Smith', entityType: 'person' },
+  fields: { name: 'Alex Smith', entityType: 'person' },
   sections: [{ name: 'General', facts: [{ text, sourceIds: [id] }] }],
 });
 
@@ -152,7 +152,7 @@ describe('memory writer tools', () => {
     ).toMatchObject({ status: 'rejected' });
   });
   it.each([
-    { kind: 'entity', id: '00000000-0000-4000-8000-000000000000' },
+    { kind: 'entity', id: 'person/Missing' },
     { kind: 'skill', id: 'templates/missing' },
   ])(
     'rejects invalid $kind references on create and update without writing',
@@ -215,7 +215,7 @@ describe('memory writer tools', () => {
     const update = {
       id: entity.id,
       revision: entityRevision(entity),
-      fields: { title: 'New title' },
+      fields: { name: 'New title' },
     };
     expect(await call(tools, 'updateEntity', update)).toEqual({
       status: 'rejected',
@@ -290,7 +290,7 @@ describe('memory writer tools', () => {
         ],
       }),
     ).toMatchObject({ status: 'updated' });
-    const updated = entities.get(entity.id);
+    const updated = entities.get('project/Alex Smith');
     expect(updated?.entityType).toBe('project');
     expect(updated?.sections.General?.[0]).toEqual({
       text: 'Former project owner',
@@ -304,7 +304,7 @@ describe('memory writer tools', () => {
     });
     expect(
       (
-        (await call(second, 'readEntity', { id: entity.id })) as {
+        (await call(second, 'readEntity', { id: 'project/Alex Smith' })) as {
           sections: Record<string, string>;
         }
       ).sections.General,
@@ -352,14 +352,14 @@ describe('memory writer tools', () => {
     ).toHaveLength(1);
   });
 
-  it('merges entities and resolves the dropped ID in later relations', async () => {
+  it('merges entities without keeping the dropped name as an alias', async () => {
     const { tools, entities } = await fixture();
     const keep = await entities.create(
-      { title: 'Alex Smith', entityType: 'person' },
+      { name: 'Alex Smith', entityType: 'person' },
       { General: [fact('Engineer')] },
     );
     const drop = await entities.create(
-      { title: 'Alex Smith', entityType: 'person' },
+      { name: 'Alex S', entityType: 'person' },
       { General: [fact('Owns billing')] },
     );
     const input = {
@@ -379,13 +379,14 @@ describe('memory writer tools', () => {
       id: keep.id,
     });
     expect(entities.list()).toHaveLength(1);
+    expect(entities.get(drop.id)).toBeNull();
     const created = (await call(tools, 'createEntity', {
       fields: {
-        title: 'Billing',
+        name: 'Billing',
         entityType: 'team',
         relatedTo: [
           {
-            target: { kind: 'entity', id: drop.id },
+            target: { kind: 'entity', id: keep.id },
             strength: 50,
             relationship: 'member',
             inverse: 'member of',
@@ -417,11 +418,11 @@ describe('memory writer tools', () => {
         ...[1, 2, 3].map((n) => [`${prefix} ${n}`, [fact('Detail')]]),
       ]);
     const keep = await entities.create(
-      { title: 'Alex Smith', entityType: 'person' },
+      { name: 'Alex Smith', entityType: 'person' },
       many('Keep'),
     );
     const drop = await entities.create(
-      { title: 'Alex Smith', entityType: 'person' },
+      { name: 'Alex S', entityType: 'person' },
       many('Drop'),
     );
     await expect(
@@ -606,7 +607,7 @@ describe('memory writer tools', () => {
       id: `old${i}`,
     }));
     const entity = await entities.create(
-      { title: 'Alex Smith', entityType: 'person' },
+      { name: 'Alex Smith', entityType: 'person' },
       { General: [{ text: 'Owns Atlas', sources: old, history: [] }] },
     );
     await call(tools, 'updateEntity', {
@@ -629,6 +630,7 @@ describe('memory writer tools', () => {
       ...create(),
       fields: {
         ...create().fields,
+        name: 'Other Person',
         linkedIdentities: [{ server: 'slack', match: { user: 'U1' } }],
       },
     });
@@ -744,7 +746,7 @@ describe('memory writer tools', () => {
     const { tools, entities } = await fixture();
     const detail = await entities.create(
       {
-        title: 'Other project',
+        name: 'Other project',
         entityType: 'project',
         loadOn: [],
         relatedTo: [],
@@ -760,7 +762,7 @@ describe('memory writer tools', () => {
     );
     const title = await entities.create(
       {
-        title: 'Launch plan',
+        name: 'Launch plan',
         entityType: 'project',
         loadOn: [],
         relatedTo: [],
@@ -795,12 +797,12 @@ describe('memory writer tools', () => {
       await call(tools, 'listEntities', { query: '2026-11-12' }),
     ).toMatchObject({ entities: [] });
     expect(
-      await call(tools, 'listEntities', { query: detail.id }),
+      await call(tools, 'listEntities', { query: 'MissingUniqueToken' }),
     ).toMatchObject({ entities: [] });
     for (let index = 0; index < 19; index++)
       await entities.create(
         {
-          title: `Extra ${index}`,
+          name: `Extra ${index}`,
           entityType: 'topic',
           loadOn: [],
           relatedTo: [],
@@ -889,7 +891,7 @@ describe('memory writer tools', () => {
   it('rejects entity output a cheap model gets wrong, with a fix in the message', async () => {
     const evidence =
       'issue 0eff93ac-11f0-4da1-ac13-78d5697ca0e7 PR_kwDOT3Z8XM8AAAABO4mHbw';
-    const { tools, entities, activities, skills, registry, controller } =
+    const { entities, activities, skills, registry, controller } =
       await fixture();
     const strict = createWriterTools({
       entities,
@@ -924,7 +926,7 @@ describe('memory writer tools', () => {
     );
     await reject(create(source, 'x'.repeat(161)), 'max 160');
     await reject(
-      { ...create(), fields: fields({ title: 'Jonathan' }) },
+      { ...create(), fields: fields({ name: 'Jonathan' }) },
       'is self',
     );
     await reject(
@@ -942,7 +944,7 @@ describe('memory writer tools', () => {
       {
         ...create(),
         fields: fields({
-          title: 'CLOUD-254',
+          name: 'CLOUD-254',
           entityType: 'issue',
           linkedIdentities: [
             {
@@ -957,7 +959,7 @@ describe('memory writer tools', () => {
     await reject(
       {
         ...create(),
-        fields: fields({ title: 'PR 12', entityType: 'pull-request' }),
+        fields: fields({ name: 'PR 12', entityType: 'pull-request' }),
       },
       'Link who requested',
     );
@@ -965,12 +967,12 @@ describe('memory writer tools', () => {
     // Copied exactly: accepted, and a truncated Linear ID is not.
     const issue = (id: string) => ({
       fields: {
-        title: 'CLOUD-254',
+        name: 'CLOUD-254',
         entityType: 'issue',
         linkedIdentities: [{ server: 'linear', match: { issueId: id } }],
         relatedTo: [
           {
-            target: { kind: 'entity', id: 'placeholder' },
+            target: { kind: 'entity', id: 'person/Placeholder' },
             strength: 50,
             relationship: 'requested by',
             inverse: 'requested',
@@ -984,7 +986,7 @@ describe('memory writer tools', () => {
       'not found in the activities',
     );
     const person = await entities.create(
-      { title: 'Alex Smith', entityType: 'person' },
+      { name: 'Alex Smith', entityType: 'person' },
       { General: [fact('Owner')] },
     );
     const linked = issue('0eff93ac-11f0-4da1-ac13-78d5697ca0e7');
@@ -1076,7 +1078,7 @@ describe('memory writer tools', () => {
     expect(
       await call(tools, 'createEntity', {
         fields: {
-          title: 'acme/web',
+          name: 'acme/web',
           entityType: 'repository',
           linkedIdentities: [
             {
@@ -1151,7 +1153,7 @@ describe('memory writer tools', () => {
             {
               target: {
                 kind: 'entity',
-                id: '00000000-0000-4000-8000-000000000000',
+                id: 'person/Missing',
               },
               strength: 80,
               relationship: 'colleague',

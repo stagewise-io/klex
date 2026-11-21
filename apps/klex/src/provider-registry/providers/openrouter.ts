@@ -6,10 +6,10 @@ import type {
 } from '../provider-registry';
 import { resolveCatalogMetadata } from './model-catalog-helpers';
 import { createOpenRouterEvaluationModel } from './openrouter-evaluation';
+import { createOpenRouterLanguageModel } from './openrouter-reasoning';
 import { withPromptCaching } from './prompt-caching';
 import {
   available,
-  createOpenAiCompatibleLanguageModel,
   fetchJson,
   gatewayAttributionHeaders,
   isRecord,
@@ -49,7 +49,7 @@ export const openRouterProviderDefinition: ProviderDefinition = {
     if (EVALUATION_MODELS.has(modelId))
       throw new Error('Evaluation-only model cannot generate chat messages');
     return withPromptCaching(
-      createOpenAiCompatibleLanguageModel(
+      createOpenRouterLanguageModel(
         instance,
         modelId,
         BASE_URL,

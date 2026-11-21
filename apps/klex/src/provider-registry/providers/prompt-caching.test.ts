@@ -2,8 +2,8 @@ import type { LanguageModelV4CallOptions } from '@ai-sdk/provider';
 import { MockLanguageModelV4 } from 'ai/test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { builtInProviderDefinitions } from './providers';
 import { withPromptCaching } from './prompt-caching';
+import { builtInProviderDefinitions } from './providers';
 
 afterEach(() => vi.unstubAllGlobals());
 

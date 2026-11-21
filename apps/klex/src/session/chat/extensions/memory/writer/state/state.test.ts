@@ -75,8 +75,37 @@ describe('registered memory writer state', () => {
     expect(restored.get().future).toEqual({ keep: true });
     expect(JSON.parse(await readFile(file, 'utf8'))._klex).toMatchObject({
       schemaVersion: 1,
-      compatibilityVersion: 1,
+      compatibilityVersion: 2,
+      minimumKlexVersion: '0.37.1',
     });
+  });
+  it('raises compatibility of existing state so older binaries refuse it', async () => {
+    const { root, file } = await fixture();
+    await writeFile(
+      file,
+      JSON.stringify({
+        initialized: true,
+        cursor: 'history:cursor',
+        pendingThrough: null,
+        _klex: {
+          store: 'memory-writer-state',
+          schemaVersion: 1,
+          compatibilityVersion: 1,
+          minimumKlexVersion: '0.33.0',
+          writtenByKlexVersion: '0.37.0',
+        },
+      }),
+    );
+    await startup(root);
+    const upgraded = JSON.parse(await readFile(file, 'utf8'));
+    expect(upgraded.cursor).toBe('history:cursor');
+    expect(upgraded._klex).toMatchObject({
+      compatibilityVersion: 2,
+      minimumKlexVersion: '0.37.1',
+    });
+    const before = await readFile(file, 'utf8');
+    await startup(root);
+    expect(await readFile(file, 'utf8')).toBe(before);
   });
   it.each(['newer', 'invalid'])(
     'rejects %s data before mutation',

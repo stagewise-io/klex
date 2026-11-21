@@ -24,8 +24,10 @@ export const MEMORY_WRITER_STORE_DEFINITION: JsonStoreDefinition = {
   relativePath: 'extensions/io.stagewise/memory/writer-state.json',
   required: false,
   schemaVersion: 1,
-  compatibilityVersion: 1,
-  minimumKlexVersion: '0.33.0',
+  // 2: entity IDs using removed dictionary words were retired. Older binaries
+  // still hold those words and must not write memory again.
+  compatibilityVersion: 2,
+  minimumKlexVersion: '0.37.1',
   versions: [{ version: 1, schema: stateSchema }],
   migrations: [],
 };

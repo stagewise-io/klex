@@ -5,9 +5,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import dictionary from './dictionary.md';
 import {
+  isDictionaryLowTokenID,
   LOW_TOKEN_ID_MAX_LENGTH,
   LOW_TOKEN_ID_MIN_LENGTH,
   randomLowTokenID,
+  seededLowTokenID,
 } from './random-low-token-id';
 
 vi.mock('node:crypto', async (importOriginal) => {
@@ -23,8 +25,8 @@ const words = dictionary
   .filter(Boolean);
 
 describe('randomLowTokenID', () => {
-  it('uses all 10,000 dictionary words without filtering or duplicates', () => {
-    expect(words).toHaveLength(10_000);
+  it('uses all 9,523 dictionary words without filtering or duplicates', () => {
+    expect(words).toHaveLength(9_523);
     expect(new Set(words).size).toBe(words.length);
     expect(words.every((word) => /^[a-z]{2,}$/.test(word))).toBe(true);
     expect(LOW_TOKEN_ID_MIN_LENGTH).toBe(
@@ -69,6 +71,24 @@ describe('randomLowTokenID', () => {
       expect(randomInt).not.toHaveBeenCalled();
     },
   );
+
+  it('derives seeded IDs from the seed, or a random UUID without one', () => {
+    const id = seededLowTokenID('DamnSlaveGod');
+    expect(id).toBe(seededLowTokenID('DamnSlaveGod'));
+    expect(seededLowTokenID()).not.toBe(seededLowTokenID());
+    expect(id).toMatch(/^(?:[A-Z][a-z]+){3}$/);
+    expect(isDictionaryLowTokenID(id)).toBe(true);
+    expect(randomInt).not.toHaveBeenCalled();
+  });
+
+  it('recognizes IDs made only of current dictionary words', () => {
+    const [a, b, c] = [words[0]!, words[1]!, words.at(-1)!];
+    const cap = (word: string) => word.charAt(0).toUpperCase() + word.slice(1);
+    expect(isDictionaryLowTokenID([a, b, c].map(cap).join(''))).toBe(true);
+    expect(isDictionaryLowTokenID(`${cap(a)}Damn${cap(c)}`)).toBe(false);
+    // Lowercase concatenations cannot be segmented reliably.
+    expect(isDictionaryLowTokenID(`${a}${b}${c}`)).toBe(false);
+  });
 
   it('measures concatenated dictionary ID token costs against UUIDs', () => {
     for (const name of ['cl100k_base', 'o200k_base'] as const) {

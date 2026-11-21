@@ -1,8 +1,9 @@
-import { randomInt } from 'node:crypto';
+import { randomInt, randomUUID } from 'node:crypto';
 import {
   chmod,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   rename,
   rm,
@@ -10,9 +11,11 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import { seededLowTokenID } from '@/utils/random-low-token-id';
 
 import {
   createEntityStore,
@@ -21,12 +24,17 @@ import {
   entityRevision,
   loadMatcherSchema,
   renderEntity,
+  replacementIds,
 } from './entities';
 import { type Fact, formatFacts, parseFacts } from './facts';
 
 vi.mock('node:crypto', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:crypto')>();
-  return { ...actual, randomInt: vi.fn(actual.randomInt) };
+  return {
+    ...actual,
+    randomInt: vi.fn(actual.randomInt),
+    randomUUID: vi.fn(actual.randomUUID),
+  };
 });
 
 const directories: string[] = [];
@@ -39,6 +47,7 @@ async function fixture() {
 }
 afterEach(async () => {
   vi.mocked(randomInt).mockReset();
+  vi.mocked(randomUUID).mockReset();
   await Promise.all(
     directories
       .splice(0)
@@ -97,7 +106,7 @@ describe('factual entities', () => {
     ).rejects.toThrow('100 attempts');
     expect(restored.list()).toHaveLength(4);
   });
-  it('preserves lowercase IDs and avoids case-only filename collisions', async () => {
+  it('regenerates lowercase IDs without keeping them and avoids case-only collisions', async () => {
     const { store, directory } = await fixture();
     const random = vi.mocked(randomInt as (max: number) => number);
     random.mockReturnValueOnce(0).mockReturnValueOnce(1).mockReturnValueOnce(2);
@@ -110,7 +119,9 @@ describe('factual entities', () => {
     await writeFile(legacyFile, content);
     const restored = createEntityStore(join(directory, 'entities'));
     await restored.start();
-    expect(restored.get(lowercase)?.id).toBe(lowercase);
+    const replacement = restored.list()[0]!.id;
+    expect(restored.get(lowercase)).toBeNull();
+    expect(restored.get(replacement)?.frontmatter.MergedFrom).toBeUndefined();
     random
       .mockReturnValueOnce(0)
       .mockReturnValueOnce(1)
@@ -122,8 +133,11 @@ describe('factual entities', () => {
       fields(),
       sections({ General: 'New' }),
     );
-    expect(created.id).toBe('AndWasWith');
-    expect(await readFile(legacyFile, 'utf8')).toBe(content);
+    // The retired lowercase ID is gone everywhere, so it no longer reserves
+    // its capitalized form.
+    expect(created.id).toBe('TheOfTo');
+    // Exact names: case-insensitive filesystems resolve the legacy path.
+    expect(await readdir(dirname(legacyFile))).not.toContain(`${lowercase}.md`);
   });
   it('keeps existing UUID notes and mixed references across restart and title/type updates', async () => {
     const { store, directory } = await fixture();
@@ -769,6 +783,165 @@ describe('factual entities', () => {
       expect(store.get(drop.id)).toEqual(drop);
     },
   );
+  describe('retired dictionary words', () => {
+    const retired = 'DamnSlaveGod';
+    async function retiredFixture() {
+      const { store, directory } = await fixture();
+      const person = await store.create(
+        fields(),
+        sections({ General: 'Engineer' }),
+      );
+      const team = await store.create(
+        {
+          title: 'Billing',
+          entityType: 'team',
+          relatedTo: [
+            {
+              target: { kind: 'entity', id: person.id },
+              strength: 50,
+              relationship: 'member',
+            },
+          ],
+        },
+        sections({ General: 'Billing team' }),
+      );
+      const personFile = (id: string) =>
+        join(directory, 'entities', 'person', `${id}.md`);
+      const teamFile = join(directory, 'entities', 'team', `${team.id}.md`);
+      await rename(personFile(person.id), personFile(retired));
+      const teamText = await readFile(teamFile, 'utf8');
+      await writeFile(
+        teamFile,
+        teamText
+          .replaceAll(person.id, retired)
+          .replace(
+            'Billing team',
+            `Billing team led by ${retired}, not ${retired}Old or x${retired}`,
+          ),
+      );
+      return { directory, team, personFile, teamFile };
+    }
+    async function restart(directory: string) {
+      const store = createEntityStore(join(directory, 'entities'));
+      await store.start();
+      return store;
+    }
+
+    it('renames the entity, rewrites every reference and keeps no trace', async () => {
+      const { directory, team, personFile, teamFile } = await retiredFixture();
+      const store = await restart(directory);
+      const renamed = store
+        .list()
+        .find(({ entityType }) => entityType === 'person')?.id;
+      const person = store.get(renamed!);
+      expect(person?.frontmatter.MergedFrom).toBeUndefined();
+      expect(store.get(team.id)?.frontmatter.RelatedTo[0]?.target.id).toBe(
+        renamed,
+      );
+      expect(store.get(team.id)?.sections.General?.[0]?.text).toBe(
+        `Billing team led by ${renamed}, not ${retired}Old or x${retired}`,
+      );
+      expect(store.get(retired)).toBeNull();
+      await expect(readFile(personFile(retired))).rejects.toMatchObject({
+        code: 'ENOENT',
+      });
+      const files = [personFile(renamed!), teamFile];
+      for (const file of files)
+        expect(
+          (await readFile(file, 'utf8')).replaceAll(
+            new RegExp(`(?:${retired}Old|x${retired})`, 'g'),
+            '',
+          ),
+        ).not.toContain(retired);
+      expect(await readdir(join(directory, 'entities'))).not.toContain(
+        '.retired-ids.json',
+      );
+    });
+
+    it('replaces retired merge aliases with the entity holding them', async () => {
+      const { store, directory } = await fixture();
+      const keep = await store.create(fields(), sections({ General: 'Kept' }));
+      const other = await store.create(
+        {
+          title: 'Billing',
+          entityType: 'team',
+          relatedTo: [
+            {
+              target: { kind: 'entity', id: keep.id },
+              strength: 50,
+              relationship: 'member',
+            },
+          ],
+        },
+        sections({ General: 'Billing team' }),
+      );
+      const keepFile = join(directory, 'entities', 'person', `${keep.id}.md`);
+      const otherFile = join(directory, 'entities', 'team', `${other.id}.md`);
+      await writeFile(
+        keepFile,
+        (await readFile(keepFile, 'utf8')).replace(
+          'AuthorityScore: 5\n',
+          `AuthorityScore: 5\nMergedFrom:\n  - ${retired}\n`,
+        ),
+      );
+      await writeFile(
+        otherFile,
+        (await readFile(otherFile, 'utf8')).replace('Billing team', retired),
+      );
+      const restored = await restart(directory);
+      expect(restored.get(keep.id)?.frontmatter.MergedFrom).toBeUndefined();
+      expect(restored.get(other.id)?.sections.General?.[0]?.text).toBe(keep.id);
+      expect(await readFile(keepFile, 'utf8')).not.toContain(retired);
+    });
+
+    it('resumes an interrupted run with the journaled IDs', async () => {
+      const { directory, teamFile } = await retiredFixture();
+      const journal = join(directory, 'entities', '.retired-ids.json');
+      await writeFile(journal, JSON.stringify([[retired, 'AndWasWith']]));
+      const store = await restart(directory);
+      expect(store.get('AndWasWith')?.entityType).toBe('person');
+      expect(await readFile(teamFile, 'utf8')).toContain('AndWasWith');
+      await expect(readFile(journal)).rejects.toMatchObject({
+        code: 'ENOENT',
+      });
+    });
+
+    it('is a no-op on rerun', async () => {
+      const { directory, personFile } = await retiredFixture();
+      const store = await restart(directory);
+      const renamed = store
+        .list()
+        .find(({ entityType }) => entityType === 'person')!.id;
+      expect(store.get(retired)).toBeNull();
+      const before = await readFile(personFile(renamed), 'utf8');
+      const again = await restart(directory);
+      expect(again.get(renamed)?.entityType).toBe('person');
+      expect(await readFile(personFile(renamed), 'utf8')).toBe(before);
+    });
+
+    it('finishes a run interrupted after renaming one file', async () => {
+      const { directory, personFile, teamFile } = await retiredFixture();
+      const renamed = 'AndWasWith';
+      await writeFile(
+        join(directory, 'entities', '.retired-ids.json'),
+        JSON.stringify([[retired, renamed]]),
+      );
+      await rename(personFile(retired), personFile(renamed));
+      const store = await restart(directory);
+      expect(store.list()).toHaveLength(2);
+      expect(store.get(renamed)?.frontmatter.MergedFrom).toBeUndefined();
+      expect(await readFile(teamFile, 'utf8')).not.toContain(`id: ${retired}`);
+    });
+
+    it('skips taken IDs case-insensitively', () => {
+      const uuid = vi.mocked(randomUUID as () => string);
+      uuid.mockReturnValueOnce('a').mockReturnValueOnce('b');
+      const taken = seededLowTokenID('a').toLowerCase();
+      expect(replacementIds([retired], [taken]).get(retired)).toBe(
+        seededLowTokenID('b'),
+      );
+    });
+  });
   it('rejects symlinked entity roots', async () => {
     const { directory } = await fixture();
     const linked = join(directory, 'linked');

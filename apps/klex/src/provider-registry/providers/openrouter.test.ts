@@ -1,4 +1,14 @@
-import { experimental_evaluate as evaluate } from 'ai';
+import type { LanguageModelV4Prompt } from '@ai-sdk/provider';
+import {
+  convertToModelMessages,
+  experimental_evaluate as evaluate,
+  generateText,
+  jsonSchema,
+  readUIMessageStream,
+  streamText,
+  tool,
+  type UIMessage,
+} from 'ai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ProviderInstance } from '../provider-registry';
@@ -27,6 +37,416 @@ if (
 }
 
 afterEach(() => vi.unstubAllGlobals());
+
+describe('OpenRouter reasoning replay', () => {
+  const modelId = 'google/gemini-3.8-flash';
+  const signature = {
+    type: 'reasoning.encrypted',
+    format: 'google-gemini-v1',
+    id: 'call-1',
+    data: 'encrypted-signature',
+  };
+  const toolCall = {
+    id: 'call-1',
+    type: 'function',
+    function: { name: 'lookup', arguments: '{}' },
+  };
+  const tools = {
+    lookup: tool({
+      inputSchema: jsonSchema<Record<string, never>>({
+        type: 'object',
+        properties: {},
+      }),
+    }),
+  };
+  const completion = (message: unknown) =>
+    Response.json({
+      id: 'response-1',
+      model: modelId,
+      choices: [{ message, finish_reason: 'tool_calls' }],
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    });
+  const sse = (deltas: unknown[]) =>
+    new Response(
+      [
+        ...deltas.map(
+          (delta) =>
+            `data: ${JSON.stringify({ id: 'response-1', model: modelId, choices: [{ delta, finish_reason: null }] })}\n\n`,
+        ),
+        `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'tool_calls' }] })}\n\n`,
+        'data: [DONE]\n\n',
+      ].join(''),
+      { headers: { 'content-type': 'text/event-stream' } },
+    );
+
+  it('replays generated tool metadata through model messages', async () => {
+    const bodies: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url, init: RequestInit) => {
+        bodies.push(JSON.parse(String(init.body)));
+        return completion({
+          role: 'assistant',
+          content: null,
+          tool_calls: [toolCall],
+          reasoning_details: [signature],
+        });
+      }),
+    );
+    const model = createLanguageModel(instance, modelId);
+    const result = await generateText({
+      model,
+      prompt: 'lookup',
+      tools,
+      maxRetries: 0,
+    });
+    expect(
+      result.toolCalls[0]?.providerMetadata?.openrouter?.reasoning_details,
+    ).toEqual([signature]);
+    expect(result.providerMetadata?.openrouter?.reasoning_details).toEqual([
+      signature,
+    ]);
+    await generateText({
+      model,
+      messages: [
+        ...result.response.messages,
+        {
+          role: 'tool',
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: 'call-1',
+              toolName: 'lookup',
+              output: { type: 'text', value: 'done' },
+            },
+          ],
+        },
+      ],
+      tools,
+      maxRetries: 0,
+    });
+    expect(bodies[1]?.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: 'assistant',
+          reasoning_details: [signature],
+        }),
+      ]),
+    );
+  });
+
+  it.each(['before', 'same', 'after'] as const)(
+    'persists signatures arriving %s tool arguments through the UI stream',
+    async (timing) => {
+      const bodies: Record<string, unknown>[] = [];
+      const callDelta = { tool_calls: [{ ...toolCall, index: 0 }] };
+      const reasoningDelta = { reasoning_details: [signature] };
+      const deltas =
+        timing === 'same'
+          ? [{ ...callDelta, ...reasoningDelta }]
+          : timing === 'before'
+            ? [reasoningDelta, callDelta]
+            : [callDelta, reasoningDelta];
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (_url, init: RequestInit) => {
+          bodies.push(JSON.parse(String(init.body)));
+          return bodies.length === 1
+            ? sse(deltas)
+            : completion({ role: 'assistant', content: 'done' });
+        }),
+      );
+      const model = createLanguageModel(instance, modelId);
+      const result = streamText({
+        model,
+        prompt: 'lookup',
+        tools,
+        maxRetries: 0,
+      });
+      let message: UIMessage | undefined;
+      for await (const update of readUIMessageStream({
+        stream: result.toUIMessageStream(),
+        terminateOnError: true,
+      }))
+        message = update;
+      expect(message).toBeDefined();
+      const part = message?.parts.find((part) => part.type === 'tool-lookup');
+      expect(part).toMatchObject({
+        callProviderMetadata: {
+          openrouter: { reasoning_details: [signature] },
+        },
+      });
+      if (!message) throw new Error('Missing UI message');
+      for (const part of message.parts) {
+        if (part.type === 'tool-lookup')
+          Object.assign(part, { state: 'output-available', output: 'done' });
+      }
+      const messages = await convertToModelMessages([message]);
+      await generateText({ model, messages, tools, maxRetries: 0 });
+      expect(bodies[1]?.messages).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            role: 'assistant',
+            reasoning_details: [signature],
+          }),
+        ]),
+      );
+      expect(
+        (await result.providerMetadata)?.openrouter?.reasoning_details,
+      ).toEqual([signature]);
+    },
+  );
+
+  it.each([
+    modelId,
+    'anthropic/claude-haiku-5.5',
+    'minimax/minimax-m3.1-flash',
+  ])('handles unsigned and foreign history for %s', async (target) => {
+    let body: Record<string, unknown> = {};
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url, init: RequestInit) => {
+        body = JSON.parse(String(init.body));
+        return completion({ content: 'done' });
+      }),
+    );
+    const foreign = {
+      type: 'reasoning.encrypted',
+      format: 'anthropic-claude-v1',
+      data: 'foreign',
+    };
+    const prompt: LanguageModelV4Prompt = [
+      {
+        role: 'assistant',
+        content: [
+          {
+            type: 'reasoning',
+            text: 'old thinking',
+            providerOptions: { openrouter: { reasoning_details: [foreign] } },
+          },
+          {
+            type: 'tool-call',
+            toolCallId: 'call-1',
+            toolName: 'lookup',
+            input: {},
+          },
+          {
+            type: 'tool-call',
+            toolCallId: 'call-2',
+            toolName: 'lookup',
+            input: {},
+          },
+        ],
+      },
+    ];
+    await createLanguageModel(instance, target).doGenerate({ prompt });
+    const assistant = (body.messages as Record<string, unknown>[])[0];
+    if (!assistant) throw new Error('Missing assistant message');
+    if (target === modelId) {
+      expect(assistant.reasoning_details).toEqual(
+        ['call-1', 'call-2'].map((id) => ({
+          ...signature,
+          id,
+          data: 'skip_thought_signature_validator',
+        })),
+      );
+      expect(assistant.tool_calls).toEqual(
+        ['call-1', 'call-2'].map((id) =>
+          expect.objectContaining({
+            id,
+            extra_content: {
+              google: { thought_signature: 'skip_thought_signature_validator' },
+            },
+          }),
+        ),
+      );
+      expect(assistant).not.toHaveProperty('reasoning_content');
+      expect(assistant).not.toHaveProperty('reasoning');
+    } else {
+      expect(assistant.reasoning_details).toEqual([foreign]);
+      expect(JSON.stringify(assistant)).not.toContain(
+        'skip_thought_signature_validator',
+      );
+    }
+  });
+
+  it('deduplicates message and part metadata, filters unsigned text, and keeps existing signatures', async () => {
+    let body: Record<string, unknown> = {};
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url, init: RequestInit) => {
+        body = JSON.parse(String(init.body));
+        return completion({ content: 'done' });
+      }),
+    );
+    const entries = [
+      signature,
+      { type: 'reasoning.text', format: 'google-gemini-v1', text: 'unsigned' },
+      {
+        type: 'reasoning.text',
+        format: 'anthropic-claude-v1',
+        text: 'unsigned',
+      },
+    ];
+    await createLanguageModel(instance, modelId).doGenerate({
+      prompt: [
+        {
+          role: 'assistant',
+          providerOptions: { openrouter: { reasoning_details: entries } },
+          content: [
+            {
+              type: 'reasoning',
+              text: 'thinking',
+              providerOptions: { openrouter: { reasoning_details: entries } },
+            },
+            {
+              type: 'tool-call',
+              toolCallId: 'call-1',
+              toolName: 'lookup',
+              input: {},
+              providerOptions: { openrouter: { reasoning_details: entries } },
+            },
+            {
+              type: 'tool-call',
+              toolCallId: 'call-2',
+              toolName: 'lookup',
+              input: {},
+              providerOptions: { google: { thoughtSignature: 'existing' } },
+            },
+            {
+              type: 'tool-call',
+              toolCallId: 'call-3',
+              toolName: 'lookup',
+              input: {},
+            },
+          ],
+        },
+      ],
+    });
+    expect(body.messages).toEqual([
+      expect.objectContaining({
+        reasoning_details: [
+          signature,
+          {
+            ...signature,
+            id: 'call-3',
+            data: 'skip_thought_signature_validator',
+          },
+        ],
+        tool_calls: [
+          expect.objectContaining({ id: 'call-1' }),
+          expect.objectContaining({
+            id: 'call-2',
+            extra_content: { google: { thought_signature: 'existing' } },
+          }),
+          expect.objectContaining({
+            id: 'call-3',
+            extra_content: {
+              google: { thought_signature: 'skip_thought_signature_validator' },
+            },
+          }),
+        ],
+      }),
+    ]);
+  });
+
+  it('preserves generated reasoning-only details and existing part metadata', async () => {
+    const entries = [
+      { type: 'reasoning.summary', summary: 'thinking' },
+      signature,
+    ];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        completion({
+          content: 'answer',
+          reasoning_details: entries,
+          tool_calls: [
+            {
+              ...toolCall,
+              extra_content: { google: { thought_signature: 'existing' } },
+            },
+          ],
+        }),
+      ),
+    );
+    const result = await createLanguageModel(instance, modelId).doGenerate({
+      prompt: [],
+    });
+    expect(result.content).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'reasoning',
+          text: 'thinking',
+          providerMetadata: { openrouter: { reasoning_details: entries } },
+        }),
+        expect.objectContaining({
+          type: 'text',
+          providerMetadata: { openrouter: { reasoning_details: entries } },
+        }),
+        expect.objectContaining({
+          type: 'tool-call',
+          providerMetadata: {
+            openrouter: {
+              thoughtSignature: 'existing',
+              reasoning_details: entries,
+            },
+          },
+        }),
+      ]),
+    );
+  });
+
+  it('accumulates reasoning text and summaries and preserves end metadata', async () => {
+    const fragments = [
+      {
+        type: 'reasoning.text',
+        text: 'Think ',
+        format: 'test',
+        index: 0,
+        signature: 'signed',
+      },
+      { type: 'reasoning.text', text: 'more', format: 'test', index: 0 },
+      { type: 'reasoning.summary', summary: 'Summary ', index: 1 },
+      { type: 'reasoning.summary', summary: 'done', index: 1 },
+      signature,
+    ];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        sse([
+          ...fragments.map((entry) => ({ reasoning_details: [entry] })),
+          { content: 'answer' },
+        ]),
+      ),
+    );
+    const result = await createLanguageModel(instance, modelId).doStream({
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }],
+    });
+    const parts = [];
+    for await (const part of result.stream) parts.push(part);
+    const expected = [
+      { ...fragments[0], text: 'Think more' },
+      { ...fragments[2], summary: 'Summary done' },
+      signature,
+    ];
+    expect(
+      parts
+        .filter((part) => part.type === 'reasoning-delta')
+        .map((part) => part.delta)
+        .join(''),
+    ).toBe('Think moreSummary done');
+    for (const part of parts)
+      if (
+        part.type === 'reasoning-end' ||
+        part.type === 'text-end' ||
+        part.type === 'finish'
+      )
+        expect(part.providerMetadata?.openrouter?.reasoning_details).toEqual(
+          expected,
+        );
+  });
+});
 
 describe('OpenRouter decision models', () => {
   it('discovers the separate decisions catalog and deduplicates models', async () => {

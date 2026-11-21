@@ -5,25 +5,22 @@ import {
   mkdir,
   open,
   readdir,
+  readFile,
   rename,
   rm,
   writeFile,
 } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, dirname, join, relative } from 'node:path';
 
 import { parse, stringify } from 'yaml';
 import { z } from 'zod';
 
 import { parseSkillId } from '@/skills';
-import {
-  LOW_TOKEN_ID_MAX_LENGTH,
-  LOW_TOKEN_ID_MIN_LENGTH,
-  randomLowTokenID,
-} from '@/utils/random-low-token-id';
 
 import {
   capSources,
   type Fact,
+  type FactVersion,
   formatFacts,
   MAX_FACT_HISTORY,
   parseFacts,
@@ -31,11 +28,11 @@ import {
 
 const wordIdSchema = z
   .string()
-  .min(LOW_TOKEN_ID_MIN_LENGTH)
-  .max(LOW_TOKEN_ID_MAX_LENGTH)
+  .min(6)
+  .max(24)
   .regex(/^(?:[a-z]+|(?:[A-Z][a-z]+){3})$/);
 const text = z.string().trim().min(1).max(200);
-export const entityIdSchema = z
+const legacyEntityIdSchema = z
   .union([z.uuid(), wordIdSchema])
   .describe(
     'Immutable entity ID: three concatenated capitalized dictionary words, a legacy lowercase word ID, or a legacy UUID.',
@@ -159,10 +156,12 @@ const storedLoadOnSchema = z
       return parsed.success ? [parsed.data] : [];
     }),
   );
-export const relationSchema = z
+const legacyRelationSchema = z
   .object({
     target: z.discriminatedUnion('kind', [
-      z.object({ kind: z.literal('entity'), id: entityIdSchema }).strict(),
+      z
+        .object({ kind: z.literal('entity'), id: legacyEntityIdSchema })
+        .strict(),
       z
         .object({
           kind: z.literal('skill'),
@@ -187,22 +186,60 @@ export const relationSchema = z
   })
   .strict();
 
+// Keep spelling and casing; only enforce portable, link-safe file names.
+export function normalizeEntityName(value: string): string {
+  let name = value
+    .normalize('NFC')
+    .replace(/[/\\:*?"<>|#[\]^\p{Cc}]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/^[\s.]+|[\s.]+$/g, '')
+    .slice(0, 100);
+  while (Buffer.byteLength(name) > 200) name = name.slice(0, -1);
+  name = name.replace(/[\s.]+$/g, '');
+  if (/^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name))
+    name = `_${name}`;
+  return name;
+}
+const entityKey = (id: string) => id.normalize('NFC').toLowerCase();
+export const entityIdSchema = z
+  .string()
+  .max(201)
+  .refine((id) => {
+    const parts = id.split('/');
+    return (
+      parts.length === 2 &&
+      entityTypeSchema.safeParse(parts[0]).success &&
+      !!parts[1] &&
+      parts[1].length >= 2 &&
+      normalizeEntityName(parts[1]) === parts[1]
+    );
+  }, 'Expected type/Name, e.g. person/Ada Lovelace')
+  .describe(
+    'Type-qualified memory name, e.g. person/Ada Lovelace. No .md extension.',
+  );
+export const relationSchema = legacyRelationSchema.extend({
+  target: z.discriminatedUnion('kind', [
+    z.object({ kind: z.literal('entity'), id: entityIdSchema }).strict(),
+    legacyRelationSchema.shape.target.options[1],
+  ]),
+});
+
 export const entityFieldsSchema = z
   .object({
-    title: text
+    name: text
       .min(2)
       .describe(
-        'Short canonical name, key or handle. Not a description; not a trigger.',
+        'Canonical name as people write it. Becomes the filename; unique within its type (ignoring case). Unsafe filename/link characters become spaces. Not a description.',
       ),
     entityType: entityTypeSchema.describe(
-      'Lowercase kebab-case kind the thing actually is. Reuse fitting existing type, else new. Wrong type: change it with updateEntity; ID and relations kept.',
+      'Lowercase kebab-case kind the thing actually is. Reuse fitting existing type, else new. Wrong type: change it with updateEntity; its path changes and references follow.',
     ),
     loadOn: z
       .array(loadMatcherSchema)
       .max(50)
       .default([])
       .describe(
-        'Dedicated auto-load triggers; any one fires. Title and LinkedIdentities already trigger; never repeat them.',
+        'Dedicated auto-load triggers; any one fires. Name and LinkedIdentities already trigger; never repeat them.',
       ),
     relatedTo: z.array(relationSchema).max(100).default([]),
     linkedIdentities: z
@@ -226,7 +263,7 @@ export const entityPatchSchema = entityFieldsSchema.partial().extend({
 
 // The filename is the identity; v3 frontmatter never repeats it. Unknown
 // properties (including a stale Id) are ignored on read and dropped on write.
-const currentFrontmatterSchema = z.object({
+const v3FrontmatterSchema = z.object({
   FormatVersion: z.literal(3),
   Title: text.min(2),
   CreatedAt: z.iso.datetime(),
@@ -234,23 +271,29 @@ const currentFrontmatterSchema = z.object({
   LastReadAt: z.iso.datetime().nullable(),
   LinkedIdentities: z.array(linkedIdentitySchema).max(30).default([]),
   LoadOn: storedLoadOnSchema,
-  RelatedTo: z.array(relationSchema).max(100),
+  RelatedTo: z.array(legacyRelationSchema).max(100),
   TrustScore: z.literal(2),
   AuthorityScore: z.literal(5),
   /** IDs of entities merged into this one; they resolve here. Omitted when empty. */
-  MergedFrom: z.array(entityIdSchema).min(1).max(100).optional(),
+  MergedFrom: z.array(legacyEntityIdSchema).min(1).max(100).optional(),
 });
 
 // Preserve existing UUID documents without rewriting their identities or references.
 const uuidFrontmatterSchema = z.object({
   FormatVersion: z.literal(2),
   Id: z.uuid(),
-  ...currentFrontmatterSchema.omit({ FormatVersion: true }).shape,
+  ...v3FrontmatterSchema.omit({ FormatVersion: true }).shape,
 });
-const frontmatterSchema = z.union([
-  currentFrontmatterSchema,
+const oldFrontmatterSchema = z.union([
+  v3FrontmatterSchema,
   uuidFrontmatterSchema,
 ]);
+const frontmatterSchema = v3FrontmatterSchema
+  .omit({ Title: true, MergedFrom: true, RelatedTo: true, FormatVersion: true })
+  .extend({
+    FormatVersion: z.literal(4),
+    RelatedTo: z.array(relationSchema).max(100),
+  });
 
 // Retain the original document contract for forward conversion of flat notes.
 const legacyFrontmatterSchema = uuidFrontmatterSchema.extend({
@@ -263,6 +306,8 @@ export interface MemoryEntity {
   /** Derived from the filename. */
   id: string;
   entityType: string;
+  /** Derived from the file name, not stored in frontmatter. */
+  name: string;
   frontmatter: z.infer<typeof frontmatterSchema>;
   sections: Record<string, Fact[]>;
 }
@@ -305,8 +350,8 @@ export interface EntityStore {
   ): Promise<MemoryEntity>;
   /**
    * Folds `dropId` into `keepId` (see `mergedEntity`), repoints every
-   * relation targeting `dropId`, deletes its file and records it as an alias
-   * of `keepId`. Restores all written files on failure.
+   * relation and whole-name mention targeting `dropId`, then deletes its file.
+   * A temporary journal completes interrupted changes; no aliases are retained.
    */
   merge(
     keepId: string,
@@ -327,7 +372,7 @@ export function renderEntity(
 ): string {
   const identities = entity.frontmatter.LinkedIdentities;
   return [
-    `# ${entity.frontmatter.Title}`,
+    `# ${entity.name}`,
     ...(identities.length
       ? [`IDs: ${identities.map(formatIdentity).join('; ')}`]
       : []),
@@ -400,23 +445,6 @@ function combineRelations(
   return [...byTarget.values()];
 }
 
-/** Relations with `from` targets pointing at `to` instead. */
-function repoint(
-  relations: readonly Relation[],
-  from: string,
-  to: string,
-  self: string,
-): Relation[] {
-  return combineRelations(
-    relations.map((relation) =>
-      relation.target.kind === 'entity' && relation.target.id === from
-        ? { ...relation, target: { kind: 'entity', id: to } }
-        : relation,
-    ),
-    [self],
-  );
-}
-
 /**
  * `keep` after absorbing `drop`: sections joined by name, equal facts
  * combined (sources and `was:` history kept within caps), identities,
@@ -460,20 +488,13 @@ export function mergedEntity(
       LinkedIdentities: identities,
       LoadOn: dedupeLoadOn(
         [...frontmatter.LoadOn, ...drop.frontmatter.LoadOn],
-        frontmatter.Title,
+        keep.name,
         identities,
       ),
       RelatedTo: combineRelations(
         [...frontmatter.RelatedTo, ...drop.frontmatter.RelatedTo],
         [keep.id, drop.id],
       ),
-      MergedFrom: [
-        ...new Set([
-          ...(frontmatter.MergedFrom ?? []),
-          drop.id,
-          ...(drop.frontmatter.MergedFrom ?? []),
-        ]),
-      ],
     },
   };
 }
@@ -490,38 +511,62 @@ function validateSections(sections: Record<string, Fact[]>): void {
 
 function serialize(entity: MemoryEntity): string {
   frontmatterSchema.parse(entity.frontmatter);
+  entityIdSchema.parse(entity.id);
   validateSections(entity.sections);
-  return `---\n${stringify(entity.frontmatter)}---\n\n${Object.entries(
+  const content = `---\n${stringify(entity.frontmatter)}---\n\n${Object.entries(
     entity.sections,
   )
     .map(([name, facts]) => `## ${name}\n\n${formatFacts(facts)}`)
     .join('\n\n')}\n`;
+  if (Buffer.byteLength(content) > 500_000)
+    throw new Error('Entity exceeds size limit');
+  return content;
 }
 
 function deserialize(
   content: string,
   id: string,
   folder?: string,
-): { entity: MemoryEntity; legacy: boolean } {
+): { entity: MemoryEntity; legacy: boolean; old?: LegacyFields } {
   const match = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/.exec(content);
   if (!match?.[1] || match[2] === undefined)
     throw new Error('Missing entity frontmatter');
   const raw = parse(match[1], { maxAliasCount: 0 });
-  let frontmatter: MemoryEntity['frontmatter'];
+  let old: LegacyFields | undefined;
   let entityType: string;
   if (raw?.FormatVersion === 1) {
     const legacy = legacyFrontmatterSchema.parse(raw);
+    if (legacy.Id !== id.split('/').at(-1))
+      throw new Error('Legacy ID does not match filename');
     entityType = entityTypeSchema.parse(legacy.EntityType);
     if (folder !== undefined && folder !== entityType)
       throw new Error('Legacy entity type does not match folder');
-    const { EntityType: _type, ...fields } = legacy;
-    frontmatter = { ...fields, FormatVersion: 2 };
+    const {
+      EntityType: _type,
+      Id: _id,
+      FormatVersion: _version,
+      ...fields
+    } = legacy;
+    old = fields;
   } else {
-    frontmatter = frontmatterSchema.parse(raw);
     entityType = entityTypeSchema.parse(folder);
+    if (raw?.FormatVersion !== 4) {
+      const legacy = oldFrontmatterSchema.parse(raw);
+      if ('Id' in legacy && legacy.Id !== id.split('/').at(-1))
+        throw new Error('Legacy ID does not match filename');
+      const { FormatVersion: _version, ...fields } = legacy;
+      old = fields;
+    }
   }
-  if ('Id' in frontmatter && frontmatter.Id !== id)
-    throw new Error('Entity identity does not match filename');
+  const frontmatter = old
+    ? {
+        ...frontmatterSchema
+          .omit({ RelatedTo: true })
+          .parse({ ...old, FormatVersion: 4 }),
+        RelatedTo: old.RelatedTo as Relation[],
+      }
+    : frontmatterSchema.parse(raw);
+  const name = id.includes('/') ? id.slice(id.indexOf('/') + 1) : id;
   const sections: Record<string, Fact[]> = Object.create(null);
   for (const section of match[2].split(/^## /m).slice(1)) {
     const line = section.indexOf('\n');
@@ -532,8 +577,9 @@ function deserialize(
   }
   validateSections(sections);
   return {
-    entity: { id, entityType, frontmatter, sections },
-    legacy: raw.FormatVersion === 1,
+    entity: { id, entityType, name, frontmatter, sections },
+    legacy: !!old,
+    old,
   };
 }
 
@@ -541,6 +587,7 @@ class EntityStoreModule implements EntityStore {
   private readonly entities = new Map<string, MemoryEntity>();
   private starting: Promise<void> | undefined;
   private work = Promise.resolve();
+  private interrupted = false;
 
   constructor(private readonly directory: string) {}
 
@@ -551,15 +598,9 @@ class EntityStoreModule implements EntityStore {
   list(): MemoryEntity[] {
     return structuredClone([...this.entities.values()]);
   }
-  /** Merged IDs resolve to the entity they were merged into. */
   get(id: string): MemoryEntity | null {
     entityIdSchema.parse(id);
-    const entity =
-      this.entities.get(id) ??
-      [...this.entities.values()].find((candidate) =>
-        candidate.frontmatter.MergedFrom?.includes(id),
-      );
-    return structuredClone(entity ?? null);
+    return structuredClone(this.entities.get(entityKey(id)) ?? null);
   }
 
   create(
@@ -572,16 +613,20 @@ class EntityStoreModule implements EntityStore {
       const identities = dedupeIdentities(input.linkedIdentities);
       this.checkIdentities(identities);
       const entity: MemoryEntity = {
-        id: this.allocateId(),
+        id: this.availableId(input.entityType, input.name),
+        name: normalizeEntityName(input.name),
         entityType: input.entityType,
         frontmatter: {
-          FormatVersion: 3,
-          Title: input.title,
+          FormatVersion: 4,
           CreatedAt: at,
           LastUpdatedAt: at,
           LastReadAt: null,
           LinkedIdentities: identities,
-          LoadOn: dedupeLoadOn(input.loadOn, input.title, identities),
+          LoadOn: dedupeLoadOn(
+            input.loadOn,
+            normalizeEntityName(input.name),
+            identities,
+          ),
           RelatedTo: input.relatedTo,
           TrustScore: 2,
           AuthorityScore: 5,
@@ -618,28 +663,37 @@ class EntityStoreModule implements EntityStore {
         ...Object.entries(entity.sections),
         ...Object.entries(sections),
       ]);
+      const previousId = entity.id;
       entity.entityType = patch.entityType ?? entity.entityType;
+      entity.name = normalizeEntityName(patch.name ?? entity.name);
+      entity.id = this.availableId(entity.entityType, entity.name, previousId);
       const previous = entity.frontmatter;
       const identities = patch.linkedIdentities
         ? dedupeIdentities(patch.linkedIdentities)
         : previous.LinkedIdentities;
-      // `id` may be a merged alias; the resolved entity is the owner.
-      this.checkIdentities(identities, entity.id);
-      const title = patch.title ?? previous.Title;
+      this.checkIdentities(identities, previousId);
       entity.frontmatter = {
         ...previous,
-        Title: title,
         LinkedIdentities: identities,
         LoadOn: dedupeLoadOn(
           patch.loadOn ?? previous.LoadOn,
-          title,
+          entity.name,
           identities,
         ),
         RelatedTo: patch.relatedTo ?? previous.RelatedTo,
         LastUpdatedAt: new Date().toISOString(),
       };
-      await this.persist(entity);
-      return structuredClone(entity);
+      if (entity.id === previousId) await this.persist(entity);
+      else
+        await this.identityChange({
+          moves: [
+            { from: previousId, to: entity.id, path: `${previousId}.md` },
+          ],
+          documents: [{ id: entity.id, content: serialize(entity) }],
+        });
+      const saved = this.get(entity.id);
+      if (!saved) throw new Error('Saved entity is missing');
+      return saved;
     });
   }
 
@@ -680,52 +734,13 @@ class EntityStoreModule implements EntityStore {
         throw new Error('Entity changed; read both again before merging');
       const merged = mergedEntity(keep, drop);
       merged.frontmatter.LastUpdatedAt = new Date().toISOString();
-      const referrers = [...this.entities.values()]
-        .filter(
-          (entity) =>
-            entity.id !== keep.id &&
-            entity.id !== drop.id &&
-            entity.frontmatter.RelatedTo.some(
-              ({ target }) => target.kind === 'entity' && target.id === drop.id,
-            ),
-        )
-        .map((entity) => structuredClone(entity));
-      // Kept entity first: once it lists the alias, every reference to the
-      // dropped ID resolves even if the steps below are interrupted.
-      const written: MemoryEntity[] = [];
-      try {
-        await this.persist(merged);
-        written.push(keep);
-        for (const referrer of referrers) {
-          await this.persist({
-            ...referrer,
-            frontmatter: {
-              ...referrer.frontmatter,
-              RelatedTo: repoint(
-                referrer.frontmatter.RelatedTo,
-                drop.id,
-                keep.id,
-                referrer.id,
-              ),
-              LastUpdatedAt: new Date().toISOString(),
-            },
-          });
-          written.push(referrer);
-        }
-        await rm(this.file(drop));
-        this.entities.delete(drop.id);
-      } catch (error) {
-        const reason = error instanceof Error ? error.message : String(error);
-        const failed: string[] = [];
-        for (const original of written.reverse())
-          await this.persist(original).catch(() => failed.push(original.id));
-        throw new Error(
-          failed.length
-            ? `Merge failed (${reason}) and could not be undone for ${failed.join(', ')}; read those entities and fix them`
-            : `Merge failed (${reason}); nothing changed`,
-        );
-      }
-      return structuredClone(merged);
+      await this.identityChange({
+        moves: [{ from: drop.id, to: keep.id, path: `${drop.id}.md` }],
+        documents: [{ id: keep.id, content: serialize(merged) }],
+      });
+      const saved = this.get(keep.id);
+      if (!saved) throw new Error('Merged entity is missing');
+      return saved;
     });
   }
 
@@ -752,32 +767,31 @@ class EntityStoreModule implements EntityStore {
       const owner = owners.get(identityKey(identity));
       if (owner)
         throw new Error(
-          `Linked identity "${formatIdentity(identity)}" already belongs to entity ${owner.id} (${owner.frontmatter.Title}); update that entity instead`,
+          `Linked identity "${formatIdentity(identity)}" already belongs to entity ${owner.id} (${owner.name}); update that entity instead`,
         );
     }
   }
 
-  private allocateId(): string {
-    // Check serialized identity, not word tuple: concatenation is ambiguous.
-    // Called only inside the store's serialized creation queue.
-    for (let attempt = 0; attempt < 100; attempt++) {
-      const id = randomLowTokenID();
-      // Merged IDs stay taken: old references resolve to the kept entity.
-      const taken = [...this.entities.values()].flatMap((entity) => [
-        entity.id,
-        ...(entity.frontmatter.MergedFrom ?? []),
-      ]);
-      if (
-        !taken.some((existing) => existing.toLowerCase() === id.toLowerCase())
-      )
-        return id;
-    }
-    throw new Error('Could not allocate a unique entity ID after 100 attempts');
+  private availableId(type: string, raw: string, self?: string): string {
+    const id = `${entityTypeSchema.parse(type)}/${normalizeEntityName(raw)}`;
+    entityIdSchema.parse(id);
+    const other = this.entities.get(entityKey(id));
+    if (other && other.id !== self)
+      throw new Error(
+        `Entity ${other.id} already exists; update it or choose a more specific name`,
+      );
+    return id;
   }
 
   private enqueue<T>(action: () => Promise<T>): Promise<T> {
     const previous = this.work;
-    const result = this.start().then(() => previous.then(action));
+    const result = this.start().then(() =>
+      previous.then(() => {
+        if (this.interrupted)
+          throw new Error('Memory change interrupted; restart to finish it');
+        return action();
+      }),
+    );
     this.work = result.then(
       () => undefined,
       () => undefined,
@@ -792,11 +806,7 @@ class EntityStoreModule implements EntityStore {
   }
 
   private file(entity: MemoryEntity): string {
-    return join(
-      this.directory,
-      entityTypeSchema.parse(entity.entityType),
-      `${entity.id}.md`,
-    );
+    return join(this.directory, `${entityIdSchema.parse(entity.id)}.md`);
   }
 
   private async persist(entity: MemoryEntity): Promise<void> {
@@ -811,45 +821,129 @@ class EntityStoreModule implements EntityStore {
     await mkdir(folder, { recursive: true, mode: 0o700 });
     if (!(await lstat(folder)).isDirectory())
       throw new Error('Ontology folder must be a plain directory');
-    const previous = this.entities.get(entity.id);
-    const file = join(folder, `${entity.id}.md`);
+    const file = this.file(entity);
     const temporary = `${file}.${randomUUID()}.tmp`;
     try {
       await writeFile(temporary, content, { flag: 'wx', mode: 0o600 });
-      if (previous && previous.entityType !== entity.entityType) {
-        // Move first: if interrupted before rewriting, the old valid document
-        // remains at the new folder and startup derives its type from that path.
-        const oldFolder = join(this.directory, previous.entityType);
-        if (!(await lstat(oldFolder)).isDirectory())
-          throw new Error('Ontology folder must be a plain directory');
-        const oldFile = join(oldFolder, `${entity.id}.md`);
-        await rename(oldFile, file);
-        try {
-          await rename(temporary, file);
-        } catch (error) {
-          await rename(file, oldFile);
-          throw error;
-        }
-      } else {
-        await rename(temporary, file);
+      const handle = await open(temporary, 'r+');
+      try {
+        await handle.sync();
+      } finally {
+        await handle.close();
       }
-      this.entities.set(entity.id, structuredClone(entity));
+      await rename(temporary, file);
+      this.entities.set(entityKey(entity.id), structuredClone(entity));
     } finally {
       await rm(temporary, { force: true });
     }
   }
 
+  /** Journal final document contents, not just names: replay is idempotent even
+   * when one new name equals another old name or a merge stops mid-write. */
+  private async commit(journal: MovesJournal): Promise<void> {
+    validateJournal(journal);
+    const file = join(this.directory, '.moves.json');
+    const temporary = `${file}.${randomUUID()}.tmp`;
+    const handle = await open(temporary, 'wx', 0o600);
+    try {
+      await handle.writeFile(JSON.stringify(journal));
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await rename(temporary, file);
+    try {
+      await this.applyMoves(journal);
+      await rm(file);
+    } catch (error) {
+      this.interrupted = true;
+      throw new Error('Memory change interrupted; restart to finish it', {
+        cause: error,
+      });
+    }
+  }
+
+  private async applyMoves(journal: MovesJournal): Promise<void> {
+    validateJournal(journal);
+    // Delete sources before writing final snapshots. A case-only rename must
+    // remove the old directory entry on case-insensitive filesystems, too.
+    for (const move of journal.moves) {
+      if (!move.path) continue;
+      const file = join(this.directory, move.path);
+      const parent = dirname(file);
+      const stat = await lstat(parent);
+      if (!stat.isDirectory())
+        throw new Error('Memory source must be a plain directory');
+      if (
+        (await readdir(parent)).some(
+          (name) => name.normalize('NFC') === basename(file).normalize('NFC'),
+        )
+      )
+        await rm(file);
+    }
+    for (const document of journal.documents) {
+      const { entity } = deserialize(
+        document.content,
+        document.id,
+        document.id.split('/')[0],
+      );
+      await this.persist(entity);
+    }
+    for (const { from } of journal.moves) {
+      if (
+        !journal.documents.some(({ id }) => entityKey(id) === entityKey(from))
+      )
+        this.entities.delete(entityKey(from));
+    }
+  }
+
+  private async identityChange(journal: MovesJournal): Promise<void> {
+    const replacements = new Map(
+      journal.moves.map(({ from, to }) => [from, to]),
+    );
+    const next = new Map(this.entities);
+    for (const { from } of journal.moves) next.delete(entityKey(from));
+    for (const { id, content } of journal.documents)
+      next.set(
+        entityKey(id),
+        deserialize(content, id, id.split('/')[0]).entity,
+      );
+    const documents: MovesJournal['documents'] = [];
+    for (const entity of next.values()) {
+      const rewritten = replaceReferences(entity, replacements);
+      if (
+        JSON.stringify(rewritten) !==
+        JSON.stringify(this.entities.get(entityKey(entity.id)))
+      )
+        documents.push({ id: entity.id, content: serialize(rewritten) });
+    }
+    await this.commit({ moves: journal.moves, documents });
+  }
+
   private async load(): Promise<void> {
     await this.ensureDirectory();
-    const documents: { file: string; entity: MemoryEntity; legacy: boolean }[] =
-      [];
+    let pending: MovesJournal | undefined;
+    try {
+      pending = movesJournalSchema.parse(
+        JSON.parse(await readFile(join(this.directory, '.moves.json'), 'utf8')),
+      );
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    if (pending) {
+      await this.applyMoves(pending);
+      await rm(join(this.directory, '.moves.json'));
+      this.entities.clear();
+    }
+    const documents: LoadedDocument[] = [];
     const ids = new Set<string>();
     const readDocument = async (
       file: string,
       name: string,
       folder?: string,
     ) => {
-      const id = entityIdSchema.parse(name.slice(0, -3));
+      const stem = name.slice(0, -3).normalize('NFC');
+      const id = folder ? `${folder}/${stem}` : stem;
       const handle = await open(
         file,
         constants.O_RDONLY |
@@ -861,10 +955,13 @@ class EntityStoreModule implements EntityStore {
         if (!stat.isFile() || stat.size > 500_000)
           throw new Error('Invalid entity file');
         const content = await handle.readFile('utf8');
-        const { entity, legacy } = deserialize(content, id, folder);
-        if (ids.has(id)) throw new Error('Duplicate entity identity');
-        ids.add(id);
-        documents.push({ file, entity, legacy });
+        const { entity, legacy, old } = deserialize(content, id, folder);
+        if (!legacy) entityIdSchema.parse(id);
+        else legacyEntityIdSchema.parse(stem);
+        const key = legacy ? stem : entityKey(id);
+        if (ids.has(key)) throw new Error('Duplicate entity identity');
+        ids.add(key);
+        documents.push({ file, entity, legacy, old, stem });
       } catch (error) {
         throw new Error(`Invalid entity ${file}`, { cause: error });
       } finally {
@@ -892,19 +989,13 @@ class EntityStoreModule implements EntityStore {
     // A merge interrupted before deleting the dropped file left it next to
     // the kept entity, which already holds its content: finish the merge.
     const merged = new Set(
-      documents.flatMap(({ entity }) => entity.frontmatter.MergedFrom ?? []),
+      documents.flatMap(({ old }) => old?.MergedFrom ?? []),
     );
-    for (const { file, entity } of documents)
-      if (merged.has(entity.id)) await rm(file);
-    documents.splice(
-      0,
-      documents.length,
-      ...documents.filter(({ entity }) => !merged.has(entity.id)),
-    );
+    const active = documents.filter(({ stem }) => !merged.has(stem));
     // One external identity belongs to exactly one entity; files edited by hand
     // must not break that before any note is converted or served.
     const owners = new Map<string, string>();
-    for (const { entity } of documents)
+    for (const { entity } of active)
       for (const identity of entity.frontmatter.LinkedIdentities) {
         const key = identityKey(identity);
         const owner = owners.get(key);
@@ -914,39 +1005,181 @@ class EntityStoreModule implements EntityStore {
           );
         owners.set(key, entity.id);
       }
-    // Validate all notes before converting any. Renaming before rewriting lets
-    // startup resume a conversion interrupted between those two atomic steps.
-    for (const { file, entity, legacy } of documents) {
-      if (legacy) {
-        const folder = join(this.directory, entity.entityType);
-        await mkdir(folder, { recursive: true, mode: 0o700 });
-        if (!(await lstat(folder)).isDirectory())
-          throw new Error('Ontology folder must be a plain directory');
-        const target = join(folder, `${entity.id}.md`);
-        if (target !== file) await rename(file, target);
-        await this.persist(entity);
-      } else {
-        this.entities.set(entity.id, entity);
-      }
+    const used = new Set(
+      active
+        .filter(({ legacy }) => !legacy)
+        .map(({ entity }) => entityKey(entity.id)),
+    );
+    const replacements = new Map<string, string>();
+    const moves: MovesJournal['moves'] = [];
+    for (const document of active.sort((a, b) =>
+      a.file.localeCompare(b.file),
+    )) {
+      const { entity, old, stem } = document;
+      if (!old) continue;
+      const base = normalizeEntityName(old.Title);
+      const name = base.length >= 2 ? base : 'Untitled';
+      let candidate = `${entity.entityType}/${name}`;
+      for (let suffix = 2; used.has(entityKey(candidate)); suffix++)
+        candidate = `${entity.entityType}/${normalizeEntityName(name.slice(0, 95))} ${suffix}`;
+      used.add(entityKey(candidate));
+      replacements.set(stem, candidate);
+      moves.push({
+        from: stem,
+        to: candidate,
+        path: relative(this.directory, document.file),
+      });
+      entity.id = candidate;
+      entity.name = candidate.slice(candidate.indexOf('/') + 1);
     }
-    // A merge interrupted while repointing left relations to dropped IDs.
-    const owner = new Map<string, string>();
-    for (const entity of this.entities.values())
-      for (const alias of entity.frontmatter.MergedFrom ?? [])
-        owner.set(alias, entity.id);
-    for (const entity of [...this.entities.values()]) {
-      let relations = entity.frontmatter.RelatedTo;
-      for (const { target } of entity.frontmatter.RelatedTo) {
-        const to = target.kind === 'entity' && owner.get(target.id);
-        if (to) relations = repoint(relations, target.id, to, entity.id);
-      }
-      if (relations !== entity.frontmatter.RelatedTo)
-        await this.persist({
-          ...entity,
-          frontmatter: { ...entity.frontmatter, RelatedTo: relations },
-        });
+    for (const { entity, old } of active)
+      for (const alias of old?.MergedFrom ?? [])
+        if (!replacements.has(alias)) replacements.set(alias, entity.id);
+    // Finish legacy merges without retaining the alias list.
+    for (const document of documents.filter(({ stem }) => merged.has(stem))) {
+      const to = replacements.get(document.stem);
+      if (!to) throw new Error('Unresolved legacy merge');
+      moves.push({
+        from: document.stem,
+        to,
+        path: relative(this.directory, document.file),
+      });
     }
+    const final = active.map(({ entity }) =>
+      replaceReferences(entity, replacements),
+    );
+    // Serialize everything before publishing the journal: invalid inputs leave
+    // every original file untouched. Snapshots make replay independent of names.
+    const snapshots = final.map((entity) => ({
+      id: entity.id,
+      content: serialize(entity),
+    }));
+    if (moves.length) await this.commit({ moves, documents: snapshots });
+    else
+      for (const entity of final)
+        this.entities.set(entityKey(entity.id), entity);
   }
+}
+
+interface LoadedDocument {
+  file: string;
+  entity: MemoryEntity;
+  legacy: boolean;
+  old?: LegacyFields;
+  stem: string;
+}
+
+/** Historical fields used only by the forward document conversion. */
+type LegacyFields = Omit<z.infer<typeof v3FrontmatterSchema>, 'FormatVersion'>;
+const movesJournalSchema = z
+  .object({
+    moves: z.array(
+      z
+        .object({
+          from: z.string().min(1),
+          to: entityIdSchema,
+          path: z
+            .string()
+            .regex(/^(?:[a-z][a-z0-9]*(?:-[a-z0-9]+)*\/)?[^/\\]+\.md$/)
+            .refine(
+              (path) =>
+                !path.split('/').some((part) => part === '.' || part === '..'),
+            )
+            .optional(),
+        })
+        .strict(),
+    ),
+    documents: z.array(
+      z
+        .object({ id: entityIdSchema, content: z.string().max(500_000) })
+        .strict(),
+    ),
+  })
+  .strict();
+type MovesJournal = z.infer<typeof movesJournalSchema>;
+
+function validateJournal(journal: MovesJournal): void {
+  movesJournalSchema.parse(journal);
+  const ids = new Set<string>();
+  for (const document of journal.documents) {
+    const key = entityKey(document.id);
+    if (ids.has(key)) throw new Error('Duplicate journal document');
+    ids.add(key);
+    const { entity, legacy } = deserialize(
+      document.content,
+      document.id,
+      document.id.split('/')[0],
+    );
+    if (legacy) throw new Error('Journal must contain current documents');
+    serialize(entity);
+  }
+  for (const move of journal.moves)
+    if (!ids.has(entityKey(move.to)))
+      throw new Error('Journal is missing a destination');
+}
+
+/**
+ * Rewrite qualified names (or legacy IDs) in links, facts, and fact history.
+ * Match whole references, never substrings, and never rewrite citation IDs.
+ */
+function replaceReferences(
+  entity: MemoryEntity,
+  replacements: ReadonlyMap<string, string>,
+): MemoryEntity {
+  if (!replacements.size) return entity;
+  const id = entity.id;
+  const pattern = new RegExp(
+    `(?<![\\p{L}\\p{N}_/-])(?:${[...replacements.keys()]
+      .sort((a, b) => b.length - a.length)
+      .map((key) => key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      .join('|')})(?![\\p{L}\\p{N}_/-])`,
+    'gu',
+  );
+  const replace = (text: string) =>
+    text.replace(pattern, (match) => replacements.get(match) ?? match);
+  const version = ({ text, sources }: FactVersion): FactVersion => ({
+    text: replace(text),
+    sources: sources.map((source) => ({
+      ...source,
+      label: replace(source.label),
+    })),
+  });
+  const sections: Record<string, Fact[]> = Object.create(null);
+  for (const [name, facts] of Object.entries(entity.sections))
+    sections[name] = facts.map((fact) => ({
+      ...version(fact),
+      history: fact.history.map(version),
+    }));
+  const { RelatedTo, ...frontmatter } = entity.frontmatter;
+  return {
+    ...entity,
+    id,
+    sections,
+    frontmatter: {
+      ...frontmatter,
+      RelatedTo: RelatedTo.some(
+        ({ target }) => target.kind === 'entity' && replacements.has(target.id),
+      )
+        ? combineRelations(
+            RelatedTo.map((relation) =>
+              relation.target.kind === 'entity' &&
+              replacements.has(relation.target.id)
+                ? {
+                    ...relation,
+                    target: {
+                      kind: 'entity',
+                      id:
+                        replacements.get(relation.target.id) ??
+                        relation.target.id,
+                    },
+                  }
+                : relation,
+            ),
+            [id],
+          )
+        : RelatedTo,
+    },
+  };
 }
 
 export function createEntityStore(directory: string): EntityStore {

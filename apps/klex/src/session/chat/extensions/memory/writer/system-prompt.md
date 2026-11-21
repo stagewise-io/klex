@@ -32,13 +32,13 @@ readEntity shows `[Section#n]` and `was n:`. New evidence changes a fact → sup
 
 General = always loaded: what it is, role, standing rules (≤600 chars). Sections only for situational detail, max 4, short topic names ("Known pitfalls"). Each fact once.
 
-Wrong type → updateEntity `entityType`; ID and relations stay.
+A memory's name is its filename, qualified by type: `person/Ada Lovelace`. Keep natural spelling and casing; tools enforce safe filenames. Names must be unique within a type, ignoring case. Different people with the same name need a specific qualifier. Wrong name or type → updateEntity `name` or `entityType`; the file moves and references follow. Use the returned path afterward; old paths are not aliases.
 
 Two entities are the same identity → mergeEntities (read both first; keep the older or richer one). Only on clear evidence: same full name in the same workspace, someone says so, or one is an empty accidental copy. Never on first name alone. Unsure → relation "possibly same as" on both, keep both. Not undoable.
 
 # People
 
-- Title = name as people write it. Sender ID as LinkedIdentity: slack `{user}`, linear `{actorId}`, chat `{senderId}`. Copy IDs exactly from the metadata; tool rejects IDs not in the activities.
+- Name = name as people write it. Sender ID as LinkedIdentity: slack `{user}`, linear `{actorId}`, chat `{senderId}`. Copy IDs exactly from the metadata; tool rejects IDs not in the activities.
 - relatedTo with `inverse`: one call links both sides. `{ target, relationship: "manages", inverse: "reports to", strength }`. Strength: one exchange 20, recurring 50, frequent 80. No evidence of nature → "talks with".
 - Role, from behavior, not claims alone: what they ask for, assign, approve, review, decide, own; who defers to them, whom they defer to. Tentative until repeated ("seems to own billing"). One-line gist in General (`Leads klex backend; assigns self Linear issues; approves PRs`), detail in section `Role and work`: responsibilities, areas owned, tasks they gave self or did, decision rights (`Can approve deploys`, `Asks, does not decide, on pricing`). Role changes → supersede. Same for bots acting as people, plus who runs or instructs them. Trust/Authority frontmatter scores are document scores set by tools, not a person's authority.
 - Style, from their own messages only: language, formality, length, emoji, typos, humor and sarcasm (record that they use it, so self does not take it literally), directness, tone under stress, what they want in replies. One-line gist in General ("German, casual, short, emojis"), detail in section `Communication style`. Pattern, not one message: first time tentative ("seems casual"); one odd message never overwrites, clear lasting change supersedes.
@@ -60,7 +60,7 @@ Build a mental model of every product self works on, from everything self saw: c
 
 Create type `event` for noteworthy happenings, work or not: call, outage, heated disagreement, odd behavior, joke that stuck, praise, complaint. Small is fine. Not routine messages or tool runs.
 
-- Title: date first. `2026-10-12 Ada–Glenn deploy dispute`.
+- Name: date first. `2026-10-12 Ada–Glenn deploy dispute`.
 - General: what happened, who, outcome, mood. `Ada pushed back on Friday deploys; Glenn agreed to Mondays`.
 - relatedTo every person involved (≥2) plus issues or systems, with inverse `took part in`.
 - Lessons about a person also go on that person.

@@ -1,18 +1,18 @@
-import { randomInt } from 'node:crypto';
 import {
   chmod,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
-  rename,
   rm,
+  stat,
   symlink,
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   createEntityStore,
@@ -20,25 +20,21 @@ import {
   entityIdSchema,
   entityRevision,
   loadMatcherSchema,
+  normalizeEntityName,
   renderEntity,
 } from './entities';
 import { type Fact, formatFacts, parseFacts } from './facts';
-
-vi.mock('node:crypto', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('node:crypto')>();
-  return { ...actual, randomInt: vi.fn(actual.randomInt) };
-});
 
 const directories: string[] = [];
 async function fixture() {
   const directory = await mkdtemp(join(tmpdir(), 'memory-entities-'));
   directories.push(directory);
-  const store = createEntityStore(join(directory, 'entities'));
+  const root = join(directory, 'entities');
+  const store = createEntityStore(root);
   await store.start();
-  return { store, directory };
+  return { store, root };
 }
 afterEach(async () => {
-  vi.mocked(randomInt).mockReset();
   await Promise.all(
     directories
       .splice(0)
@@ -46,255 +42,224 @@ afterEach(async () => {
   );
 });
 const fields = () =>
-  entityFieldsSchema.parse({ title: 'Alex Smith', entityType: 'person' });
+  entityFieldsSchema.parse({ name: 'Alex Smith', entityType: 'person' });
 const fact = (text: string, id = 'abc'): Fact => ({
   text,
   sources: [{ label: '2026-11-12 · slack', id }],
   history: [],
 });
-const sections = (input: Record<string, string>) =>
-  Object.fromEntries(
-    Object.entries(input).map(([name, text]) => [name, [fact(text)]]),
-  );
+const sections = (text = 'Engineer') => ({ General: [fact(text)] });
+const relation = (id: string, strength = 50) => ({
+  target: { kind: 'entity' as const, id },
+  strength,
+  relationship: 'knows',
+});
+const legacyId = '11111111-1111-4111-8111-111111111111';
+// Literal released document contracts; independent of the current serializer.
+const legacyNote = (
+  version = 3,
+  title = 'Alex Smith',
+  extra = '',
+  body = 'Engineer',
+) =>
+  `---\nFormatVersion: ${version}\n${version < 3 ? `Id: ${legacyId}\n` : ''}${version === 1 ? 'EntityType: person\n' : ''}Title: ${title}\nCreatedAt: 2026-11-12T00:00:00.000Z\nLastUpdatedAt: 2026-11-12T00:00:00.000Z\nLastReadAt: null\nLinkedIdentities: []\nLoadOn: []\nRelatedTo: []\nTrustScore: 2\nAuthorityScore: 5\n${extra}---\n\n## General\n\n- ${body} [old](history:abc)\n`;
+async function seed(root: string, path: string, content: string) {
+  const file = join(root, path);
+  await mkdir(dirname(file), { recursive: true });
+  await writeFile(file, content);
+  return file;
+}
+async function restart(root: string) {
+  const store = createEntityStore(root);
+  await store.start();
+  return store;
+}
 
-describe('factual entities', () => {
-  it('retries final-string collisions across types and restarts', async () => {
-    const { store, directory } = await fixture();
-    const random = vi.mocked(randomInt as (max: number) => number);
-    random.mockReturnValueOnce(0).mockReturnValueOnce(1).mockReturnValueOnce(2);
-    const first = await store.create(fields(), sections({ General: 'First' }));
-    expect(first.id).toBe('TheOfTo');
-    random
-      .mockReturnValueOnce(0)
-      .mockReturnValueOnce(1)
-      .mockReturnValueOnce(2)
-      .mockReturnValueOnce(3)
-      .mockReturnValueOnce(4)
-      .mockReturnValueOnce(5);
-    const second = await store.create(
-      { ...fields(), entityType: 'project' },
-      sections({ General: 'Second' }),
+describe('named factual entities', () => {
+  it('uses the type-qualified filename, with no title or identity frontmatter', async () => {
+    const { store, root } = await fixture();
+    const entity = await store.create(fields(), sections());
+    expect(entity.id).toBe('person/Alex Smith');
+    expect(entity.name).toBe('Alex Smith');
+    const content = await readFile(join(root, `${entity.id}.md`), 'utf8');
+    expect(content).toContain('FormatVersion: 4');
+    expect(content).not.toMatch(/^(Title|Id|EntityType|MergedFrom):/m);
+    expect((await restart(root)).get(entity.id)).toEqual(entity);
+  });
+  it('rejects duplicate names ignoring case, including concurrent creation and restart', async () => {
+    const { store, root } = await fixture();
+    const results = await Promise.allSettled([
+      store.create(fields(), sections()),
+      store.create({ ...fields(), name: 'alex smith' }, sections()),
+    ]);
+    expect(results.filter(({ status }) => status === 'fulfilled')).toHaveLength(
+      1,
     );
-    expect(second.id).toBe('AndWasWith');
-    const restored = createEntityStore(join(directory, 'entities'));
-    await restored.start();
-    random
-      .mockReturnValueOnce(0)
-      .mockReturnValueOnce(1)
-      .mockReturnValueOnce(2)
-      .mockReturnValueOnce(6)
-      .mockReturnValueOnce(7)
-      .mockReturnValueOnce(8);
-    const third = await restored.create(
-      fields(),
-      sections({ General: 'Third' }),
-    );
-    expect(third.id).toBe('HisIsHad');
-    random.mockReturnValue(0);
-    await restored.create(fields(), sections({ General: 'Repeat' }));
     await expect(
-      restored.create(fields(), sections({ General: 'Collision' })),
-    ).rejects.toThrow('100 attempts');
-    expect(restored.list()).toHaveLength(4);
-  });
-  it('preserves lowercase IDs and avoids case-only filename collisions', async () => {
-    const { store, directory } = await fixture();
-    const random = vi.mocked(randomInt as (max: number) => number);
-    random.mockReturnValueOnce(0).mockReturnValueOnce(1).mockReturnValueOnce(2);
-    const entity = await store.create(fields(), sections({ General: 'Fact' }));
-    const file = join(directory, 'entities', 'person', `${entity.id}.md`);
-    const lowercase = entity.id.toLowerCase();
-    const content = await readFile(file, 'utf8');
-    await rm(file);
-    const legacyFile = join(directory, 'entities', 'person', `${lowercase}.md`);
-    await writeFile(legacyFile, content);
-    const restored = createEntityStore(join(directory, 'entities'));
-    await restored.start();
-    expect(restored.get(lowercase)?.id).toBe(lowercase);
-    random
-      .mockReturnValueOnce(0)
-      .mockReturnValueOnce(1)
-      .mockReturnValueOnce(2)
-      .mockReturnValueOnce(3)
-      .mockReturnValueOnce(4)
-      .mockReturnValueOnce(5);
-    const created = await restored.create(
-      fields(),
-      sections({ General: 'New' }),
+      (await restart(root)).create(fields(), sections()),
+    ).rejects.toThrow('already exists');
+    const project = await store.create(
+      { ...fields(), entityType: 'project' },
+      sections(),
     );
-    expect(created.id).toBe('AndWasWith');
-    expect(await readFile(legacyFile, 'utf8')).toBe(content);
+    expect(project.id).toBe('project/Alex Smith');
+    expect(store.get('person/alex smith')?.id).toBe('person/Alex Smith');
   });
-  it('keeps existing UUID notes and mixed references across restart and title/type updates', async () => {
-    const { store, directory } = await fixture();
-    const id = '11111111-1111-4111-8111-111111111111';
-    const folder = join(directory, 'entities', 'person');
-    await mkdir(folder, { recursive: true });
-    const file = join(folder, `${id}.md`);
-    const legacy = `---\nFormatVersion: 2\nId: ${id}\nTitle: Legacy person\nCreatedAt: 2026-11-12T00:00:00.000Z\nLastUpdatedAt: 2026-11-12T00:00:00.000Z\nLastReadAt: null\nLoadOn:\n  - type: contentPattern\n    pattern: Legacy person\n  - type: pushNotificationMetadataPattern\n    conditions:\n      - path: user\n        match: exact\n        value: U1\nRelatedTo: []\nTrustScore: 2\nAuthorityScore: 5\n---\n\n## General\n\nOld fact\n\nSources: [old](history:abc)\n`;
-    await writeFile(file, legacy);
-    const restored = createEntityStore(join(directory, 'entities'));
-    await restored.start();
-    expect(await readFile(file, 'utf8')).toBe(legacy);
-    // Unscoped legacy matchers are dropped; prose becomes a cited fact.
-    expect(restored.get(id)?.frontmatter.LoadOn).toEqual([
-      { type: 'contentPattern', pattern: 'Legacy person' },
-    ]);
-    expect(restored.get(id)?.sections.General).toEqual([
-      { text: 'Old fact', sources: [{ label: 'old', id: 'abc' }], history: [] },
-    ]);
-    const entity = await restored.create(
+  it('normalizes unsafe names while leaving spelling and casing to the writer', async () => {
+    const { store } = await fixture();
+    expect(normalizeEntityName(' .. acme/web: API?  .. ')).toBe('acme web API');
+    expect(normalizeEntityName('CON')).toBe('_CON');
+    expect(normalizeEntityName('e\u0301')).toBe('é');
+    const entity = await store.create(
+      { ...fields(), name: 'acme/web: API?' },
+      sections(),
+    );
+    expect(entity.id).toBe('person/acme web API');
+    for (const id of [
+      '../escape',
+      'person/../escape',
+      'Person/Name',
+      'person/.',
+      'person/a/b',
+      'person/Name.md/other',
+      'person/Bad#Name',
+    ])
+      expect(entityIdSchema.safeParse(id).success).toBe(false);
+    await expect(
+      store.create({ ...fields(), name: '///' }, sections()),
+    ).rejects.toThrow();
+  });
+  it('renames and retypes files and every relation and whole qualified mention together', async () => {
+    const { store, root } = await fixture();
+    const entity = await store.create(fields(), sections());
+    const peer = await store.create(
       {
-        ...fields(),
-        relatedTo: [
+        name: 'Sam Lee',
+        entityType: 'person',
+        relatedTo: [relation(entity.id)],
+      },
+      {
+        General: [
           {
-            target: { kind: 'entity', id },
-            strength: 50,
-            relationship: 'colleague',
+            ...fact(
+              `Works with [[${entity.id}]], not x${entity.id} or ${entity.id}son`,
+            ),
+            history: [
+              {
+                text: `Met ${entity.id}.`,
+                sources: [{ label: entity.id, id: 'evidence-id' }],
+              },
+            ],
           },
         ],
       },
-      sections({ General: 'New fact' }),
     );
-    expect(entityIdSchema.safeParse(entity.id).success).toBe(true);
-    await restored.update(
-      id,
-      {
-        title: 'Renamed',
-        entityType: 'project',
-        relatedTo: [
-          {
-            target: { kind: 'entity', id: entity.id },
-            strength: 50,
-            relationship: 'colleague',
-          },
-        ],
-      },
+    const moved = await store.update(
+      entity.id,
+      { name: 'Alex Jones', entityType: 'project' },
       {},
     );
-    const again = createEntityStore(join(directory, 'entities'));
-    await again.start();
-    expect(again.get(id)?.id).toBe(id);
-    expect(again.get(id)?.frontmatter.RelatedTo[0]?.target.id).toBe(entity.id);
-    expect(again.get(entity.id)?.frontmatter.RelatedTo[0]?.target.id).toBe(id);
-    expect(store.list()).toHaveLength(0);
-    for (const invalid of [
-      '../escape',
-      'Uppercase',
-      'a-b-c',
-      '',
-      'a'.repeat(1000),
-    ])
-      expect(entityIdSchema.safeParse(invalid).success).toBe(false);
-  });
-  it('persists separate identities with identical titles and reloads markdown', async () => {
-    const { store, directory } = await fixture();
-    const first = await store.create(
-      fields(),
-      sections({
-        General: 'Engineer',
-        Details: 'Project owner',
-      }),
+    expect(moved.id).toBe('project/Alex Jones');
+    expect(store.get(entity.id)).toBeNull();
+    expect(moved.frontmatter.CreatedAt).toBe(entity.frontmatter.CreatedAt);
+    expect(moved.sections).toEqual(entity.sections);
+    await expect(readFile(join(root, `${entity.id}.md`))).rejects.toMatchObject(
+      { code: 'ENOENT' },
     );
-    const second = await store.create(
-      fields(),
-      sections({ General: 'Designer' }),
+    const restored = await restart(root);
+    expect(restored.get(moved.id)).toEqual(moved);
+    const changed = restored.get(peer.id);
+    if (!changed) throw new Error('Missing peer');
+    expect(changed.frontmatter.RelatedTo).toEqual([relation(moved.id)]);
+    expect(changed.sections.General?.[0]?.text).toBe(
+      `Works with [[${moved.id}]], not x${entity.id} or ${entity.id}son`,
     );
-    expect(first.id).not.toBe(second.id);
-    expect(first.frontmatter).toMatchObject({
-      TrustScore: 2,
-      AuthorityScore: 5,
-      LastReadAt: null,
-      LoadOn: [],
+    expect(changed.sections.General?.[0]?.history[0]).toEqual({
+      text: `Met ${moved.id}.`,
+      sources: [{ label: moved.id, id: 'evidence-id' }],
     });
-    const file = await readFile(
-      join(directory, 'entities', 'person', `${first.id}.md`),
-      'utf8',
-    );
-    expect(file).toContain('## General');
-    expect(file).toContain('FormatVersion: 3');
-    expect(file).not.toContain('EntityType:');
-    expect(file).not.toMatch(/^Id:/m);
-    expect(first.entityType).toBe('person');
-    const restored = createEntityStore(join(directory, 'entities'));
-    await restored.start();
-    expect(restored.list()).toHaveLength(2);
-    expect(restored.get(first.id)).toEqual(first);
+    expect(await readdir(root)).not.toContain('.moves.json');
   });
-  it('ignores unknown frontmatter, including a stale Id, and drops it on write', async () => {
-    const { store, directory } = await fixture();
-    const entity = await store.create(fields(), sections({ General: 'Fact' }));
-    const file = join(directory, 'entities', 'person', `${entity.id}.md`);
-    await writeFile(
-      file,
-      (await readFile(file, 'utf8')).replace(
-        'FormatVersion: 3',
-        'FormatVersion: 3\nId: SomethingElseEntirely\ntags:\n  - obsidian',
-      ),
-    );
-    const restored = createEntityStore(join(directory, 'entities'));
-    await restored.start();
-    expect(restored.get(entity.id)).toEqual(entity);
-    await restored.update(entity.id, { title: 'Alex Jones' }, {});
-    const rewritten = await readFile(file, 'utf8');
-    expect(rewritten).not.toMatch(/^(Id|tags):/m);
+  it('supports case-only renames without duplicate directory entries', async () => {
+    const { store, root } = await fixture();
+    const entity = await store.create(fields(), sections());
+    const updated = await store.update(entity.id, { name: 'ALEX SMITH' }, {});
+    expect(await readdir(join(root, 'person'))).toEqual(['ALEX SMITH.md']);
+    expect((await restart(root)).get(updated.id)).toEqual(updated);
   });
-  it('protects dates and General, preserves sections and serializes concurrent updates', async () => {
+  it('rejects rename collisions without modifying either entity', async () => {
     const { store } = await fixture();
+    const first = await store.create(fields(), sections());
+    const second = await store.create(
+      { ...fields(), name: 'Other Person' },
+      sections(),
+    );
+    await expect(
+      store.update(second.id, { name: 'alex smith' }, {}),
+    ).rejects.toThrow('already exists');
+    expect(store.get(first.id)).toEqual(first);
+    expect(store.get(second.id)).toEqual(second);
+  });
+  it('preserves omitted collections, dates and sections, rejects stale writes and protects General', async () => {
+    const { store } = await fixture();
+    const identity = { server: 'slack', match: { user: 'U1' } };
     const original = await store.create(
-      fields(),
-      sections({
-        General: 'Engineer',
-        Details: 'Original',
-      }),
+      {
+        ...fields(),
+        linkedIdentities: [identity],
+        loadOn: [{ type: 'contentPattern', pattern: 'deployment team' }],
+      },
+      sections(),
     );
-    const id = original.id;
-    await Promise.all([
-      store.update(id, { title: 'Alex Jones' }, {}),
-      store.update(id, {}, sections({ Extra: 'More' })),
+    const results = await Promise.allSettled([
+      store.update(
+        original.id,
+        {},
+        { Details: [fact('More')] },
+        [],
+        entityRevision(original),
+      ),
+      store.update(original.id, {}, {}, [], entityRevision(original)),
     ]);
-    expect(store.get(id)?.sections).toEqual(
-      sections({ General: 'Engineer', Details: 'Original', Extra: 'More' }),
+    expect(results.filter(({ status }) => status === 'fulfilled')).toHaveLength(
+      1,
     );
-    expect(store.get(id)?.frontmatter.CreatedAt).toBe(
-      original.frontmatter.CreatedAt,
-    );
-    expect(store.get(id)?.frontmatter.LastReadAt).toBeNull();
-    await store.recordRead(id);
-    expect(store.get(id)?.frontmatter.LastReadAt).toBeTruthy();
-    await expect(store.update(id, {}, {}, ['General'])).rejects.toThrow(
-      'General',
-    );
+    const updated = store.get(original.id);
+    if (!updated) throw new Error('Missing entity');
+    expect(updated.frontmatter.LinkedIdentities).toEqual([identity]);
+    expect(updated.frontmatter.LoadOn).toEqual(original.frontmatter.LoadOn);
+    expect(updated.frontmatter.CreatedAt).toBe(original.frontmatter.CreatedAt);
+    expect(updated.sections.Details).toEqual([fact('More')]);
+    await store.recordRead(original.id);
+    expect(store.get(original.id)?.frontmatter.LastReadAt).toBeTruthy();
+    await expect(
+      store.update(original.id, {}, {}, ['General']),
+    ).rejects.toThrow('General');
     expect(() =>
-      store.update(id, { CreatedAt: 'forged' } as never, {}),
+      store.update(original.id, { CreatedAt: 'forged' } as never, {}),
     ).toThrow();
-    expect(() => store.get('../outside')).toThrow();
-    expect(() =>
-      entityFieldsSchema.parse({ ...fields(), TrustScore: 5 }),
-    ).toThrow();
+    const cleared = await store.update(
+      original.id,
+      { linkedIdentities: [], loadOn: [], relatedTo: [] },
+      {},
+    );
+    expect(cleared.frontmatter.LoadOn).toEqual([]);
+    expect(cleared.frontmatter.LinkedIdentities).toEqual([]);
   });
-  it('round-trips fact history and renders only current facts for the reader', async () => {
-    const { store } = await fixture();
-    const general: Fact = {
+  it('keeps fact history on disk but renders only current facts and requested detail', async () => {
+    const { store, root } = await fixture();
+    const general = {
       ...fact('Lives in Berlin', 'new'),
       history: [
-        {
-          text: 'Lives in Paris',
-          sources: [{ label: '2026-11-12 · slack', id: 'old' }],
-        },
+        { text: 'Lives in Paris', sources: [{ label: 'old', id: 'old' }] },
       ],
     };
-    const markdown = formatFacts([general]);
-    expect(markdown).toBe(
-      '- Lives in Berlin [2026-11-12 · slack](history:new)\n  - was: Lives in Paris [2026-11-12 · slack](history:old)',
-    );
-    expect(parseFacts(markdown)).toEqual([general]);
+    expect(parseFacts(formatFacts([general]))).toEqual([general]);
     const identity = { server: 'slack', match: { user: 'U1' } };
     const entity = await store.create(
       {
         ...fields(),
         linkedIdentities: [identity],
-        // Equal to the title or identity, so redundant.
         loadOn: [
           { type: 'contentPattern', pattern: 'alex smith' },
           {
@@ -311,49 +276,19 @@ describe('factual entities', () => {
       '# Alex Smith\n\nIDs: slack user=U1\n\n## General\n- Lives in Berlin',
     );
     expect(renderEntity(entity, ['Details'])).toContain('- Details');
+    expect((await restart(root)).get(entity.id)?.sections.General).toEqual([
+      general,
+    ]);
     await expect(
       store.create(
-        { ...fields(), linkedIdentities: [identity] },
-        sections({ General: 'Other' }),
+        { ...fields(), name: 'Other Person', linkedIdentities: [identity] },
+        sections(),
       ),
-    ).rejects.toThrow('already belongs to entity');
+    ).rejects.toThrow('already belongs');
   });
-  it('supports extensible ontology and all three matcher types', async () => {
-    const { store } = await fixture();
-    const entity = await store.create(
-      {
-        ...fields(),
-        entityType: 'custom-domain-type',
-        loadOn: [
-          {
-            type: 'pushNotificationMetadataPattern',
-            server: 'slack',
-            conditions: [
-              { path: 'user', match: 'exact', value: 'U123' },
-              { path: 'channel', match: 'glob', value: 'C0*' },
-              {
-                path: 'payload.issue.identifier',
-                match: 'regex',
-                value: '^KLEX-\\d+$',
-              },
-            ],
-          },
-          {
-            type: 'toolCallPattern',
-            mcpServer: 'slack',
-            toolName: 'reply',
-            arguments: [],
-          },
-        ],
-      },
-      sections({ General: 'Fact' }),
-    );
-    expect(entity.frontmatter.LoadOn).toHaveLength(2);
-    expect(() =>
-      loadMatcherSchema.parse({ type: 'toolCallPattern' }),
-    ).toThrow();
+  it('validates extensible ontology and matcher conditions', () => {
     for (const condition of [
-      { path: 'user', match: 'fuzzy', value: 'U123' },
+      { path: 'user', match: 'fuzzy', value: 'U1' },
       { path: 'user', match: 'regex', value: '(' },
       { path: 'user', match: 'glob', value: 5 },
     ])
@@ -364,417 +299,205 @@ describe('factual entities', () => {
           conditions: [condition],
         }),
       ).toThrow();
-  });
-  it('preserves matcher and relation collections when a patch omits them', async () => {
-    const { store } = await fixture();
-    const target = await store.create(
-      fields(),
-      sections({ General: 'Colleague' }),
-    );
-    const entity = await store.create(
-      {
-        ...fields(),
-        loadOn: [{ type: 'contentPattern', pattern: 'deployment team' }],
-        relatedTo: [
-          {
-            target: { kind: 'entity', id: target.id },
-            strength: 75,
-            relationship: 'colleague',
-          },
+    expect(
+      entityFieldsSchema.parse({
+        name: 'Example',
+        entityType: 'custom-domain-type',
+        loadOn: [
+          { type: 'toolCallPattern', mcpServer: 'slack', arguments: [] },
         ],
-      },
-      sections({ General: 'Engineer' }),
-    );
-    const updated = await store.update(
-      entity.id,
-      { title: 'Alex Jones' },
-      sections({ Details: 'More' }),
-    );
-    expect(updated.frontmatter.RelatedTo).toEqual(entity.frontmatter.RelatedTo);
-    expect(updated.frontmatter.LoadOn).toEqual([
-      { type: 'contentPattern', pattern: 'deployment team' },
-    ]);
-    const cleared = await store.update(
-      entity.id,
-      { loadOn: [], relatedTo: [] },
-      {},
-    );
-    expect(cleared.frontmatter.RelatedTo).toEqual([]);
-    expect(cleared.frontmatter.LoadOn).toEqual([]);
+      }).entityType,
+    ).toBe('custom-domain-type');
   });
-  it('moves ontology folders while preserving identity, dates, sources and reloadability', async () => {
-    const { store, directory } = await fixture();
-    const original = await store.create(
-      fields(),
-      sections({ General: 'Fact' }),
-    );
-    const id = original.id;
-    const moved = await store.update(id, { entityType: 'project' }, {});
-    expect(moved.entityType).toBe('project');
-    expect(moved.id).toBe(id);
-    expect(moved.frontmatter.CreatedAt).toBe(original.frontmatter.CreatedAt);
-    expect(moved.sections).toEqual(original.sections);
-    await expect(
-      readFile(join(directory, 'entities', 'person', `${id}.md`)),
-    ).rejects.toMatchObject({ code: 'ENOENT' });
-    const restored = createEntityStore(join(directory, 'entities'));
-    await restored.start();
-    expect(restored.get(id)).toEqual(moved);
-    await mkdir(join(directory, 'entities', 'topic'));
-    await rename(
-      join(directory, 'entities', 'project', `${id}.md`),
-      join(directory, 'entities', 'topic', `${id}.md`),
-    );
-    const manuallyMoved = createEntityStore(join(directory, 'entities'));
-    await manuallyMoved.start();
-    expect(manuallyMoved.get(id)?.entityType).toBe('topic');
-    for (const entityType of [
-      '../escape',
-      'Person',
-      'nested/person',
-      '.',
-      '',
-    ]) {
-      expect(() => store.update(id, { entityType }, {})).toThrow();
-    }
-  });
-  it('converts flat v1 notes and resumes notes already moved before conversion', async () => {
-    const { store, directory } = await fixture();
-    const original = await store.create(
-      fields(),
-      sections({ General: 'Fact' }),
-    );
-    const file = join(directory, 'entities', 'person', `${original.id}.md`);
-    const id = '11111111-1111-4111-8111-111111111111';
-    const current = (await readFile(file, 'utf8')).replace(
-      'FormatVersion: 3',
-      `FormatVersion: 2\nId: ${id}`,
-    );
-    await rm(file);
-    const expected = {
-      ...original,
-      id,
-      frontmatter: { ...original.frontmatter, FormatVersion: 2, Id: id },
-    };
-    const legacy = current.replace(
-      'FormatVersion: 2',
-      'FormatVersion: 1\nEntityType: person',
-    );
-    const convertedFile = join(directory, 'entities', 'person', `${id}.md`);
-    const flat = join(directory, 'entities', `${id}.md`);
-    await writeFile(flat, legacy);
-    const migrated = createEntityStore(join(directory, 'entities'));
-    await migrated.start();
-    expect(migrated.get(id)).toEqual(expected);
-    expect(await readFile(convertedFile, 'utf8')).toBe(current);
-    await expect(readFile(flat)).rejects.toMatchObject({ code: 'ENOENT' });
-    const again = createEntityStore(join(directory, 'entities'));
-    await again.start();
-    expect(await readFile(convertedFile, 'utf8')).toBe(current);
-    await writeFile(convertedFile, legacy);
-    await createEntityStore(join(directory, 'entities')).start();
-    expect(await readFile(convertedFile, 'utf8')).toBe(current);
-  });
-  it('validates all documents before conversion and rejects duplicates and newer formats unchanged', async () => {
-    const { store, directory } = await fixture();
-    const entity = await store.create(fields(), sections({ General: 'Fact' }));
-    const file = join(directory, 'entities', 'person', `${entity.id}.md`);
-    const current = await readFile(file, 'utf8');
-    const legacy = current;
-    const flat = join(directory, 'entities', `${entity.id}.md`);
-    await writeFile(flat, legacy);
-    await expect(
-      createEntityStore(join(directory, 'entities')).start(),
-    ).rejects.toThrow('Invalid entity');
-    expect(await readFile(flat, 'utf8')).toBe(legacy);
-    expect(await readFile(file, 'utf8')).toBe(current);
-    await rm(flat);
-    const newer = current.replace('FormatVersion: 3', 'FormatVersion: 4');
-    await writeFile(file, newer);
-    await expect(
-      createEntityStore(join(directory, 'entities')).start(),
-    ).rejects.toThrow('Invalid entity');
-    expect(await readFile(file, 'utf8')).toBe(newer);
-    await writeFile(file, current);
-    await symlink(
-      join(directory, 'entities', 'person'),
-      join(directory, 'entities', 'project'),
-    );
-    await expect(
-      createEntityStore(join(directory, 'entities')).start(),
-    ).rejects.toThrow('plain directory');
-  });
-  it('retypes person to bot keeping ID, inbound relations, identities and facts', async () => {
-    const { store, directory } = await fixture();
-    const identity = { server: 'slack', match: { user: 'U123' } };
-    const entity = await store.create(
-      { ...fields(), linkedIdentities: [identity] },
-      sections({ General: 'Deploy helper', Style: 'Terse' }),
-    );
-    const relation = {
-      target: { kind: 'entity' as const, id: entity.id },
-      strength: 50,
-      relationship: 'works with',
-    };
-    const peer = await store.create(
-      { ...fields(), title: 'Sam Lee', relatedTo: [relation] },
-      sections({ General: 'Engineer' }),
-    );
-    const retyped = await store.update(entity.id, { entityType: 'bot' }, {});
-    const restored = createEntityStore(join(directory, 'entities'));
-    await restored.start();
-    expect(restored.get(entity.id)).toEqual(retyped);
-    expect(retyped).toMatchObject({
-      id: entity.id,
-      entityType: 'bot',
-      sections: entity.sections,
-      frontmatter: { LinkedIdentities: [identity] },
-    });
-    expect(restored.get(peer.id)?.frontmatter.RelatedTo).toEqual([relation]);
-  });
-  it('merges two entities, repoints relations and resolves the dropped ID', async () => {
-    const { store, directory } = await fixture();
-    const keep = await store.create(
-      {
-        ...fields(),
-        linkedIdentities: [{ server: 'slack', match: { user: 'U1' } }],
-        loadOn: [{ type: 'contentPattern', pattern: 'alex' }],
-      },
-      {
-        General: [fact('Engineer', 'a')],
-        Style: [fact('Terse', 'a')],
-      },
-    );
+  it('merges facts, identities and links without persistent aliases; names can be reused', async () => {
+    const { store, root } = await fixture();
+    const keep = await store.create(fields(), sections());
     const drop = await store.create(
       {
         ...fields(),
-        linkedIdentities: [{ server: 'linear', match: { userId: 'L1' } }],
-        loadOn: [{ type: 'contentPattern', pattern: 'alex' }],
+        name: 'Alex S',
+        linkedIdentities: [{ server: 'slack', match: { user: 'U1' } }],
       },
-      {
-        General: [fact('Engineer', 'b'), fact('Owns billing', 'b')],
-        Work: [fact('Ships Fridays', 'b')],
-      },
+      { General: [fact('Engineer', 'other'), fact('Owns billing')] },
     );
-    const toEntity = (id: string, strength: number, relationship: string) => ({
-      target: { kind: 'entity' as const, id },
-      strength,
-      relationship,
-    });
     const peer = await store.create(
       {
-        ...fields(),
-        title: 'Sam Lee',
-        relatedTo: [
-          toEntity(keep.id, 80, 'manages'),
-          toEntity(drop.id, 20, 'knows'),
-        ],
+        name: 'Sam Lee',
+        entityType: 'person',
+        relatedTo: [relation(keep.id, 80), relation(drop.id, 20)],
       },
-      sections({ General: 'Manager' }),
+      sections(`Met ${drop.id}`),
     );
-    const team = await store.create(
-      {
-        title: 'Billing',
-        entityType: 'team',
-        relatedTo: [toEntity(drop.id, 50, 'member')],
-      },
-      sections({ General: 'Billing team' }),
-    );
-    await store.update(
-      keep.id,
-      { relatedTo: [toEntity(drop.id, 30, 'same as')] },
-      {},
-    );
-    await store.update(
-      drop.id,
-      { relatedTo: [toEntity(team.id, 50, 'member of')] },
-      {},
-    );
-    const revision = (id: string) => {
-      const entity = store.get(id);
-      if (!entity) throw new Error('Missing entity');
-      return entityRevision(entity);
-    };
-    const stale = revision(keep.id);
-    await store.update(keep.id, { title: 'Alex Smith' }, {});
     await expect(
-      store.merge(keep.id, drop.id, stale, revision(drop.id)),
-    ).rejects.toThrow('read both again');
-
+      store.merge(keep.id, drop.id, 'stale', entityRevision(drop)),
+    ).rejects.toThrow('read both');
     const merged = await store.merge(
       keep.id,
       drop.id,
-      revision(keep.id),
-      revision(drop.id),
+      entityRevision(keep),
+      entityRevision(drop),
+    );
+    expect(merged.sections.General?.map(({ text }) => text)).toEqual([
+      'Engineer',
+      'Owns billing',
+    ]);
+    expect(merged.sections.General?.[0]?.sources.map(({ id }) => id)).toEqual([
+      'abc',
+      'other',
+    ]);
+    expect(merged.frontmatter.LinkedIdentities).toHaveLength(1);
+    expect(merged.frontmatter).not.toHaveProperty('MergedFrom');
+    const restored = await restart(root);
+    expect(restored.get(drop.id)).toBeNull();
+    expect(restored.get(peer.id)?.frontmatter.RelatedTo).toEqual([
+      relation(keep.id, 80),
+    ]);
+    expect(restored.get(peer.id)?.sections.General?.[0]?.text).toBe(
+      `Met ${keep.id}`,
+    );
+    await expect(restored.update(drop.id, {}, {})).rejects.toThrow(
+      'Unknown entity',
     );
     expect(
-      merged.sections.General?.map(({ text, sources }) => [
-        text,
-        sources.map(({ id }) => id),
-      ]),
-    ).toEqual([
-      ['Engineer', ['a', 'b']],
-      ['Owns billing', ['b']],
-    ]);
-    expect(Object.keys(merged.sections)).toEqual(['General', 'Style', 'Work']);
-    expect(merged.frontmatter.LinkedIdentities).toHaveLength(2);
-    expect(merged.frontmatter.LoadOn).toEqual([
-      { type: 'contentPattern', pattern: 'alex' },
-    ]);
-    expect(merged.frontmatter.RelatedTo).toEqual([
-      toEntity(team.id, 50, 'member of'),
-    ]);
-    expect(merged.frontmatter.MergedFrom).toEqual([drop.id]);
-    await expect(
-      readFile(join(directory, 'entities', 'person', `${drop.id}.md`)),
-    ).rejects.toMatchObject({ code: 'ENOENT' });
-
-    const restored = createEntityStore(join(directory, 'entities'));
-    await restored.start();
-    expect(restored.list()).toHaveLength(3);
-    expect(restored.get(drop.id)?.id).toBe(keep.id);
-    expect(restored.get(peer.id)?.frontmatter.RelatedTo).toEqual([
-      toEntity(keep.id, 80, 'manages'),
-    ]);
-    expect(restored.get(team.id)?.frontmatter.RelatedTo).toEqual([
-      toEntity(keep.id, 50, 'member'),
-    ]);
-    await expect(restored.merge(keep.id, drop.id, 'x', 'y')).rejects.toThrow(
-      'into itself',
-    );
+      (await restored.create({ ...fields(), name: drop.name }, sections())).id,
+    ).toBe(drop.id);
   });
-  it('finishes a merge interrupted before the dropped file was deleted', async () => {
-    const { store, directory } = await fixture();
-    const keep = await store.create(
-      fields(),
-      sections({ General: 'Engineer' }),
-    );
-    const drop = await store.create(fields(), sections({ General: 'Copy' }));
-    const dropFile = join(directory, 'entities', 'person', `${drop.id}.md`);
-    const dropped = await readFile(dropFile, 'utf8');
-    await store.merge(
-      keep.id,
-      drop.id,
-      entityRevision(keep),
-      entityRevision(drop),
-    );
-    await writeFile(dropFile, dropped);
-    const restored = createEntityStore(join(directory, 'entities'));
-    await restored.start();
-    expect(restored.list().map(({ id }) => id)).toEqual([keep.id]);
-    await expect(readFile(dropFile)).rejects.toMatchObject({ code: 'ENOENT' });
-  });
-  it('repoints relations a merge left on a dropped ID at startup', async () => {
-    const { store, directory } = await fixture();
-    const keep = await store.create(
-      fields(),
-      sections({ General: 'Engineer' }),
-    );
-    const drop = await store.create(fields(), sections({ General: 'Copy' }));
-    const team = await store.create(
-      {
-        title: 'Billing',
-        entityType: 'team',
-        relatedTo: [
-          {
-            target: { kind: 'entity', id: drop.id },
-            strength: 50,
-            relationship: 'member',
-          },
-        ],
-      },
-      sections({ General: 'Billing team' }),
-    );
-    const teamFile = join(directory, 'entities', 'team', `${team.id}.md`);
-    const unrepointed = await readFile(teamFile, 'utf8');
-    await store.merge(
-      keep.id,
-      drop.id,
-      entityRevision(keep),
-      entityRevision(drop),
-    );
-    await writeFile(teamFile, unrepointed);
-    const restored = createEntityStore(join(directory, 'entities'));
-    await restored.start();
-    expect(restored.get(team.id)?.frontmatter.RelatedTo).toEqual([
-      {
-        target: { kind: 'entity', id: keep.id },
-        strength: 50,
-        relationship: 'member',
-      },
-    ]);
-  });
-  it('updates a merged entity through its dropped ID', async () => {
-    const { store } = await fixture();
-    const identity = { server: 'slack', match: { user: 'U1' } };
-    const keep = await store.create(
-      { ...fields(), linkedIdentities: [identity] },
-      sections({ General: 'Engineer' }),
-    );
-    const drop = await store.create(fields(), sections({ General: 'Copy' }));
-    await store.merge(
-      keep.id,
-      drop.id,
-      entityRevision(keep),
-      entityRevision(drop),
-    );
-    const updated = await store.update(
-      drop.id,
-      { linkedIdentities: [identity] },
-      {},
-    );
-    expect(updated.id).toBe(keep.id);
-  });
-  it.skipIf(process.getuid?.() === 0)(
-    'restores written files when a merge step fails',
-    async () => {
-      const { store, directory } = await fixture();
-      const keep = await store.create(
-        fields(),
-        sections({ General: 'Engineer' }),
+  it.each([1, 2, 3])(
+    'converts released format %s, removes title and IDs, preserves evidence and reruns without writes',
+    async (version) => {
+      const { root } = await fixture();
+      const stem = version === 3 ? 'DamnSlaveGod' : legacyId;
+      const source = await seed(
+        root,
+        version === 1 ? `${stem}.md` : `person/${stem}.md`,
+        legacyNote(version),
       );
-      const drop = await store.create(fields(), sections({ General: 'Copy' }));
-      await store.create(
-        {
-          title: 'Billing',
-          entityType: 'team',
-          relatedTo: [
-            {
-              target: { kind: 'entity', id: drop.id },
-              strength: 50,
-              relationship: 'member',
-            },
-          ],
-        },
-        sections({ General: 'Billing team' }),
-      );
-      const keepFile = join(directory, 'entities', 'person', `${keep.id}.md`);
-      const before = await readFile(keepFile, 'utf8');
-      const teamFolder = join(directory, 'entities', 'team');
-      await chmod(teamFolder, 0o500);
-      try {
-        await expect(
-          store.merge(
-            keep.id,
-            drop.id,
-            entityRevision(keep),
-            entityRevision(drop),
-          ),
-        ).rejects.toThrow('nothing changed');
-      } finally {
-        await chmod(teamFolder, 0o700);
-      }
-      expect(await readFile(keepFile, 'utf8')).toBe(before);
-      expect(store.get(keep.id)).toEqual(keep);
-      expect(store.get(drop.id)).toEqual(drop);
+      const store = await restart(root);
+      const entity = store.get('person/Alex Smith');
+      if (!entity) throw new Error('Missing converted entity');
+      expect(entity.frontmatter.CreatedAt).toBe('2026-11-12T00:00:00.000Z');
+      expect(entity.sections.General?.[0]?.sources).toEqual([
+        { label: 'old', id: 'abc' },
+      ]);
+      await expect(readFile(source)).rejects.toMatchObject({ code: 'ENOENT' });
+      const target = join(root, 'person/Alex Smith.md');
+      const before = await readFile(target, 'utf8');
+      const beforeStat = await stat(target);
+      expect(before).not.toMatch(/^(Title|Id|MergedFrom):/m);
+      await restart(root);
+      expect(await readFile(target, 'utf8')).toBe(before);
+      expect((await stat(target)).mtimeMs).toBe(beforeStat.mtimeMs);
     },
   );
-  it('rejects symlinked entity roots', async () => {
-    const { directory } = await fixture();
-    const linked = join(directory, 'linked');
-    await symlink(join(directory, 'entities'), linked);
-    await expect(createEntityStore(linked).start()).rejects.toThrow(
-      'plain directory',
-    );
+  it('suffixes duplicate legacy titles within their type, not across types', async () => {
+    const { root } = await fixture();
+    await seed(root, 'person/AndWasWith.md', legacyNote());
+    await seed(root, 'person/TheOfTo.md', legacyNote(3, 'alex smith'));
+    await seed(root, 'project/HisIsHad.md', legacyNote());
+    expect(
+      (await restart(root))
+        .list()
+        .map(({ id }) => id)
+        .sort(),
+    ).toEqual([
+      'person/Alex Smith',
+      'person/alex smith 2',
+      'project/Alex Smith',
+    ]);
   });
+  it('repoints legacy links and aliases, finishes legacy merges and rewrites whole-ID history', async () => {
+    const { root } = await fixture();
+    await seed(
+      root,
+      'person/TheOfTo.md',
+      legacyNote(3, 'Alex Smith', 'MergedFrom:\n  - AndWasWith\n'),
+    );
+    await seed(root, 'person/AndWasWith.md', legacyNote(3, 'Duplicate'));
+    await seed(
+      root,
+      'team/HisIsHad.md',
+      legacyNote(
+        3,
+        'Billing',
+        '',
+        'Led by AndWasWith; not xAndWasWith',
+      ).replace(
+        'RelatedTo: []',
+        'RelatedTo:\n  - target: { kind: entity, id: AndWasWith }\n    strength: 50\n    relationship: knows',
+      ),
+    );
+    const store = await restart(root);
+    expect(store.list()).toHaveLength(2);
+    expect(store.get('team/Billing')?.frontmatter.RelatedTo).toEqual([
+      relation('person/Alex Smith'),
+    ]);
+    expect(store.get('team/Billing')?.sections.General?.[0]?.text).toBe(
+      'Led by person/Alex Smith; not xAndWasWith',
+    );
+    expect(
+      await readFile(join(root, 'person/Alex Smith.md'), 'utf8'),
+    ).not.toContain('MergedFrom');
+  });
+  it('validates every document before conversion and leaves invalid/newer files untouched', async () => {
+    const { root } = await fixture();
+    const old = await seed(root, 'person/TheOfTo.md', legacyNote());
+    const newer = await seed(root, 'person/AndWasWith.md', legacyNote(99));
+    await expect(restart(root)).rejects.toThrow('Invalid entity');
+    expect(await readFile(old, 'utf8')).toBe(legacyNote());
+    expect(await readFile(newer, 'utf8')).toBe(legacyNote(99));
+    expect(await readdir(root)).not.toContain('.moves.json');
+  });
+  it('rejects invalid legacy identities and symlinked roots and folders without changes', async () => {
+    const { root } = await fixture();
+    const old = await seed(root, 'person/TheOfTo.md', legacyNote());
+    const linked = `${root}-linked`;
+    directories.push(linked);
+    await symlink(root, linked);
+    await expect(restart(linked)).rejects.toThrow('plain directory');
+    await symlink(join(root, 'person'), join(root, 'project'));
+    await expect(restart(root)).rejects.toThrow('plain directory');
+    expect(await readFile(old, 'utf8')).toBe(legacyNote());
+  });
+  it('replays final snapshots when interrupted after source removal or partial writes', async () => {
+    const { store, root } = await fixture();
+    const entity = await store.create(fields(), sections());
+    const oldContent = await readFile(join(root, `${entity.id}.md`), 'utf8');
+    const id = 'project/New Name';
+    const journal = {
+      moves: [{ from: entity.id, to: id, path: `${entity.id}.md` }],
+      documents: [{ id, content: oldContent }],
+    };
+    await writeFile(join(root, '.moves.json'), JSON.stringify(journal));
+    await rm(join(root, `${entity.id}.md`));
+    const recovered = await restart(root);
+    expect(recovered.get(id)?.name).toBe('New Name');
+    expect(recovered.get(entity.id)).toBeNull();
+    // Replaying the same journal after a complete write is also safe.
+    await writeFile(join(root, '.moves.json'), JSON.stringify(journal));
+    expect((await restart(root)).get(id)).toEqual(recovered.get(id));
+  });
+  it.skipIf(process.getuid?.() === 0)(
+    'journals a failed rename and completes it on restart',
+    async () => {
+      const { store, root } = await fixture();
+      const entity = await store.create(fields(), sections());
+      const folder = join(root, 'project');
+      await mkdir(folder);
+      await chmod(folder, 0o500);
+      try {
+        await expect(
+          store.update(entity.id, { entityType: 'project' }, {}),
+        ).rejects.toThrow('restart');
+        await expect(
+          store.create({ ...fields(), name: 'Other Person' }, sections()),
+        ).rejects.toThrow('restart');
+      } finally {
+        await chmod(folder, 0o700);
+      }
+      expect((await restart(root)).get('project/Alex Smith')?.sections).toEqual(
+        entity.sections,
+      );
+      expect(await readdir(root)).not.toContain('.moves.json');
+    },
+  );
 });

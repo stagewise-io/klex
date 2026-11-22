@@ -88,6 +88,77 @@ const create = (id = source, text = 'Project owner') => ({
 });
 
 describe('memory writer tools', () => {
+  it('creates, searches, reads, relates, renames and merges namespace-qualified memories through tool schemas', async () => {
+    const { tools, entities } = await fixture();
+    const input = {
+      ...create(),
+      fields: {
+        name: 'stagewise-io/products/backend/klex',
+        entityType: 'project',
+      },
+    };
+    const created = (await call(tools, 'createEntity', input)) as {
+      id: string;
+    };
+    expect(created).toMatchObject({
+      status: 'created',
+      id: 'project/stagewise-io/products/backend/klex',
+    });
+    expect(
+      JSON.stringify(
+        await call(tools, 'listEntities', {
+          query: 'stagewise-io/products/backend/klex',
+        }),
+      ),
+    ).toContain(created.id);
+    const read = (await call(tools, 'readEntity', { id: created.id })) as {
+      revision: string;
+    };
+    expect(read.revision).toBeTruthy();
+    const peer = (await call(tools, 'createEntity', {
+      ...create(),
+      fields: {
+        name: 'other-org/web',
+        entityType: 'project',
+        relatedTo: [
+          {
+            target: { kind: 'entity', id: created.id },
+            relationship: 'uses',
+            inverse: 'used by',
+            strength: 50,
+          },
+        ],
+      },
+    })) as { id: string };
+    const latest = (await call(tools, 'readEntity', { id: created.id })) as {
+      revision: string;
+    };
+    const moved = (await call(tools, 'updateEntity', {
+      id: created.id,
+      revision: latest.revision,
+      fields: { name: 'stagewise-io/platform/klex' },
+      operations: [],
+    })) as { id: string };
+    expect(moved.id).toBe('project/stagewise-io/platform/klex');
+    expect(entities.get(peer.id)?.frontmatter.RelatedTo[0]?.target.id).toBe(
+      moved.id,
+    );
+    const keep = (await call(tools, 'readEntity', { id: moved.id })) as {
+      revision: string;
+    };
+    const drop = (await call(tools, 'readEntity', { id: peer.id })) as {
+      revision: string;
+    };
+    expect(
+      await call(tools, 'mergeEntities', {
+        keepId: moved.id,
+        dropId: peer.id,
+        keepRevision: keep.revision,
+        dropRevision: drop.revision,
+      }),
+    ).toMatchObject({ status: 'merged' });
+    expect(entities.get(peer.id)).toBeNull();
+  });
   it('reads and relates all skill namespaces but only writes learning', async () => {
     const { tools, registry, entities } = await fixture();
     await registry.replaceTemplateSkills([

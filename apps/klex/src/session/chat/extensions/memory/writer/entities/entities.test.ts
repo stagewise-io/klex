@@ -107,20 +107,24 @@ describe('named factual entities', () => {
   });
   it('normalizes unsafe names while leaving spelling and casing to the writer', async () => {
     const { store } = await fixture();
-    expect(normalizeEntityName(' .. acme/web: API?  .. ')).toBe('acme web API');
+    expect(normalizeEntityName(' .. acme/web: API?  .. ')).toBe('acme/web API');
     expect(normalizeEntityName('CON')).toBe('_CON');
     expect(normalizeEntityName('e\u0301')).toBe('é');
     const entity = await store.create(
       { ...fields(), name: 'acme/web: API?' },
       sections(),
     );
-    expect(entity.id).toBe('person/acme web API');
+    expect(entity.id).toBe('person/acme/web API');
     for (const id of [
       '../escape',
       'person/../escape',
       'Person/Name',
       'person/.',
-      'person/a/b',
+      'person//b',
+      'person/a/../b',
+      'person/a/./b',
+      'person/a/',
+      'person/a\\b',
       'person/Name.md/other',
       'person/Bad#Name',
     ])
@@ -128,6 +132,231 @@ describe('named factual entities', () => {
     await expect(
       store.create({ ...fields(), name: '///' }, sections()),
     ).rejects.toThrow();
+  });
+  it('creates deeply nested names, preserves slash identity, canonicalizes shared folders and reloads', async () => {
+    const { store, root } = await fixture();
+    const name = 'GitHub/stagewise-io/products/backend/klex';
+    const entity = await store.create(
+      { ...fields(), entityType: 'project', name },
+      sections(),
+    );
+    expect(entity.id).toBe(`project/${name}`);
+    expect(entity.name).toBe(name);
+    await store.recordRead(entity.id);
+    const second = await store.create(
+      {
+        ...fields(),
+        entityType: 'project',
+        name: 'github/STAGEWISE-IO/products/backend/web',
+      },
+      sections(),
+    );
+    expect(second.id).toBe('project/GitHub/stagewise-io/products/backend/web');
+    await expect(
+      store.create(
+        { ...fields(), entityType: 'project', name: name.toLowerCase() },
+        sections(),
+      ),
+    ).rejects.toThrow('already exists');
+    const flat = await store.create(
+      { ...fields(), entityType: 'project', name: name.replaceAll('/', ' ') },
+      sections(),
+    );
+    expect(flat.id).not.toBe(entity.id);
+    const restored = await restart(root);
+    expect(restored.list()).toHaveLength(3);
+    expect(restored.get(entity.id.toLowerCase())?.name).toBe(name);
+    expect(await readFile(join(root, `${entity.id}.md`), 'utf8')).toContain(
+      'Engineer',
+    );
+  });
+  it('renames, retypes and merges nested notes while rewriting whole references and preserving descendants', async () => {
+    const { store, root } = await fixture();
+    const original = await store.create(
+      { ...fields(), name: 'org/repo' },
+      sections(),
+    );
+    const child = await store.create(
+      { ...fields(), name: 'org/repo/child' },
+      sections(),
+    );
+    const peer = await store.create(
+      {
+        ...fields(),
+        name: 'other/team/Peer',
+        relatedTo: [relation(original.id)],
+      },
+      sections(`See [[${original.id}]], not ${original.id}/child`),
+    );
+    const moved = await store.update(
+      original.id,
+      { name: 'new/org/repo', entityType: 'project' },
+      {},
+    );
+    expect(store.get(peer.id)?.sections.General?.[0]?.text).toBe(
+      `See [[${moved.id}]], not ${original.id}/child`,
+    );
+    expect(store.get(peer.id)?.frontmatter.RelatedTo).toEqual([
+      relation(moved.id),
+    ]);
+    expect((await restart(root)).get(child.id)).toEqual(child);
+    const updatedPeer = store.get(peer.id);
+    if (!updatedPeer) throw new Error('Missing peer after rename');
+    await store.merge(
+      moved.id,
+      peer.id,
+      entityRevision(moved),
+      entityRevision(updatedPeer),
+    );
+    const restored = await restart(root);
+    expect(restored.get(peer.id)).toBeNull();
+    expect(restored.get(moved.id)?.sections.General).toHaveLength(2);
+    await expect(stat(join(root, 'person/other'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    });
+  });
+  it.each([1, 2, 3])(
+    'converts format %s slash titles with reserved names, suffixes, references and idempotent restart',
+    async (version) => {
+      const { store, root } = await fixture();
+      const reserved = await store.create(
+        { ...fields(), name: 'org/repo' },
+        sections(),
+      );
+      await store.create({ ...fields(), name: 'org/repo 2' }, sections());
+      const source =
+        version === 1
+          ? `${legacyId}.md`
+          : `person/${version === 2 ? legacyId : 'TheOfTo'}.md`;
+      const stem = version === 3 ? 'TheOfTo' : legacyId;
+      await seed(
+        root,
+        source,
+        legacyNote(version, 'org/repo', '', `See [[${stem}]]`).replace(
+          'RelatedTo: []',
+          `RelatedTo:\n  - target: { kind: entity, id: ${stem} }\n    strength: 50\n    relationship: knows`,
+        ),
+      );
+      await seed(
+        root,
+        'project/AndWasWith.md',
+        legacyNote(3, 'org/repo/deep/child'),
+      );
+      const migrated = await restart(root);
+      expect(migrated.get(reserved.id)).toEqual(reserved);
+      const converted = migrated.get('person/org/repo 3');
+      expect(converted?.name).toBe('org/repo 3');
+      expect(converted?.sections.General?.[0]?.text).toBe(
+        'See [[person/org/repo 3]]',
+      );
+      expect(migrated.get('project/org/repo/deep/child')).not.toBeNull();
+      const target = join(root, 'person/org/repo 3.md');
+      const before = await stat(target);
+      await restart(root);
+      expect((await stat(target)).mtimeMs).toBe(before.mtimeMs);
+      await expect(readFile(join(root, source))).rejects.toMatchObject({
+        code: 'ENOENT',
+      });
+    },
+  );
+  it('reserves empty folder casing and suffixes maximum-length nested titles within all limits', async () => {
+    const { root } = await fixture();
+    await mkdir(join(root, 'person/Existing/Empty'), { recursive: true });
+    let store = await restart(root);
+    const entity = await store.create(
+      { ...fields(), name: 'existing/empty/Note' },
+      sections(),
+    );
+    expect(entity.id).toBe('person/Existing/Empty/Note');
+    const name = `${'a'.repeat(99)}/${'b'.repeat(100)}`;
+    await store.create({ ...fields(), name }, sections());
+    await seed(root, 'person/TheOfTo.md', legacyNote(3, name));
+    store = await restart(root);
+    const converted = store.list().find((item) => item.name.endsWith(' 2'));
+    expect(converted?.name.length).toBe(200);
+    expect(converted && entityIdSchema.safeParse(converted.id).success).toBe(
+      true,
+    );
+    expect((await restart(root)).list()).toHaveLength(3);
+  });
+  it('rejects unsafe path segments and excessive path lengths without writing', async () => {
+    const { store, root } = await fixture();
+    for (const name of [
+      '/absolute',
+      'org//repo',
+      'org/../repo',
+      'org/./repo',
+      'org/',
+      'org/ /repo',
+      'org/???/repo',
+      'org/readme.md/repo',
+      'org/repo.md',
+      `${'a'.repeat(100)}/${'b'.repeat(100)}`,
+    ]) {
+      await expect(
+        Promise.resolve().then(() =>
+          store.create({ ...fields(), name }, sections()),
+        ),
+      ).rejects.toThrow();
+    }
+    expect(await readdir(root)).toEqual([]);
+    await seed(root, 'person/TheOfTo.md', legacyNote(3, 'org/../repo'));
+    await expect(restart(root)).rejects.toThrow();
+    expect(await readFile(join(root, 'person/TheOfTo.md'), 'utf8')).toContain(
+      'Title: org/../repo',
+    );
+    expect(await readdir(root)).not.toContain('.moves.json');
+  });
+  it('rejects intermediate symlinks during load, writes and journal replay before deleting sources', async () => {
+    const { store, root } = await fixture();
+    const entity = await store.create(fields(), sections());
+    const outside = join(root, '..', 'outside');
+    await mkdir(outside);
+    await mkdir(join(root, 'project'));
+    await symlink(outside, join(root, 'project/org'));
+    await expect(
+      store.create(
+        { ...fields(), entityType: 'project', name: 'org/deep/repo' },
+        sections(),
+      ),
+    ).rejects.toThrow('plain directory');
+    await expect(restart(root)).rejects.toThrow('plain directory');
+    const content = await readFile(join(root, `${entity.id}.md`), 'utf8');
+    await writeFile(
+      join(root, '.moves.json'),
+      JSON.stringify({
+        moves: [
+          {
+            from: entity.id,
+            to: 'project/org/deep/repo',
+            path: `${entity.id}.md`,
+          },
+        ],
+        documents: [{ id: 'project/org/deep/repo', content }],
+      }),
+    );
+    await expect(restart(root)).rejects.toThrow('plain directory');
+    expect(await readFile(join(root, `${entity.id}.md`), 'utf8')).toBe(content);
+    expect(await readdir(outside)).toEqual([]);
+  });
+  it('replays nested renames even when former parents have already been removed', async () => {
+    const { store, root } = await fixture();
+    const entity = await store.create(
+      { ...fields(), name: 'old/org/repo' },
+      sections(),
+    );
+    const content = await readFile(join(root, `${entity.id}.md`), 'utf8');
+    const id = 'project/new/org/repo/deep';
+    const journal = JSON.stringify({
+      moves: [{ from: entity.id, to: id, path: `${entity.id}.md` }],
+      documents: [{ id, content }],
+    });
+    await writeFile(join(root, '.moves.json'), journal);
+    await rm(join(root, 'person'), { recursive: true });
+    const recovered = await restart(root);
+    expect(recovered.get(id)?.name).toBe('new/org/repo/deep');
+    await writeFile(join(root, '.moves.json'), journal);
+    expect((await restart(root)).get(id)).toEqual(recovered.get(id));
   });
   it('renames and retypes files and every relation and whole qualified mention together', async () => {
     const { store, root } = await fixture();

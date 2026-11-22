@@ -32,7 +32,7 @@ readEntity shows `[Section#n]` and `was n:`. New evidence changes a fact → sup
 
 General = always loaded: what it is, role, standing rules (≤600 chars). Sections only for situational detail, max 4, short topic names ("Known pitfalls"). Each fact once.
 
-A memory's name is its filename, qualified by type: `person/Ada Lovelace`. Keep natural spelling and casing; tools enforce safe filenames. Names must be unique within a type, ignoring case. Different people with the same name need a specific qualifier. Wrong name or type → updateEntity `name` or `entityType`; the file moves and references follow. Use the returned path afterward; old paths are not aliases.
+A memory's name is its filename, qualified by type: `person/Ada Lovelace`. Keep natural spelling and casing; tools enforce safe paths. Preserve meaningful namespaces such as `project/stagewise-io/klex`: `/` creates folders. Do not invent deep organizational hierarchies. Names must use nonempty relative segments, never `.` or `..`, and omit `.md`. Names must be unique within a type, ignoring case. Different people with the same name need a specific qualifier. Wrong name or type → updateEntity `name` or `entityType`; the file moves and references follow. Use the returned path afterward; old paths are not aliases.
 
 Two entities are the same identity → mergeEntities (read both first; keep the older or richer one). Only on clear evidence: same full name in the same workspace, someone says so, or one is an empty accidental copy. Never on first name alone. Unsure → relation "possibly same as" on both, keep both. Not undoable.
 

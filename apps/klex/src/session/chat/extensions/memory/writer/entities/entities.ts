@@ -8,9 +8,10 @@ import {
   readFile,
   rename,
   rm,
+  rmdir,
   writeFile,
 } from 'node:fs/promises';
-import { basename, dirname, join, relative } from 'node:path';
+import { basename, dirname, join, relative, sep } from 'node:path';
 
 import { parse, stringify } from 'yaml';
 import { z } from 'zod';
@@ -187,10 +188,10 @@ const legacyRelationSchema = z
   .strict();
 
 // Keep spelling and casing; only enforce portable, link-safe file names.
-export function normalizeEntityName(value: string): string {
+function normalizeNameSegment(value: string): string {
   let name = value
     .normalize('NFC')
-    .replace(/[/\\:*?"<>|#[\]^\p{Cc}]/gu, ' ')
+    .replace(/[\\:*?"<>|#[\]^\p{Cc}]/gu, ' ')
     .replace(/\s+/g, ' ')
     .replace(/^[\s.]+|[\s.]+$/g, '')
     .slice(0, 100);
@@ -200,20 +201,62 @@ export function normalizeEntityName(value: string): string {
     name = `_${name}`;
   return name;
 }
+export function normalizeEntityName(value: string): string {
+  const parts = value.split('/');
+  if (parts.some((part) => !part.trim() || /^\.{1,2}$/.test(part.trim())))
+    throw new Error(
+      'Memory names require nonempty relative path segments; no . or ..',
+    );
+  const normalized = parts.map(normalizeNameSegment);
+  if (normalized.some((part) => !part || part.toLowerCase().endsWith('.md')))
+    throw new Error('Memory path segments must be nonempty and omit .md');
+  const name = normalized.join('/');
+  if (name.length > 200 || Buffer.byteLength(name) > 400)
+    throw new Error('Memory name exceeds path limit');
+  return name;
+}
 const entityKey = (id: string) => id.normalize('NFC').toLowerCase();
+// Shared folders have one spelling on both case-sensitive and insensitive disks.
+function canonicalParents(id: string, existing: Iterable<string>): string {
+  const parts = id.split('/');
+  for (const other of existing) {
+    const folders = other.split('/').slice(0, -1);
+    for (let i = 0; i < Math.min(parts.length - 1, folders.length); i++) {
+      const part = parts[i];
+      const folder = folders[i];
+      if (
+        part === undefined ||
+        folder === undefined ||
+        entityKey(part) !== entityKey(folder)
+      )
+        break;
+      parts[i] = folder;
+    }
+  }
+  return parts.join('/');
+}
 export const entityIdSchema = z
   .string()
-  .max(201)
+  .max(301)
   .refine((id) => {
-    const parts = id.split('/');
+    const [type, ...parts] = id.split('/');
+    const name = parts.join('/');
     return (
-      parts.length === 2 &&
-      entityTypeSchema.safeParse(parts[0]).success &&
-      !!parts[1] &&
-      parts[1].length >= 2 &&
-      normalizeEntityName(parts[1]) === parts[1]
+      entityTypeSchema.safeParse(type).success &&
+      name.length >= 2 &&
+      name.length <= 200 &&
+      Buffer.byteLength(name) <= 400 &&
+      parts.length > 0 &&
+      parts.every(
+        (part) =>
+          !!part &&
+          part !== '.' &&
+          part !== '..' &&
+          normalizeNameSegment(part) === part &&
+          !part.toLowerCase().endsWith('.md'),
+      )
     );
-  }, 'Expected type/Name, e.g. person/Ada Lovelace')
+  }, 'Expected type/Name or type/namespace/Name, without .md')
   .describe(
     'Type-qualified memory name, e.g. person/Ada Lovelace. No .md extension.',
   );
@@ -229,7 +272,7 @@ export const entityFieldsSchema = z
     name: text
       .min(2)
       .describe(
-        'Canonical name as people write it. Becomes the filename; unique within its type (ignoring case). Unsafe filename/link characters become spaces. Not a description.',
+        'Canonical name as people write it. Becomes the filename; unique within its type (ignoring case). Slash preserves an existing namespace (org/repo); do not invent folder hierarchies. Other unsafe filename/link characters become spaces. Not a description.',
       ),
     entityType: entityTypeSchema.describe(
       'Lowercase kebab-case kind the thing actually is. Reuse fitting existing type, else new. Wrong type: change it with updateEntity; its path changes and references follow.',
@@ -585,6 +628,7 @@ function deserialize(
 
 class EntityStoreModule implements EntityStore {
   private readonly entities = new Map<string, MemoryEntity>();
+  private readonly folders = new Set<string>();
   private starting: Promise<void> | undefined;
   private work = Promise.resolve();
   private interrupted = false;
@@ -633,6 +677,7 @@ class EntityStoreModule implements EntityStore {
         },
         sections: structuredClone(sections),
       };
+      entity.name = entity.id.slice(entity.id.indexOf('/') + 1);
       await this.persist(entity);
       return structuredClone(entity);
     });
@@ -667,6 +712,7 @@ class EntityStoreModule implements EntityStore {
       entity.entityType = patch.entityType ?? entity.entityType;
       entity.name = normalizeEntityName(patch.name ?? entity.name);
       entity.id = this.availableId(entity.entityType, entity.name, previousId);
+      entity.name = entity.id.slice(entity.id.indexOf('/') + 1);
       const previous = entity.frontmatter;
       const identities = patch.linkedIdentities
         ? dedupeIdentities(patch.linkedIdentities)
@@ -773,7 +819,13 @@ class EntityStoreModule implements EntityStore {
   }
 
   private availableId(type: string, raw: string, self?: string): string {
-    const id = `${entityTypeSchema.parse(type)}/${normalizeEntityName(raw)}`;
+    const id = canonicalParents(
+      `${entityTypeSchema.parse(type)}/${normalizeEntityName(raw)}`,
+      [
+        ...[...this.entities.values()].map((entity) => entity.id),
+        ...[...this.folders].map((path) => `${path}/__probe`),
+      ],
+    );
     entityIdSchema.parse(id);
     const other = this.entities.get(entityKey(id));
     if (other && other.id !== self)
@@ -805,6 +857,40 @@ class EntityStoreModule implements EntityStore {
       throw new Error('Entity root must be a plain directory');
   }
 
+  // Walk one component at a time; recursive mkdir/lstat of only the final
+  // parent would follow an intermediate symlink outside the memory root.
+  private async checkParents(path: string, create = false): Promise<boolean> {
+    let folder = this.directory;
+    for (const part of path.split('/').slice(0, -1)) {
+      const names = await readdir(folder);
+      if (
+        names.some(
+          (name) =>
+            entityKey(name) === entityKey(part) &&
+            name.normalize('NFC') !== part.normalize('NFC'),
+        )
+      )
+        throw new Error('Memory folder casing conflicts');
+      folder = join(folder, part);
+      if (create)
+        await mkdir(folder, { mode: 0o700 }).catch((error) => {
+          if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+        });
+      let info: Awaited<ReturnType<typeof lstat>>;
+      try {
+        info = await lstat(folder);
+      } catch (error) {
+        if (!create && (error as NodeJS.ErrnoException).code === 'ENOENT')
+          return false;
+        throw error;
+      }
+      if (!info.isDirectory())
+        throw new Error('Memory parent must be a plain directory');
+      this.folders.add(relative(this.directory, folder).split(sep).join('/'));
+    }
+    return true;
+  }
+
   private file(entity: MemoryEntity): string {
     return join(this.directory, `${entityIdSchema.parse(entity.id)}.md`);
   }
@@ -814,14 +900,8 @@ class EntityStoreModule implements EntityStore {
     if (Buffer.byteLength(content) > 500_000)
       throw new Error('Entity exceeds size limit');
     await this.ensureDirectory();
-    const folder = join(
-      this.directory,
-      entityTypeSchema.parse(entity.entityType),
-    );
-    await mkdir(folder, { recursive: true, mode: 0o700 });
-    if (!(await lstat(folder)).isDirectory())
-      throw new Error('Ontology folder must be a plain directory');
     const file = this.file(entity);
+    await this.checkParents(`${entity.id}.md`, true);
     const temporary = `${file}.${randomUUID()}.tmp`;
     try {
       await writeFile(temporary, content, { flag: 'wx', mode: 0o600 });
@@ -865,15 +945,18 @@ class EntityStoreModule implements EntityStore {
 
   private async applyMoves(journal: MovesJournal): Promise<void> {
     validateJournal(journal);
+    // Validate all ancestor chains before deleting any source.
+    for (const move of journal.moves)
+      if (move.path) await this.checkParents(move.path);
+    for (const document of journal.documents)
+      await this.checkParents(`${document.id}.md`, true);
     // Delete sources before writing final snapshots. A case-only rename must
     // remove the old directory entry on case-insensitive filesystems, too.
     for (const move of journal.moves) {
       if (!move.path) continue;
       const file = join(this.directory, move.path);
       const parent = dirname(file);
-      const stat = await lstat(parent);
-      if (!stat.isDirectory())
-        throw new Error('Memory source must be a plain directory');
+      if (!(await this.checkParents(move.path))) continue;
       if (
         (await readdir(parent)).some(
           (name) => name.normalize('NFC') === basename(file).normalize('NFC'),
@@ -888,6 +971,28 @@ class EntityStoreModule implements EntityStore {
         document.id.split('/')[0],
       );
       await this.persist(entity);
+    }
+    // Remove only empty former parent folders, never recursively.
+    for (const move of journal.moves) {
+      if (!move.path) continue;
+      let folder = dirname(join(this.directory, move.path));
+      while (folder !== this.directory) {
+        try {
+          await rmdir(folder);
+          this.folders.delete(
+            relative(this.directory, folder).split(sep).join('/'),
+          );
+        } catch (error) {
+          if (
+            ['ENOENT', 'ENOTEMPTY', 'EEXIST'].includes(
+              (error as NodeJS.ErrnoException).code ?? '',
+            )
+          )
+            break;
+          throw error;
+        }
+        folder = dirname(folder);
+      }
     }
     for (const { from } of journal.moves) {
       if (
@@ -944,6 +1049,7 @@ class EntityStoreModule implements EntityStore {
     ) => {
       const stem = name.slice(0, -3).normalize('NFC');
       const id = folder ? `${folder}/${stem}` : stem;
+      const type = folder?.split('/')[0];
       const handle = await open(
         file,
         constants.O_RDONLY |
@@ -955,7 +1061,7 @@ class EntityStoreModule implements EntityStore {
         if (!stat.isFile() || stat.size > 500_000)
           throw new Error('Invalid entity file');
         const content = await handle.readFile('utf8');
-        const { entity, legacy, old } = deserialize(content, id, folder);
+        const { entity, legacy, old } = deserialize(content, id, type);
         if (!legacy) entityIdSchema.parse(id);
         else legacyEntityIdSchema.parse(stem);
         const key = legacy ? stem : entityKey(id);
@@ -968,24 +1074,43 @@ class EntityStoreModule implements EntityStore {
         await handle.close();
       }
     };
-    for (const entry of await readdir(this.directory, {
-      withFileTypes: true,
-    })) {
-      const file = join(this.directory, entry.name);
-      if (entry.isDirectory()) {
-        entityTypeSchema.parse(entry.name);
-        for (const note of await readdir(file, { withFileTypes: true })) {
-          if (!note.name.endsWith('.md')) continue;
-          if (!note.isFile()) throw new Error('Entity must be a regular file');
-          await readDocument(join(file, note.name), note.name, entry.name);
+    const folders = new Map<string, string>();
+    const walk = async (directory: string, prefix = ''): Promise<void> => {
+      for (const entry of await readdir(directory, {
+        withFileTypes: true,
+      })) {
+        const file = join(directory, entry.name);
+        if (entry.isSymbolicLink())
+          throw new Error('Memory parent must be a plain directory');
+        if (entry.isDirectory()) {
+          const path = prefix
+            ? `${prefix}/${entry.name.normalize('NFC')}`
+            : entry.name;
+          if (!prefix) entityTypeSchema.parse(entry.name);
+          else {
+            const name = path.slice(path.indexOf('/') + 1);
+            if (
+              !name ||
+              normalizeEntityName(name) !== name ||
+              name
+                .split('/')
+                .some((part) => !part || part.toLowerCase().endsWith('.md'))
+            )
+              throw new Error('Unsafe memory folder');
+          }
+          const previous = folders.get(entityKey(path));
+          if (previous && previous !== path)
+            throw new Error('Memory folder casing conflicts');
+          folders.set(entityKey(path), path);
+          this.folders.add(path);
+          await walk(file, path);
+        } else if (entry.name.endsWith('.md')) {
+          if (!entry.isFile()) throw new Error('Entity must be a regular file');
+          await readDocument(file, entry.name, prefix || undefined);
         }
-      } else if (entry.name.endsWith('.md')) {
-        if (!entry.isFile()) throw new Error('Entity must be a regular file');
-        await readDocument(file, entry.name);
-      } else if (entry.isSymbolicLink()) {
-        throw new Error('Ontology folder must be a plain directory');
       }
-    }
+    };
+    await walk(this.directory);
     // A merge interrupted before deleting the dropped file left it next to
     // the kept entity, which already holds its content: finish the merge.
     const merged = new Set(
@@ -1006,9 +1131,7 @@ class EntityStoreModule implements EntityStore {
         owners.set(key, entity.id);
       }
     const used = new Set(
-      active
-        .filter(({ legacy }) => !legacy)
-        .map(({ entity }) => entityKey(entity.id)),
+      active.filter(({ legacy }) => !legacy).map(({ entity }) => entity.id),
     );
     const replacements = new Map<string, string>();
     const moves: MovesJournal['moves'] = [];
@@ -1019,15 +1142,39 @@ class EntityStoreModule implements EntityStore {
       if (!old) continue;
       const base = normalizeEntityName(old.Title);
       const name = base.length >= 2 ? base : 'Untitled';
-      let candidate = `${entity.entityType}/${name}`;
-      for (let suffix = 2; used.has(entityKey(candidate)); suffix++)
-        candidate = `${entity.entityType}/${normalizeEntityName(name.slice(0, 95))} ${suffix}`;
-      used.add(entityKey(candidate));
+      let candidate = canonicalParents(`${entity.entityType}/${name}`, [
+        ...used,
+        ...[...folders.values()].map((path) => `${path}/__probe`),
+      ]);
+      const occupied = () =>
+        [...used].some((id) => entityKey(id) === entityKey(candidate));
+      for (let suffix = 2; occupied(); suffix++) {
+        const parts = name.split('/');
+        const ending = ` ${suffix}`;
+        let leaf = parts.pop() ?? '';
+        const parents = parts.length ? `${parts.join('/')}/` : '';
+        while (
+          leaf.length + ending.length > 100 ||
+          Buffer.byteLength(leaf + ending) > 200 ||
+          parents.length + leaf.length + ending.length > 200 ||
+          Buffer.byteLength(parents + leaf + ending) > 400
+        ) {
+          if (!leaf)
+            throw new Error('Cannot suffix memory name within path limit');
+          leaf = leaf.slice(0, -1);
+        }
+        parts.push(`${normalizeNameSegment(leaf)}${ending}`);
+        candidate = canonicalParents(
+          `${entity.entityType}/${parts.join('/')}`,
+          [...used, ...[...folders.values()].map((path) => `${path}/__probe`)],
+        );
+      }
+      used.add(candidate);
       replacements.set(stem, candidate);
       moves.push({
         from: stem,
         to: candidate,
-        path: relative(this.directory, document.file),
+        path: relative(this.directory, document.file).split(sep).join('/'),
       });
       entity.id = candidate;
       entity.name = candidate.slice(candidate.indexOf('/') + 1);
@@ -1042,7 +1189,7 @@ class EntityStoreModule implements EntityStore {
       moves.push({
         from: document.stem,
         to,
-        path: relative(this.directory, document.file),
+        path: relative(this.directory, document.file).split(sep).join('/'),
       });
     }
     const final = active.map(({ entity }) =>
@@ -1080,10 +1227,12 @@ const movesJournalSchema = z
           to: entityIdSchema,
           path: z
             .string()
-            .regex(/^(?:[a-z][a-z0-9]*(?:-[a-z0-9]+)*\/)?[^/\\]+\.md$/)
             .refine(
               (path) =>
-                !path.split('/').some((part) => part === '.' || part === '..'),
+                path.endsWith('.md') &&
+                (entityIdSchema.safeParse(path.slice(0, -3)).success ||
+                  legacyEntityIdSchema.safeParse(path.slice(0, -3)).success),
+              'Unsafe memory source path',
             )
             .optional(),
         })

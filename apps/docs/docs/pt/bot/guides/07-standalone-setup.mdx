@@ -1,0 +1,57 @@
+---
+title: Configurar um Bot independente
+description: Instale o Klex e crie um Bot auto-hospedado sem registrá-lo no Klex Cloud.
+related:
+  - /bot/quickstart
+  - /bot/concepts/models
+  - /bot/concepts/mcp
+---
+
+Você pode executar um Bot auto-hospedado sem registrá-lo no Klex Cloud.
+
+<a id="install-klex"></a>
+
+## Instalar o Klex
+
+Instale o Klex em um terminal:
+
+**macOS, Linux ou WSL:**
+
+```sh
+curl -fsSL https://klex.bot/install.sh | sh
+```
+
+**Windows (PowerShell):**
+
+```powershell
+irm https://klex.bot/install.ps1 | iex
+```
+
+<a id="create-a-bot-interactively"></a>
+
+## Criar um Bot de forma interativa
+
+Inicie o aplicativo:
+
+```sh
+klex --no-cloud
+```
+
+1. Pressione `a` para criar um Bot e digite seu nome.
+2. Em **Settings → Providers & Endpoints**, configure um provedor de modelos. Em **Model Selection**, selecione um modelo de chat.
+3. Abra **Settings → Soul** e crie uma Soul que descreva o caráter e o trabalho do Bot.
+4. Em **Settings → MCP Servers**, conecte os servidores de que o Bot precisa. Configure as permissões da conta dele nos aplicativos conectados.
+
+Para receber eventos de um canal externo, conecte um servidor compatível com os MCP Events relevantes, recursos ao vivo ou a [extensão de notificações push](https://github.com/stagewise-io/klex/tree/main/packages/mcp-extension-push-notifications) do Klex. Os MCP Events exigem uma watch e, para receber atualizações de um recurso ao vivo, o recurso precisa estar aberto. Alguns servidores também exigem configuração no serviço conectado.
+
+<a id="create-a-bot-without-the-picker"></a>
+
+## Criar um Bot sem o seletor
+
+Para criar um Bot independente sem o seletor interativo, informe um nome:
+
+```sh
+klex --create-bot --no-cloud --bot-name Ada
+```
+
+Adicione `--headless` para executá-lo sem a interface de terminal. Configure um provedor, um modelo de chat e uma Soul antes que o Bot possa trabalhar. Para configurar um Bot novo de forma interativa, omita `--headless` e use as configurações acima. Para configuração em modo headless, use a Admin API; consulte suas [condições de acesso local e limites de segurança](/bot/guides/observability#access-the-local-admin-api). A criação não pode ser combinada com `--data-dir` ou `KLEX_DATA_DIR`, que selecionam um Bot existente. Para parar um Bot headless, consulte [Controlar seu Klex Bot](/bot/guides/control-and-limits#stop-a-headless-bot).

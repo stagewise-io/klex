@@ -9,7 +9,11 @@ function strip(markdown) {
       /^<noscript><link rel="stylesheet" href="\/hosting-noscript\.css" \/><\/noscript>\r?\n?/gm,
       '',
     )
-    .replace(/^<script src="\/hosting-tabs\.js" defer><\/script>\r?\n?/gm, '');
+    .replace(
+      /^<script src="\/(?:hosting-tabs|quickstart-tabs)\.js" defer><\/script>\r?\n?/gm,
+      '',
+    )
+    .replace(/<div className="hosting-quickstart">([\s\S]*?)<\/div>/g, '$1');
 }
 async function clean(directory) {
   for (const entry of await readdir(directory, { withFileTypes: true })) {
@@ -24,7 +28,12 @@ async function clean(directory) {
       entry.name.endsWith('.json')
     ) {
       const original = await readFile(path, 'utf8');
-      if (!original.includes('hosting-tabs.js')) continue;
+      if (
+        !original.includes('hosting-tabs.js') &&
+        !original.includes('quickstart-tabs.js') &&
+        !original.includes('hosting-quickstart')
+      )
+        continue;
       const page = JSON.parse(original);
       if (typeof page.markdown === 'string')
         page.markdown = strip(page.markdown);

@@ -8,22 +8,44 @@ related:
 
 Ein Agent Skill ist eine wiederverwendbare Anleitung für eine wiederkehrende Aufgabe. Ein Skill kann zum Beispiel beschreiben, wie ein Projektstatus vorbereitet wird. Seine Beschreibung erklärt, wann die Anleitung gilt; der Hauptteil enthält das Vorgehen.
 
-Klex macht verfügbare Skills für den Bot auffindbar und weist ihn an, vor einer Aufgabe einen passenden Skill zu laden. Ein Skill leitet den Bot an, garantiert aber weder ein bestimmtes Ergebnis noch ersetzt er Kontoberechtigungen.
+Klex macht verfügbare Skills für den Bot auffindbar. Der Bot kann eine Anleitung laden, wenn sie zu einer Aufgabe passt.
 
 <a id="where-skills-come-from"></a>
 
 ## Woher Skills kommen
 
-Ein Bot kann aus seiner Tätigkeit Skills lernen. Skills können auch aus anderen Quellen stammen, etwa aus Vorlagen. Jeder Bot speichert seine Skills in seinem eigenen [Datenverzeichnis](/bot/concepts/data-directory). Ein Namespace und ein Name kennzeichnen jeden Skill, zum Beispiel `learning/project-status`.
+Skills können aus verschiedenen Quellen stammen:
 
-Wenn der Bot seinen aktiven Gesprächskontext verdichtet, kann er die daraus entfernten Aktivitäten auswerten und hilfreiche Erkenntnisse in Skills umwandeln. Das Lernen läuft im Hintergrund und kann Zeit brauchen. Nicht jedes Gespräch führt zu einem Skill.
+- **Template Skills** werden mit Bot Templates bereitgestellt.
+- **Learned Skills** entwickeln sich aus den Erfahrungen des Bots.
+- **Uploaded Skills** werden von Nutzern bereitgestellt, um Verhalten oder Wissen vorzugeben.
 
-Jeder Skill wird als Datei `SKILL.md` unter `skills/{namespace}/{name}/` gespeichert. Die Datei enthält einen Namen, eine Beschreibung und einen Markdown-Hauptteil.
+Jeder Bot speichert seine Skills in seinem eigenen [Datenverzeichnis](/bot/concepts/data-directory). Ein Namespace und ein Name kennzeichnen jeden Skill, zum Beispiel `learning/project-status`.
+
+Ein Hintergrundprozess für das Gedächtnis wertet Aktivitäten aus und kann hilfreiche Erkenntnisse in Skills umwandeln. Bei späteren Aktivitäten kann er gelernte Skills aktualisieren oder entfernen. Nicht jedes Gespräch führt zu einem Skill.
+
+Jeder Skill wird als Datei `SKILL.md` unter `skills/{namespace}/{name}/` gespeichert. Die Datei enthält einen Namen, eine Beschreibung und einen Markdown-Hauptteil. Ein Skill kann auch Referenzdateien im Ordner `references/` enthalten.
 
 <a id="review-and-manage-skills"></a>
 
 ## Skills prüfen und verwalten
 
-Über die Admin API des Bots lassen sich Skills auflisten, lesen, bearbeiten und löschen. Mit `GET /v1/skills` rufen Sie die Liste ab und mit `GET /v1/skills/{namespace}/{name}` einen einzelnen Skill. Derselbe Pfad unterstützt auch `PATCH` und `DELETE`.
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Cloud-gehostet">
 
-Prüfen Sie gelernte Skills auf Richtigkeit. Durch das Lernen können sie sich mit der Zeit ändern oder entfernt werden, auch wenn ein Administrator sie bearbeitet hat. Eine Bearbeitung schützt einen gelernten Skill nicht vor späteren Änderungen.
+Die Verwaltung von Uploaded Skills über Klex Cloud ist in Vorbereitung. Uploaded Skills werden der einzige Skill-Typ sein, den Nutzer über Klex Cloud verwalten können.
+
+</Tab>
+<Tab title="Selbst gehostet">
+
+Nutzen Sie die Admin API des Bots, um Skills zu prüfen. Unter [Bot-Aktivität prüfen](/bot/guides/observability#access-the-local-admin-api) finden Sie Informationen zum lokalen Zugriff und seinen Sicherheitsgrenzen.
+
+</Tab>
+</Tabs>
+
+Über die Admin API des Bots lassen sich Skills auflisten, lesen, bearbeiten und löschen. Mit `GET /v1/skills` rufen Sie die Liste ab und mit `GET /v1/skills/{namespace}/{name}` einen einzelnen Skill. Derselbe Pfad unterstützt auch `PATCH` und `DELETE`. Für Referenzdateien gibt es eigene API-Routen. Die Löschung kann fehlschlagen, wenn eine Gedächtnisentität auf den Skill verweist.
+
+Prüfen Sie gelernte Skills auf Richtigkeit. Der Gedächtnisprozess kann sie mit der Zeit aktualisieren oder entfernen, auch wenn ein Administrator sie bearbeitet hat. Eine Bearbeitung schützt einen gelernten Skill nicht vor späteren Änderungen.
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

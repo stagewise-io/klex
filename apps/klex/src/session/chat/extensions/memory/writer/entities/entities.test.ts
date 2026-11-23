@@ -82,7 +82,7 @@ describe('named factual entities', () => {
     expect(entity.id).toBe('person/Alex Smith');
     expect(entity.name).toBe('Alex Smith');
     const content = await readFile(join(root, `${entity.id}.md`), 'utf8');
-    expect(content).toContain('FormatVersion: 4');
+    expect(content).toContain('FormatVersion: 5');
     expect(content).not.toMatch(/^(Title|Id|EntityType|MergedFrom):/m);
     expect((await restart(root)).get(entity.id)).toEqual(entity);
   });
@@ -615,6 +615,97 @@ describe('named factual entities', () => {
       expect(before).not.toMatch(/^(Title|Id|MergedFrom):/m);
       await restart(root);
       expect(await readFile(target, 'utf8')).toBe(before);
+      expect((await stat(target)).mtimeMs).toBe(beforeStat.mtimeMs);
+    },
+  );
+  it('stores relations as Obsidian links and rejects malformed links and labels', async () => {
+    const { store, root } = await fixture();
+    const target = await store.create(
+      { ...fields(), name: 'Lead Person' },
+      sections('Lead'),
+    );
+    const relations = [
+      { ...relation(target.id, 80), relationship: 'reports to' },
+      {
+        target: { kind: 'skill' as const, id: 'learning/deploy' },
+        strength: 50,
+        relationship: 'uses',
+      },
+    ];
+    const entity = await store.create(
+      { ...fields(), relatedTo: relations },
+      sections(),
+    );
+    const file = join(root, `${entity.id}.md`);
+    const content = await readFile(file, 'utf8');
+    expect(content).toContain(
+      'RelatedTo:\n  - "[[person/Lead Person|reports to (80)]]"\n  - "[[learning/deploy/SKILL.md|uses (50)]]"\n',
+    );
+    expect((await restart(root)).get(entity.id)).toEqual(entity);
+    await writeFile(file, content.replace('|reports to (80)]]', ']]'));
+    await expect(restart(root)).rejects.toThrow('Invalid entity');
+    expect(() =>
+      entityFieldsSchema.parse({
+        ...fields(),
+        relatedTo: [{ ...relations[0], relationship: 'a|b' }],
+      }),
+    ).toThrow();
+  });
+  it.each([3, 4])(
+    'converts released format %s object relations to exact v5 links',
+    async (version) => {
+      const { root } = await fixture();
+      // Frozen released contracts: v3 (v0.37.1-nightly20261117c001) and v4
+      // (v0.37.1-nightly20261123c001). Independent of the current serializer.
+      const head =
+        version === 3
+          ? 'FormatVersion: 3\nTitle: Alex Smith\n'
+          : 'FormatVersion: 4\n';
+      const targetId = version === 3 ? 'BrightOakField' : 'project/Klex';
+      const note = (relatedTo: string, first = head) =>
+        `---\n${first}CreatedAt: 2026-11-17T10:00:00.000Z\nLastUpdatedAt: 2026-11-17T11:00:00.000Z\nLastReadAt: null\nLinkedIdentities:\n  - server: slack\n    match:\n      user: U071HL78SDN\nLoadOn: []\nRelatedTo:\n${relatedTo}TrustScore: 2\nAuthorityScore: 5\n---\n\n## General\n\n- Engineer [2026-11-17 · slack](history:abc)\n  - was: Intern [2026-11-01 · slack](history:def)\n`;
+      const source = await seed(
+        root,
+        version === 3 ? 'person/CalmRiverStone.md' : 'person/Alex Smith.md',
+        note(
+          `  - target:\n      kind: entity\n      id: ${targetId}\n    strength: 80\n    relationship: works on\n  - target:\n      kind: skill\n      id: learning/deploy\n    strength: 50\n    relationship: "uses [[often]] | daily"\n`,
+        ),
+      );
+      await seed(
+        root,
+        version === 3 ? 'project/BrightOakField.md' : 'project/Klex.md',
+        version === 3
+          ? legacyNote(3, 'Klex')
+          : legacyNote(3, 'Klex').replace(
+              'FormatVersion: 3\nTitle: Klex\n',
+              'FormatVersion: 4\n',
+            ),
+      );
+      const store = await restart(root);
+      const target = join(root, 'person/Alex Smith.md');
+      if (version === 3)
+        await expect(readFile(source)).rejects.toMatchObject({
+          code: 'ENOENT',
+        });
+      const converted = await readFile(target, 'utf8');
+      // Literal v5 output: links replace objects; everything else is kept.
+      expect(converted).toBe(
+        '---\nFormatVersion: 5\nCreatedAt: 2026-11-17T10:00:00.000Z\nLastUpdatedAt: 2026-11-17T11:00:00.000Z\nLastReadAt: null\nLinkedIdentities:\n  - server: slack\n    match:\n      user: U071HL78SDN\nLoadOn: []\nTrustScore: 2\nAuthorityScore: 5\nRelatedTo:\n  - "[[project/Klex|works on (80)]]"\n  - "[[learning/deploy/SKILL.md|uses often daily (50)]]"\n---\n\n## General\n\n- Engineer [2026-11-17 · slack](history:abc)\n  - was: Intern [2026-11-01 · slack](history:def)\n',
+      );
+      expect(store.get('person/Alex Smith')?.frontmatter.RelatedTo).toEqual([
+        { ...relation('project/Klex', 80), relationship: 'works on' },
+        {
+          target: { kind: 'skill', id: 'learning/deploy' },
+          strength: 50,
+          relationship: 'uses often daily',
+        },
+      ]);
+      expect(await readFile(join(root, 'project/Klex.md'), 'utf8')).toContain(
+        'FormatVersion: 5',
+      );
+      const beforeStat = await stat(target);
+      await restart(root);
+      expect(await readFile(target, 'utf8')).toBe(converted);
       expect((await stat(target)).mtimeMs).toBe(beforeStat.mtimeMs);
     },
   );

@@ -1111,7 +1111,9 @@ describe('provider registry module integration', () => {
         { modelId: 'vendor:model:v2', displayName: 'Discovered model' },
       ],
     }));
-    const createLanguageModel = vi.fn(
+    const createLanguageModel = vi.fn<
+      NonNullable<ProviderDefinition['createLanguageModel']>
+    >(
       (instance, modelId) =>
         ({ providerId: instance.id, modelId }) as unknown as LanguageModelV4,
     );
@@ -1436,11 +1438,24 @@ describe('provider registry module integration', () => {
       providerId: 'provider-primary',
       modelId: 'vendor:model:v2',
     });
-    expect(createLanguageModel).toHaveBeenCalledWith(
+    expect(createLanguageModel).toHaveBeenCalledTimes(2);
+    expect(createLanguageModel).toHaveBeenNthCalledWith(
+      2,
       expect.objectContaining({ id: 'provider-primary' }),
       'vendor:model:v2',
-      undefined,
+      {
+        credential: expect.any(Function),
+        discoveredModel: expect.any(Function),
+        invalidate: expect.any(Function),
+      },
     );
+    const context = createLanguageModel.mock.calls[1]?.[2];
+    if (!context) throw new Error('Expected provider runtime context');
+    await expect(context.credential()).resolves.toBeUndefined();
+    await expect(context.invalidate()).resolves.toBeUndefined();
+    // Model-selection writes invalidated the earlier discovery snapshot.
+    expect(context.discoveredModel?.('vendor:model:v2')).toBeUndefined();
+    expect(context.discoveredModel?.('missing-metadata')).toBeUndefined();
 
     await expect(registry.testConnection('provider-primary')).resolves.toEqual({
       ok: true,

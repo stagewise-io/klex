@@ -176,4 +176,21 @@ describe('estimateInputSize', () => {
       );
     }
   });
+
+  it('scans long unbroken history with bounded linear work', () => {
+    const longAlphaRun = 'g'.repeat(20_000);
+    const longHyphenRun = 'g-'.repeat(10_000);
+    const { attributes } = estimateInputSize({
+      basePrompt: '',
+      extensionSystemPromptParts: [],
+      modelMessages: [
+        { role: 'user', content: `${longAlphaRun} ${longHyphenRun}` },
+      ],
+      tools: {},
+    });
+
+    expect(metric(attributes, 'identifier_units')).toBe(0);
+    expect(metric(attributes, 'filepath_units')).toBe(0);
+    expect(metric(attributes, 'structured_scan_truncated')).toBe(0);
+  });
 });

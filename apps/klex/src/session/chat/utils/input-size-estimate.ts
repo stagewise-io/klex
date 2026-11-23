@@ -28,12 +28,14 @@ type StructuredKind = 'identifier' | 'filepath' | 'url';
 const MIN_REPEAT_LINE_CODE_POINTS = 32;
 const MAX_REPEAT_LINES = 50_000;
 const MAX_STRUCTURED_CANDIDATES = 50_000;
+const MAX_STRUCTURED_CANDIDATE_LENGTH = 4_096;
+const MAX_STRUCTURED_CANDIDATE_CHARS = 1_000_000;
 
 const URL_PATTERN = /\b(?:https?|file):\/\/[^\s<>"'\x60)}\]]+/giu;
-const FILEPATH_PATTERN =
-  /(?:~?\/|\.{1,2}[/]|[A-Za-z]:[/])?[A-Za-z0-9_.-]+(?:[/][A-Za-z0-9_.-]+)+(?:\.[A-Za-z0-9]{1,12})?/gu;
+const UUID_PATTERN = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/iu;
+const HEX_IDENTIFIER_PATTERN = /^[0-9a-f]{16,}$/iu;
 const IDENTIFIER_PATTERN =
-  /\b(?:[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}|[0-9a-f]{16,}|(?=[A-Za-z0-9_-]{20,}\b)(?=[A-Za-z0-9_-]*[A-Za-z])(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]+)\b/giu;
+  /\b(?:[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}|[0-9a-f]{16,}|[A-Za-z0-9_-]{20,})\b/giu;
 const MEMORY_BLOCK_PATTERN = /<memory>\s*[\s\S]*?<\/memory>/giu;
 
 const OUTPUT_KEYS = {
@@ -162,6 +164,7 @@ interface EstimateState {
   filePartCount: number;
   unestimatedToolComponentCount: number;
   structuredCandidateCount: number;
+  structuredCandidateChars: number;
   structuredScanTruncated: boolean;
   repeatedLineScanTruncated: boolean;
 }
@@ -189,6 +192,7 @@ function createState(): EstimateState {
     filePartCount: 0,
     unestimatedToolComponentCount: 0,
     structuredCandidateCount: 0,
+    structuredCandidateChars: 0,
     structuredScanTruncated: false,
     repeatedLineScanTruncated: false,
   };
@@ -388,25 +392,21 @@ interface StructuredCandidate {
   readonly value: string;
 }
 
+// Keep path/ID scans linear; avoid unanchored backtracking over prompt text.
 function recordStructuredContent(state: EstimateState, text: string): void {
+  if (state.structuredScanTruncated) return;
   const candidates: StructuredCandidate[] = [];
-  collectStructuredCandidates(state, text, 'url', URL_PATTERN, candidates);
+  collectUrlCandidates(state, text, candidates);
+  if (state.structuredCandidateCount >= MAX_STRUCTURED_CANDIDATES)
+    state.structuredScanTruncated = true;
   if (!state.structuredScanTruncated)
-    collectStructuredCandidates(
-      state,
-      text,
-      'filepath',
-      FILEPATH_PATTERN,
-      candidates,
-    );
+    collectFilepathCandidates(state, text, candidates);
+  if (state.structuredCandidateCount >= MAX_STRUCTURED_CANDIDATES)
+    state.structuredScanTruncated = true;
   if (!state.structuredScanTruncated)
-    collectStructuredCandidates(
-      state,
-      text,
-      'identifier',
-      IDENTIFIER_PATTERN,
-      candidates,
-    );
+    collectIdentifierCandidates(state, text, candidates);
+  if (state.structuredCandidateCount >= MAX_STRUCTURED_CANDIDATES)
+    state.structuredScanTruncated = true;
 
   candidates.sort(
     (left, right) =>
@@ -438,25 +438,174 @@ function recordStructuredContent(state: EstimateState, text: string): void {
   }
 }
 
-function collectStructuredCandidates(
+function collectUrlCandidates(
   state: EstimateState,
   text: string,
-  kind: StructuredKind,
-  pattern: RegExp,
   candidates: StructuredCandidate[],
 ): void {
-  for (const match of text.matchAll(pattern)) {
+  for (const match of text.matchAll(URL_PATTERN)) {
+    const start = match.index;
+    let end = start + match[0].length;
+    while (end > start) {
+      const trailing = text[end - 1];
+      if (trailing === undefined || !'.,!?;:'.includes(trailing)) break;
+      end -= 1;
+    }
+    if (!addStructuredCandidate(state, text, start, end, 'url', candidates))
+      return;
+  }
+}
+
+function collectFilepathCandidates(
+  state: EstimateState,
+  text: string,
+  candidates: StructuredCandidate[],
+): void {
+  let cursor = 0;
+  while (cursor < text.length) {
+    if (!isPathTokenChar(text[cursor])) {
+      cursor += 1;
+      continue;
+    }
+    const runStart = cursor;
+    while (cursor < text.length && isPathTokenChar(text[cursor])) cursor += 1;
+    collectPathsInRun(state, text, runStart, cursor, candidates);
     if (state.structuredCandidateCount >= MAX_STRUCTURED_CANDIDATES) {
       state.structuredScanTruncated = true;
       return;
     }
-    state.structuredCandidateCount += 1;
-    const value =
-      kind === 'url' ? match[0].replace(/[.,!?;:]+$/u, '') : match[0];
-    if (!value) continue;
-    const start = match.index;
-    candidates.push({ start, end: start + value.length, kind, value });
   }
+}
+
+function collectPathsInRun(
+  state: EstimateState,
+  text: string,
+  runStart: number,
+  runEnd: number,
+  candidates: StructuredCandidate[],
+): void {
+  let sequenceStart = -1;
+  let segmentCount = 0;
+  let segmentStart = runStart;
+
+  for (let index = runStart; index <= runEnd; index += 1) {
+    if (index < runEnd && text[index] !== '/') continue;
+
+    if (segmentStart < index) {
+      if (segmentCount === 0)
+        sequenceStart =
+          segmentStart === runStart + 1 && text[runStart] === '/'
+            ? runStart
+            : segmentStart;
+      segmentCount += 1;
+    } else if (index !== runStart) {
+      if (segmentCount >= 2) {
+        if (
+          !addStructuredCandidate(
+            state,
+            text,
+            sequenceStart,
+            index,
+            'filepath',
+            candidates,
+          )
+        )
+          return;
+      }
+      sequenceStart = -1;
+      segmentCount = 0;
+    }
+
+    if (index === runEnd || index + 1 === runEnd || text[index + 1] === '/') {
+      if (segmentCount >= 2) {
+        if (
+          !addStructuredCandidate(
+            state,
+            text,
+            sequenceStart,
+            index,
+            'filepath',
+            candidates,
+          )
+        )
+          return;
+      }
+      sequenceStart = -1;
+      segmentCount = 0;
+    }
+    segmentStart = index + 1;
+  }
+}
+
+// No lookaheads: candidates consume whole word-like runs and are filtered after.
+function collectIdentifierCandidates(
+  state: EstimateState,
+  text: string,
+  candidates: StructuredCandidate[],
+): void {
+  for (const match of text.matchAll(IDENTIFIER_PATTERN)) {
+    const value = match[0];
+    const isUuid = UUID_PATTERN.test(value);
+    const isLongHex = HEX_IDENTIFIER_PATTERN.test(value);
+    const isMixedIdentifier = /[A-Za-z]/u.test(value) && /[0-9]/u.test(value);
+    if (!isUuid && !isLongHex && !isMixedIdentifier) continue;
+    if (
+      !addStructuredCandidate(
+        state,
+        text,
+        match.index,
+        match.index + value.length,
+        'identifier',
+        candidates,
+      )
+    )
+      return;
+  }
+}
+
+function addStructuredCandidate(
+  state: EstimateState,
+  text: string,
+  start: number,
+  end: number,
+  kind: StructuredKind,
+  candidates: StructuredCandidate[],
+): boolean {
+  if (state.structuredCandidateCount >= MAX_STRUCTURED_CANDIDATES) {
+    state.structuredScanTruncated = true;
+    return false;
+  }
+  state.structuredCandidateCount += 1;
+  const length = end - start;
+  if (
+    length > MAX_STRUCTURED_CANDIDATE_LENGTH ||
+    state.structuredCandidateChars + length > MAX_STRUCTURED_CANDIDATE_CHARS
+  ) {
+    state.structuredScanTruncated = true;
+    return false;
+  }
+  state.structuredCandidateChars += length;
+  candidates.push({ start, end, kind, value: text.slice(start, end) });
+  return true;
+}
+
+function isPathTokenChar(char: string | undefined): boolean {
+  if (!char) return false;
+  const code = char.charCodeAt(0);
+  return (
+    isAsciiLetterCode(code) ||
+    (code >= 48 && code <= 57) ||
+    char === '_' ||
+    char === '.' ||
+    char === '-' ||
+    char === '/' ||
+    char === '~' ||
+    char === ':'
+  );
+}
+
+function isAsciiLetterCode(code: number): boolean {
+  return (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
 }
 
 function structuredPriority(kind: StructuredKind): number {

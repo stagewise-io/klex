@@ -1,0 +1,57 @@
+---
+title: スタンドアロン Bot をセットアップする
+description: Klex をインストールし、Cloud に登録せずにセルフホストの Bot を作成します。
+related:
+  - /bot/quickstart
+  - /bot/concepts/models
+  - /bot/concepts/mcp
+---
+
+Klex Cloud に登録せずに、セルフホストの Bot を実行できます。
+
+<a id="install-klex"></a>
+
+## Klex をインストールする
+
+ターミナルで Klex をインストールします。
+
+**macOS、Linux、WSL:**
+
+```sh
+curl -fsSL https://klex.bot/install.sh | sh
+```
+
+**Windows (PowerShell):**
+
+```powershell
+irm https://klex.bot/install.ps1 | iex
+```
+
+<a id="create-a-bot-interactively"></a>
+
+## 対話形式で Bot を作成する
+
+アプリを起動します。
+
+```sh
+klex --no-cloud
+```
+
+1. `a` を押して Bot を作成し、名前を入力します。
+2. **Settings → Providers & Endpoints** でモデルプロバイダーを設定します。**Model Selection** でチャットモデルを選択します。
+3. **Settings → Soul** を開き、Bot の性格と仕事を記述する Soul を作成します。
+4. **Settings → MCP Servers** で Bot に必要なサーバーを接続します。接続先のアプリで Bot のアカウント権限を設定します。
+
+外部チャネルからイベントを受け取るには、該当する MCP Events、ライブリソース、または Klex の [プッシュ通知拡張](https://github.com/stagewise-io/klex/tree/main/packages/mcp-extension-push-notifications)に対応したサーバーを接続します。MCP Events には watch が必要です。ライブリソースの更新を受け取るには、そのリソースを開いておく必要があります。サーバーによっては、接続先のサービスで別途設定が必要です。
+
+<a id="create-a-bot-without-the-picker"></a>
+
+## ピッカーを使わずに Bot を作成する
+
+対話形式のピッカーを使わずにスタンドアロン Bot を作成するには、名前を指定します。
+
+```sh
+klex --create-bot --no-cloud --bot-name Ada
+```
+
+ターミナル UI なしで実行するには、`--headless` を追加します。Bot が作業できるようにするには、プロバイダー、チャットモデル、Soul を設定してください。新しい Bot を対話形式で設定する場合は `--headless` を省き、上記の設定を使用します。ヘッドレスでの設定には Admin API を使用します。[ローカルアクセスとセキュリティ上の制限](/bot/guides/observability#access-the-local-admin-api)も確認してください。作成時に `--data-dir` または `KLEX_DATA_DIR` は併用できません。これらは既存の Bot を選択するためのものです。ヘッドレス Bot の停止方法は、[Klex Bot の制御](/bot/guides/control-and-limits#stop-a-headless-bot)を参照してください。

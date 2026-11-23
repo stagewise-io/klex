@@ -1,0 +1,51 @@
+---
+title: Agent Skills
+description: Klex ボットが繰り返し行うタスクに Agent Skills を利用し、保存する方法。
+related:
+  - /bot/concepts/memory
+  - /bot/concepts/data-directory
+---
+
+Agent Skill は、繰り返し行うタスクのための再利用可能な手順です。例えば、プロジェクトの進捗報告の作成方法を記述できます。説明には手順を使う場面を、本文には具体的な手順を記載します。
+
+Klex は、利用可能なスキルをボットが見つけられるようにします。ボットはタスクに合った手順を読み込めます。
+
+<a id="where-skills-come-from"></a>
+
+## スキルの提供元
+
+スキルにはさまざまな提供元があります。
+
+- **Template Skills** は Bot Templates に含まれています。
+- **Learned Skills** はボットの経験から発展します。
+- **Uploaded Skills** は、動作や知識を追加するためにユーザーが提供します。
+
+各ボットはスキルを独自の[データディレクトリ](/bot/concepts/data-directory)に保存します。スキルは `learning/project-status` のように、名前空間と名前で識別されます。
+
+バックグラウンドのメモリープロセスは活動を確認し、有用な教訓をスキルに変えることがあります。その後の活動を処理する際に、学習したスキルを更新または削除することもあります。すべての会話からスキルが作成されるわけではありません。
+
+各スキルは `skills/{namespace}/{name}/` 内の `SKILL.md` ファイルとして保存されます。このファイルには名前、説明、Markdown 形式の本文が含まれます。スキルには `references/` フォルダー内の参照ファイルを含めることもできます。
+
+<a id="review-and-manage-skills"></a>
+
+## スキルの確認と管理
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="クラウドホスト">
+
+Cloud での Uploaded Skills の管理機能は近日公開予定です。Cloud でユーザーが管理できるスキルは Uploaded Skills のみになります。
+
+</Tab>
+<Tab title="セルフホスト">
+
+スキルの確認にはボットの Admin API を使用します。ローカルアクセスとそのセキュリティ上の制限については、[ボットのアクティビティを確認する](/bot/guides/observability#access-the-local-admin-api)を参照してください。
+
+</Tab>
+</Tabs>
+
+ボットの Admin API では、スキルの一覧表示、内容の取得、編集、削除ができます。一覧を取得するには `GET /v1/skills`、個別のスキルを読むには `GET /v1/skills/{namespace}/{name}` を使用します。同じパスで `PATCH` と `DELETE` も利用できます。参照ファイルには別の API ルートがあります。メモリーエンティティがスキルを参照している場合、削除は失敗することがあります。
+
+学習したスキルの正確さを確認してください。メモリープロセスは、管理者が編集したスキルも含め、時間の経過とともに更新または削除することがあります。編集しても、学習したスキルがその後変更されないように保護されるわけではありません。
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

@@ -24,10 +24,22 @@ Klex offers a range of built-in MCP servers. You can also connect other MCP serv
 
 Connect the apps and computers your Bot needs for its job. For most MCPs, it acts through its own account or identity, with permissions configured for that Bot.
 
-- Connect or disconnect MCP servers for a Bot in the Cloud dashboard.
-- Configure permissions for the Bot's accounts and connected apps directly in those accounts and apps.
-- Review the Bot's activity in the dashboard.
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Cloud-hosted">
 
-Connecting a server and granting an account access are distinct decisions. Check both when deciding what a Bot can reach and do.
+Open your Bot in Klex Cloud and use **Connectors** to manage its app connections and **Computers** to manage its connected computers. You can also review its **Activity**.
+
+</Tab>
+<Tab title="Self-hosted">
+
+In the Klex app, use **Settings → MCP Servers** to manage server connections. See [MCP and Klex Bots](/bot/concepts/mcp#add-a-remote-server-in-the-self-hosted-app) for the steps. Use **Settings → Logs** to review local diagnostics.
+
+</Tab>
+</Tabs>
+
+Configure permissions for the Bot's accounts and connected apps directly in those accounts and apps. Connecting a server and granting an account access are distinct decisions. Check both when deciding what a Bot can reach and do.
 
 For the bigger picture, see [How Klex Bots work](/bot/concepts/how-bots-work). For where chats and memory are stored, see [the data directory](/bot/concepts/data-directory).
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

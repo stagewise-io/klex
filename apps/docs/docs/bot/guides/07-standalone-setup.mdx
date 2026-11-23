@@ -38,7 +38,7 @@ klex --no-cloud
 3. Open **Settings → Soul** and create a soul describing the Bot's character and work.
 4. In **Settings → MCP Servers**, connect the servers the Bot needs. Configure its account permissions in the connected apps.
 
-To receive events from an external channel, connect an MCP server that supports the relevant resource updates, MCP Events, or Klex's [push-notification extension](https://github.com/stagewise-io/klex/tree/main/packages/mcp-extension-push-notifications).
+To receive events from an external channel, connect a server that supports the relevant MCP Events, live resources, or Klex's [push-notification extension](https://github.com/stagewise-io/klex/tree/main/packages/mcp-extension-push-notifications). MCP Events require a watch, and live resource updates require the resource to be open. Some servers also require separate setup in the connected service.
 
 ## Create a Bot without the picker
 
@@ -48,4 +48,4 @@ To create a standalone Bot without the interactive picker, provide a name:
 klex --create-bot --no-cloud --bot-name Ada
 ```
 
-Add `--headless` to run without the terminal UI. Configure a provider, chat model, and soul before the Bot can work. Creation cannot be combined with `--data-dir` or `KLEX_DATA_DIR`; those select an existing Bot. For stopping a headless Bot, see [Control your Klex Bot](/bot/guides/control-and-limits#stop-a-headless-bot).
+Add `--headless` to run without the terminal UI. Configure a provider, chat model, and soul before the Bot can work. To configure a new Bot interactively, omit `--headless` and use the settings above. For headless configuration, use the Admin API; see its [local access and security limits](/bot/guides/observability#access-the-local-admin-api). Creation cannot be combined with `--data-dir` or `KLEX_DATA_DIR`; those select an existing Bot. For stopping a headless Bot, see [Control your Klex Bot](/bot/guides/control-and-limits#stop-a-headless-bot).

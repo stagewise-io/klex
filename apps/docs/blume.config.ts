@@ -120,9 +120,9 @@ export default defineConfig({
         },
         {
           from: `${locale}/concepts/god-messages`,
-          to: `${locale}/bot/concepts/${['/de', '/pt'].includes(locale) ? 'god-messages' : 'soul'}`,
+          to: `${locale}/bot/concepts/${['/de'].includes(locale) ? 'god-messages' : 'soul'}`,
         },
-        ...(['/de', '/pt'].includes(locale)
+        ...(['/de'].includes(locale)
           ? []
           : [
               {

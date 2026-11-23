@@ -82,7 +82,9 @@ export default defineConfig({
     { from: '/bot/use-cases', to: '/bot', status: 302 },
     { from: '/architecture', to: '/bot/concepts/how-bots-work' },
     { from: '/concepts/soul', to: '/bot/concepts/soul' },
-    { from: '/concepts/god-messages', to: '/bot/concepts/god-messages' },
+    { from: '/concepts/god-messages', to: '/bot/concepts/soul' },
+    { from: '/bot/concepts/god-messages', to: '/bot/concepts/soul' },
+    { from: '/bot/reliability/availability', to: '/bot/reliability/updates' },
     { from: '/concepts/model-providers', to: '/bot/concepts/models' },
     { from: '/concepts/model-selection', to: '/bot/concepts/models' },
     { from: '/concepts/data-directory', to: '/bot/concepts/data-directory' },
@@ -112,7 +114,6 @@ export default defineConfig({
       const unchanged = [
         '',
         '/concepts/soul',
-        '/concepts/god-messages',
         '/concepts/data-directory',
       ];
       return [
@@ -121,6 +122,13 @@ export default defineConfig({
           to: `${locale}/bot`,
           status: 302 as const,
         },
+        {
+          from: `${locale}/concepts/god-messages`,
+          to: `${locale}/bot/concepts/${['/de', '/es', '/fr', '/pt'].includes(locale) ? 'god-messages' : 'soul'}`,
+        },
+        ...(['/de', '/es', '/fr', '/pt'].includes(locale)
+          ? []
+          : [{ from: `${locale}/bot/concepts/god-messages`, to: `${locale}/bot/concepts/soul` }]),
         ...unchanged.map((path) => ({
           from: `${locale}${path}`,
           to: `${locale}/bot${path}`,

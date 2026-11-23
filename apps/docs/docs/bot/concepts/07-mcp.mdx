@@ -15,8 +15,10 @@ Klex offers built-in MCP servers and supports other MCP servers. The capabilitie
 
 - **Tools** let the Bot request actions or information from the server.
 - **Resources** provide content the Bot can discover and open.
-- **Push notifications**, when supported by the server, can deliver events to the Bot. Klex uses an MCP extension for these notifications.
-- **MCP Events** uses a draft extension. When a server supports it, the Bot can discover and watch its events. Watches persist across chats and restarts, but events during downtime can be lost. Setting up a watch does not configure the external service for you.
+- **Push notifications** can deliver messages and other events when the server supports the [Klex MCP Push Notifications extension](https://github.com/stagewise-io/klex/tree/main/packages/mcp-extension-push-notifications).
+- **MCP Events & Triggers**, a draft MCP extension, allows the Bot to discover and watch supported server events. Watches persist across chats and restarts, but events during downtime can be lost. Setting up a watch does not configure the external service for you.
+
+These MCP capabilities can prompt the Bot to work when a message arrives or something changes in an app. They depend on the connected server's support and setup; no separate Klex-specific gateway is required.
 
 ## Adding a server
 
@@ -29,7 +31,19 @@ Only connect servers you trust. A connection makes the server’s capabilities a
   <img class="bot-concept-compact" src="/images/mcp-compact.svg" width="640" height="584" alt="A Bot connects to an app through MCP. Its account is shown inside the app, separate from the connection." />
 </div>
 
-### Add a remote server in the self-hosted app
+### Add a remote server
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Cloud-hosted">
+
+1. In Klex Cloud, open your Bot and select **Connectors**. You need organization owner or admin access to manage connectors.
+2. Choose **Connect an MCP** in the connector catalog, enter the server's URL and name, and add any required headers under **Advanced options**.
+3. Select **Connect** and complete authorization if prompted. Check the connection status before relying on the server.
+
+</Tab>
+<Tab title="Self-hosted">
+
+<a id="add-a-remote-server-in-the-self-hosted-app"></a>
 
 In the interactive Klex app, you can add a streamable HTTP server:
 
@@ -40,8 +54,14 @@ In the interactive Klex app, you can add a streamable HTTP server:
 
 To inspect a server, select it and press Enter. Its detail screen shows its status, transport, tool count, and push-notification support. From there, `e` edits its configuration and `d` removes it after confirmation. On removal, Klex deletes local OAuth credentials and attempts token revocation when the provider supports it. Revocation can fail, so check the account’s permissions separately in the connected app.
 
+</Tab>
+</Tabs>
+
 For OAuth authorization through the Cloud interface, the Bot must be enrolled and have a connected Cloud tunnel. A standalone Bot without Cloud enrollment cannot use that Cloud-relayed authorization flow.
 
 ## If a connection needs attention
 
 A server may need authorization or fail to connect. Check its connection status and complete any required authorization. If it still cannot connect, check the server address, credentials, and whether the server is available. The Bot can only use capabilities a connected server exposes.
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

@@ -5,7 +5,6 @@ sidebar:
 description: How a Bot’s soul describes its character and how to manage it.
 related:
   - /bot/concepts/identity
-  - /bot/concepts/god-messages
   - /bot/concepts/memory
   - /bot/concepts/data-directory
 ---
@@ -14,13 +13,9 @@ The soul describes a Bot’s personality, voice, purpose, and priorities. It is 
 
 ## Create or update a soul
 
-When you create a Bot in Klex Cloud, choose its character traits using the suggested defaults or your own preferences.
+Use the Bot's Admin API to create or update its soul from instructions. Send `POST /v1/soul` to create a soul from scratch, or `PATCH /v1/soul` to update an existing soul. Use `GET /v1/soul` to read it. See [local Admin API access](/bot/guides/observability#access-the-local-admin-api) for access and security guidance.
 
-In the self-hosted Klex app, open **Settings → Soul**. You can view the saved soul, create one from instructions, update it, or re-create it from scratch. Generation uses your configured chat models and saves successful output. Save a soul before sending the Bot new work.
-
-For example, instructions might describe the Bot’s job, preferred tone, and how it should approach decisions. Review the generated soul and update it if it does not reflect what you intended.
-
-Klex also supports [god messages](/bot/concepts/god-messages), which can request a soul change. They are not the only way to create or update a soul.
+Soul generation uses configured chat models and saves the result after it succeeds. For example, instructions might describe the Bot’s job, preferred tone, and approach to decisions. Review the generated soul and update it if needed. Save a soul before sending the Bot new work.
 
 ## Storage and access
 

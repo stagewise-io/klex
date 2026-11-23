@@ -38,15 +38,15 @@ Find answers about getting started, hosting, connections, and operating Klex Bot
 
 ## Reliability
 
-- **Can I monitor a self-hosted Bot’s health?** Yes. Enable the optional health listener to monitor the Klex process and its readiness. See [Monitor a self-hosted Bot](/bot/reliability/availability#monitor-a-self-hosted-bot).
-- **Can a Bot work around the clock?** Yes. Keep its hosting environment running and its model and connections available for the work you want it to do. See [Availability](/bot/reliability/availability).
+- **Can I monitor a self-hosted Bot’s health?** Yes. Enable the optional health listener to monitor the Klex process and its readiness.
+- **Can a Bot work around the clock?** Yes. Keep its hosting environment running and its model and connections available for the work you want it to do.
 - **Do I have to re-create a Bot after an update?** Generally, no. Your Bot keeps its configuration, chats, and memory in its data directory. Check the release notes when updating. See [Updates](/bot/reliability/updates).
 
 ## Cloud and hosting
 
 - **Can I run a Bot without Klex Cloud?** Yes. Cloud enrollment is not required for a self-hosted Bot, though the standalone experience is less complete. See [Hosted vs. self-hosted](/cloud/hosted-vs-local).
-- **Who can access a Bot’s memory?** Administrators can access it through the Bot’s Admin API. For Cloud-hosted Bots, limited Klex staff can access chats or memory for agreed support debugging; access is logged and visible to you. Cloud-hosted data is encrypted in transit and at rest. See [Data privacy](/cloud/data-privacy) for the scope and applicable terms.
-- **Can I turn off analytics for a self-hosted Bot?** Yes. Use `--no-analytics`, `KLEX_NO_ANALYTICS=1`, or `DO_NOT_TRACK=1`. The explicit `--analytics` flag overrides the environment opt-outs. Operational telemetry is separate and has its own controls. These settings do not disable connections to providers, MCP servers, or Cloud. See [Analytics and telemetry](/cloud/data-privacy#analytics-and-telemetry-for-a-self-hosted-bot).
+- **Who can access a Bot’s memory?** Administrators can review chats and skills through the Bot’s Admin API. For Cloud-hosted Bots, limited Klex staff can access chats or memory for agreed support debugging; access is logged and visible to you. Cloud-hosted data is encrypted in transit and at rest. See [Data privacy](/cloud/data-privacy) for the scope and applicable terms.
+- **Can I turn off analytics for a self-hosted Bot?** Yes. You can disable product analytics and operational telemetry separately. See [Analytics and telemetry](/cloud/data-privacy#analytics-and-telemetry-for-a-self-hosted-bot) for the controls.
 - **Can I self-host Klex Cloud?** Self-hosted Klex Cloud is available to Enterprise customers. This is separate from self-hosting an individual Bot. See [Self-hosting the Cloud](/cloud/self-hosting).
 
 ## Klex Bots in your company

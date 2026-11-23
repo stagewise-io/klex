@@ -2,11 +2,10 @@
 title: Sessions of a Klex Bot
 sidebar:
   label: Sessions
-description: How a Klex Bot uses its regular session and separate sessions for tasks and administrator directives.
+description: How a Klex Bot uses its regular session and separate sessions for tasks.
 related:
   - /bot/concepts/how-bots-work
   - /bot/concepts/memory
-  - /bot/concepts/god-messages
 ---
 
 A Klex Bot runs in an environment that manages its active sessions and [memory](/bot/concepts/memory). The Bot works in external computers and apps connected through [MCP](/bot/concepts/mcp).
@@ -23,11 +22,5 @@ The regular session has access to connected MCP servers. It processes incoming e
 ## Separate tasks
 
 A Bot can use separate sessions for internal tasks. For example, it can start a consultation on a difficult question and use the result in its work.
-
-<a id="god-session"></a>
-
-## God messages
-
-[God messages](/bot/concepts/god-messages) are administrator directives processed in a dedicated session, separate from regular conversations. They can request a change to the Bot's [soul](/bot/concepts/soul). Administrators can also create and update the soul through the Soul settings or Admin API.
 
 See [How Klex Bots work](/bot/concepts/how-bots-work) for the Bot environment and its connections.

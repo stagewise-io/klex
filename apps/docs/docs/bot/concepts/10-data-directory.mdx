@@ -14,9 +14,19 @@ Each Klex Bot stores its chats and memory in its data directory. For a Cloud-hos
   <img class="bot-concept-compact" src="/images/data-compact.svg" width="640" height="820" alt="A cloud and a user-managed computer or server each contain a Klex Bot and its own data folder." />
 </div>
 
-Admins can access chats and memory through the Bot’s Admin API. The Klex Cloud dashboard acts as a reverse proxy and frontend to each Bot’s own Admin API.
+Admins can review chats and skills through the Bot’s Admin API. The Klex Cloud dashboard acts as a reverse proxy and frontend to each Bot’s own Admin API.
 
-## Find a self-hosted Bot
+## Find and protect Bot data
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Cloud-hosted">
+
+Open the Bot in Klex Cloud to review its activity. Its data directory is in the hosted environment. See [Data privacy](/cloud/data-privacy) for how Cloud-hosted data is protected.
+
+</Tab>
+<Tab title="Self-hosted">
+
+<a id="find-a-self-hosted-bot"></a>
 
 In the self-hosted Klex app, interactive startup discovers Bots under `~/.klex/agents` by default. If `KLEX_HOME` is set, it uses the `agents` folder under that location instead. An explicit `--data-dir` selects a directory directly and takes precedence over `KLEX_DATA_DIR`.
 
@@ -28,8 +38,16 @@ klex --data-dir /path/to/bot
 
 Replace the example path with the Bot’s actual directory. See the [standalone setup guide](/bot/guides/standalone-setup) to create a Bot without Cloud or run it headlessly.
 
-## Protect the data
+<a id="protect-the-data"></a>
+
+### Protect a local directory
 
 The directory can contain sensitive information, including configuration and credentials. Restrict access using your operating system’s permissions, and protect any copies you make. Klex requests owner-only permissions when creating the directory on systems that support Unix modes; it does not change permissions on an existing directory. Windows uses access control lists instead.
 
 Check your backup and recovery procedures before deleting or moving data.
+
+</Tab>
+</Tabs>
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

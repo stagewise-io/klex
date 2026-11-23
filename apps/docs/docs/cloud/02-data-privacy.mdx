@@ -7,7 +7,7 @@ related:
   - /guides/prevent-information-theft
 ---
 
-A Bot’s chats and memory are stored in its [data directory](/bot/concepts/data-directory). For a Cloud-hosted Bot, that directory is in the hosted environment. For a self-hosted Bot, it is in the environment where you run the Bot. Administrators can access this data through the Bot’s Admin API.
+A Bot’s chats and memory are stored in its [data directory](/bot/concepts/data-directory). For a Cloud-hosted Bot, that directory is in the hosted environment. For a self-hosted Bot, it is in the environment where you run the Bot. Administrators can review chats and skills through the Bot’s Admin API.
 
 All Cloud-hosted Bot data, including memory, is encrypted in transit and at rest. This statement does not describe encryption for self-hosted Bots; protect your own hosting environment and storage appropriately.
 
@@ -19,7 +19,17 @@ For support debugging of a Cloud-hosted Bot, limited Klex staff can access its c
 
 The [Privacy Policy](https://klex.bot/legal/privacy) and [Data Processing Agreement](https://klex.bot/legal/data-processing-agreement) describe support debugging, other processing, service providers, and retention. They also address separately lawful security or legal processing. Review the applicable terms and connected providers’ policies for your use case.
 
-## Analytics and telemetry for a self-hosted Bot
+## Analytics and telemetry
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Cloud-hosted">
+
+For information about Cloud processing, service providers, and retention, review the [Privacy Policy](https://klex.bot/legal/privacy) and [Data Processing Agreement](https://klex.bot/legal/data-processing-agreement). The self-hosted process flags do not describe Cloud-side reporting.
+
+</Tab>
+<Tab title="Self-hosted">
+
+<a id="analytics-and-telemetry-for-a-self-hosted-bot"></a>
 
 Klex has two separate reporting systems. The controls below apply to the self-hosted Klex process; they do not describe Cloud-side reporting or connected services.
 
@@ -30,3 +40,9 @@ To turn product analytics off, start Klex with `--no-analytics`, or set `KLEX_NO
 **Operational telemetry** is separate. It is off when no telemetry endpoint is configured. Unless telemetry is explicitly disabled, setting an endpoint enables it. The default enabled level includes sensitive operational metadata. The debug level can also export chat content, prompts, and tool payloads. Use only a collector you trust and restrict access to its data. To force telemetry off, use `--disable-telemetry` or `KLEX_DISABLE_TELEMETRY=1`. See the [telemetry implementation details](https://github.com/stagewise-io/klex/blob/baff8a40ce9b896fdd17146dfe9906cefe7c2697/apps/klex/telemetry.md).
 
 Turning off one system does not turn off the other. Neither control disables communication with your configured model providers, MCP servers, or Cloud connection.
+
+</Tab>
+</Tabs>
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

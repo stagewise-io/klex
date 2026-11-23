@@ -23,7 +23,7 @@ For example: “Every Monday at 09:00 Europe/Berlin, summarize the open project 
 
 A Bot can use its internal to-dos for short-term work and one-time reminders. They are not a recurring calendar: use a suitable connected service for repeating schedules.
 
-Administrators can list and create to-dos through `GET` and `POST /v1/todos`, and update or delete one through `PATCH` or `DELETE /v1/todos/{id}`. The list is shared across the Bot’s sessions; changes appear on its next step. A reminder time must be in the future and include a UTC offset or `Z`. Check the Bot’s OpenAPI document for route availability, and secure access as described in [Review Bot activity](/bot/guides/observability#access-the-local-admin-api).
+Administrators can list and create to-dos through `GET` and `POST /v1/todos`, and update or delete one through `PATCH` or `DELETE /v1/todos/{id}`. The list is shared across the Bot’s sessions; changes appear on its next step. A reminder time must be in the future and include a UTC offset or `Z`. Check the Bot’s OpenAPI document for route availability. For a self-hosted Bot, see [local Admin API access](/bot/guides/observability#access-the-local-admin-api) and its security limits.
 
 A Bot can also learn a reusable procedure from experience as an [Agent Skill](/bot/concepts/agent-skills), helping it carry out familiar work.
 

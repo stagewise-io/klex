@@ -13,7 +13,18 @@ Cada bot de Klex guarda sus chats y su memoria en su directorio de datos. En un 
 
 Los administradores pueden revisar los chats y los Skills mediante la Admin API del bot. El panel de Klex Cloud actúa como proxy inverso e interfaz de la Admin API de cada bot.
 
-## Encontrar un bot autoalojado
+## Encontrar y proteger los datos del bot
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Alojado en la nube">
+
+Abra el bot en Klex Cloud para revisar su actividad. Su directorio de datos está en el entorno alojado. Consulte [Privacidad de datos](/cloud/data-privacy) para saber cómo se protegen esos datos.
+
+</Tab>
+<Tab title="Autoalojado">
+
+<a id="find-a-self-hosted-bot"></a>
+<a id="encontrar-un-bot-autoalojado"></a>
 
 En la aplicación Klex autoalojada, el inicio interactivo busca bots por defecto en `~/.klex/agents`. Si está definida la variable `KLEX_HOME`, utiliza la carpeta `agents` dentro de esa ruta. Con `--data-dir` puede seleccionar directamente un directorio; esta opción tiene prioridad sobre `KLEX_DATA_DIR`.
 
@@ -23,10 +34,19 @@ Por ejemplo, para abrir un bot cuyo directorio de datos ya conoce:
 klex --data-dir /path/to/bot
 ```
 
-Sustituya la ruta de ejemplo por el directorio real del bot. Consulte el [inicio rápido](/bot/quickstart) para crear un bot y configurarlo sin interfaz de terminal.
+Sustituya la ruta de ejemplo por el directorio real del bot. La [guía de configuración autónoma](/bot/guides/standalone-setup) explica cómo crear un bot sin Cloud o ejecutarlo sin interfaz de terminal.
 
-## Proteger los datos
+<a id="protect-the-data"></a>
+<a id="proteger-los-datos"></a>
+
+### Proteger un directorio local
 
 El directorio puede contener información sensible, incluidas la configuración y las credenciales. Limite el acceso con los permisos de su sistema operativo y proteja las copias que realice. En sistemas con modos de archivo Unix, Klex solicita permisos solo para el propietario al crear el directorio; no cambia los permisos de directorios existentes. Windows utiliza listas de control de acceso.
 
-Revise sus procedimientos de copia de seguridad y recuperación antes de eliminar o mover datos. Esta página no describe un procedimiento de migración o recuperación admitido, ni las reglas de retención o el tratamiento de datos por terceros.
+Revise sus procedimientos de copia de seguridad y recuperación antes de eliminar o mover datos.
+
+</Tab>
+</Tabs>
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

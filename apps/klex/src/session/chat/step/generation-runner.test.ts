@@ -3,9 +3,9 @@ import { randomUUID } from 'node:crypto';
 import { trace } from '@opentelemetry/api';
 import {
   APICallError,
-  NoOutputGeneratedError,
   type LanguageModel,
   type ModelMessage,
+  NoOutputGeneratedError,
 } from 'ai';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -172,6 +172,7 @@ describe('GenerationRunner — missing OpenAI items', () => {
         ],
       });
       const fallback = vi.spyOn(deps.fallbackManager, 'fallbackToNextModel');
+      vi.spyOn(deps.stepSpan, 'isRecording').mockReturnValue(true);
       const event = vi.spyOn(deps.stepSpan, 'addEvent');
       const error = missingError();
       if (mode === 'finish') {
@@ -193,7 +194,7 @@ describe('GenerationRunner — missing OpenAI items', () => {
               content: [{ type: 'text', text: 'old answer' }],
             },
           ]);
-          expect(deps.messages[0]!.parts).toEqual([
+          expect(deps.messages[0]?.parts).toEqual([
             { type: 'text', text: 'old answer' },
           ]);
           return makeGenResult(
@@ -204,6 +205,19 @@ describe('GenerationRunner — missing OpenAI items', () => {
       );
       const result = await new GenerationRunner(deps).run();
       expect(runStreamedGeneration).toHaveBeenCalledTimes(2);
+      const invocationAttributes = event.mock.calls
+        .filter(([name]) => name === 'step.generation_invoked')
+        .map(([, attributes]) => attributes as Record<string, unknown>);
+      expect(invocationAttributes).toHaveLength(2);
+      expect(
+        Number(
+          invocationAttributes[0]?.['klex.input_size.estimated_total_units'],
+        ),
+      ).toBeGreaterThan(
+        Number(
+          invocationAttributes[1]?.['klex.input_size.estimated_total_units'],
+        ),
+      );
       expect(fallback).not.toHaveBeenCalled();
       expect(result).toMatchObject({
         requestRejected: false,
@@ -946,6 +960,37 @@ describe('GenerationRunner — stream progress', () => {
       'step.first_chunk_received',
       expect.objectContaining({ 'generation.attempt': 1 }),
     );
+  });
+
+  it('attaches numeric input estimates without exporting prompt text', async () => {
+    const stepSpan = trace.getTracer('test').startSpan('step');
+    vi.spyOn(stepSpan, 'isRecording').mockReturnValue(true);
+    const addEventSpy = vi.spyOn(stepSpan, 'addEvent');
+
+    const runner = new GenerationRunner(
+      makeDeps({ stepSpan, basePrompt: 'PRIVATE_PROMPT_TEXT' }),
+    );
+    await runner.run();
+
+    const invocationAttributes = addEventSpy.mock.calls.find(
+      ([name]) => name === 'step.generation_invoked',
+    )?.[1];
+    expect(invocationAttributes).toHaveProperty(
+      'klex.input_size.estimated_total_units',
+    );
+    expect(
+      (invocationAttributes as Record<string, unknown> | undefined)?.[
+        'klex.input_size.estimated_total_units'
+      ],
+    ).toBeGreaterThan(0);
+    expect(JSON.stringify(invocationAttributes)).not.toContain(
+      'PRIVATE_PROMPT_TEXT',
+    );
+    expect(
+      Object.values(invocationAttributes ?? {}).every(
+        (value) => typeof value !== 'string',
+      ),
+    ).toBe(true);
   });
 
   it('sets chunkCount attribute on step span', async () => {

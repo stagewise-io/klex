@@ -1,13 +1,11 @@
 import type { ModelMessage } from 'ai';
-import { getEncoding } from 'js-tiktoken';
 
 import { serializeValue } from '@/session/chat/utils/history-view';
 import type {
   InteractionToolDescriptor,
   PreparedInferenceContext,
 } from '@/session/interaction';
-
-const tokenizer = getEncoding('o200k_base');
+import { o200kTokenizer } from '@/session/tokenizer';
 
 const MAX_HISTORY_TEXT_CHARACTERS = 131_072;
 /**
@@ -258,7 +256,7 @@ function retainNewestHistory(
 function countInitialItemTokens(item: GPTLiveInitialItem): number {
   const text = item.content[0]?.text ?? '';
   // Include a conservative per-message allowance for role and envelope tokens.
-  return tokenizer.encode(text).length + 8;
+  return o200kTokenizer.encode(text).length + 8;
 }
 
 /**
@@ -284,7 +282,7 @@ export function truncateToTokenBudget(text: string, maxTokens: number): string {
       const piece = codePoints
         .slice(start, start + MAX_TOKEN_PIECE_CODE_POINTS)
         .join('');
-      used += tokenizer.encode(piece).length;
+      used += o200kTokenizer.encode(piece).length;
       if (used > maxTokens) return prefix;
       prefix += piece;
     }
@@ -314,7 +312,7 @@ function assertWithinTokenBudget(
   maxTokens: number,
   name: string,
 ): void {
-  const tokens = tokenizer.encode(text).length;
+  const tokens = o200kTokenizer.encode(text).length;
   if (tokens > maxTokens)
     throw new Error(`${name} exceeds its ${maxTokens}-token budget`);
 }

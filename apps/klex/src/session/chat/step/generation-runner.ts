@@ -28,6 +28,7 @@ import type {
 } from '../extensions/extension-api';
 import type { ExtendedUIMessage } from '../message-types';
 import type { AgentTools } from '../tools';
+import { estimateInputSize } from '../utils/input-size-estimate';
 import type { ModelFallbackManager } from '../utils/model-fallback-manager';
 import {
   extractMissingOpenAIItemId,
@@ -184,6 +185,23 @@ export class GenerationRunner {
         providerType: this.deps.modelContext.providerType,
       });
 
+    const estimateCurrentInputSize = ():
+      | Readonly<Record<string, number>>
+      | undefined => {
+      if (!stepSpan.isRecording()) return undefined;
+      try {
+        return estimateInputSize({
+          basePrompt: this.deps.basePrompt,
+          extensionSystemPromptParts: this.deps.extensionSystemPromptParts,
+          modelMessages: this.deps.modelMessages,
+          tools: this.deps.tools,
+        }).attributes;
+      } catch {
+        // Estimation failures must never prevent a generation retry.
+        return { 'klex.input_size.estimate_failed': 1 };
+      }
+    };
+
     while (attempt < MAX_GENERATION_ATTEMPTS) {
       attempt++;
       const generationAbortController = new AbortController();
@@ -205,10 +223,12 @@ export class GenerationRunner {
       let firstChunkReceived = false;
       let chunkCount = 0;
 
+      const inputSizeAttributes = estimateCurrentInputSize();
       stepSpan.addEvent('step.generation_invoked', {
         'generation.attempt': attempt,
         'generation.deadline.firstOutputMs': deadlines.firstOutputMs,
         'generation.deadline.idleMs': deadlines.idleMs,
+        ...(inputSizeAttributes ?? {}),
       });
       const watchdog = new StreamWatchdog(deadlines);
 

@@ -1,0 +1,34 @@
+---
+title: Die Seele eines Klex Bots
+sidebar:
+  order: 4
+description: Wie die Seele den Charakter eines Bots beschreibt und wie Sie sie verwalten.
+related:
+  - /bot/concepts/identity
+  - /bot/concepts/memory
+  - /bot/concepts/data-directory
+---
+
+Die Seele beschreibt die Persönlichkeit, Ausdrucksweise, Aufgabe und Prioritäten eines Bots. Sie ist von seinem [Gedächtnis](/bot/concepts/memory) getrennt und Teil des Kontexts seiner regulären Session.
+
+<a id="erstellung-der-bot-seele"></a>
+<a id="creating-a-bots-soul"></a>
+<a id="creator-mode"></a>
+<a id="creator-mode-cloud-only"></a>
+<a id="creator-modus-nur-cloud"></a>
+<a id="god-message-mode"></a>
+<a id="god-message-modus"></a>
+
+## Eine Seele erstellen oder aktualisieren
+
+Verwenden Sie die Admin API des Bots, um seine Seele anhand von Anweisungen zu erstellen oder zu aktualisieren. Mit `POST /v1/soul` erstellen Sie eine Seele von Grund auf, mit `PATCH /v1/soul` aktualisieren Sie eine vorhandene Seele und mit `GET /v1/soul` lesen Sie sie. Hinweise zum Zugriff und zur Sicherheit finden Sie unter [Lokaler Zugriff auf die Admin API](/bot/guides/observability#access-the-local-admin-api).
+
+Die Generierung verwendet die konfigurierten Chat-Modelle und speichert das Ergebnis nach erfolgreichem Abschluss. In den Anweisungen können Sie beispielsweise die Aufgabe des Bots, seinen bevorzugten Ton und seinen Umgang mit Entscheidungen beschreiben. Überprüfen Sie die generierte Seele und aktualisieren Sie sie bei Bedarf. Speichern Sie eine Seele, bevor Sie dem Bot neue Aufgaben geben.
+
+## Speicherung und Zugriff
+
+Die Seele wird im [Datenverzeichnis](/bot/concepts/data-directory) des Bots gespeichert. Die Admin API des Bots kann die Seele lesen und anhand von Administratoranweisungen eine neue oder aktualisierte Seele generieren. In der regulären Session steht kein Tool zum Schreiben der Seele zur Verfügung.
+
+## Wenn der Bot keine Seele hat
+
+Ein Bot benötigt eine nicht leere Seele, um reguläre Aufgaben zu bearbeiten. Andernfalls überspringt er neue Aufgaben und verwirft den neu hinzugefügten Session-Verlauf; übersprungene Aufgaben werden nicht vorgemerkt. Erstellen Sie eine Seele, bevor Sie neue Eingaben senden.

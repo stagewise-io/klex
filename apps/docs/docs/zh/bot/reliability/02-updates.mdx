@@ -1,0 +1,45 @@
+---
+title: 更新
+description: 准备 Klex 更新并保护自托管 Bot 的数据。
+related:
+  - /bot/concepts/data-directory
+---
+
+<a id="monitor-a-bot"></a>
+<a id="monitor-a-self-hosted-bot"></a>
+
+更新 Klex 通常不需要创建新 Bot。Bot 的配置、聊天记录和记忆与其[数据目录](/bot/concepts/data-directory)关联。
+
+## 更新并保护 Bot
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="云托管">
+
+Klex Cloud 负责管理云托管 Bot 的运行环境。发生变更后，在控制台中打开 Bot，检查其状态并查看活动。有关云端数据的信息，请参阅[数据与隐私](/cloud/data-privacy)。
+
+</Tab>
+<Tab title="自托管">
+
+<a id="update-a-self-hosted-installation"></a>
+
+更新前，请阅读发行说明，了解特定版本的操作要求。更新后，检查 Bot 是否能启动、连接是否正常，以及重要工作流程是否仍能产生预期结果。Klex 启动时会检查受支持的本地数据，并在需要时迁移数据。
+
+对于由安装程序管理的安装，交互式应用可以提示有可用更新。在更新横幅中按 `u` 即可安装并重启。如果有活动会话，应用会警告会话将被中断，并要求再次按 `u`。
+
+自动更新默认关闭。要为受管理的安装启用自动更新，请使用 `--auto-update` 启动 Klex，或设置 `KLEX_AUTO_UPDATE=1`。使用 `--no-auto-update` 可覆盖环境变量并关闭自动更新。这适用于交互式和无头模式；其他安装类型不使用此更新程序。
+
+Klex 会在启动 Bot 前以及运行期间定期检查更新。运行期间安装更新后，它会暂停接收新工作，等待当前工作完成后重启。等待的忙碌时间上限为十分钟；实时通话进行时计时器会暂停。如果工作未能及时完成，可能会被中断。更新后请监控日志并检查 Bot，不要假定所有任务都已完成。
+
+<a id="protect-self-hosted-data"></a>
+
+### 备份数据
+
+手动更新前，请[停止自托管 Bot](/bot/guides/control-and-limits#stop-a-bot)，并安全备份其数据目录。关闭自动更新时，重启由安装程序管理的交互式安装，并使用更新横幅。如果启用自动更新，请改为计划在 Bot 停止时定期备份。目录可能包含敏感信息，因此请限制对备份的访问，并遵循组织的备份和恢复流程。
+
+除非已确认兼容，否则不要使用较旧版本的 Klex 打开更新后的数据目录。如果更新失败，请调查报告的错误，并在更改或删除 Bot 数据前查阅发行说明或联系 Klex 支持。
+
+</Tab>
+</Tabs>
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

@@ -1,0 +1,26 @@
+---
+title: Sessions of a Klex Bot
+sidebar:
+  label: Sessions
+description: How a Klex Bot uses its regular session and separate sessions for tasks.
+related:
+  - /bot/concepts/how-bots-work
+  - /bot/concepts/memory
+---
+
+A Klex Bot runs in an environment that manages its active sessions and [memory](/bot/concepts/memory). The Bot works in external computers and apps connected through [MCP](/bot/concepts/mcp).
+
+<a id="the-technical-foundation"></a>
+<a id="main-session"></a>
+
+## Regular session
+
+The regular session has access to connected MCP servers. It processes incoming events and can work in connected environments. Available actions depend on the connections and permissions.
+
+<a id="utility-sessions"></a>
+
+## Separate tasks
+
+A Bot can use separate sessions for internal tasks. For example, it can start a consultation on a difficult question and use the result in its work.
+
+See [How Klex Bots work](/bot/concepts/how-bots-work) for the Bot environment and its connections.

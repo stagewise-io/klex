@@ -1,0 +1,52 @@
+---
+title: O diretório de dados de um bot Klex
+sidebar:
+  order: 10
+description: Onde um bot armazena as suas conversas e memória e como encontrar os dados de um bot auto-hospedado.
+related:
+  - /bot/concepts/memory
+  - /cloud/hosted-vs-local
+  - /cloud/data-privacy
+---
+
+Cada bot Klex armazena as suas conversas e memória no seu diretório de dados. Para um bot alojado no Cloud, o diretório encontra-se no ambiente alojado. Para um bot auto-hospedado, encontra-se na pasta local usada para os seus dados.
+
+Os administradores podem consultar as conversas e os Skills através da Admin API do bot. O painel Klex Cloud funciona como proxy inverso e interface para a Admin API de cada bot.
+
+## Encontrar e proteger os dados do bot
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Alojado no Cloud">
+
+Abra o bot no Klex Cloud para consultar a sua atividade. O seu diretório de dados encontra-se no ambiente alojado. Consulte [Privacidade dos dados](/cloud/data-privacy) para saber como os dados alojados no Cloud são protegidos.
+
+</Tab>
+<Tab title="Auto-hospedado">
+
+<a id="find-a-self-hosted-bot"></a>
+<a id="encontrar-um-bot-auto-hospedado"></a>
+
+Na aplicação Klex auto-hospedada, o arranque interativo procura bots por defeito em `~/.klex/agents`. Se `KLEX_HOME` estiver definido, usa a pasta `agents` sob esse caminho. Com `--data-dir`, pode selecionar diretamente um diretório; esta opção tem prioridade sobre `KLEX_DATA_DIR`.
+
+Por exemplo, para abrir um bot cujo diretório de dados já conhece:
+
+```sh
+klex --data-dir /path/to/bot
+```
+
+Substitua o caminho de exemplo pelo diretório real do bot. Consulte o [guia de configuração autónoma](/bot/guides/standalone-setup) para criar um bot sem Cloud ou executá-lo sem interface de terminal.
+
+<a id="protect-the-data"></a>
+<a id="proteger-os-dados"></a>
+
+### Proteger um diretório local
+
+O diretório pode conter informações sensíveis, incluindo configuração e credenciais. Limite o acesso através das permissões do sistema operativo e proteja as cópias que criar. Em sistemas que usam modos de ficheiros Unix, o Klex solicita permissões reservadas ao proprietário ao criar o diretório; não altera as permissões de diretórios existentes. O Windows usa listas de controlo de acesso.
+
+Verifique os seus procedimentos de cópia de segurança e restauro antes de apagar ou mover dados.
+
+</Tab>
+</Tabs>
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

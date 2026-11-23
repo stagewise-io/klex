@@ -1,0 +1,34 @@
+---
+title: Automatiser les tâches récurrentes
+sidebar:
+  label: Tâches récurrentes
+description: Configurez des tâches répétées avec un service de planification connecté et des instructions claires.
+related:
+  - /bot/concepts/memory
+  - /bot/concepts/agent-skills
+  - /bot/guides/control-and-limits
+---
+
+Pour les tâches récurrentes, utilisez un calendrier ou un service de planification connecté capable de transmettre des événements au Bot. Le service doit prendre en charge la fréquence souhaitée et fournir les fonctions nécessaires par sa connexion MCP.
+
+<a id="set-up-a-routine"></a>
+
+## Configurer une routine
+
+1. Connectez le service de planification et autorisez le compte du Bot. Vérifiez qu’il peut créer le calendrier et recevoir ses événements.
+2. Indiquez au Bot la tâche à effectuer, sa fréquence, le fuseau horaire et la destination du résultat. Donnez-lui accès aux applications et aux données nécessaires.
+3. Demandez au Bot de créer le calendrier, puis vérifiez-le dans le service de planification. Testez le processus et examinez le résultat avant de vous y fier.
+
+Par exemple : « Chaque lundi à 09:00 Europe/Berlin, résume les tickets ouverts du projet et publie le résumé dans notre canal de projet. » Le Bot doit avoir accès à la source des tickets et au canal de destination, ainsi qu’à un calendrier fonctionnel.
+
+<a id="reminders-and-learned-procedures"></a>
+
+## Rappels et procédures apprises
+
+Un Bot peut utiliser ses tâches internes pour le travail à court terme et les rappels ponctuels. Elles ne constituent pas un calendrier récurrent : utilisez un service connecté adapté pour les tâches répétées.
+
+Les administrateurs peuvent lister et créer des tâches avec `GET` et `POST /v1/todos`, puis modifier ou supprimer une tâche avec `PATCH` ou `DELETE /v1/todos/{id}`. La liste est partagée entre les sessions du Bot ; il voit les changements à sa prochaine étape. Une heure de rappel doit être future et inclure un décalage UTC ou `Z`. Vérifiez la disponibilité des routes dans le document OpenAPI du Bot et protégez l’accès comme indiqué dans [Examiner l’activité du Bot](/bot/guides/observability#access-the-local-admin-api).
+
+Un Bot peut aussi apprendre de son expérience une procédure réutilisable sous forme d’[Agent Skill](/bot/concepts/agent-skills). Examinez son travail et corrigez les erreurs : l’apprentissage ne garantit pas l’exactitude des exécutions futures.
+
+Gardez le Bot et ses connexions disponibles à l’heure prévue. Un calendrier ne prouve pas qu’une tâche a été accomplie : vérifiez les résultats importants et appliquez votre processus habituel de suivi ou d’escalade.

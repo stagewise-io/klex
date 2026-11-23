@@ -1,0 +1,34 @@
+---
+title: El alma de un bot de Klex
+sidebar:
+  order: 4
+description: Cómo el alma describe el carácter de un bot y cómo gestionarla.
+related:
+  - /bot/concepts/identity
+  - /bot/concepts/memory
+  - /bot/concepts/data-directory
+---
+
+El alma describe la personalidad, la forma de expresarse, la tarea y las prioridades de un bot. Está separada de su [memoria](/bot/concepts/memory) y forma parte del contexto de su sesión habitual.
+
+<a id="crear-el-alma-de-un-bot"></a>
+<a id="creating-a-bots-soul"></a>
+<a id="creator-mode"></a>
+<a id="creator-mode-cloud-only"></a>
+<a id="modo-creador-solo-cloud"></a>
+<a id="god-message-mode"></a>
+<a id="modo-mensaje-dios"></a>
+
+## Crear o actualizar un alma
+
+Use la Admin API del bot para crear o actualizar su alma a partir de instrucciones. Envíe `POST /v1/soul` para crear un alma desde cero o `PATCH /v1/soul` para actualizar una existente. Use `GET /v1/soul` para leerla. Consulte las indicaciones de acceso y seguridad para la [Admin API local](/bot/guides/observability#access-the-local-admin-api).
+
+La generación del alma usa los modelos de chat configurados y guarda el resultado si se completa correctamente. Las instrucciones pueden describir, por ejemplo, la tarea del bot, el tono que prefiere y cómo debe abordar las decisiones. Revise el alma generada y actualícela si es necesario. Guarde un alma antes de enviar nuevas tareas al bot.
+
+## Almacenamiento y acceso
+
+El alma se guarda en el [directorio de datos](/bot/concepts/data-directory) del bot. La Admin API del bot puede leer el alma y generar una nueva o actualizada a partir de instrucciones de administración. La sesión habitual no dispone de una herramienta para escribir el alma.
+
+## Si el bot no tiene alma
+
+Un bot necesita un alma que no esté vacía para realizar sus tareas habituales. Sin ella, omite las tareas nuevas y descarta el contenido recién añadido al historial de la sesión; las tareas omitidas no se ponen en cola. Cree un alma antes de enviar nuevas entradas.

@@ -1,0 +1,36 @@
+---
+title: Klex Bot의 정체성
+sidebar:
+  label: 정체성
+description: Bot의 이름, Soul과 연결된 계정이 정체성에 기여하는 방식입니다.
+related:
+  - /bot/concepts/soul
+  - /bot/concepts/communication
+  - /bot/concepts/brain-and-computers
+---
+
+Klex Bot에는 이름과 성격 및 우선순위를 설명하는 [Soul](/bot/concepts/soul)이 있습니다. 연결된 계정은 외부 앱에서 Bot이 어떻게 표시되고 무엇에 접근할 수 있는지 결정합니다.
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="클라우드 호스팅">
+
+Klex Cloud에서 Bot을 열고 이름 옆의 **Edit bot**을 선택하세요. 변경하려면 Bot이 연결되어 있어야 하며 조직 소유자 또는 관리자 권한이 필요합니다. **Name** 필드를 변경하세요.
+
+</Tab>
+<Tab title="셀프 호스팅">
+
+Klex 앱의 **Settings → Bot Identity**에서 Bot의 공식 이름을 확인하고 변경할 수 있습니다.
+
+</Tab>
+</Tabs>
+
+설정된 Bot 이름은 세션 컨텍스트에 포함됩니다.
+
+<a id="identity-in-connected-apps"></a>
+
+## 연결된 앱에서의 정체성
+
+대부분의 연결된 앱에서 Bot은 자신의 계정을 통해 활동합니다. 해당 앱에서 계정 권한을 설정하세요. 환경을 연결하는 방법은 [연결](/bot/concepts/brain-and-computers)을 참조하세요.
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

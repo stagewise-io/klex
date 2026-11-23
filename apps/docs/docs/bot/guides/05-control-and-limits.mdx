@@ -1,0 +1,57 @@
+---
+title: Control your Klex Bot
+sidebar:
+  label: Control
+description: Stop a Klex Bot and manage its access to connected computers and apps.
+related:
+  - /bot/guides/observability
+  - /bot/concepts/brain-and-computers
+  - /guides/secure-bot-usage
+---
+
+You can stop a Klex Bot and manage what it can access through its connections and accounts.
+
+<a id="run-a-self-hosted-bot-without-the-picker"></a>
+
+## Stop a Bot
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Cloud-hosted">
+
+Open your Bot in Klex Cloud and select **Stop** in its hosting controls.
+
+</Tab>
+<Tab title="Self-hosted">
+
+To stop a Bot running in the app, close the app.
+
+<a id="stop-a-headless-bot"></a>
+
+For a headless Bot, use your service manager's stop command. If the process is supervised, configure it so the Bot does not immediately restart.
+
+</Tab>
+</Tabs>
+
+## Manage access
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Cloud-hosted">
+
+Open your Bot's **Connectors** in Klex Cloud to manage its connections.
+
+</Tab>
+<Tab title="Self-hosted">
+
+In the Klex app, use **Settings → MCP Servers** to inspect, edit, or remove a server; see [MCP and Klex Bots](/bot/concepts/mcp#add-a-remote-server-in-the-self-hosted-app) for the steps and OAuth revocation caveat.
+
+</Tab>
+</Tabs>
+
+Configure permissions for the accounts and apps the Bot uses directly in those accounts and apps. See [Connections to computers and apps](/bot/concepts/brain-and-computers) for how connections and account permissions relate.
+
+Klex does not currently support approvals or restrictions for individual actions. Configure the Bot's account and app permissions accordingly.
+
+You can also [review the Bot's activity](/bot/guides/observability) in the dashboard.
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

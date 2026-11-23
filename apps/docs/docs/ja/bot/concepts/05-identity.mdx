@@ -1,0 +1,36 @@
+---
+title: Klex Botのアイデンティティ
+sidebar:
+  label: アイデンティティ
+description: Botの名前、魂、接続されたアカウントがアイデンティティをどのように形作るかを説明します。
+related:
+  - /bot/concepts/soul
+  - /bot/concepts/communication
+  - /bot/concepts/brain-and-computers
+---
+
+Klex Botには名前と、その性格や優先事項を記述する[魂](/bot/concepts/soul)があります。接続されたアカウントによって、外部アプリでの表示やアクセスできる範囲が決まります。
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="クラウドホスト">
+
+Klex CloudでBotを開き、名前の横にある **Edit bot** を選択します。変更するにはBotが接続されていることと、組織のオーナーまたは管理者の権限が必要です。**Name** フィールドを変更します。
+
+</Tab>
+<Tab title="セルフホスト">
+
+Klexアプリの **Settings → Bot Identity** では、Botの正式な名前を確認し、変更できます。
+
+</Tab>
+</Tabs>
+
+設定されたBotの名前は、セッションのコンテキストに含まれます。
+
+<a id="identity-in-connected-apps"></a>
+
+## 接続されたアプリでのアイデンティティ
+
+ほとんどの接続されたアプリでは、Botは自分のアカウントを通じて行動します。そのアカウントの権限はアプリ側で設定してください。環境の接続方法については、[接続](/bot/concepts/brain-and-computers)を参照してください。
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

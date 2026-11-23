@@ -1,0 +1,48 @@
+---
+title: Updates
+description: So bereitest du Klex-Updates vor und schützt die Daten eines selbst gehosteten Bots.
+related:
+  - /bot/concepts/data-directory
+---
+
+<a id="monitor-a-bot"></a>
+<a id="monitor-a-self-hosted-bot"></a>
+<a id="einen-selbst-gehosteten-bot-überwachen"></a>
+
+Ein Update von Klex erfordert normalerweise keinen neuen Bot. Die Konfiguration, Chats und Memory des Bots gehören zu seinem [Datenverzeichnis](/bot/concepts/data-directory).
+
+## Bot aktualisieren und schützen
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Cloud-gehostet">
+
+Klex Cloud verwaltet die Laufzeit Cloud-gehosteter Bots. Öffne deinen Bot im Dashboard, um nach einer Änderung seinen Status und seine Aktivitäten zu prüfen. Informationen zu Cloud-Daten findest du unter [Daten und Datenschutz](/cloud/data-privacy).
+
+</Tab>
+<Tab title="Selbst gehostet">
+
+<a id="update-a-self-hosted-installation"></a>
+<a id="eine-selbst-gehostete-installation-aktualisieren"></a>
+
+Lies vor dem Update die Release Notes für versionsspezifische Hinweise. Prüfe danach, ob der Bot startet, seine Verbindungen funktionieren und wichtige Arbeitsabläufe die erwarteten Ergebnisse liefern. Klex prüft beim Start unterstützte lokale Daten und migriert sie bei Bedarf.
+
+Bei einer vom Installer verwalteten Installation kann die interaktive Anwendung ein verfügbares Update anbieten. Drücke im Update-Banner `u`, um das Update zu installieren und neu zu starten. Sind Sessions aktiv, warnt die Anwendung vor deren Unterbrechung und fordert dich auf, `u` erneut zu drücken.
+
+Automatische Updates sind standardmäßig ausgeschaltet. Um sie für eine verwaltete Installation einzuschalten, starte Klex mit `--auto-update` oder setze `KLEX_AUTO_UPDATE=1`. Mit `--no-auto-update` kannst du die Umgebungsvariable überschreiben und automatische Updates ausschalten. Das funktioniert im interaktiven und im Headless-Modus. Andere Installationstypen verwenden diesen Updater nicht.
+
+Klex prüft vor dem Start des Bots und während des Betriebs regelmäßig auf Updates. Nach der Installation eines Updates im laufenden Betrieb pausiert Klex neue Arbeit und wartet vor dem Neustart auf laufende Arbeit. Dafür stehen zehn Minuten Beschäftigungszeit zur Verfügung. Während eines aktiven Echtzeitanrufs pausiert der Timer. Arbeit kann unterbrochen werden, wenn sie nicht rechtzeitig abgeschlossen ist. Überwache die Logs und prüfe den Bot nach einem Update, statt anzunehmen, dass alle Aufgaben abgeschlossen wurden.
+
+<a id="protect-self-hosted-data"></a>
+<a id="selbst-gehostete-daten-schützen"></a>
+
+### Daten sichern
+
+[Stoppe vor einem manuellen Update den selbst gehosteten Bot](/bot/guides/control-and-limits#stop-a-bot) und erstelle eine sichere Sicherung seines Datenverzeichnisses. Wenn automatische Updates ausgeschaltet sind, starte eine vom Installer verwaltete interaktive Installation neu und verwende das Update-Banner. Wenn du automatische Updates einschaltest, plane stattdessen regelmäßige Sicherungen bei gestopptem Bot. Das Verzeichnis kann vertrauliche Informationen enthalten. Beschränke daher den Zugriff auf die Sicherung und befolge die Sicherungs- und Wiederherstellungsverfahren deiner Organisation.
+
+Öffne ein aktualisiertes Datenverzeichnis nicht mit einer älteren Klex-Version, ohne vorher deren Kompatibilität zu prüfen. Wenn ein Update fehlschlägt, untersuche den gemeldeten Fehler und lies die Release Notes oder kontaktiere den Klex-Support, bevor du Bot-Daten änderst oder löschst.
+
+</Tab>
+</Tabs>
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

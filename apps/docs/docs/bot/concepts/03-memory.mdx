@@ -1,0 +1,29 @@
+---
+title: Klex Bot Memory
+sidebar:
+  label: Memory
+description: How a Klex Bot uses skills and past experience to carry out its work.
+related:
+  - /bot/concepts/data-directory
+  - /bot/concepts/how-bots-work
+  - /cloud/hosted-vs-local
+---
+
+Memory helps a Klex Bot build on what it has learned and use context from past work. It brings together **skills**, including learned and pre-configured procedures, with relevant knowledge from the Bot's activity.
+
+A Bot can use skills to handle familiar tasks and recall past context when it is useful, such as a project's terminology or an earlier decision. It can request recall in the background, and relevant context can also surface as it works. See [Agent Skills](/bot/concepts/agent-skills) for more on reusable procedures.
+
+## Where chats and memory are stored
+
+Chats and memory are stored in the Bot's data directory:
+
+- For a **Cloud-hosted Bot**, the directory is in the hosted environment.
+- For a **self-hosted Bot**, it is in the local folder used for the Bot's data.
+
+All Cloud-hosted Bot data, including memory, is encrypted in transit and at rest.
+
+<a id="how-administrators-access-them"></a>
+
+## Review chats and skills
+
+Administrators can review chats and skills through the Bot's Admin API. The Klex Cloud dashboard is a frontend and reverse proxy for each Bot's Admin API. For more on storage, see [the data directory](/bot/concepts/data-directory).

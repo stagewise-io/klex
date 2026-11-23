@@ -1,0 +1,51 @@
+---
+title: Agent Skills
+description: Cómo utilizan y almacenan los Klex Bots los Agent Skills para tareas recurrentes.
+related:
+  - /bot/concepts/memory
+  - /bot/concepts/data-directory
+---
+
+Un Agent Skill es un conjunto reutilizable de instrucciones para una tarea recurrente. Por ejemplo, un skill puede describir cómo preparar un informe de estado de un proyecto. Su descripción indica cuándo se aplican las instrucciones y su contenido explica el procedimiento.
+
+Klex permite que el Bot descubra los skills disponibles y cargue un procedimiento cuando sea adecuado para una tarea.
+
+<a id="where-skills-come-from"></a>
+
+## De dónde vienen los skills
+
+Los skills pueden proceder de distintas fuentes:
+
+- **Template Skills** se incluyen con los Bot Templates.
+- **Learned Skills** se desarrollan a partir de la experiencia del Bot.
+- **Uploaded Skills** son aportados por usuarios para proporcionar comportamientos o conocimientos.
+
+Cada Bot almacena sus skills en su propio [directorio de datos](/bot/concepts/data-directory). Cada skill se identifica mediante un espacio de nombres y un nombre, como `learning/project-status`.
+
+Un proceso de memoria en segundo plano revisa la actividad y puede convertir las lecciones útiles en skills. Al procesar actividad posterior, puede actualizar o eliminar skills aprendidos; una conversación no produce necesariamente un skill.
+
+Cada skill se almacena en un archivo `SKILL.md` dentro de `skills/{namespace}/{name}/`. El archivo contiene un nombre, una descripción y un cuerpo en Markdown. Un skill también puede tener archivos de referencia en su carpeta `references/`.
+
+<a id="review-and-manage-skills"></a>
+
+## Revisar y gestionar los skills
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Alojado en la nube">
+
+La gestión de Uploaded Skills desde Klex Cloud estará disponible próximamente. Los Uploaded Skills serán el único tipo de skill que los usuarios podrán gestionar desde Cloud.
+
+</Tab>
+<Tab title="Autoalojado">
+
+Usa la Admin API del Bot para revisar los skills. Consulta [Revisar la actividad del Bot](/bot/guides/observability#access-the-local-admin-api) para conocer el acceso local y sus límites de seguridad.
+
+</Tab>
+</Tabs>
+
+La Admin API del Bot permite listar los skills, consultar su contenido, editarlos o eliminarlos. Usa `GET /v1/skills` para listarlos y `GET /v1/skills/{namespace}/{name}` para leer uno. La misma ruta admite `PATCH` y `DELETE`. Los archivos de referencia tienen rutas de API independientes. La eliminación puede fallar si una entidad de memoria hace referencia al skill.
+
+Revisa la exactitud de los skills aprendidos. El proceso de memoria puede actualizarlos o eliminarlos con el tiempo, incluidos los que haya editado una persona administradora. Una edición no impide que un skill aprendido cambie más adelante.
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

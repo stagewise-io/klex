@@ -1,0 +1,52 @@
+---
+title: Das Datenverzeichnis eines Klex Bots
+sidebar:
+  order: 10
+description: Wo ein Klex Bot Chats und Gedächtnis speichert und wie Sie die Daten eines selbst gehosteten Bots finden.
+related:
+  - /bot/concepts/memory
+  - /cloud/hosted-vs-local
+  - /cloud/data-privacy
+---
+
+Jeder Klex Bot speichert seine Chats und sein Gedächtnis in seinem Datenverzeichnis. Bei einem Cloud-gehosteten Bot liegt das Verzeichnis in der gehosteten Umgebung. Bei einem selbst gehosteten Bot liegt es im lokalen Ordner für die Daten des Bots.
+
+Administratoren können über die Admin API des Bots Chats und Skills einsehen. Das Dashboard von Klex Cloud dient als Reverse-Proxy und Oberfläche für die Admin API des jeweiligen Bots.
+
+## Bot-Daten finden und schützen
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Cloud-gehostet">
+
+Öffnen Sie den Bot in Klex Cloud, um seine Aktivitäten einzusehen. Sein Datenverzeichnis liegt in der gehosteten Umgebung. Wie diese Daten geschützt werden, erfahren Sie unter [Datenschutz](/cloud/data-privacy).
+
+</Tab>
+<Tab title="Selbst gehostet">
+
+<a id="find-a-self-hosted-bot"></a>
+<a id="einen-selbst-gehosteten-bot-finden"></a>
+
+In der selbst gehosteten Klex-App sucht der interaktive Start standardmäßig unter `~/.klex/agents` nach Bots. Wenn `KLEX_HOME` gesetzt ist, wird stattdessen der Ordner `agents` unter diesem Pfad verwendet. Mit `--data-dir` wählen Sie ein Verzeichnis direkt aus; die Option hat Vorrang vor `KLEX_DATA_DIR`.
+
+Um beispielsweise einen Bot zu öffnen, dessen Datenverzeichnis bereits bekannt ist:
+
+```sh
+klex --data-dir /path/to/bot
+```
+
+Ersetzen Sie den Beispielpfad durch das tatsächliche Verzeichnis des Bots. Die [Anleitung zur eigenständigen Einrichtung](/bot/guides/standalone-setup) zeigt, wie Sie einen Bot ohne Cloud erstellen oder ohne Terminaloberfläche betreiben.
+
+<a id="protect-the-data"></a>
+<a id="daten-schützen"></a>
+
+### Ein lokales Verzeichnis schützen
+
+Das Verzeichnis kann sensible Informationen enthalten, darunter Konfiguration und Zugangsdaten. Beschränken Sie den Zugriff mithilfe der Berechtigungen Ihres Betriebssystems und schützen Sie erstellte Kopien. Klex fordert beim Erstellen des Verzeichnisses auf Systemen mit Unix-Dateimodi Berechtigungen nur für den Eigentümer an; bestehende Verzeichnisberechtigungen werden nicht geändert. Windows verwendet stattdessen Zugriffssteuerungslisten.
+
+Überprüfen Sie Ihre Sicherungs- und Wiederherstellungsverfahren, bevor Sie Daten löschen oder verschieben.
+
+</Tab>
+</Tabs>
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

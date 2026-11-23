@@ -1,0 +1,33 @@
+---
+title: Das Gedächtnis eines Klex Bots
+sidebar:
+  label: Gedächtnis
+description: Wie ein Klex Bot Skills und frühere Erfahrungen für seine Arbeit nutzt.
+related:
+  - /bot/concepts/data-directory
+  - /bot/concepts/how-bots-work
+  - /cloud/hosted-vs-local
+---
+
+Das Gedächtnis hilft einem Klex Bot, auf Gelerntem aufzubauen und Kontext aus früherer Arbeit zu nutzen. Es verbindet **Skills**, darunter gelernte und vorkonfigurierte Abläufe, mit relevantem Wissen aus den Aktivitäten des Bots.
+
+Ein Bot kann Skills für vertraute Aufgaben nutzen und bei Bedarf früheren Kontext abrufen, etwa die Begriffe eines Projekts oder eine frühere Entscheidung. Er kann einen Abruf im Hintergrund anfordern; relevanter Kontext kann auch während seiner Arbeit erscheinen. Mehr über wiederverwendbare Abläufe findest du unter [Agent Skills](/bot/concepts/agent-skills).
+
+<a id="where-chats-and-memory-are-stored"></a>
+
+## Wo Chats und Gedächtnis gespeichert werden
+
+Chats und Gedächtnis liegen im Datenverzeichnis des Bots:
+
+- Bei einem **Cloud-gehosteten Bot** liegt das Verzeichnis in der gehosteten Umgebung.
+- Bei einem **selbst gehosteten Bot** liegt es im lokalen Ordner, der für die Daten des Bots verwendet wird.
+
+Alle Daten Cloud-gehosteter Bots, einschließlich des Gedächtnisses, werden bei der Übertragung und im Ruhezustand verschlüsselt.
+
+<a id="how-administrators-access-them"></a>
+<a id="wie-administratoren-darauf-zugreifen"></a>
+<a id="review-chats-and-skills"></a>
+
+## Chats und Skills prüfen
+
+Administratoren können Chats und Skills über die Admin API des Bots prüfen. Das Dashboard von Klex Cloud dient als Oberfläche und Reverse-Proxy für die Admin API des jeweiligen Bots. Mehr zum Speicherort findest du unter [Datenverzeichnis](/bot/concepts/data-directory).

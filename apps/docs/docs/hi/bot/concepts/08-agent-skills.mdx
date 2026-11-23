@@ -1,0 +1,51 @@
+---
+title: Agent Skills
+description: Klex Bots दोहराए जाने वाले कामों के लिए Agent Skills का उपयोग और भंडारण कैसे करते हैं।
+related:
+  - /bot/concepts/memory
+  - /bot/concepts/data-directory
+---
+
+Agent Skill किसी दोहराए जाने वाले काम के लिए निर्देशों का पुनः उपयोग योग्य समूह है। उदाहरण के लिए, कोई Skill बता सकती है कि किसी प्रोजेक्ट की स्थिति का अपडेट कैसे तैयार करें। उसका विवरण Bot को बताता है कि निर्देश कब लागू होते हैं; उसके मुख्य भाग में प्रक्रिया होती है।
+
+Klex उपलब्ध Skills को Bot के लिए खोजने योग्य बनाता है, ताकि वह काम पर लागू होने वाली प्रक्रिया लोड कर सके।
+
+<a id="where-skills-come-from"></a>
+
+## Skills कहाँ से आती हैं
+
+Skills अलग-अलग स्रोतों से आ सकती हैं:
+
+- **Template Skills** Bot Templates के साथ आती हैं।
+- **Learned Skills** Bot के अनुभव से विकसित होती हैं।
+- **Uploaded Skills** उपयोगकर्ता व्यवहार या ज्ञान देने के लिए प्रदान करते हैं।
+
+हर Bot अपनी Skills अपनी [डेटा डायरेक्टरी](/bot/concepts/data-directory) में रखता है। प्रत्येक Skill की पहचान उसके namespace और नाम से होती है, जैसे `learning/project-status`।
+
+बैकग्राउंड में चलने वाली मेमोरी प्रक्रिया गतिविधि की समीक्षा करती है और उपयोगी सीख को Skills में बदल सकती है। बाद की गतिविधि संसाधित करते समय वह Learned Skills को अपडेट या हटा सकती है; हर बातचीत से Skill बनना ज़रूरी नहीं है।
+
+हर Skill `SKILL.md` फ़ाइल के रूप में `skills/{namespace}/{name}/` के अंदर रखी जाती है। फ़ाइल में नाम, विवरण और Markdown में मुख्य भाग होता है। Skill के `references/` फ़ोल्डर में संदर्भ फ़ाइलें भी हो सकती हैं।
+
+<a id="review-and-manage-skills"></a>
+
+## Skills की समीक्षा और प्रबंधन
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="क्लाउड-होस्टेड">
+
+Cloud पर Uploaded Skills का प्रबंधन जल्द उपलब्ध होगा। Cloud के माध्यम से उपयोगकर्ता केवल Uploaded Skills का प्रबंधन कर सकेंगे।
+
+</Tab>
+<Tab title="सेल्फ़-होस्टेड">
+
+Skills की समीक्षा के लिए Bot के Admin API का उपयोग करें। स्थानीय पहुँच और उसकी सुरक्षा सीमाओं के लिए [Bot गतिविधि की समीक्षा](/bot/guides/observability#access-the-local-admin-api) देखें।
+
+</Tab>
+</Tabs>
+
+Bot का Admin API Skills की सूची दे सकता है, उनकी सामग्री प्राप्त कर सकता है और उन्हें संपादित या हटा सकता है। सूची के लिए `GET /v1/skills` और किसी एक Skill को पढ़ने के लिए `GET /v1/skills/{namespace}/{name}` का उपयोग करें। इसी पूर्ण पथ पर `PATCH` और `DELETE` भी समर्थित हैं। संदर्भ फ़ाइलों के लिए अलग API routes हैं। यदि कोई मेमोरी एंटिटी Skill का संदर्भ देती है, तो उसे हटाना विफल हो सकता है।
+
+Learned Skills की सटीकता जाँचें। मेमोरी प्रक्रिया समय के साथ उन्हें अपडेट या हटा सकती है, भले ही किसी एडमिन ने उन्हें संपादित किया हो। संपादन से बाद के बदलाव नहीं रुकते।
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

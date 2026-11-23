@@ -1,0 +1,33 @@
+---
+title: Klex Bot 记忆
+sidebar:
+  label: 记忆
+description: Klex Bot 如何利用技能和过去的经验完成工作。
+related:
+  - /bot/concepts/data-directory
+  - /bot/concepts/how-bots-work
+  - /cloud/hosted-vs-local
+---
+
+记忆帮助 Klex Bot 运用学到的内容和过去工作中的上下文。它将**技能**（包括学到的和预先配置的流程）与 Bot 活动中的相关知识结合起来。
+
+Bot 可以使用技能处理熟悉的任务，并在有用时回忆过去的上下文，例如项目术语或之前的决定。它可以在后台请求回忆，相关上下文也可能在工作中出现。有关可复用流程的更多信息，请参阅 [Agent Skills](/bot/concepts/agent-skills)。
+
+<a id="where-chats-and-memory-are-stored"></a>
+
+## 聊天记录和记忆存储在哪里？
+
+聊天记录和记忆存储在 Bot 的数据目录中：
+
+- 对于 **Cloud 托管的 Bot**，目录位于托管环境中。
+- 对于**自托管的 Bot**，目录位于用于存放 Bot 数据的本地文件夹中。
+
+Cloud 托管的 Bot 的所有数据，包括记忆，在传输和静态存储时都会加密。
+
+<a id="how-administrators-access-them"></a>
+<a id="管理员如何访问"></a>
+<a id="review-chats-and-skills"></a>
+
+## 查看聊天记录和技能
+
+管理员可以通过 Bot 的 Admin API 查看聊天记录和技能。Klex Cloud 控制台是每个 Bot 的 Admin API 的前端和反向代理。有关存储的详细信息，请参阅[数据目录](/bot/concepts/data-directory)。

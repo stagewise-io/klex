@@ -1,0 +1,33 @@
+---
+title: Connexions aux ordinateurs et aux applications
+sidebar:
+  label: Connexions
+description: Comment MCP connecte un bot Klex aux ordinateurs et aux applications, et comment gérer son accès.
+related:
+  - /bot/concepts/how-bots-work
+  - /bot/concepts/mcp
+  - /bot/quickstart
+---
+
+Un bot Klex travaille dans des environnements externes connectés par MCP (Model Context Protocol). Un serveur MCP peut donner accès à un ordinateur complet ou à une application comme GitHub ou Google Workspace. Les ordinateurs sont eux aussi connectés par MCP.
+
+Une connexion est active ou inactive. L’environnement propre du bot le maintient en fonctionnement et gère sa mémoire ; les environnements connectés sont ceux dans lesquels il travaille.
+
+## Choisir les connexions
+
+- **Ordinateurs** : ils fournissent un environnement connecté dans lequel le bot peut travailler.
+- **Applications** : elles exposent leur environnement par l’intermédiaire d’un serveur MCP.
+
+Klex propose plusieurs serveurs MCP intégrés. Vous pouvez aussi connecter d’autres serveurs MCP. Le choix dépend des tâches confiées au bot.
+
+## Gérer l’accès d’un bot
+
+Une connexion détermine si le bot peut atteindre un serveur MCP. Pour la plupart des MCP, le bot agit avec son propre compte ou sa propre identité, configurés pour ce bot avec des permissions et des droits d’accès.
+
+- Connectez ou déconnectez les serveurs MCP d’un bot dans le tableau de bord Cloud.
+- Configurez les permissions des comptes et des applications connectées du bot directement dans ces comptes et applications.
+- Consultez l’activité du bot dans le tableau de bord.
+
+Connecter un serveur et accorder l’accès à un compte sont deux décisions distinctes. Vérifiez les deux pour déterminer ce que le bot peut atteindre et faire.
+
+Pour une vue d’ensemble, consultez [Comment fonctionnent les bots Klex](/bot/concepts/how-bots-work). Pour savoir où sont stockées les conversations et la mémoire, consultez [le répertoire de données](/bot/concepts/data-directory).

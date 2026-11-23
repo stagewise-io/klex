@@ -795,117 +795,7 @@ const knownModelIdParamSchema = z.object({
   modelId: z.string().min(1),
 });
 
-// --- God Messages ---
-
-const MAX_GOD_MESSAGE_BLOCKS = 16;
-const MAX_GOD_MESSAGE_TEXT_LENGTH = 100_000;
-const MAX_GOD_MESSAGE_MEDIA_LENGTH = 20_000_000;
-const MAX_GOD_MESSAGE_URI_LENGTH = 2_048;
-const MAX_GOD_MESSAGE_METADATA_LENGTH = 1_000;
-const BASE64_PATTERN =
-  /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
-
-const godMessageTextSchema = z.string().min(1).max(MAX_GOD_MESSAGE_TEXT_LENGTH);
-const godMessageBase64Schema = z
-  .string()
-  .min(1)
-  .max(MAX_GOD_MESSAGE_MEDIA_LENGTH)
-  .regex(BASE64_PATTERN, 'Expected canonical base64 data');
-
-const godMessageTextBlockSchema = z
-  .object({
-    type: z.literal('text'),
-    text: godMessageTextSchema,
-  })
-  .openapi('GodMessageTextBlock');
-
-const godMessageImageBlockSchema = z
-  .object({
-    type: z.literal('image'),
-    mimeType: z.string().min(1).max(MAX_GOD_MESSAGE_METADATA_LENGTH),
-    data: godMessageBase64Schema,
-  })
-  .openapi('GodMessageImageBlock');
-
-const godMessageAudioBlockSchema = z
-  .object({
-    type: z.literal('audio'),
-    mimeType: z.string().min(1).max(MAX_GOD_MESSAGE_METADATA_LENGTH),
-    data: godMessageBase64Schema,
-  })
-  .openapi('GodMessageAudioBlock');
-
-const godMessageResourceLinkBlockSchema = z
-  .object({
-    type: z.literal('resource_link'),
-    uri: z.string().min(1).max(MAX_GOD_MESSAGE_URI_LENGTH),
-    name: z.string().min(1).max(MAX_GOD_MESSAGE_METADATA_LENGTH),
-    title: z.string().max(MAX_GOD_MESSAGE_METADATA_LENGTH).optional(),
-    description: z.string().max(MAX_GOD_MESSAGE_TEXT_LENGTH).optional(),
-    mimeType: z.string().max(MAX_GOD_MESSAGE_METADATA_LENGTH).optional(),
-    size: z.number().int().nonnegative().optional(),
-  })
-  .openapi('GodMessageResourceLinkBlock');
-
-const godMessageResourceBlockSchema = z
-  .object({
-    type: z.literal('resource'),
-    resource: z
-      .object({
-        uri: z.string().min(1).max(MAX_GOD_MESSAGE_URI_LENGTH),
-        mimeType: z.string().max(MAX_GOD_MESSAGE_METADATA_LENGTH).optional(),
-        text: godMessageTextSchema.optional(),
-        blob: godMessageBase64Schema.optional(),
-      })
-      .refine(
-        (resource) =>
-          (resource.text !== undefined) !== (resource.blob !== undefined),
-        { message: 'Resource must contain exactly one of text or blob' },
-      ),
-  })
-  .openapi('GodMessageResourceBlock');
-
-const godMessageContentBlockSchema = z.union([
-  godMessageTextBlockSchema,
-  godMessageImageBlockSchema,
-  godMessageAudioBlockSchema,
-  godMessageResourceLinkBlockSchema,
-  godMessageResourceBlockSchema,
-]);
-
-const createGodMessageBodySchema = z
-  .object({
-    content: z
-      .array(godMessageContentBlockSchema)
-      .nonempty()
-      .max(MAX_GOD_MESSAGE_BLOCKS),
-  })
-  .openapi('CreateGodMessageBody');
-
-const createGodMessageResponseSchema = z
-  .object({
-    sessionId: z.string(),
-  })
-  .openapi('CreateGodMessageResponse');
-
-// --- God Session Observability ---
-
-const usageSchema = z.object({
-  latest: z
-    .object({
-      inputTokens: z.number().int(),
-      outputTokens: z.number().int(),
-      inputCacheWriteTokens: z.number().int(),
-      inputCacheReadTokens: z.number().int(),
-    })
-    .nullable(),
-  total: z.object({
-    inputTokens: z.number().int(),
-    outputTokens: z.number().int(),
-    inputCacheWriteTokens: z.number().int(),
-    inputCacheReadTokens: z.number().int(),
-  }),
-});
+// --- Session Observability ---
 
 const sessionRuntimeStateSchema = z.enum([
   'working',
@@ -934,75 +824,6 @@ const childSessionSummarySchema: z.ZodType<ChildSessionSummary> = z
     },
   })
   .openapi('ChildSessionSummary');
-
-const godSessionInfoResponseSchema = z
-  .object({
-    name: z.string(),
-    extensionIdentifier: z.string().optional(),
-    kind: z.enum(['default', 'god', 'child']),
-    parentId: z.string().nullable(),
-    modelPurpose: z.enum(MODEL_PURPOSES),
-    id: z.string(),
-    status: z.enum(['active', 'terminated']),
-    runtimeState: sessionRuntimeStateSchema,
-    model: z.object({
-      id: z.string().nullable(),
-      isFallback: z.boolean(),
-      fallbackIndex: z.number().int().min(0),
-    }),
-    usage: z.object({
-      chat: usageSchema,
-      extensions: z.record(z.string(), usageSchema),
-    }),
-    turns: z.number().int().min(0),
-    steps: z.number().int().min(0),
-    messageCount: z.number().int().min(0),
-    createdAt: z.string().datetime(),
-    childSessions: z
-      .array(childSessionSummarySchema)
-      .optional()
-      .describe('Live child sessions spawned by this session'),
-    triggeredByMemoryOnly: z
-      .boolean()
-      .optional()
-      .describe(
-        'True while the session is busy and only memory-retrieval results woke it since it was last idle',
-      ),
-  })
-  .openapi('GodSessionInfoResponse');
-
-const serializedMessagePartSchema = z
-  .record(z.string(), z.unknown())
-  .openapi('SerializedMessagePart');
-
-const serializedMessageSchema = z
-  .object({
-    id: z.string(),
-    role: z.string(),
-    parts: z.array(serializedMessagePartSchema),
-  })
-  .openapi('SerializedMessage');
-
-const godMessagesResponseSchema = z
-  .object({
-    messages: z.array(serializedMessageSchema),
-    nextCursor: z.string().nullable(),
-    hasMore: z.boolean(),
-  })
-  .openapi('GodMessagesResponse');
-
-const godMessagesQuerySchema = z
-  .object({
-    limit: z.coerce.number().int().min(1).max(200).default(50),
-    cursor: z.string().optional(),
-  })
-  .openapi('GodMessagesQuery');
-
-const godMessageResetResponseSchema = z
-  .object({
-    sessionId: z.string(),
-  })
-  .openapi('GodMessageResetResponse');
 
 // --- Skills ---
 
@@ -1627,8 +1448,6 @@ export {
   cloudEnrollResponseSchema,
   cloudStatusResponseSchema,
   connectivityResultSchema,
-  createGodMessageBodySchema,
-  createGodMessageResponseSchema,
   createKnownModelBodySchema,
   createMcpServerBodySchema,
   createProviderBodySchema,
@@ -1638,10 +1457,6 @@ export {
   episodeSummaryListResponseSchema,
   episodeSummarySchema,
   errorResponseSchema,
-  godMessageResetResponseSchema,
-  godMessagesQuerySchema,
-  godMessagesResponseSchema,
-  godSessionInfoResponseSchema,
   healthResponseSchema,
   imageInputCapabilitySchema,
   introspectionChildSchema,
@@ -1678,8 +1493,6 @@ export {
   providerVoicesQuerySchema,
   providerVoicesResponseSchema,
   putSkillReferenceBodySchema,
-  serializedMessagePartSchema,
-  serializedMessageSchema,
   sessionHistoryListQuerySchema,
   sessionHistoryListResponseSchema,
   sessionHistoryMessageSchema,

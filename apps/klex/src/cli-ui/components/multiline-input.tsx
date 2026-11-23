@@ -7,7 +7,7 @@ import {
   moveComposerCursor,
 } from '../utils/message-composer';
 
-/** Bounded, cursor-following input using the same editing rules as god messages. */
+/** Bounded, cursor-following multiline input. */
 export function MultilineInput({
   value,
   onChange,

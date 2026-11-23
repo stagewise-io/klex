@@ -21,6 +21,6 @@ A sessão principal representa o comportamento e as ações reais do bot. Apenas
 
 As sessões utilitárias não têm acesso ao mundo exterior, mas podem interagir com o diretório de dados do bot. Elas lidam com tarefas como analisar sessões existentes para construir novas memórias, eliminar memórias obsoletas, afinar competências (memórias de procedimento) e ligar as experiências do bot a entidades na memória.
 
-### Sessão Deus
+### Administração da alma
 
-A sessão Deus é uma sessão dedicada que tem acesso limitado ao mundo exterior e só é utilizável através da API de Admin. Não recebe entradas do mundo exterior além das [mensagens Deus](/concepts/god-messages) dedicadas, e o seu propósito é realizar tarefas administrativas que exigem permissões elevadas, como ordenar ao bot criar ou atualizar a sua [alma](/concepts/soul).
+A API dedicada cria e atualiza a [alma](/concepts/soul). As sessões de chat apenas a leem e não a podem editar.

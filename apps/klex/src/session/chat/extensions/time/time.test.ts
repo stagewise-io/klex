@@ -10,7 +10,7 @@ import {
   type ExtensionDeps,
   type ProvisionalStepContext,
 } from '../extension-api';
-import { createTimeExt, createTimeExtGod, type TimeExtConfig } from './time';
+import { createTimeExt, type TimeExtConfig } from './time';
 
 vi.mock('./system-prompt.md', () => ({
   default: 'time prompt',
@@ -165,61 +165,13 @@ describe('createTimeExt', () => {
   });
 });
 
-describe('TimeExt god tools', () => {
+describe('TimeExt tools', () => {
   it('does not expose timezone updates in standard sessions', () => {
     const tools = createTimeExt(DEFAULT_CONFIG)
       .create(makeDeps())
       .getTools?.({} as never);
 
     expect(tools).not.toHaveProperty('updateTimezone');
-  });
-
-  it('persists a valid timezone for the next process start', async () => {
-    let persisted: Record<string, unknown> = {
-      timezone: 'UTC',
-      preserved: true,
-    };
-    const mutate = vi.fn(
-      async (
-        update: (current: Record<string, unknown>) => Record<string, unknown>,
-      ) => {
-        persisted = update(persisted);
-        return persisted;
-      },
-    );
-    const ext = createTimeExtGod(DEFAULT_CONFIG).create(
-      makeDeps({ config: { mutate } as unknown as ExtensionDeps['config'] }),
-    );
-    const tools = ext.getTools?.({} as never) ?? {};
-
-    const result = await tools.updateTimezone?.execute?.(
-      { timezone: 'Europe/Berlin' } as never,
-      { toolCallId: 'test', messages: [] } as never,
-    );
-
-    expect(mutate).toHaveBeenCalledOnce();
-    expect(persisted).toEqual({
-      timezone: 'Europe/Berlin',
-      preserved: true,
-    });
-    expect(result).toBe(
-      'Timezone updated, will be active after restart of the agent.',
-    );
-    expect(ext.introspect?.()).toMatchObject({
-      mode: 'god',
-      timezone: 'UTC',
-    });
-  });
-
-  it('rejects invalid timezone updates in the tool schema', () => {
-    const tools = createTimeExtGod(DEFAULT_CONFIG)
-      .create(makeDeps())
-      .getTools?.({} as never);
-    const schema = tools?.updateTimezone?.inputSchema as {
-      safeParse: (input: unknown) => { success: boolean };
-    };
-
-    expect(schema.safeParse({ timezone: 'Fake/Zone' }).success).toBe(false);
   });
 });
 
@@ -770,7 +722,6 @@ describe('TimeExt.introspect', () => {
       timezone: 'UTC',
     }).create(makeDeps());
     expect(ext.introspect?.()).toEqual({
-      mode: 'standard',
       timeUpdatePeriod: 300,
       timezone: 'UTC',
     });

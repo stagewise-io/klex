@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Exercise the packaged executable, not a mocked health-server module.
 // A FIFO holds directory-lock acquisition during startup. A local model
-// response holds a real god-session turn during termination. No sleeps
+// response holds a real default-session reminder turn during termination. No sleeps
 // decide either state; the test releases each gate after checking probes.
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
@@ -98,7 +98,7 @@ try {
     'sh',
     image,
     '-c',
-    'mkdir -p /data/agent; printf "%s" "$1" > /data/agent/config.json; mkfifo /data/agent/.klex.lock',
+    'mkdir -p /data/agent/extensions/io.stagewise/soul; printf "%s" "$1" > /data/agent/config.json; printf "You acknowledge reminders briefly." > /data/agent/extensions/io.stagewise/soul/SOUL.md; mkfifo /data/agent/.klex.lock',
     'fixture',
     JSON.stringify(config),
   );
@@ -171,7 +171,7 @@ try {
     'node',
     '--input-type=module',
     '-e',
-    `const response = await fetch('http://127.0.0.1:31337/v1/god-messages', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ content: [{ type: 'text', text: 'Reply with a short acknowledgement.' }] }) }); if (response.status !== 202) throw new Error(await response.text());`,
+    `const response = await fetch('http://127.0.0.1:31337/v1/todos', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ description: 'Reply with a short acknowledgement.', reminderTime: new Date(Date.now() + 1000).toISOString() }) }); if (response.status !== 201) throw new Error(await response.text());`,
   );
   await waitFor('active model request', () => Boolean(heldResponse));
   assert.equal(await status('/readyz'), 200);

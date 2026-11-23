@@ -21,6 +21,6 @@ Die Hauptsession repräsentiert das tatsächliche Verhalten und die Aktionen des
 
 Utility-Sessions haben keinen Zugriff auf die Außenwelt, können aber mit dem Datenverzeichnis des Bots interagieren. Sie behandeln Aufgaben wie das Analysieren bestehender Sessions zum Aufbau neuer Erinnerungen, das Löschen veralteter Erinnerungen, das Feintunen von Skills (prozedurale Erinnerungen) und das Verknüpfen der Erfahrungen des Bots mit Entitäten im Gedächtnis.
 
-### God-Session
+### Verwaltung der Seele
 
-Die God-Session ist eine dedizierte Session mit begrenztem Zugriff auf die Außenwelt und nur über die Admin-API nutzbar. Sie erhält keine Eingaben aus der Außenwelt außer dedizierten [God-Messages](/concepts/god-messages), und ihr Zweck ist es, administrative Aufgaben auszuführen, die erhöhte Berechtigungen erfordern, wie z. B. das Befehlen des Bots, seine [Seele](/concepts/soul) zu erstellen oder zu aktualisieren.
+Die dedizierte API erstellt und aktualisiert die [Seele](/concepts/soul). Chat-Sessions lesen sie nur und können sie nicht bearbeiten.

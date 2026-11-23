@@ -10,16 +10,11 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { generateText, type Tool } from 'ai';
+import { generateText } from 'ai';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { getSoulGenerationSystemPrompt } from './generation-system-prompt';
-import {
-  createSoul,
-  createSoulExt,
-  createSoulExtGod,
-  type SoulDependencies,
-} from './soul';
+import { createSoul, createSoulExt, type SoulDependencies } from './soul';
 
 vi.mock('ai', async (original) => ({
   ...(await original<typeof import('ai')>()),
@@ -138,25 +133,14 @@ describe('Soul admin generation', () => {
     expect(soul.get()).toBe('Direct, not rude.');
   });
 
-  it('does not overwrite a legacy cloud tool write during API generation', async () => {
+  it('does not overwrite a concurrent file edit during API generation', async () => {
     const { soul, soulDirectory } = setup();
     await soul.create('First');
     const pending =
       Promise.withResolvers<Awaited<ReturnType<typeof generateText>>>();
     generate.mockReturnValueOnce(pending.promise);
     const request = soul.create('Start over');
-    const god = createSoulExtGod.create({
-      getDataDir: () => soulDirectory,
-    } as Parameters<typeof createSoulExtGod.create>[0]);
-    const update = god.getTools?.({} as never).updateSoul as
-      | Tool<{ content: string }, string>
-      | undefined;
-    const execute = update?.execute;
-    if (!execute) throw new Error('Missing legacy soul tool');
-    await execute(
-      { content: 'Cloud-written soul' },
-      { toolCallId: 'legacy', messages: [], context: undefined },
-    );
+    writeFileSync(join(soulDirectory, 'SOUL.md'), 'Cloud-written soul');
     pending.resolve(output('Generated replacement'));
     await expect(request).rejects.toMatchObject({ code: 'soul_changed' });
     expect(soul.get()).toBe('Cloud-written soul');
@@ -362,18 +346,17 @@ describe('Soul admin generation', () => {
     expect(generate).toHaveBeenCalledOnce();
   });
 
-  it('unblocks existing regular extensions after API creation, retaining the legacy god tool', async () => {
+  it('unblocks existing read-only extensions after API creation', async () => {
     const { soul, soulDirectory } = setup();
     const deps = { getDataDir: () => soulDirectory } as Parameters<
       typeof createSoulExt.create
     >[0];
     const regular = createSoulExt.create(deps);
-    const god = createSoulExtGod.create(deps);
     expect(regular.shouldRunStep!([])).toBe(false);
-    expect(god.getTools?.({} as never)).toHaveProperty('updateSoul');
+    expect(regular.getTools).toBeUndefined();
     await soul.create('Create');
     expect(regular.shouldRunStep!([])).toBe(true);
     expect(regular.getSystemPromptPart!()).toContain('Direct, not rude.');
-    expect(god.getTools?.({} as never)).toHaveProperty('updateSoul');
+    expect(regular.getTools).toBeUndefined();
   });
 });

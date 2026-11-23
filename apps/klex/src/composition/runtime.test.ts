@@ -49,7 +49,6 @@ function createModules(options: {
     realtime: options.withRealtime === false ? undefined : make('realtime'),
     mcp: make('mcp'),
     telemetryManager: make('telemetry-manager'),
-    godMessages: make('god-messages'),
   };
 }
 
@@ -92,7 +91,6 @@ describe('runtime composition', () => {
       'realtime',
       'mcp',
       'telemetry-manager',
-      'god-messages',
     ]);
     expect(order.indexOf('session-host')).toBeLessThan(order.indexOf('mcp'));
     expect(order.indexOf('session-host')).toBeLessThan(
@@ -127,7 +125,6 @@ describe('runtime composition', () => {
     await runtime.close();
 
     expect(recorded.closes).toEqual([
-      'god-messages',
       'telemetry-manager',
       'realtime',
       'mcp',
@@ -198,7 +195,7 @@ describe('runtime composition', () => {
     await Promise.all([runtime.close(), runtime.close()]);
     await runtime.close();
 
-    expect(recorded.closes).toHaveLength(10);
+    expect(recorded.closes).toHaveLength(9);
   });
 
   it('unwinds started modules and rethrows when one fails to start', async () => {
@@ -283,7 +280,6 @@ describe('runtime composition', () => {
     await expect(runtime.close()).resolves.toBeUndefined();
 
     expect(recorded.closes).toEqual([
-      'god-messages',
       'telemetry-manager',
       'realtime',
       'session-host',

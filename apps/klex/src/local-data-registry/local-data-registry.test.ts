@@ -14,10 +14,6 @@ vi.mock(
   '@/session/chat/extensions/memory/retrieval/retrieval-prompt.md',
   () => ({ default: '' }),
 );
-vi.mock(
-  '@/session/chat/extensions/soul/system-prompt-part/no-soul-god.md',
-  () => ({ default: '' }),
-);
 vi.mock('@/session/chat/extensions/soul/generation-prompt.md', () => ({
   default: '',
 }));

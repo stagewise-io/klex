@@ -118,7 +118,6 @@ export function selectCheckpointAnchor(
         (part) =>
           part.type === 'file' ||
           part.type === 'data-context' ||
-          part.type === 'data-god-message' ||
           (part.type === 'text' &&
             !/<(?:todo-reminder|resource|time|timezone)>/.test(part.text)),
       ),

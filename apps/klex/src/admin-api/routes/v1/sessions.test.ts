@@ -297,9 +297,11 @@ describe('GET /v1/sessions/{instanceId}/messages', () => {
     expect(olderBody).toMatchObject({ hasMore: false, nextCursor: null });
   });
 
-  it('redacts base64 content', async () => {
-    const { app, history } = await setup();
-    const recorder = history.openRecorder(meta());
+  it('reads historical god-message content after reopening storage and redacts base64', async () => {
+    const { history } = await setup();
+    const recorder = history.openRecorder(
+      meta({ sessionId: 'legacy-god', kind: 'god', name: 'god' }),
+    );
     const withImage = {
       id: 'img',
       role: 'user',
@@ -316,6 +318,31 @@ describe('GET /v1/sessions/{instanceId}/messages', () => {
     } as unknown as ExtendedUIMessage;
     recorder.scheduleSync(() => [withImage]);
     await history.flush();
+    await history.close();
+
+    const dataDirectory = directories.at(-1)!;
+    await createLocalData({
+      logging: logger,
+      dataDirectory,
+      klexVersion: KLEX_VERSION,
+      stores: [SESSION_HISTORY_STORE_DEFINITION],
+    }).start();
+    const reopened = createSessionHistory({
+      logging: logger,
+      dataDirectory,
+      config: { get: () => klexConfigSchema.parse({}) },
+    });
+    modules.push(reopened);
+    await reopened.start();
+    expect(await reopened.getSession(recorder.instanceId)).toMatchObject({
+      kind: 'god',
+    });
+    const app = setupTestApp((app) => {
+      app.openapi(
+        getSessionHistoryMessagesRoute,
+        getSessionHistoryMessages({ sessionHistory: reopened }),
+      );
+    });
 
     const response = await app.request(
       `/v1/sessions/${recorder.instanceId}/messages`,

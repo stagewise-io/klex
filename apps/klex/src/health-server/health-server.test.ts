@@ -66,10 +66,6 @@ describe('health server', () => {
         isInteractionLeased: () => false,
         beginDrain: () => undefined,
       },
-      godMessages: {
-        isQuiescent: () => true,
-        beginDrain: () => undefined,
-      },
       mcp: {
         pausePushDelivery: () => undefined,
         acknowledgeDeliveredEvents: async () => undefined,

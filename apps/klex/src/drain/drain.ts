@@ -1,6 +1,5 @@
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
-import type { GodMessages } from '@/god-messages';
 import type { Mcp } from '@/mcp';
 import type { SessionHost } from '@/session/session-host';
 
@@ -29,8 +28,6 @@ export interface DrainDependencies {
     SessionHost,
     'isQuiescent' | 'isInteractionLeased' | 'beginDrain'
   >;
-  /** Separate god session; drained alongside the default session tree. */
-  godMessages: Pick<GodMessages, 'isQuiescent' | 'beginDrain'>;
   mcp: Pick<Mcp, 'pausePushDelivery' | 'acknowledgeDeliveredEvents'>;
   pollIntervalMs?: number;
   /** Called synchronously when the first drain begins. */
@@ -119,14 +116,11 @@ class DrainModule implements Drain {
     this.begun = true;
     this.deps.onBegin?.();
     this.deps.sessionHost.beginDrain();
-    this.deps.godMessages.beginDrain();
     this.deps.mcp.pausePushDelivery();
   }
 
   private isQuiescent(): boolean {
-    return (
-      this.deps.sessionHost.isQuiescent() && this.deps.godMessages.isQuiescent()
-    );
+    return this.deps.sessionHost.isQuiescent();
   }
 
   private async flushAcknowledgements(): Promise<void> {

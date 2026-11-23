@@ -9,7 +9,7 @@ import {
 import { join } from 'node:path';
 
 import type { JSONObject } from '@ai-sdk/provider';
-import { generateText, type ToolSet, tool } from 'ai';
+import { generateText } from 'ai';
 import z from 'zod';
 
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
@@ -22,13 +22,10 @@ import type {
   Extension,
   ExtensionDeps,
   ExtensionFactory,
-  ResolvedModel,
 } from '../extension-api';
 import { getSoulGenerationSystemPrompt } from './generation-system-prompt';
 import { formatSoulGenerationUserMessage } from './generation-user-message';
-import { getSoulGodSystemPrompt } from './god-system-prompt';
 import { getSystemPromptPart as systemPromptPartSoul } from './system-prompt-part/with-soul';
-import updateSoulToolDescription from './update-soul-tool-description.md';
 
 /**
  * File name of the soul definition inside the extension's global data
@@ -42,29 +39,6 @@ const instructionsSchema = z.string().trim().max(10_000);
 
 /** Removes nested soul tags that could break the trusted prompt wrapper. */
 const SOUL_TAG_PATTERN = /<\/?soul\b[^>]*>/gi;
-const soulContentSchema = z
-  .string()
-  .min(1)
-  .max(MAX_SOUL_LENGTH)
-  .refine(
-    (content) => content.replace(SOUL_TAG_PATTERN, '').trim().length > 0,
-    {
-      message: 'Soul content must not be blank after removing soul tags',
-    },
-  );
-
-/**
- * The mode of a soul extension instance.
- *
- * - `'standard'` — used in regular (default) sessions. The extension is
- *   read-only: it drops new history and skips steps without a soul, injects
- *   the soul content, and provides no tools. The soul cannot be created or
- *   updated from a regular session.
- * - `'god'` — retains the legacy `updateSoul` tool for cloud compatibility.
- *   Does not block administration when no soul exists.
- */
-type SoulMode = 'standard' | 'god';
-
 /** Reads current soul content without adopting the agent's identity or creating files. */
 export function readSoul(soulDirectory: string): string | null {
   let content: string;
@@ -280,7 +254,7 @@ class SoulModule implements Soul {
   }
 }
 
-/** Shared atomic persistence for API generation and the legacy god-session tool. */
+/** Atomic persistence for API generation. */
 function saveSoul(directory: string, content: string): void {
   mkdirSync(directory, { recursive: true });
   const temporary = join(directory, `.SOUL.${randomUUID()}.tmp`);
@@ -332,10 +306,7 @@ class SoulExt implements Extension {
   private retainedMessageIds = new Set<string>();
   private stepAllowed = false;
 
-  constructor(
-    private readonly deps: ExtensionDeps,
-    private readonly mode: SoulMode = 'standard',
-  ) {
+  constructor(private readonly deps: ExtensionDeps) {
     this.soulDir = deps.getDataDir(true);
     this.soulPath = join(this.soulDir, SOUL_FILE);
   }
@@ -344,7 +315,7 @@ class SoulExt implements Extension {
    * Reads and returns sanitized soul content if `SOUL.md` exists and is
    * non-empty after trimming. Nested soul tags are removed so file content
    * cannot break the prompt wrapper. Returns `null` otherwise. All soul-state
-   * checks (prompt, tools, execute guard, introspection) go through
+   * checks (prompt, step guard, introspection) go through
    * this method so they stay consistent.
    */
   private readSoul(): string | null {
@@ -363,7 +334,7 @@ class SoulExt implements Extension {
   }
 
   shouldRunStep(history: ExtendedUIMessage[]): boolean {
-    this.stepAllowed = this.mode === 'god' || this.readSoul() !== null;
+    this.stepAllowed = this.readSoul() !== null;
     if (!this.stepAllowed) {
       for (let index = history.length - 1; index >= 0; index--) {
         if (!this.retainedMessageIds.has(history[index]!.id))
@@ -380,8 +351,7 @@ class SoulExt implements Extension {
   /**
    * Returns the wrapped soul content for the system prompt. If `SOUL.md`
    * exists in the global extension directory, its contents are enclosed in
-   * the dedicated soul section. Without a soul, god mode supports explicit
-   * setup through the legacy tool. Standard mode contributes nothing;
+   * the dedicated soul section. Without a soul, contributes nothing;
    * shouldRunStep drops new history and skips inference.
    *
    * Called once per step. Re-reads the file each time so manual edits
@@ -389,46 +359,20 @@ class SoulExt implements Extension {
    */
   getSystemPromptPart(): string {
     const soul = this.readSoul();
-    if (this.mode === 'god') return getSoulGodSystemPrompt(soul);
     return soul !== null ? systemPromptPartSoul(soul) : '';
-  }
-
-  /** Legacy cloud contract: only god sessions can write a complete soul. */
-  getTools(_model: ResolvedModel): ToolSet {
-    if (this.mode === 'standard') return {};
-    return {
-      updateSoul: tool({
-        description: updateSoulToolDescription,
-        inputSchema: z.object({
-          content: soulContentSchema,
-        }),
-        execute: async ({ content }) => {
-          saveSoul(this.soulDir, soulContentSchema.parse(content));
-          return 'Your soul has been updated.';
-        },
-      }),
-    };
   }
 
   introspect(): Record<string, unknown> {
     return {
       hasSoul: this.readSoul() !== null,
       soulPath: this.soulPath,
-      mode: this.mode,
     };
   }
 }
 
-/** Loads and maintains the agent soul for a standard chat session. */
+/** Loads the agent soul read-only for a chat session. */
 export const createSoulExt: ExtensionFactory = {
   identifier: 'io.stagewise/soul',
   displayName: 'Soul',
-  create: (deps) => new SoulExt(deps, 'standard'),
-};
-
-/** Loads the agent soul with the behavior required by an isolated god session. */
-export const createSoulExtGod: ExtensionFactory = {
-  identifier: 'io.stagewise/soul',
-  displayName: 'Soul (God)',
-  create: (deps) => new SoulExt(deps, 'god'),
+  create: (deps) => new SoulExt(deps),
 };

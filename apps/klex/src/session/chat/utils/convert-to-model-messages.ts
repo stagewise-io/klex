@@ -10,7 +10,7 @@ import { stringify } from 'yaml';
 import type { ContextDataUIPart } from '@/session/inbox';
 
 import type { DataPartTransformers } from '../extensions/extension-api';
-import type { ExtendedUIMessage, GodMessageDataUIPart } from '../message-types';
+import type { ExtendedUIMessage } from '../message-types';
 import { quote } from './history-view/lines';
 import { projectSandboxToolMedia } from './project-sandbox-media';
 
@@ -27,7 +27,7 @@ import { projectSandboxToolMedia } from './project-sandbox-media';
  * avoid sending empty user messages to the model API.
  *
  * Custom data parts are converted using built-in transformers for the
- * core types (`data-context`, `data-god-message`, `data-continue`,
+ * core types (`data-context`, `data-continue`,
  * `data-check`) and extension-registered transformers for any additional
  * types. Core type transformers cannot be overridden by extensions — the
  * built-in conversion always applies.
@@ -35,16 +35,14 @@ import { projectSandboxToolMedia } from './project-sandbox-media';
  * SDK's `convertDataPart` returns `undefined`).
  *
  * @param transformers Merged data-part transformers from extensions.
- *   Core types (`context`, `god-message`, `continue`, `check`) are always
+ *   Core types (`context`, `continue`, `check`) are always
  *   handled by built-in transformers and are ignored if present here.
  */
 export const convertToModelMessagesExtended = async (
   messages: ExtendedUIMessage[],
   transformers: DataPartTransformers,
 ): ReturnType<typeof convertToModelMessages> => {
-  const materialized = materializeGodMessageParts(
-    materializeContextParts(messages),
-  );
+  const materialized = materializeContextParts(messages);
   // Find the last user message index.
   let lastUserMsgIdx = -1;
   for (let i = materialized.length - 1; i >= 0; i--) {
@@ -121,134 +119,6 @@ function materializeContextParts(
       return materializeContextPart(part.data);
     }),
   }));
-}
-
-function materializeGodMessageParts(
-  messages: ExtendedUIMessage[],
-): ExtendedUIMessage[] {
-  return messages.map((message) => ({
-    ...message,
-    parts: message.parts.flatMap((part) => {
-      if (part.type !== 'data-god-message') return [part];
-      return materializeGodMessagePart(part.data);
-    }),
-  }));
-}
-
-/**
- * Materializes shared content blocks (text, image, audio, resource_link,
- * resource) into ordered standard UI parts. Used by both
- * {@link materializeContextPart} and {@link materializeGodMessagePart}.
- */
-function materializeContentBlocks(
-  content: ContextDataUIPart['content'],
-): ExtendedUIMessage['parts'] {
-  const parts: ExtendedUIMessage['parts'] = [];
-  for (const block of content) {
-    if (block.type === 'text') {
-      parts.push({
-        type: 'text',
-        text: `<text>${escapeXmlText(block.text)}</text>`,
-      });
-      continue;
-    }
-
-    if (block.type === 'image') {
-      const normalizedMimeType = block.mimeType.toLowerCase();
-      parts.push({
-        type: 'text',
-        text: `<image>`,
-      });
-      parts.push({
-        type: 'file',
-        mediaType: normalizedMimeType,
-        url: `data:${normalizedMimeType};base64,${block.data}`,
-      });
-      parts.push({ type: 'text', text: '</image>' });
-      continue;
-    }
-
-    if (block.type === 'audio') {
-      const normalizedMimeType = block.mimeType.toLowerCase();
-      parts.push({
-        type: 'text',
-        text: `<audio>`,
-      });
-      parts.push({
-        type: 'file',
-        mediaType: normalizedMimeType,
-        url: `data:${normalizedMimeType};base64,${block.data}`,
-      });
-      parts.push({ type: 'text', text: '</audio>' });
-      continue;
-    }
-
-    if (block.type === 'resource_link') {
-      const attrs = [
-        `uri="${escapeXmlAttr(block.uri)}"`,
-        `name="${escapeXmlAttr(block.name)}"`,
-      ];
-      if (block.title) attrs.push(`title="${escapeXmlAttr(block.title)}"`);
-      if (block.description)
-        attrs.push(`description="${escapeXmlAttr(block.description)}"`);
-      if (block.mimeType)
-        attrs.push(`mime-type="${escapeXmlAttr(block.mimeType)}"`);
-      if (block.size !== undefined) attrs.push(`size="${block.size}"`);
-      parts.push({
-        type: 'text',
-        text: `<resource-link ${attrs.join(' ')} />`,
-      });
-      continue;
-    }
-
-    if (block.type === 'resource') {
-      const res = block.resource;
-      const attrs = [`uri="${escapeXmlAttr(res.uri)}"`];
-      if (res.mimeType)
-        attrs.push(`mime-type="${escapeXmlAttr(res.mimeType)}"`);
-      parts.push({
-        type: 'text',
-        text: `<resource ${attrs.join(' ')}>`,
-      });
-      if (res.text !== undefined) {
-        parts.push({
-          type: 'text',
-          text: `<text>${escapeXmlText(res.text)}</text>`,
-        });
-      } else if (res.blob !== undefined && res.mimeType?.trim()) {
-        const normalizedMimeType =
-          res.mimeType.split(';', 1)[0]?.trim().toLowerCase() ||
-          'application/octet-stream';
-        parts.push({
-          type: 'file',
-          mediaType: normalizedMimeType,
-          url: `data:${normalizedMimeType};base64,${res.blob.replaceAll(/\s/g, '')}`,
-        });
-      } else if (res.blob !== undefined) {
-        parts.push({
-          type: 'text',
-          text: `<blob>${escapeXmlText(res.blob)}</blob>`,
-        });
-      }
-      parts.push({ type: 'text', text: '</resource>' });
-    }
-  }
-  return parts;
-}
-
-/**
- * Materializes a `data-god-message` part into ordered standard UI parts.
- * Uses a `<god-message>` wrapper with no metadata section — god messages
- * carry no environment metadata.
- */
-function materializeGodMessagePart(
-  data: GodMessageDataUIPart,
-): ExtendedUIMessage['parts'] {
-  return [
-    { type: 'text', text: '<god-message>' },
-    ...materializeContentBlocks(data.content),
-    { type: 'text', text: '</god-message>' },
-  ];
 }
 
 function materializeContextPart(
@@ -341,19 +211,6 @@ function materializeContextPart(
   return parts;
 }
 
-function escapeXmlText(value: string): string {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;');
-}
-
-function escapeXmlAttr(value: string): string {
-  return escapeXmlText(value)
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&apos;');
-}
-
 /** Transforms a `data-continue` part into the literal text `"Continue."`. */
 function convertContinuePart(): TextPart[] {
   return [{ type: 'text', text: 'Continue.' }];
@@ -372,7 +229,7 @@ function convertCheckPart(): TextPart[] {
 /**
  * Builds a `convertDataPart` callback for the AI SDK.
  *
- * Core data part types (`context`, `god-message`, `continue`, `check`) are always
+ * Core data part types (`context`, `continue`, `check`) are always
  * handled by built-in transformers — extension-registered transformers
  * for these keys are ignored. All other custom types are dispatched to
  * the extension-registered transformer map.
@@ -398,10 +255,9 @@ function makeConvertDataPart(
     // Strip the `data-` prefix to get the data part key.
     const key = part.type.replace(/^data-/, '');
 
-    // Context and god-message are materialized into ordered standard UI
+    // Context is materialized into ordered standard UI
     // parts beforehand — the convertDataPart hook never sees them.
     if (key === 'context') return undefined;
-    if (key === 'god-message') return undefined;
     if (key === 'continue') {
       const result = convertContinuePart();
       return result.length > 0 ? result[0] : undefined;

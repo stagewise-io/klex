@@ -1,89 +1,59 @@
 ---
 title: Schnellstart
-description: Erstellen Sie einen Cloud-gehosteten Klex Bot oder betreiben Sie ihn auf Ihrem eigenen Computer.
+description: Erstellen Sie einen Klex Bot in der Cloud oder betreiben Sie ihn auf Ihrem eigenen Computer.
 related:
   - /cloud/hosted-vs-local
   - /bot/concepts/brain-and-computers
 ---
 
-Klex empfiehlt für die meisten Nutzer einen Cloud-gehosteten Bot. Sie können einen Bot auch auf Ihrem eigenen Computer betreiben, mit oder ohne Registrierung bei Klex Cloud. Sie benötigen Zugang zu einem Modellanbieter; für die Cloud-Einrichtung benötigen Sie außerdem ein Konto bei Klex Cloud.
+Erstellen Sie einen Klex Bot, der mit Ihnen zusammenarbeitet. Klex empfiehlt für die meisten Nutzer das Cloud-Hosting. Sie können einen Bot auch auf Ihrem eigenen Computer betreiben.
 
-<div className="hosting-quickstart">
-<Tabs inline hash sync={false}>
-<Tab title="Cloud-gehostet" id="cloud-gehostet">
-
+<a id="creating-your-bot"></a>
 <a id="erstellen-ihres-bots"></a>
 
-## Einen Cloud-gehosteten Bot erstellen
+<div className="hosting-quickstart">
+<Tabs inline hash syncKey="hosting">
+<Tab title="Cloud-gehostet" id="cloud-gehostet">
 
-1. Melden Sie sich bei [Klex Cloud](https://cloud.klex.bot) an und beginnen Sie mit der Erstellung eines Bots.
-2. Wählen Sie Cloud-Hosting und folgen Sie den Einrichtungsschritten, um den Bot zu benennen, seine [Seele](/bot/concepts/soul) zu definieren und seine Modellanbieter und Modelle zu konfigurieren.
-3. Verbinden Sie die Apps oder Computer, die der Bot benötigt. Unter [Verbindungen](/bot/concepts/brain-and-computers) erfahren Sie, wie Sie den Zugriff verwalten.
+## Einrichtung in der Cloud
 
-Senden Sie dem Bot in einer verbundenen App eine Nachricht, um zu prüfen, ob er antwortet. Seine Aktivitäten können Sie im Cloud-Dashboard einsehen.
+1. Melden Sie sich bei [Klex Cloud](https://cloud.klex.bot) an und wählen Sie **New bot**.
+2. Geben Sie Ihrem Bot eine Aufgabe oder wählen Sie einen Vorschlag. Passen Sie seinen Namen und sein Erscheinungsbild an.
+3. Wählen Sie **Create bot in cloud**.
+4. Überprüfen Sie seine Charaktereigenschaften und fahren Sie mit **Models & Computer** fort.
+5. Verbinden Sie einen KI-Anbieter und wählen Sie die Modelle für den Bot oder importieren Sie die Modellkonfiguration eines anderen Bots. Schließen Sie die Einrichtung ab, sobald der Bot verbunden ist.
+6. Öffnen Sie den Chat des Bots, um loszulegen.
+
+Sie können die Apps und Computer verbinden, die Ihr Bot für seine Arbeit benötigt. Unterstützte MCP-Server können auch Nachrichten und App-Ereignisse übermitteln, die den Bot zur Arbeit veranlassen. Weitere Informationen finden Sie unter [MCP und Klex Bots](/bot/concepts/mcp).
 
 </Tab>
 <Tab title="Selbst gehostet" id="selbst-gehostet">
 
 <a id="installation"></a>
 
-## Klex für das Self-Hosting installieren
+## Selbst gehostete Einrichtung
 
-Um den Bot auf Ihrem eigenen Computer zu betreiben, installieren Sie Klex in einer Shell:
+1. Melden Sie sich bei [Klex Cloud](https://cloud.klex.bot) an, wählen Sie **New bot** und legen Sie Aufgabe und Erscheinungsbild fest.
+2. Wählen Sie **Or run it on your own computer** und dann **Set up on your computer**. Kopieren Sie den vollständigen Befehl aus Klex Cloud, fügen Sie ihn auf dem Computer, auf dem der Bot laufen soll, in ein Terminal ein und führen Sie ihn aus.
+3. Folgen Sie den Einrichtungsschritten, um den Charakter und die Modelle des Bots zu konfigurieren.
 
-**macOS, Linux oder WSL:**
-
-```sh
-curl -fsSL https://klex.bot/install.sh | sh
-```
-
-**Windows (PowerShell):**
-
-```powershell
-irm https://klex.bot/install.ps1 | iex
-```
-
-### Einrichtung mit Cloud-Unterstützung
-
-Starten Sie die Einrichtung eines selbst gehosteten Bots in Klex Cloud und folgen Sie den Anweisungen zur Registrierung. Der Bot läuft auf Ihrem Computer; die Cloud stellt eine Verwaltungsoberfläche bereit.
-
-### Eigenständige Einrichtung
-
-Um den Bot ohne Cloud-Registrierung zu betreiben, starten Sie die interaktive App:
+Lassen Sie den Bot auf Ihrem Computer laufen, damit er arbeiten kann. Um ihn neu zu starten, führen Sie den folgenden Befehl in einem Terminal aus und wählen Sie Ihren Bot:
 
 ```sh
-klex --no-cloud
+klex
 ```
 
-1. Drücken Sie `a`, um einen Bot zu erstellen, und geben Sie seinen Namen ein.
-2. Konfigurieren Sie unter **Settings → Providers & Endpoints** einen Modellanbieter. Wählen Sie unter **Model Selection** ein gültiges Chat-Modell aus.
-3. Öffnen Sie **Settings → Soul** und erstellen Sie eine Seele, die den Charakter und die Arbeit des Bots beschreibt.
-4. Verbinden Sie unter **Settings → MCP Servers** die Server, die der Bot benötigt. Konfigurieren Sie die Berechtigungen seiner Konten in den verbundenen Apps.
+### Ohne Cloud betreiben
 
-Um Ereignisse aus einem externen Kanal zu empfangen, verbinden Sie einen MCP-Server, der die entsprechenden Ressourcenaktualisierungen, MCP Events oder die [Push-Benachrichtigungserweiterung](https://github.com/stagewise-io/klex/tree/main/packages/mcp-extension-push-notifications) von Klex unterstützt.
+Die Registrierung bei Klex Cloud ist optional. Um einen Bot direkt in der Klex-App zu konfigurieren, folgen Sie der [Anleitung zur eigenständigen Einrichtung](/bot/guides/standalone-setup).
 
 </Tab>
 </Tabs>
 </div>
 
-## Einen selbst gehosteten Bot ohne Auswahlmenü erstellen
-
-Um einen bei Klex Cloud registrierten Bot zu erstellen und zu starten, verwenden Sie ein Registrierungstoken aus Klex Cloud:
-
-```sh
-klex --create-bot --cloud-enroll-token <token>
-```
-
-Sie können das Token statt als Kommandozeilenargument über `KLEX_CLOUD_ENROLLMENT_TOKEN` übergeben. Ergänzen Sie `--headless`, um den Bot ohne Terminaloberfläche zu starten.
-
-Für einen eigenständigen Bot geben Sie einen Namen an:
-
-```sh
-klex --create-bot --no-cloud --bot-name Ada
-```
-
-Die Erstellung lässt sich nicht mit `--data-dir` oder `KLEX_DATA_DIR` kombinieren; diese wählen einen bestehenden Bot aus. Konfigurieren Sie einen Anbieter und ein Chat-Modell, bevor der Bot arbeiten kann.
-
-Wenn der Bot nicht antwortet, helfen die [Schritte zur Fehlerbehebung](/bot/guides/observability#if-a-bot-does-not-respond) (auf Englisch).
+Wenn der Bot nicht antwortet, helfen die [Schritte zur Fehlerbehebung](/bot/guides/observability#if-a-bot-does-not-respond).
 
 <script src="/quickstart-tabs.js" defer></script>
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

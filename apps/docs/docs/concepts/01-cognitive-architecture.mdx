@@ -21,6 +21,6 @@ The main session represents the bot's actual behavior and actions. Only this ses
 
 Utility sessions have no access to the outside world, but can interact with the bot's data directory. They handle tasks such as analyzing existing sessions to build new memories, deleting deprecated memories, fine-tuning skills (procedural memories), and linking the bot's experiences to entities in memory.
 
-### God session
+### Administration
 
-The god session is a dedicated session that has limited access to the outside world and is only usable through the Admin API. It does not receive inputs from the outside world other than dedicated [god messages](/concepts/god-messages) and its purpose is to perform administrative tasks that require elevated permissions, such as commanding the bot to create or update its [soul](/concepts/soul).
+Administrative changes use dedicated Admin API endpoints, not a privileged chat session. The [soul](/concepts/soul) is created and updated through its own API; ordinary sessions only read it.

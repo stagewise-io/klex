@@ -16,8 +16,7 @@ const health = await client.v1.health.$get();
 ## Session activity
 
 Session info, returned for each entry of `state.sessions` in
-`GET /v1/introspect/sessions` and `GET /v1/introspect/god-sessions` and by
-`GET /v1/god-messages/session`, includes two optional fields:
+`GET /v1/introspect/sessions`, includes two optional fields:
 
 - `childSessions`: live child sessions as `{ id, name, extensionIdentifier?,
   runtimeState, childSessions? }`. `name` is the stable role name:
@@ -185,15 +184,6 @@ Error responses include a machine-readable `code` alongside the human-readable
 configured credentials, connected servers, unavailable Cloud authorization,
 and authorization timeouts.
 
-## God session management
-
-The Admin API contract includes the dedicated God Messages session:
-
-- `POST /v1/god-messages` submits a trusted multipart directive.
-- `GET /v1/god-messages/session` returns the current session state.
-- `GET /v1/god-messages/messages` returns cursor-paginated session history.
-- `POST /v1/god-messages/reset` replaces a resettable session.
-
 ## Todos
 
 These routes manage the agent's todo list, which all of its sessions share:
@@ -217,8 +207,8 @@ release return `404` for these routes.
 
 ## Session history
 
-The agent persists the transcript of every chat session instance (default,
-god, and child) to local storage. These routes expose it read-only:
+The agent persists the transcript of every default and child chat session instance
+to local storage. Historical god sessions remain readable. These routes expose it read-only:
 
 - `GET /v1/sessions` lists instances, newest first. Filter with `kind`
   (`default`, `god`, `child`), `live`, and `parentInstanceId`; page with
@@ -234,7 +224,7 @@ god, and child) to local storage. These routes expose it read-only:
 
 Messages use the stored AI SDK `UIMessage` shape: `tool-${name}` parts carry
 full `input`, `output`, and `errorText`, and `data-${name}` parts carry their
-`data`. Unlike God Messages history, nothing is truncated. Provider metadata
+`data`. Nothing is truncated. Provider metadata
 (`providerMetadata`, `callProviderMetadata`, `resultProviderMetadata`, such
 as encrypted reasoning) is omitted unless `includeProviderMetadata=true`.
 

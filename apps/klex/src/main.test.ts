@@ -97,7 +97,6 @@ vi.mock('@/directory-lock', () => ({
     removeDirectory: mocks.removeDirectory,
   }),
 }));
-vi.mock('@/god-messages', () => ({ createGodMessages: vi.fn() }));
 vi.mock('@/health-server', () => ({
   createHealthServer: () => mocks.healthServer,
 }));
@@ -152,10 +151,6 @@ vi.mock('@/session/chat/extensions/episode-summary', () => ({
   createEpisodeSummaryExt: vi.fn(),
   createEpisodeSummaryLog: vi.fn(),
 }));
-vi.mock('@/session/chat/extensions/god-messages', () => ({
-  createGodMessagesDistrustExt: vi.fn(),
-  createGodMessagesTrustExt: vi.fn(),
-}));
 vi.mock('@/session/chat/extensions/image-input-optimizer', () => ({
   createImageInputOptimizerExt: vi.fn(),
 }));
@@ -181,12 +176,10 @@ vi.mock('@/session/chat/extensions/read-attachment/read-attachment', () => ({
 vi.mock('@/session/chat/extensions/soul', () => ({
   createSoul: vi.fn(() => ({ get: () => null })),
   createSoulExt: { identifier: 'io.stagewise/soul', create: vi.fn() },
-  createSoulExtGod: vi.fn(),
   readSoul: mocks.readSoul,
 }));
 vi.mock('@/session/chat/extensions/time', () => ({
   createTimeExt: vi.fn(),
-  createTimeExtGod: vi.fn(),
 }));
 vi.mock('@/session/chat/extensions/todos', () => ({
   createTodoList: vi.fn(),

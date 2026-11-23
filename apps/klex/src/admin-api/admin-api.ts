@@ -4,7 +4,6 @@ import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
 import type { CloudConnectivity } from '@/cloud-connectivity';
 import type { Config } from '@/config';
-import type { GodMessages } from '@/god-messages';
 import type { Introspector } from '@/introspection';
 import type { Mcp } from '@/mcp';
 import type { ModelCallLogger } from '@/model-call-logger';
@@ -25,7 +24,6 @@ export interface AdminApiDependencies {
   modelCallLogger: ModelCallLogger;
   providerRegistry: ProviderRegistry;
   cloudConnectivity: CloudConnectivity;
-  godMessages: GodMessages;
   sessionHistory: SessionHistory;
   skillRegistry: SkillRegistry;
   episodeSummaryLog: EpisodeSummaryLog;
@@ -56,7 +54,6 @@ class AdminApiModule implements AdminApi {
       modelCallLogger: ModelCallLogger;
       providerRegistry: ProviderRegistry;
       cloudConnectivity: CloudConnectivity;
-      godMessages: GodMessages;
       sessionHistory: SessionHistory;
       skillRegistry: SkillRegistry;
       episodeSummaryLog: EpisodeSummaryLog;
@@ -78,7 +75,6 @@ class AdminApiModule implements AdminApi {
       modelCallLogger: this.deps.modelCallLogger,
       providerRegistry: this.deps.providerRegistry,
       cloudConnectivity: this.deps.cloudConnectivity,
-      godMessages: this.deps.godMessages,
       sessionHistory: this.deps.sessionHistory,
       skillRegistry: this.deps.skillRegistry,
       episodeSummaryLog: this.deps.episodeSummaryLog,
@@ -149,7 +145,6 @@ export function createAdminApi(deps: AdminApiDependencies): AdminApi {
     modelCallLogger: deps.modelCallLogger,
     providerRegistry: deps.providerRegistry,
     cloudConnectivity: deps.cloudConnectivity,
-    godMessages: deps.godMessages,
     sessionHistory: deps.sessionHistory,
     skillRegistry: deps.skillRegistry,
     episodeSummaryLog: deps.episodeSummaryLog,

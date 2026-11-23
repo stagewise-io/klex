@@ -119,7 +119,6 @@ export function createInstinctHistoryView(options: {
   return createHistoryView({
     filter: {
       ...TRANSCRIPT_HISTORY_FILTER,
-      godMessages: true,
       data: options.data,
     },
   });

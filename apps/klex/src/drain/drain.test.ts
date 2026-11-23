@@ -25,14 +25,10 @@ const TERMINATION: DrainRequest = {
 };
 
 function createHarness() {
-  const host = { quiescent: false, leased: false, godQuiescent: true };
+  const host = { quiescent: false, leased: false };
   const sessionHost = {
     isQuiescent: vi.fn(() => host.quiescent),
     isInteractionLeased: vi.fn(() => host.leased),
-    beginDrain: vi.fn(),
-  };
-  const godMessages = {
-    isQuiescent: vi.fn(() => host.godQuiescent),
     beginDrain: vi.fn(),
   };
   const mcp = {
@@ -43,12 +39,11 @@ function createHarness() {
   const drain = createDrain({
     logging,
     sessionHost,
-    godMessages,
     mcp,
     pollIntervalMs: 1_000,
     onBegin,
   });
-  return { drain, godMessages, host, mcp, sessionHost, onBegin };
+  return { drain, host, mcp, sessionHost, onBegin };
 }
 
 describe('Drain', () => {
@@ -67,7 +62,6 @@ describe('Drain', () => {
 
     await expect(harness.drain.drain(UPDATE)).resolves.toBe('drained');
     expect(harness.sessionHost.beginDrain).toHaveBeenCalledTimes(1);
-    expect(harness.godMessages.beginDrain).toHaveBeenCalledTimes(1);
     expect(harness.mcp.pausePushDelivery).toHaveBeenCalledTimes(1);
     expect(harness.mcp.acknowledgeDeliveredEvents).toHaveBeenCalledTimes(1);
   });
@@ -81,20 +75,6 @@ describe('Drain', () => {
     harness.host.quiescent = true;
     await vi.advanceTimersByTimeAsync(1_000);
     await Promise.all([first, second]);
-  });
-
-  it('waits for the god session as well as the default session', async () => {
-    const harness = createHarness();
-    harness.host.quiescent = true;
-    harness.host.godQuiescent = false;
-    const drain = harness.drain.drain(UPDATE);
-
-    await vi.advanceTimersByTimeAsync(3_000);
-    expect(harness.mcp.acknowledgeDeliveredEvents).not.toHaveBeenCalled();
-
-    harness.host.godQuiescent = true;
-    await vi.advanceTimersByTimeAsync(1_000);
-    await expect(drain).resolves.toBe('drained');
   });
 
   it('waits while busy and drains once quiescent', async () => {

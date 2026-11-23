@@ -16,7 +16,6 @@ export interface SettingsScreenProps {
   onOpenModelSelection: () => void;
   onOpenDebugInformation: () => void;
   onOpenLogs: () => void;
-  onOpenGodMessages: () => void;
   onBack: () => void;
 }
 
@@ -34,7 +33,6 @@ const MENU_ITEMS: MenuItem[] = [
   { label: 'Model Selection', value: 'model-selection' },
   { label: 'Debug Information', value: 'debug-information' },
   { label: 'Logs', value: 'logs' },
-  { label: 'God Messages', value: 'god-messages' },
 ];
 
 export function SettingsScreen({
@@ -47,7 +45,6 @@ export function SettingsScreen({
   onOpenModelSelection,
   onOpenDebugInformation,
   onOpenLogs,
-  onOpenGodMessages,
   onBack,
 }: SettingsScreenProps) {
   const { setMeta } = useScreenMeta();
@@ -93,9 +90,6 @@ export function SettingsScreen({
         break;
       case 'logs':
         onOpenLogs();
-        break;
-      case 'god-messages':
-        onOpenGodMessages();
         break;
     }
   };

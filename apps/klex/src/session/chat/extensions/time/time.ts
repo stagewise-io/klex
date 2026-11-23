@@ -7,7 +7,6 @@ import {
   type DataPartTransformers,
   dataPartTransformer,
   type Extension,
-  type ExtensionDeps,
   type ExtensionFactory,
   isDataPartOf,
   type ProvisionalStepContext,
@@ -195,16 +194,10 @@ function latestTimeContext(history: readonly ExtendedUIMessage[]): {
   return { timestamp, timezone };
 }
 
-type TimeExtMode = 'standard' | 'god';
-
 class TimeExt implements Extension {
   private convDayKey: string | null = null;
 
-  constructor(
-    private readonly deps: ExtensionDeps,
-    private readonly cfg: TimeExtConfig,
-    private readonly mode: TimeExtMode,
-  ) {}
+  constructor(private readonly cfg: TimeExtConfig) {}
 
   getProvisionalStepContext(
     history: readonly ExtendedUIMessage[],
@@ -285,26 +278,6 @@ class TimeExt implements Extension {
       }),
     };
 
-    if (this.mode === 'god') {
-      tools.updateTimezone = tool({
-        description:
-          'Update the agent timezone in central configuration. The new timezone takes effect only after the agent restarts.',
-        inputSchema: z.object({
-          timezone: z
-            .string()
-            .trim()
-            .refine(isValidTimezone, 'Must be a valid IANA timezone'),
-        }),
-        execute: async ({ timezone }) => {
-          await this.deps.config.mutate((current) => ({
-            ...current,
-            timezone,
-          }));
-          return 'Timezone updated, will be active after restart of the agent.';
-        },
-      });
-    }
-
     return tools;
   }
 
@@ -344,7 +317,6 @@ class TimeExt implements Extension {
     return {
       timeUpdatePeriod: this.cfg.timeUpdatePeriod,
       timezone: this.cfg.timezone,
-      mode: this.mode,
     };
   }
 }
@@ -358,18 +330,6 @@ export interface TimeExtConfig {
 
 /** Adds timezone-aware current-time context to a session at the configured cadence. */
 export function createTimeExt(config: TimeExtConfig): ExtensionFactory {
-  return createTimeExtFactory(config, 'standard');
-}
-
-/** Adds time context and god-only access to persist the next-start timezone. */
-export function createTimeExtGod(config: TimeExtConfig): ExtensionFactory {
-  return createTimeExtFactory(config, 'god');
-}
-
-function createTimeExtFactory(
-  config: TimeExtConfig,
-  mode: TimeExtMode,
-): ExtensionFactory {
   if (!isValidTimezone(config.timezone)) {
     throw new Error(
       `timezone must be a valid IANA identifier; received "${config.timezone}".`,
@@ -386,7 +346,7 @@ function createTimeExtFactory(
   const startupConfig = { ...config };
   return {
     identifier: 'io.stagewise/time',
-    displayName: mode === 'god' ? 'Time (God)' : 'Time',
-    create: (deps) => new TimeExt(deps, startupConfig, mode),
+    displayName: 'Time',
+    create: () => new TimeExt(startupConfig),
   };
 }

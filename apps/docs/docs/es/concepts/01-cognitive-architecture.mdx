@@ -21,6 +21,6 @@ La sesión principal representa el comportamiento y las acciones reales del bot.
 
 Las sesiones de utilidad no tienen acceso al mundo exterior, pero pueden interactuar con el directorio de datos del bot. Manejan tareas como analizar sesiones existentes para construir nuevos recuerdos, eliminar recuerdos obsoletos, ajustar habilidades (memorias de procedimiento) y vincular las experiencias del bot con entidades en la memoria.
 
-### Sesión Dios
+### Administración del alma
 
-La sesión Dios es una sesión dedicada que tiene acceso limitado al mundo exterior y solo es utilizable a través de la API de Admin. No recibe entradas del mundo exterior más que los [mensajes Dios](/concepts/god-messages) dedicados, y su propósito es realizar tareas administrativas que requieren permisos elevados, como ordenar al bot crear o actualizar su [alma](/concepts/soul).
+La API dedicada crea y actualiza el [alma](/concepts/soul). Las sesiones de chat solo la leen y no pueden editarla.

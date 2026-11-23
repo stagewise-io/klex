@@ -962,7 +962,7 @@ describe('Todos extension', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Shared todo list (admin API writes, default and god sessions)
+  // Shared todo list (admin API and session writes)
   // -------------------------------------------------------------------------
 
   async function latestTodosPart(
@@ -1082,48 +1082,6 @@ describe('Todos extension', () => {
     expect(todoList.getTodos()).toEqual([
       { id: cleared.id, description: 'Cleared reminder', reminderTime: null },
     ]);
-  });
-
-  it('shares one list between the default and god sessions', async () => {
-    const dataDirectory = mkdtempSync(join(tmpdir(), 'todos-ext-god-'));
-    const defaultSession = createMockDeps(
-      [],
-      dataDirectory,
-      DEFAULT_SESSION_ID,
-    );
-    const godSession = createMockDeps([], dataDirectory, 'god');
-    const defaultExt = todosExt.create(defaultSession.deps);
-    const godExt = todosExt.create(godSession.deps);
-    await Promise.all([defaultExt.onStart?.(), godExt.onStart?.()]);
-
-    const created = await callTool(godExt, 'createTodo', {
-      description: 'From the god session',
-      reminderTime: '2025-03-15T10:00:05Z',
-    });
-    expect((await latestTodosPart(defaultExt))?.todos).toEqual([
-      expect.objectContaining({ id: created.id }),
-    ]);
-
-    await callTool(defaultExt, 'changeTodoReminder', {
-      id: created.id,
-      reminderTime: '2025-03-15T10:00:20Z',
-    });
-    await vi.advanceTimersByTimeAsync(10_000);
-    expect(defaultSession.sendMessage).not.toHaveBeenCalled();
-    expect(godSession.sendMessage).not.toHaveBeenCalled();
-
-    await vi.advanceTimersByTimeAsync(10_000);
-    await vi.waitFor(() =>
-      expect(
-        defaultSession.sendMessage.mock.calls.length +
-          godSession.sendMessage.mock.calls.length,
-      ).toBe(1),
-    );
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(
-      defaultSession.sendMessage.mock.calls.length +
-        godSession.sendMessage.mock.calls.length,
-    ).toBe(1);
   });
 
   it('serializes concurrent tool and list writes without losing any', async () => {

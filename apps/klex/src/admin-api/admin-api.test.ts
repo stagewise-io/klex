@@ -4,7 +4,6 @@ import type { RootLogger } from '@stagewise/logger';
 
 import type { CloudConnectivity } from '@/cloud-connectivity';
 import type { Config } from '@/config';
-import type { GodMessages } from '@/god-messages';
 import type { Introspector } from '@/introspection';
 import type { Mcp } from '@/mcp';
 import type { ModelCallLogger } from '@/model-call-logger';
@@ -55,11 +54,6 @@ const cloudConnectivity = {
   }),
   getTunnelState: () => 'disconnected',
 } as unknown as CloudConnectivity;
-const godMessages = {
-  start: async () => undefined,
-  sendGodMessage: async () => ({ sessionId: 'test' }),
-  close: async () => undefined,
-} as unknown as GodMessages;
 const soul: Soul = {
   get: () => null,
   create: async () => 'Created soul',
@@ -86,7 +80,6 @@ describe('AdminApi', () => {
         modelCallLogger,
         providerRegistry,
         cloudConnectivity,
-        godMessages,
         sessionHistory,
         skillRegistry,
         episodeSummaryLog,
@@ -123,7 +116,6 @@ describe('AdminApi', () => {
         modelCallLogger,
         providerRegistry,
         cloudConnectivity,
-        godMessages,
         sessionHistory,
         skillRegistry,
         episodeSummaryLog,
@@ -157,6 +149,26 @@ describe('AdminApi', () => {
         error: 'Not found',
         code: 'not_found',
       });
+    });
+
+    it('does not expose removed god-message routes or OpenAPI schemas', async () => {
+      for (const [path, method] of [
+        ['/v1/god-messages', 'POST'],
+        ['/v1/god-messages/session', 'GET'],
+        ['/v1/god-messages/messages', 'GET'],
+        ['/v1/god-messages/reset', 'POST'],
+      ]) {
+        const response = await api.handle(
+          new Request(`http://klex.local${path}`, { method }),
+        );
+        expect(response.status).toBe(404);
+      }
+      const response = await api.handle(
+        new Request('http://klex.local/v1/openapi.json'),
+      );
+      expect(await response.text()).not.toMatch(
+        /god-message|GodMessage|GodSession/,
+      );
     });
 
     it('serves the soul contract and advertises it in OpenAPI through the admin handler', async () => {
@@ -203,7 +215,6 @@ describe('AdminApi', () => {
         modelCallLogger,
         providerRegistry,
         cloudConnectivity,
-        godMessages,
         sessionHistory,
         skillRegistry,
         episodeSummaryLog,

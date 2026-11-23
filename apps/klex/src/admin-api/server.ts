@@ -4,7 +4,6 @@ import type { ModuleLogger } from '@stagewise/logger';
 
 import type { CloudConnectivity } from '@/cloud-connectivity';
 import type { Config } from '@/config';
-import type { GodMessages } from '@/god-messages';
 import type { Introspector } from '@/introspection';
 import type { Mcp } from '@/mcp';
 import type { ModelCallLogger } from '@/model-call-logger';
@@ -26,16 +25,6 @@ import {
   listEpisodeSummaries,
   listEpisodeSummariesRoute,
 } from './routes/v1/episode-summaries';
-import {
-  createGodMessage,
-  createGodMessageRoute,
-  getGodMessages,
-  getGodMessagesRoute,
-  getGodSession,
-  getGodSessionRoute,
-  resetGodSession,
-  resetGodSessionRoute,
-} from './routes/v1/god-messages';
 import { getHealth, healthRoute } from './routes/v1/health';
 import {
   getIntrospectionPathHandler,
@@ -176,7 +165,6 @@ export interface AdminAppDependencies {
   modelCallLogger: ModelCallLogger;
   providerRegistry: ProviderRegistry;
   cloudConnectivity: CloudConnectivity;
-  godMessages: GodMessages;
   sessionHistory: SessionHistory;
   skillRegistry: SkillRegistry;
   episodeSummaryLog: EpisodeSummaryLog;
@@ -233,10 +221,6 @@ export function createAdminApp(deps: AdminAppDependencies) {
     .openapi(startAuthorizationRoute, startAuthorization(deps))
     .openapi(cancelAuthorizationRoute, cancelAuthorization(deps))
     .openapi(completeAuthorizationRoute, completeAuthorization(deps))
-    .openapi(createGodMessageRoute, createGodMessage(deps))
-    .openapi(getGodSessionRoute, getGodSession(deps))
-    .openapi(getGodMessagesRoute, getGodMessages(deps))
-    .openapi(resetGodSessionRoute, resetGodSession(deps))
     .openapi(listSessionHistoryRoute, listSessionHistory(deps))
     .openapi(getSessionHistoryRoute, getSessionHistory(deps))
     .openapi(getSessionHistoryMessagesRoute, getSessionHistoryMessages(deps))

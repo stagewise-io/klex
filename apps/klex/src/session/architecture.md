@@ -4,15 +4,14 @@
 
 Klex has one durable agent with many concurrent model execution units called **sessions**. Sessions are private — the user never manages them directly. Each session owns its own message history, inbox, extension handler, and run loop.
 
-There are three kinds of sessions:
+There are two runtime kinds of sessions:
 
 | Kind | MCP | Push notifications | Outside input | Created by |
 |------|-----|--------------------|--------------|------------|
 | `default` | ✅ | ✅ when composed with the MCP ingress extension | ✅ | `SessionHost` |
-| `god` | ❌ | ❌ | God messages only | `GodMessages` module |
 | `child` | ❌ | ❌ | Parent extension only | Extension via `createChildSession` |
 
-The `default` session is the main execution unit — it talks to MCP servers, receives push notifications, and runs the agent's main loop. `god` and `child` sessions are isolated: no MCP, no push notifications, no outside-world access. Their only input is messages injected by their owner.
+The `default` session is the main execution unit — it talks to MCP servers, receives push notifications, and runs the agent's main loop. `child` sessions are isolated: no MCP, no push notifications, no outside-world access. Their only input is messages injected by their owner.
 
 ## Hierarchy
 
@@ -25,11 +24,6 @@ SessionHost
                  └─ child session (isolated — no MCP, no push notifications)
                       └─ extension handler
                            └─ extension (can spawn a grandchild)
-```
-
-```
-GodMessages module
-  └─ god session (no MCP — loads memory extension + god-messages trust extension)
 ```
 
 ## SessionHost
@@ -59,7 +53,7 @@ Extensions inspect `sessionContext.kind` to decide session-specific behavior. An
 
 ### MCP access
 
-`ExtensionDeps.mcp` is `Mcp | null`. The `default` session passes the real `Mcp` instance; `god` and `child` sessions pass `null`. Extensions that require MCP check in their constructor.
+`ExtensionDeps.mcp` is `Mcp | null`. The `default` session passes the real `Mcp` instance; `child` sessions pass `null`. Extensions that require MCP check in their constructor.
 
 ### Push notification subscription
 
@@ -99,18 +93,14 @@ The consult extension creates isolated child sessions with model purpose `consul
 
 ## Composition root
 
-The composition root wires shared deps once and passes a `sessionFactory` to both `SessionHost` and `GodMessages`. The factory captures shared deps (config, modelResolver, logging, dataDirectory) and creates chat sessions with child-specific parameters.
+The composition root wires shared deps once and passes a `sessionFactory` to `SessionHost`. The factory captures shared deps (config, modelResolver, logging, dataDirectory) and creates chat sessions with child-specific parameters.
 
 ### Startup order
 
 ```
 model-call-logger → session-history → admin-api → cloud-connectivity
-  → session-host → realtime → mcp → telemetry-manager → god-messages
+  → session-host → realtime → mcp → telemetry-manager
 ```
-
-### God messages
-
-The `GodMessages` module creates its session via `sessionFactory` with `mcp: null` and `sessionContext.kind: 'god'`. The session loads trust extensions. No push notifications, no MCP tools.
 
 ### Soul administration
 
@@ -120,11 +110,11 @@ The soul module exposes `GET /v1/soul` (the soul string or JSON `null`), `POST /
 
 The API uses a separate one-shot generation call, not a chat session: up to three attempts total, cycling through configured `chat` models in order, with SDK retries disabled and a 60-second timeout per attempt. It rejects blank, oversized, fenced, filtered, or truncated output. Exhausted attempts return 502; no chat models returns 503. Successful output is atomically saved to the existing extension-owned `SOUL.md` document. Concurrent writes and changes detected during generation return 409. Failures leave the existing soul untouched. Requests can be cancelled and never commit late model results. Closing the admin API also cancels in-flight generation, including requests made through the in-process handler without a local listener.
 
-Before each regular-session step, the soul extension removes newly added canonical history and skips the step when no non-empty soul exists. Previously retained history is preserved. There is no setup polling or input-admission layer; fresh input starts a new step after soul creation. God sessions retain the legacy `updateSoul({ content })` tool for deployed cloud compatibility, with its existing success response and 10,000-character limit. The god-session soul prompt (`god-system-prompt.ts`) reuses the same shared base and all three operation parts, scoped by `system-prompt-part/god-soul-management.md` to explicit soul-management god messages. It selects one applicable operation and sends the complete result through `updateSoul`, rather than treating the one-shot output instructions as the whole session's response contract. Regular-session prompts do not include this writing guidance. Both writers use atomic file replacement; API generation detects a legacy tool edit before committing and returns 409. There is no background soul-setup retry supervisor. The CLI exposes viewing, creation, updates (blank instructions refine the existing soul), and confirmed re-creation under Settings → Soul, using the admin API and configured chat models. The file path and document representation are unchanged; no local-data migration is needed.
+Before each regular-session step, the soul extension removes newly added canonical history and skips the step when no non-empty soul exists. Previously retained history is preserved. There is no setup polling or input-admission layer; fresh input starts a new step after soul creation. Chat sessions have no soul-editing tool. Only the dedicated soul API generates updates; it uses atomic file replacement and rejects concurrent file changes with 409. Regular-session prompts do not include generation guidance. There is no background soul-setup retry supervisor. The CLI exposes viewing, creation, updates (blank instructions refine the existing soul), and confirmed re-creation under Settings → Soul, using the admin API and configured chat models. The file path and document representation are unchanged; no local-data migration is needed.
 
 ### Session history
 
-`session-history` owns `sessions.sqlite`, a registered local-data store. The factory passes it to every chat session. Default, god, and child sessions each record their transcript under their own `instanceId`, starting with their first message. Every message row also carries the stable `sessionId` and a per-session monotonic `ord`; all default-session instances append to one durable `default` log. On startup the default session restores its bounded window (latest checkpoint header plus raw tail) from that log before its extensions start. Its in-memory history stays bounded because checkpoints trim the window, not just the model view. God and child sessions start empty. An instance that closes before any message is never persisted. Child rows point to their parent through `parentInstanceId`. The store starts before the admin API and the session host, so the first session can record and the read-only `/v1/sessions` routes can serve it. Introspection shows only live state. The admin API keeps its `seq` field and `beforeSeq` cursor, now backed by `ord`; values stay ordered per instance but are no longer dense. The history store also keeps persisted ended instances, such as replaced default sessions, reset god sessions, and closed children, until the size cap evicts them. See [Chat Session Architecture](./chat/architecture.md#transcript-persistence).
+`session-history` owns `sessions.sqlite`, a registered local-data store. The factory passes it to every chat session. Default and child sessions each record their transcript under their own `instanceId`, starting with their first message. Every message row also carries the stable `sessionId` and a per-session monotonic `ord`; all default-session instances append to one durable `default` log. On startup the default session restores its bounded window (latest checkpoint header plus raw tail) from that log before its extensions start. Its in-memory history stays bounded because checkpoints trim the window, not just the model view. Child sessions start empty. An instance that closes before any message is never persisted. Child rows point to their parent through `parentInstanceId`. The store starts before the admin API and the session host, so the first session can record and the read-only `/v1/sessions` routes can serve it. Introspection shows only live state. The admin API keeps its `seq` field and `beforeSeq` cursor, now backed by `ord`; values stay ordered per instance but are no longer dense. The history store also keeps persisted ended instances, such as replaced default sessions, historical god sessions, and closed children, until the size cap evicts them. See [Chat Session Architecture](./chat/architecture.md#transcript-persistence).
 
 ## Introspection tree
 
@@ -136,15 +126,11 @@ sessions
           └── <child-session-id>
               ├── extensions
               └── child-sessions
-
-god-sessions
-  └── <god-session-id>
-      └── extensions
 ```
 
 Child sessions register under their parent session's `child-sessions` scope, giving full recursive visibility without a second source of lifecycle state. Session metadata includes the session kind, parent ID, and model purpose so operators can distinguish ordinary and consult execution units.
 
-Each session's info also carries a `childSessions` summary of its live children (id, role name, extension identifier, runtime state, nested children), so a single read of `sessions` or `god-sessions` shows whether memory retrieval (`memory-retrieval`) or learning (`learning-*`) is running. `triggeredByMemoryOnly` is true while a session is busy and every input since it was last idle was a memory-retrieval result.
+Each session's info also carries a `childSessions` summary of its live children (id, role name, extension identifier, runtime state, nested children), so a single read of `sessions` shows whether memory retrieval (`memory-retrieval`) or learning (`learning-*`) is running. `triggeredByMemoryOnly` is true while a session is busy and every input since it was last idle was a memory-retrieval result.
 
 ## See also
 

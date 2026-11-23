@@ -4,8 +4,8 @@ A drain lets the agent finish its current work before the process goes away. Two
 
 ## Sequence
 
-1. Stop new work for the rest of the process: `SessionHost.beginDrain()`, `GodMessages.beginDrain()`, `Mcp.pausePushDelivery()`. Events that arrive later stay in the server's pending queue for the next process.
-2. Poll until the default session tree and the god session are quiescent, or the budget runs out.
+1. Stop new work for the rest of the process: `SessionHost.beginDrain()`, `Mcp.pausePushDelivery()`. Events that arrive later stay in the server's pending queue for the next process.
+2. Poll until the default session tree is quiescent, or the budget runs out.
 3. Once quiescent, acknowledge the Push Notifications that were handled. After a timeout nothing is acknowledged, so unfinished events are delivered again.
 4. The caller runs the normal shutdown (`KLEX_SHUTDOWN_TIMEOUT_MS`).
 

@@ -371,7 +371,7 @@ class ChatSessionModule implements AgentSession {
       createdAt: new Date().toISOString(),
     });
     // Create an independent root span named `session {name}` that lives for
-    // the entire session lifetime. Main, god, and extension-owned child
+    // the entire session lifetime. Main and extension-owned child
     // sessions share this naming and attribute scheme; each gets its own
     // trace. All turn / step / generation / tool spans inherit this trace,
     // giving a single trace tree per session in the tracing backend. Child

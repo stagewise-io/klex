@@ -74,7 +74,7 @@ export interface SessionInfo {
   name: string;
   /** Owning extension identifier for child sessions. */
   extensionIdentifier?: string;
-  /** Session kind used to distinguish default, god, and child sessions. */
+  /** Session kind, including historical god sessions for stored transcripts. */
   kind: SessionKind;
   /** Parent session identifier for child sessions. */
   parentId: string | null;
@@ -157,8 +157,7 @@ export interface SessionHooks {
  * Extended {@link AgentSession} handle that exposes chat-specific capabilities.
  *
  * Owners interact with sessions through the narrow {@link AgentSession}
- * interface. Modules that need to send native messages (e.g. the god-messages
- * module) use this wider handle to access {@link ChatSessionInbox.sendMessage}
+ * interface. Owners that need to send native messages use this wider handle to access {@link ChatSessionInbox.sendMessage}
  * and the session ID.
  */
 export interface ChatSessionHandle extends AgentSession {
@@ -234,8 +233,7 @@ export interface AgentSession extends ConversationHost {
  *
  * - `default` — the main execution unit. Has MCP access, subscribes to
  *   push notifications, and receives outside input.
- * - `god` — an isolated session for god messages. No MCP, no push
- *   notifications. Input comes only from the god-messages module.
+ * - `god` — historical kind retained only for persisted transcript readers.
  * - `child` — a session spawned by an extension. No MCP, no push
  *   notifications. Input comes only from the parent extension.
  */
@@ -252,7 +250,7 @@ export interface SessionContext {
    */
   kind: SessionKind;
   /**
-   * Stable low-cardinality role name (`main`, `god`, `consult`, ...). The
+   * Stable low-cardinality role name (`main`, `consult`, ...). The
    * session root span is named `session {name}`; per-instance identity
    * belongs in `sessionId`.
    */

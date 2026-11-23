@@ -61,7 +61,7 @@ Lease acquisition is a safe-boundary handoff: quiesce the generation lane, inter
 
 ### Context preparation
 
-Leased bootstrap checks `shouldRunStep` before assembling context, just like a chat step. A missing soul removes newly added canonical history and rejects bootstrap; the caller releases the failed setup lease. Other extension skips do not automatically remove history. God-mode sessions remain allowed without a soul.
+Leased bootstrap checks `shouldRunStep` before assembling context, just like a chat step. A missing soul removes newly added canonical history and rejects bootstrap; the caller releases the failed setup lease. Other extension skips do not automatically remove history.
 
 Both chat steps and leased interactions use the same context assembly: provisional extension context, cloned canonical history (the bounded window), history transformers, model-message conversion, context transformers, tool collection, then instructions. The preparation handle is committed only after provider setup succeeds; setup failure rolls it back.
 
@@ -210,7 +210,7 @@ Telemetry span events: `checkpoint.committed`, `checkpoint.applied`, `checkpoint
 
 **Carry-forward.** `getCheckpointCarry(dropped)` returns data parts that represent the extension's latest state within the dropped messages (time and timezone, consult list, MCP server list and open resources, todos). Because the header is part of the window, the existing `latest*Part(history)` lookups find carried state like any other part, and `getProvisionalStepContext` does not re-emit it. Extensions no longer read pre-cutoff history in `historyTransformer`.
 
-**Restore.** The default session restores its window before extensions start, so `onStart` hooks see it. `SessionHistory.loadWindow('default')` returns the latest checkpoint header plus its raw tail. Without a checkpoint it returns the newest messages within `RESTORE_FALLBACK_MAX_BYTES` (2 MiB), starting at a user message and never cutting a message; the first compaction threshold hit then produces a checkpoint. The session seeds its recorder with the restored IDs, ords, and hashes, so nothing is written twice. Child and god sessions start empty.
+**Restore.** The default session restores its window before extensions start, so `onStart` hooks see it. `SessionHistory.loadWindow('default')` returns the latest checkpoint header plus its raw tail. Without a checkpoint it returns the newest messages within `RESTORE_FALLBACK_MAX_BYTES` (2 MiB), starting at a user message and never cutting a message; the first compaction threshold hit then produces a checkpoint. The session seeds its recorder with the restored IDs, ords, and hashes, so nothing is written twice. Child sessions start empty.
 
 ## Episodic memory
 
@@ -314,7 +314,7 @@ The episode-summary extension (`io.stagewise/episode-summary`) gives newly ready
 
 ## Todos
 
-The todos extension (`io.stagewise/todos`) keeps one agent-wide list in the registered JSON store `extensions/io.stagewise/todos/todos.json`. The default and god sessions load it.
+The todos extension (`io.stagewise/todos`) keeps one agent-wide list in the registered JSON store `extensions/io.stagewise/todos/todos.json`. The default session loads it.
 
 - **Shared list**: `application.ts` creates one `TodoList` with `createTodoList()` and passes it to `createTodosExt({ todoList })` and the admin API. The list owns the store and every write: model tools, reminder delivery and admin routes. Writes are serialized and persisted before they resolve; the 100-todo and 500-character limits are checked inside the serialized write.
 - **Change propagation**: running extensions attach to the list and reconcile their reminder timers after every committed write, whoever made it. The model sees the change on its next step, because the provisional step context compares the stored list with the last `data-todos` part. Description edits render as `Todo updated` diff lines.

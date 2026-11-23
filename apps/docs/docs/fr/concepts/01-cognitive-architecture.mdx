@@ -21,6 +21,6 @@ La session principale représente le comportement et les actions réels du bot. 
 
 Les sessions utilitaires n'ont pas accès au monde extérieur, mais peuvent interagir avec le répertoire de données du bot. Elles gèrent des tâches telles que l'analyse des sessions existantes pour construire de nouveaux souvenirs, la suppression des souvenirs obsolètes, l'affinage des compétences (mémoires procédurales) et la liaison des expériences du bot avec des entités en mémoire.
 
-### Session Dieu
+### Administration de l'âme
 
-La session Dieu est une session dédiée qui a un accès limité au monde extérieur et n'est utilisable que via l'API Admin. Elle ne reçoit pas d'entrées du monde extérieur autres que les [messages Dieu](/concepts/god-messages) dédiés, et son but est d'effectuer des tâches administratives nécessitant des permissions élevées, comme commander au bot de créer ou de mettre à jour son [âme](/concepts/soul).
+L'API dédiée crée et met à jour l'[âme](/concepts/soul). Les sessions de chat la lisent sans pouvoir la modifier.

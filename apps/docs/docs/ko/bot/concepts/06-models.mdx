@@ -1,0 +1,69 @@
+---
+title: 모델
+description: 모델 제공자를 설정하고 Klex Bot의 작업별 모델을 선택합니다.
+related:
+  - /bot/quickstart
+  - /bot/concepts/how-bots-work
+  - /cloud/hosted-vs-local
+---
+
+Klex Bot은 설정한 제공자의 모델을 사용합니다. Klex는 OpenAI, Anthropic, Google Gemini, 로컬 Ollama, 호환되는 사용자 지정 엔드포인트 등 여러 제공자 유형을 지원합니다. 사용할 수 있는 모델은 제공자와 계정에 따라 다릅니다.
+
+제공자는 Klex가 연결하는 서비스 또는 엔드포인트이고, 모델은 해당 제공자를 통해 사용할 수 있는 개별 모델입니다. 제공자를 설정해도 모든 작업의 모델이 자동으로 선택되지는 않습니다.
+
+<a id="configure-models"></a>
+
+## 모델 설정하기
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Cloud 호스팅">
+
+1. Klex Cloud에서 Bot을 열고 **Models**를 선택합니다. 모델을 변경하려면 Bot이 연결되어 있어야 하며 관리자 권한이 필요합니다.
+2. 연결된 제공자가 없다면 **Add a provider**를 선택하고 제공자를 선택한 다음 설정을 완료합니다. 필요한 설정과 로그인 단계는 제공자마다 다릅니다.
+3. 모델 프리셋을 선택하거나 모델 표에서 용도별 모델을 선택합니다. Chat, 메모리, 압축 모델을 포함해 선택 내용을 확인합니다.
+
+</Tab>
+<Tab title="셀프 호스팅">
+
+셀프 호스팅 Klex 앱에서 다음 단계를 따릅니다.
+
+1. **Settings → Providers & Endpoints**를 열고 `a`를 누른 다음 제공자 유형을 선택합니다. 필요한 설정을 입력하고 로그인 단계를 완료합니다.
+2. **Settings → Model Selection**을 열고 **Chat**을 선택한 다음 설정된 제공자의 모델을 추가합니다. 일반 대화와 Soul 생성에는 Chat 모델이 필요합니다.
+3. 다른 용도를 확인하고 필요에 따라 호환되는 모델을 추가합니다. 이 화면에서 메모리, 상담, 이미지 입력, 오디오 입력, 음성 모델을 선택할 수 있습니다.
+
+</Tab>
+</Tabs>
+
+일부 제공자는 모델을 자동으로 검색하고, 다른 제공자는 모델 정보를 직접 추가해야 합니다. 사용 가능 여부와 지원 기능은 제공자와 모델에 따라 다릅니다.
+
+<a id="choosing-models-for-different-tasks"></a>
+
+## 작업별 모델 선택하기
+
+하나의 모델을 여러 용도에 사용하거나 작업별로 다른 모델을 선택할 수 있습니다. 필요한 입력을 지원하는지와 제공자의 비용 및 지연 시간을 고려하세요. 사용하기 전에 제공자의 약관과 요금을 확인하세요.
+
+Chat에는 순서가 있는 모델 목록을 설정할 수 있습니다. 모델 오류가 발생하면 Klex는 설정된 다른 Chat 모델로 대체할 수 있습니다. 모델 설정에서 순서를 확인하세요.
+
+<a id="instincts-and-model-usage"></a>
+
+## Instincts와 모델 사용량
+
+Klex는 생성 단계 전에 **Instincts** 모델로 맥락을 분류할 수 있습니다. Instincts 모델이 설정되지 않으면 사용 가능한 Chat 모델로 분류합니다. 이 호출로 모델 사용량과 비용이 추가될 수 있습니다. 요금을 확인하고 사용량을 모니터링하세요.
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Cloud 호스팅">
+
+Bot의 **Models** 섹션을 열고 모델 표에서 **Quick Decisions**에 사용할 모델을 선택합니다. 이 모델이 Instincts 모델입니다.
+
+</Tab>
+<Tab title="셀프 호스팅">
+
+**Settings → Model Selection**에서 Instincts 모델을 선택합니다.
+
+</Tab>
+</Tabs>
+
+기본적으로 동적 effort는 섀도 모드에서 실행됩니다. 권장 추론 effort를 평가하지만 주 모델의 설정은 변경하지 않습니다. 섀도 분류에도 모델이 사용되어 비용이 발생할 수 있습니다.
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

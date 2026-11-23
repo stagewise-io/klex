@@ -111,11 +111,7 @@ export default defineConfig({
         ['/concepts/model-providers', '/concepts/models'],
         ['/concepts/model-selection', '/concepts/models'],
       ];
-      const unchanged = [
-        '',
-        '/concepts/soul',
-        '/concepts/data-directory',
-      ];
+      const unchanged = ['', '/concepts/soul', '/concepts/data-directory'];
       return [
         {
           from: `${locale}/bot/use-cases`,
@@ -128,7 +124,21 @@ export default defineConfig({
         },
         ...(['/de', '/es', '/fr', '/pt'].includes(locale)
           ? []
-          : [{ from: `${locale}/bot/concepts/god-messages`, to: `${locale}/bot/concepts/soul` }]),
+          : [
+              {
+                from: `${locale}/bot/concepts/god-messages`,
+                to: `${locale}/bot/concepts/soul`,
+              },
+            ]),
+        // German retains its Availability page until the locale review.
+        ...(locale === '/de'
+          ? []
+          : [
+              {
+                from: `${locale}/bot/reliability/availability`,
+                to: `${locale}/bot/reliability/updates`,
+              },
+            ]),
         ...unchanged.map((path) => ({
           from: `${locale}${path}`,
           to: `${locale}/bot${path}`,

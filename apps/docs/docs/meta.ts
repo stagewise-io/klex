@@ -1,3 +1,10 @@
 export default {
-  pages: ['index', 'quickstart', 'architecture', 'concepts', 'guides'],
+  pages: [
+    'index',
+    'quickstart',
+    'architecture',
+    'concepts',
+    'guides',
+    'templates',
+  ],
 };

@@ -1,0 +1,57 @@
+---
+title: 设置独立机器人
+description: 安装 Klex，在不注册 Cloud 的情况下创建自托管机器人。
+related:
+  - /bot/quickstart
+  - /bot/concepts/models
+  - /bot/concepts/mcp
+---
+
+你可以运行自托管机器人，而不必将其注册到 Klex Cloud。
+
+<a id="install-klex"></a>
+
+## 安装 Klex
+
+在终端中安装 Klex：
+
+**macOS、Linux 或 WSL：**
+
+```sh
+curl -fsSL https://klex.bot/install.sh | sh
+```
+
+**Windows (PowerShell)：**
+
+```powershell
+irm https://klex.bot/install.ps1 | iex
+```
+
+<a id="create-a-bot-interactively"></a>
+
+## 交互式创建机器人
+
+启动应用：
+
+```sh
+klex --no-cloud
+```
+
+1. 按 `a` 创建机器人并输入名称。
+2. 在 **Settings → Providers & Endpoints** 中配置模型提供商。在 **Model Selection** 中选择聊天模型。
+3. 打开 **Settings → Soul**，创建描述机器人性格和工作的 Soul。
+4. 在 **Settings → MCP Servers** 中连接机器人需要的服务器，并在所连接的应用中配置其账户权限。
+
+要接收外部渠道的事件，请连接支持相应 MCP Events、实时资源或 Klex [推送通知扩展](https://github.com/stagewise-io/klex/tree/main/packages/mcp-extension-push-notifications)的服务器。MCP Events 需要 watch；要接收实时资源更新，必须保持资源打开。部分服务器还需要在所连接的服务中进行额外设置。
+
+<a id="create-a-bot-without-the-picker"></a>
+
+## 不使用选择菜单创建机器人
+
+要不使用交互式选择菜单创建独立机器人，请指定名称：
+
+```sh
+klex --create-bot --no-cloud --bot-name Ada
+```
+
+添加 `--headless` 可在没有终端界面的情况下运行。机器人开始工作前，需要配置提供商、聊天模型和 Soul。要交互式配置新机器人，请省略 `--headless` 并使用上述设置。无界面配置使用 Admin API；请参阅其[本地访问和安全限制](/zh/bot/guides/observability#access-the-local-admin-api)。创建时不能同时使用 `--data-dir` 或 `KLEX_DATA_DIR`；它们用于选择现有机器人。停止无界面机器人的方法，请参阅[控制 Klex 机器人](/zh/bot/guides/control-and-limits#stop-a-headless-bot)。

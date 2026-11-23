@@ -250,6 +250,8 @@ export interface ProviderAuthorization {
 
 /** Per-instance access to registry-owned credentials. */
 export interface ProviderContext {
+  /** Raw discovery snapshot from the settings-scoped, non-persisted cache. */
+  discoveredModel?(modelId: string): ProviderModel | undefined;
   /** Current credential, refreshed first when it is about to expire. */
   credential(): Promise<ProviderCredential | undefined>;
   /** Force one refresh, e.g. after a 401. */
@@ -932,14 +934,28 @@ class ProviderRegistryModule implements ProviderRegistry {
     this.pendingDiscovery.delete(id);
   }
 
-  /** Context for providers whose current settings use interactive authorization. */
+  /** Credential access and discovery snapshot for the current settings. */
   private contextFor(
     definition: ProviderDefinition,
     instance: ProviderInstance,
   ): ProviderContext | undefined {
     const authorization = definition.authorization;
-    if (!authorization?.isRequired(instance.settings)) return undefined;
-    return this.credentials.contextFor(instance, authorization);
+    const credentials = authorization?.isRequired(instance.settings)
+      ? this.credentials.contextFor(instance, authorization)
+      : {
+          credential: async () => undefined,
+          invalidate: async () => undefined,
+        };
+    const cached = this.modelCache.get(instance.id);
+    const models =
+      cached?.signature === this.settingsSignature(instance.settings)
+        ? cached.models
+        : undefined;
+    return {
+      ...credentials,
+      discoveredModel: (modelId) =>
+        models?.find((model) => model.modelId === modelId),
+    };
   }
 
   private authorizationInfo(

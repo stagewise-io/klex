@@ -141,6 +141,7 @@ describe('ProviderRegistry', () => {
       'amazon-bedrock',
       'azure-openai',
       'openrouter',
+      'langdock',
       'moonshot',
       'alibaba-qwen',
       'deepseek',

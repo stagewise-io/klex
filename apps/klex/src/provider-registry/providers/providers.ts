@@ -11,6 +11,7 @@ import { glmCodingPlanProviderDefinition } from './glm-coding-plan';
 import { googleGeminiProviderDefinition } from './google-gemini';
 import { googleGenerativeProviderDefinition } from './google-generative';
 import { googleVertexProviderDefinition } from './google-vertex';
+import { langdockProviderDefinition } from './langdock';
 import { minimaxProviderDefinition } from './minimax';
 import { minimaxCodingPlanProviderDefinition } from './minimax-coding-plan';
 import { mistralProviderDefinition } from './mistral';
@@ -35,6 +36,7 @@ export const builtInProviderDefinitions: readonly ProviderDefinition[] = [
   amazonBedrockProviderDefinition,
   azureOpenAiProviderDefinition,
   openRouterProviderDefinition,
+  langdockProviderDefinition,
   moonshotProviderDefinition,
   alibabaQwenProviderDefinition,
   deepSeekProviderDefinition,

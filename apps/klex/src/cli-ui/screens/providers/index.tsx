@@ -335,6 +335,7 @@ const PROVIDER_GROUP_BY_TYPE: Partial<Record<string, ProviderGroup>> = {
   'azure-openai': 'Cloud platforms',
   'google-vertex': 'Cloud platforms',
   openrouter: 'Gateways & plans',
+  langdock: 'Gateways & plans',
   'glm-coding-plan': 'Gateways & plans',
   'minimax-coding-plan': 'Gateways & plans',
   'opencode-go': 'Gateways & plans',

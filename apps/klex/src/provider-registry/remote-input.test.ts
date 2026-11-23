@@ -127,7 +127,12 @@ describe('Google recursive JSON input declarations (KLEX-89)', () => {
     }
   });
 
-  it.each(['google-gemini', 'google-generative', 'google-vertex'] as const)(
+  it.each([
+    'google-gemini',
+    'google-generative',
+    'google-vertex',
+    'langdock',
+  ] as const)(
     '%s serializes safe declarations and dispatches native args in generate and stream',
     async (type) => {
       const before = structuredClone(inputSchema);
@@ -332,7 +337,12 @@ describe('Google JSON tool result references (KLEX-61)', () => {
     },
   ];
 
-  it.each(['google-gemini', 'google-generative', 'google-vertex'] as const)(
+  it.each([
+    'google-gemini',
+    'google-generative',
+    'google-vertex',
+    'langdock',
+  ] as const)(
     '%s sends refs as lossless text for generation and streaming',
     async (type) => {
       const requests: {
@@ -571,6 +581,7 @@ describe('remote input capability contract', () => {
       'google-generative',
       'google-vertex',
       'vercel-ai-gateway',
+      'langdock',
     ].includes(type);
     const result = await prepareRemoteInput(model(type), capabilities, {
       url,
@@ -791,6 +802,7 @@ describe.each([false, true])(
       ['google-gemini', 'video/mp4', 'google'],
       ['google-generative', 'application/pdf', 'google'],
       ['google-vertex', 'audio/wav', 'google'],
+      ['langdock', 'application/pdf', 'google'],
     ] as const)(
       '%s maps %s to exact native content without downloading',
       async (type, mediaType, family) => {

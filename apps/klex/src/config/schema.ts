@@ -21,6 +21,7 @@ const nativeModelIdSchema = z.string().min(1);
 const modelIdSchema = nativeModelIdSchema;
 
 const providerTypeSchema = z.enum([
+  'langdock',
   'openai',
   'anthropic',
   'google-gemini',
@@ -321,6 +322,9 @@ const vercelAiGatewaySettingsSchema = openAiSettingsSchema.extend({
 });
 
 const providerSettingsSchemas = {
+  langdock: openAiSettingsSchema.extend({
+    region: z.enum(['eu', 'us']).default('eu'),
+  }),
   'vercel-ai-gateway': vercelAiGatewaySettingsSchema,
   'typesafe-ai': openAiSettingsSchema,
   openai: openAiSettingsSchema,
@@ -351,6 +355,7 @@ const providerSettingsSchemas = {
 } satisfies Record<ProviderType, z.ZodType<Record<string, unknown>>>;
 
 const providerSecretSettings = {
+  langdock: ['apiKey'],
   'vercel-ai-gateway': ['apiKey'],
   'typesafe-ai': ['apiKey'],
   openai: ['apiKey'],
@@ -689,7 +694,7 @@ const effortConfigSchema = z
     'Effort floor must not exceed ceiling',
   );
 
-/** Live application config, persisted schema version 9. */
+/** Live application config, persisted schema version 13. */
 const klexConfigSchema = z.object({
   configVersion: z.literal(2).default(2),
   officialName: z

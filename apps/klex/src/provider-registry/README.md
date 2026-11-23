@@ -13,6 +13,7 @@ The provider registry is the single integration point for language-model transpo
 | `amazon-bedrock` | Amazon Bedrock | No |
 | `azure-openai` | Microsoft Azure OpenAI | No |
 | `openrouter` | OpenRouter | Yes |
+| `langdock` | Langdock (OpenAI, Anthropic, Google protocols) | Yes |
 | `moonshot` | Moonshot AI | OpenAI-compatible discovery |
 | `alibaba-qwen` | Alibaba Qwen | OpenAI-compatible discovery |
 | `deepseek` | DeepSeek | OpenAI-compatible discovery |
@@ -36,8 +37,12 @@ This registry covers language-model transports only. Full Codex, Claude Code, an
 
 ## Google tool input schemas
 
+Langdock settings, protocol routing, and its transient discovery-cache contract
+are documented in [Langdock](./providers/langdock.md).
+
 The Google model wrapper adapts unrestricted recursive JSON-value unions in
-function declarations for Gemini, custom Google Generative endpoints, and Vertex.
+function declarations for Gemini, custom Google Generative endpoints, Vertex,
+and Langdock's Google route.
 For example, Slack's `useSlackApi` declares both `body` and `parameters` using
 Zod's recursive JSON union. The SDK sends this as `parametersJsonSchema`; its
 object branch recurses through `additionalProperties`, which Gemini rejects as

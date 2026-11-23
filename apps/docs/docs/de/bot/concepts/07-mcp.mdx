@@ -15,8 +15,10 @@ Klex bietet integrierte MCP-Server und unterstützt weitere MCP-Server. Die verf
 
 - **Tools** ermöglichen dem Bot, Aktionen oder Informationen vom Server anzufordern.
 - **Ressourcen** stellen Inhalte bereit, die der Bot finden und öffnen kann.
-- **Push-Benachrichtigungen** können Ereignisse an den Bot übermitteln, wenn der Server sie unterstützt. Klex verwendet dafür eine MCP-Erweiterung.
-- **MCP Events** verwendet eine Erweiterung im Entwurfsstadium. Unterstützt ein Server sie, kann der Bot seine Ereignisse finden und beobachten. Beobachtungen bleiben über Chats und Neustarts hinweg bestehen; Ereignisse während einer Ausfallzeit können jedoch verloren gehen. Eine Beobachtung einzurichten konfiguriert den externen Dienst nicht automatisch.
+- **Push-Benachrichtigungen** können Nachrichten und andere Ereignisse übermitteln, wenn der Server die [Klex MCP Push Notifications extension](https://github.com/stagewise-io/klex/tree/main/packages/mcp-extension-push-notifications) unterstützt.
+- **MCP Events & Triggers** ist eine MCP-Erweiterung im Entwurfsstadium. Unterstützt ein Server sie, kann der Bot seine Ereignisse finden und beobachten. Beobachtungen bleiben über Chats und Neustarts hinweg bestehen; Ereignisse während einer Ausfallzeit können jedoch verloren gehen. Eine Beobachtung einzurichten konfiguriert den externen Dienst nicht automatisch.
+
+Diese MCP-Funktionen können den Bot zur Arbeit veranlassen, wenn eine Nachricht eintrifft oder sich etwas in einer App ändert. Sie hängen von der Unterstützung und Einrichtung des verbundenen Servers ab; ein separates Klex-spezifisches Gateway ist nicht erforderlich.
 
 <a id="adding-a-server"></a>
 
@@ -31,9 +33,20 @@ Verbinden Sie nur vertrauenswürdige Server. Eine Verbindung stellt dem Bot die 
   <img class="bot-concept-compact" src="/images/mcp-compact.svg" width="640" height="584" alt="Ein Bot verbindet sich über MCP mit einer App. Sein Konto ist getrennt von der Verbindung innerhalb der App dargestellt." />
 </div>
 
-<a id="add-a-remote-server-in-the-self-hosted-app"></a>
+### Einen entfernten Server hinzufügen
 
-### Einen entfernten Server in der selbst gehosteten App hinzufügen
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Cloud-gehostet">
+
+1. Öffnen Sie Ihren Bot in Klex Cloud und wählen Sie **Connectors**. Zum Verwalten von Verbindungen benötigen Sie die Rolle Owner oder Admin der Organisation.
+2. Wählen Sie im Connector-Katalog **Connect an MCP**, geben Sie URL und Namen des Servers ein und ergänzen Sie benötigte Header unter **Advanced options**.
+3. Wählen Sie **Connect** und schließen Sie eine erforderliche Autorisierung ab. Prüfen Sie den Verbindungsstatus, bevor Sie sich auf den Server verlassen.
+
+</Tab>
+<Tab title="Selbst gehostet">
+
+<a id="add-a-remote-server-in-the-self-hosted-app"></a>
+<a id="einen-entfernten-server-in-der-selbst-gehosteten-app-hinzufügen"></a>
 
 In der interaktiven Klex-App können Sie einen Streamable-HTTP-Server hinzufügen:
 
@@ -44,6 +57,9 @@ In der interaktiven Klex-App können Sie einen Streamable-HTTP-Server hinzufüge
 
 Um einen Server zu prüfen, wählen Sie ihn aus und drücken Sie die Eingabetaste. Die Detailansicht zeigt Status, Transport, Anzahl der Tools und Unterstützung für Push-Benachrichtigungen. Dort bearbeiten Sie mit `e` die Konfiguration oder entfernen sie nach Bestätigung mit `d`. Beim Entfernen löscht Klex lokale OAuth-Zugangsdaten und versucht, das Token zu widerrufen, sofern der Anbieter dies unterstützt. Der Widerruf kann fehlschlagen. Prüfen Sie daher die Kontoberechtigungen in der verbundenen App separat.
 
+</Tab>
+</Tabs>
+
 Für eine OAuth-Autorisierung über die Cloud-Oberfläche muss der Bot bei Cloud registriert sein und einen verbundenen Cloud-Tunnel haben. Ein eigenständiger Bot ohne Cloud-Registrierung kann diesen über Cloud vermittelten Autorisierungsweg nicht nutzen.
 
 <a id="if-a-connection-needs-attention"></a>
@@ -51,3 +67,6 @@ Für eine OAuth-Autorisierung über die Cloud-Oberfläche muss der Bot bei Cloud
 ## Wenn eine Verbindung Aufmerksamkeit erfordert
 
 Ein Server muss möglicherweise autorisiert werden oder kann keine Verbindung herstellen. Prüfen Sie den Verbindungsstatus und schließen Sie eine erforderliche Autorisierung ab. Falls die Verbindung weiterhin fehlschlägt, prüfen Sie die Serveradresse, die Zugangsdaten und die Verfügbarkeit des Servers. Der Bot kann nur die Funktionen nutzen, die ein verbundener Server bereitstellt.
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

@@ -1,0 +1,57 @@
+---
+title: 독립 실행형 Bot 설정하기
+description: Klex를 설치하고 Cloud 등록 없이 자체 호스팅 Bot을 만듭니다.
+related:
+  - /bot/quickstart
+  - /bot/concepts/models
+  - /bot/concepts/mcp
+---
+
+Klex Cloud에 등록하지 않고 자체 호스팅 Bot을 실행할 수 있습니다.
+
+<a id="install-klex"></a>
+
+## Klex 설치하기
+
+터미널에서 Klex를 설치합니다.
+
+**macOS, Linux 또는 WSL:**
+
+```sh
+curl -fsSL https://klex.bot/install.sh | sh
+```
+
+**Windows (PowerShell):**
+
+```powershell
+irm https://klex.bot/install.ps1 | iex
+```
+
+<a id="create-a-bot-interactively"></a>
+
+## 대화형으로 Bot 만들기
+
+앱을 시작합니다.
+
+```sh
+klex --no-cloud
+```
+
+1. `a`를 눌러 Bot을 만들고 이름을 입력합니다.
+2. **Settings → Providers & Endpoints**에서 모델 제공자를 설정합니다. **Model Selection**에서 채팅 모델을 선택합니다.
+3. **Settings → Soul**을 열고 Bot의 성격과 업무를 설명하는 Soul을 만듭니다.
+4. **Settings → MCP Servers**에서 Bot에 필요한 서버를 연결합니다. 연결된 앱에서 Bot 계정의 권한을 설정합니다.
+
+외부 채널에서 이벤트를 받으려면 해당 MCP Events, 라이브 리소스 또는 Klex의 [푸시 알림 확장](https://github.com/stagewise-io/klex/tree/main/packages/mcp-extension-push-notifications)을 지원하는 서버를 연결합니다. MCP Events에는 watch가 필요하고, 라이브 리소스 업데이트를 받으려면 해당 리소스를 열어 두어야 합니다. 일부 서버는 연결된 서비스에서 별도 설정도 필요합니다.
+
+<a id="create-a-bot-without-the-picker"></a>
+
+## 선택 화면 없이 Bot 만들기
+
+대화형 선택 화면 없이 독립 실행형 Bot을 만들려면 이름을 지정합니다.
+
+```sh
+klex --create-bot --no-cloud --bot-name Ada
+```
+
+터미널 UI 없이 실행하려면 `--headless`를 추가합니다. Bot이 작업하려면 제공자, 채팅 모델, Soul을 설정해야 합니다. 새 Bot을 대화형으로 설정하려면 `--headless`를 생략하고 위 설정을 사용합니다. 헤드리스 설정에는 Admin API를 사용합니다. [로컬 접근 및 보안 제한](/bot/guides/observability#access-the-local-admin-api)을 확인하세요. 생성 시 `--data-dir` 또는 `KLEX_DATA_DIR`을 함께 사용할 수 없습니다. 이 옵션들은 기존 Bot을 선택합니다. 헤드리스 Bot을 중지하는 방법은 [Klex Bot 제어하기](/bot/guides/control-and-limits#stop-a-headless-bot)를 참고하세요.

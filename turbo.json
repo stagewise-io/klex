@@ -21,6 +21,12 @@
       "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/scripts/agent-site/**"],
       "outputs": ["dist/**", ".vercel/output/**"]
     },
+    "@klex/machine#build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**", "src/generated/**"],
+      "env": ["KLEX_MACHINE_MACOS_HELPER_PREBUILT"],
+      "cache": false
+    },
     "build:admin-api-types": {
       "dependsOn": ["^build"],
       "outputs": [".types/admin-api/**"]
@@ -82,6 +88,11 @@
     "verify": {
       "dependsOn": ["build"],
       "cache": false
+    },
+    "@klex/machine#verify": {
+      "dependsOn": ["build"],
+      "cache": false,
+      "env": ["KLEX_MACHINE_MACOS_HELPER_PREBUILT"]
     },
     "clean": {
       "cache": false

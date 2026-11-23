@@ -67,6 +67,34 @@ const get = (kind, path, options = {}) =>
   });
 
 describe('built routing over HTTP', () => {
+  it('serves localized Markdown through packaged routing for both URL forms', async () => {
+    for (const path of ['/', '/index.md', '/brand.md', '/press.md']) {
+      const response = await get('marketing', path, {
+        headers: { Accept: 'text/markdown', 'Accept-Language': 'de-DE' },
+      });
+      expect(response.status).toBe(200);
+      expect(response.headers.get('content-type')).toContain('text/markdown');
+      expect(response.headers.get('content-language')).toBe('de');
+      expect(response.headers.get('vary')).toBe(
+        'Accept, Accept-Language, Cookie',
+      );
+      expect(response.headers.get('cache-control')).toBe('no-store');
+      const body = await response.text();
+      expect(body.length).toBeGreaterThan(100);
+      if (path === '/' || path === '/index.md')
+        expect(body).toContain('Dein eigenes Team');
+      const head = await get('marketing', path, {
+        method: 'HEAD',
+        headers: {
+          Accept: 'text/markdown',
+          Cookie: 'klex-language=fr',
+          'Accept-Language': 'de',
+        },
+      });
+      expect(head.headers.get('content-language')).toBe('fr');
+      expect(await head.text()).toBe('');
+    }
+  });
   it('permanently redirects legacy legal aliases to their canonical pages', async () => {
     for (const policy of ['terms', 'privacy']) {
       for (const suffix of ['', '/']) {

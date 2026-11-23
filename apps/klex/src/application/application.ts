@@ -28,7 +28,6 @@ import {
   DEFAULT_TERMINATION_DRAIN_TIMEOUT_MS,
   type Drain,
 } from '@/drain';
-import { createGodMessages } from '@/god-messages';
 import type { HealthServer } from '@/health-server';
 import { createIntrospector } from '@/introspection';
 import { createLocalData, type LocalData } from '@/local-data';
@@ -60,28 +59,22 @@ import {
   createEpisodeSummaryLog,
 } from '@/session/chat/extensions/episode-summary';
 import type { ExtensionFactory } from '@/session/chat/extensions/extension-api';
-import {
-  createGodMessagesDistrustExt,
-  createGodMessagesTrustExt,
-} from '@/session/chat/extensions/god-messages';
 import { createImageInputOptimizerExt } from '@/session/chat/extensions/image-input-optimizer';
 import { createJsReplSandboxExt } from '@/session/chat/extensions/js-repl-sandbox';
-import { createLearningExt } from '@/session/chat/extensions/learning';
 import { createMcpIngressExt } from '@/session/chat/extensions/mcp-ingress';
-import { createMemoryExt } from '@/session/chat/extensions/memory';
+import {
+  createMemoryExt,
+  createMemoryWriterExt,
+} from '@/session/chat/extensions/memory';
 import { createNameLoaderExt } from '@/session/chat/extensions/name-loader';
 import { createReadAttachmentExt } from '@/session/chat/extensions/read-attachment/read-attachment';
 import { createSkillsExt } from '@/session/chat/extensions/skills';
 import {
   createSoul,
   createSoulExt,
-  createSoulExtGod,
   readSoul,
 } from '@/session/chat/extensions/soul';
-import {
-  createTimeExt,
-  createTimeExtGod,
-} from '@/session/chat/extensions/time';
+import { createTimeExt } from '@/session/chat/extensions/time';
 import {
   createTodoList,
   createTodosExt,
@@ -671,7 +664,7 @@ class ApplicationModule implements Application {
     /**
      * Creates a SessionFactory that prepends `baseExtensions` to every
      * session it creates, then appends the per-session extensions supplied
-     * by the caller (the session host or god-messages module).
+     * by the session host.
      *
      * Every session gets a child-capable factory with no implicit base
      * extensions. The spawning extension chooses the child's complete
@@ -689,6 +682,7 @@ class ApplicationModule implements Application {
           hooks: params.hooks,
           sessionFactory: makeSessionFactory([]),
           modelPurpose: params.modelPurpose,
+          fallbackModelPurposes: params.fallbackModelPurposes,
           basePrompt: params.basePrompt,
           parentSpanContext: params.parentSpanContext,
         });
@@ -701,8 +695,7 @@ class ApplicationModule implements Application {
     // Shared canonical reader; grouping and progress belong to each consumer.
     const activities = createActivityHistory(sessionHistory);
     const episodeSummaryLog = createEpisodeSummaryLog();
-    // One factory and list for the default and god sessions, which share the
-    // agent-wide todos file.
+    // Sessions and the admin API share the agent-wide todos file.
     const todoList = createTodoList();
     const todosExt = createTodosExt({ todoList });
 
@@ -711,7 +704,6 @@ class ApplicationModule implements Application {
       createEffortExt,
       createNameLoaderExt,
       createSoulExt,
-      createGodMessagesDistrustExt,
       createJsReplSandboxExt,
       createContextCompactionExt,
       defaultTimeExt,
@@ -726,10 +718,15 @@ class ApplicationModule implements Application {
           providerRegistry.resolveRealtimeProvider() !== undefined,
       }),
       createMemoryExt({ activities }),
-      createLearningExt({
+      createMemoryWriterExt({
         activities,
-        getSoul: () =>
-          readSoul(join(dataDirectory, 'extensions', createSoulExt.identifier)),
+        skillReader: skillRegistry,
+        selfName: () => config.get().officialName,
+        legacyLearningDirectory: join(
+          dataDirectory,
+          'extensions',
+          'io.stagewise/learning',
+        ),
       }),
       createEpisodeSummaryExt({
         activities,
@@ -751,28 +748,6 @@ class ApplicationModule implements Application {
       basePrompt: systemPrompt,
     });
 
-    // God session: no MCP, trust-mode god-messages, soul-god variant.
-    // js-repl-sandbox excluded — it requires MCP access.
-    const godMessages = createGodMessages({
-      logging,
-      introspection: introspector,
-      sessionFactory: makeSessionFactory([
-        createNameLoaderExt,
-        createSoulExtGod,
-        createGodMessagesTrustExt,
-      ]),
-      basePrompt: systemPrompt,
-      extensionFactories: [
-        createContextCompactionExt,
-        createTimeExtGod({
-          timeUpdatePeriod: TIME_UPDATE_PERIOD_SECONDS,
-          timezone,
-        }),
-        createImageInputOptimizerExt,
-        createAudioInputOptimizerExt,
-        todosExt,
-      ],
-    });
     const soul = createSoul({
       logging,
       config,
@@ -791,7 +766,6 @@ class ApplicationModule implements Application {
       modelCallLogger,
       providerRegistry,
       cloudConnectivity,
-      godMessages,
       sessionHistory,
       skillRegistry,
       episodeSummaryLog,
@@ -858,7 +832,6 @@ class ApplicationModule implements Application {
         realtime,
         mcp,
         telemetryManager,
-        godMessages,
       },
     });
     interactiveCloud = undefined;
@@ -871,11 +844,10 @@ class ApplicationModule implements Application {
     let updateManager: UpdateManager | undefined = this.deps.updateManager;
     let autoUpdate: AutoUpdate | undefined;
     const drain: Drain | undefined =
-      sessionHost && godMessages && mcp
+      sessionHost && mcp
         ? createDrain({
             logging,
             sessionHost,
-            godMessages,
             mcp,
             onBegin: () => healthServer?.markNotReady(),
           })

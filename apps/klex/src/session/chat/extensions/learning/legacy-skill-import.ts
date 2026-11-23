@@ -13,6 +13,7 @@ import {
 
 import type { LearningState, SkillState } from './learning-state';
 
+export const LEARNING_SKILL_NAMESPACE = 'learning';
 const SKILL_FILE = 'SKILL.md';
 
 export interface LegacySkillImportOptions {
@@ -43,7 +44,7 @@ export interface LegacySkillImportResult {
  *
  * LEGACY(skill-registry): only data written by Klex < 0.28.0 has legacy
  * folders. Delete this file, its tests and fixtures, and the call in
- * `learning.ts` once no supported upgrade starts below 0.28.0. Dropping the
+ * `memory/writer/writer.ts` once no supported upgrade starts below 0.28.0. Dropping the
  * `skills` map from the learning state is a separate schema change; see
  * "Legacy removal" in `session/chat/architecture.md`.
  */

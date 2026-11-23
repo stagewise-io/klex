@@ -2,6 +2,17 @@
 
 All notable Klex changes are documented here.
 
+## 0.37.0 (2026-11-17)
+
+### Features
+
+- attach MCP images from sandbox results as image parts (f45a9ab)
+
+### Bug Fixes
+
+- make recursive tool inputs Gemini Live-safe (c032f2f)
+- make recursive MCP inputs Gemini-safe (c4ddb91)
+
 ## 0.36.0 (2026-11-16)
 
 ### Features

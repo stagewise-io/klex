@@ -1,0 +1,27 @@
+export {
+  createEntityStore,
+  type EntityFields,
+  type EntityStore,
+  entityFieldsSchema,
+  entityIdSchema,
+  entityPatchSchema,
+  entityRevision,
+  linkedIdentitySchema,
+  loadMatcherSchema,
+  type MemoryEntity,
+  mergedEntity,
+  type Relation,
+  relationSchema,
+  renderEntity,
+  sectionNameSchema,
+} from './entities';
+export {
+  capSources,
+  type Fact,
+  type FactSource,
+  type FactVersion,
+  factText,
+  formatFacts,
+  MAX_FACT_HISTORY,
+  parseFacts,
+} from './facts';

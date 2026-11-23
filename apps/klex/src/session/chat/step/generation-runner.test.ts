@@ -3,9 +3,9 @@ import { randomUUID } from 'node:crypto';
 import { trace } from '@opentelemetry/api';
 import {
   APICallError,
-  NoOutputGeneratedError,
   type LanguageModel,
   type ModelMessage,
+  NoOutputGeneratedError,
 } from 'ai';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -653,6 +653,44 @@ describe('GenerationRunner — error finish reason with model fallback', () => {
       generation: null,
     });
     expect(messages).toHaveLength(0);
+    expect(result.contextOverflow).toBeUndefined();
+  });
+
+  it('reports a context-window rejection as a context overflow', async () => {
+    vi.mocked(runStreamedGeneration).mockResolvedValue(
+      makeGenResult(
+        makeAssistantMessage(),
+        'error',
+        makeApiError({
+          message: 'Your input exceeds the context window of this model.',
+          statusCode: 400,
+        }),
+      ),
+    );
+
+    const result = await new GenerationRunner(makeDeps()).run();
+
+    expect(result).toMatchObject({
+      requestRejected: true,
+      contextOverflow: true,
+      modelFallbackOccurred: false,
+    });
+  });
+
+  it('reports a context overflow that falls back as a model error', async () => {
+    vi.mocked(runStreamedGeneration).mockResolvedValue(
+      makeGenResult(makeAssistantMessage(), 'error', {
+        type: 'error',
+        error: { code: 'context_length_exceeded', message: 'Too long' },
+      }),
+    );
+
+    const result = await new GenerationRunner(
+      makeDeps({ fallbackManager: makeFallbackManager(['a', 'b']) }),
+    ).run();
+
+    expect(result.requestRejected).toBe(false);
+    expect(result.contextOverflow).toBe(true);
   });
 
   it('triggers fallback when error is null (no details)', async () => {

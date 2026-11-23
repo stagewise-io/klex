@@ -105,6 +105,7 @@ describe('realtime and default chat interaction', () => {
     }));
     const connection = {
       namespace: 'voice',
+      metadata: {},
       tools: [
         {
           name: 'echo',

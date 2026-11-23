@@ -3,6 +3,9 @@ import { connect, type Socket } from 'node:net';
 import type { Duplex } from 'node:stream';
 
 import {
+  type AccessibilityElement,
+  type AccessibilityQuery,
+  type AccessibilityTree,
   type CaptureOptions,
   type DesktopCapabilities,
   type DesktopProvider,
@@ -14,6 +17,12 @@ import {
   type ScreenSize,
   type ScrollDirection,
 } from '../provider.js';
+import {
+  AtspiClient,
+  type AtspiConnector,
+  connectAtspiBus,
+  withTimeout,
+} from './atspi.js';
 
 export const DEFAULT_VNC_SOCKET_PATH = '/run/klex/vnc.sock';
 const STREAM_CONNECT_TIMEOUT_MS = 2_000;
@@ -45,7 +54,12 @@ export interface X11DesktopProviderOptions {
   run?: CommandRunner;
   launch?: ProcessLauncher;
   connect?: SocketConnector;
+  /** D-Bus connector for the accessibility and session buses. */
+  connectBus?: AtspiConnector;
 }
+
+const NO_TREE_HINT =
+  'GTK and Qt apps expose one once accessibility is on, but only if they were started after it was enabled; Chrome and Electron apps also need --force-renderer-accessibility. Use desktop_screenshot instead.';
 
 const BUTTONS: Record<MouseButton, string> = {
   left: '1',
@@ -183,6 +197,7 @@ export class X11DesktopProvider implements DesktopProvider {
   readonly #run: CommandRunner;
   readonly #launch: ProcessLauncher;
   readonly #connect: SocketConnector;
+  readonly #atspi: AtspiClient;
 
   constructor(options: X11DesktopProviderOptions = {}) {
     this.#display = options.display?.trim() || undefined;
@@ -191,11 +206,16 @@ export class X11DesktopProvider implements DesktopProvider {
     this.#run = options.run ?? runCommand;
     this.#launch = options.launch ?? launchProcess;
     this.#connect = options.connect ?? ((path) => connect(path));
+    const connectBus = options.connectBus ?? connectAtspiBus;
+    this.#atspi = new AtspiClient({
+      address: () => this.#atspiAddress(connectBus),
+      connect: connectBus,
+    });
   }
 
   async probe(): Promise<DesktopCapabilities> {
     if (!this.#display) return NO_DESKTOP;
-    const [screen, capture, stream] = await Promise.all([
+    const [screen, capture, stream, accessibility] = await Promise.all([
       this.screenSize().catch(() => undefined),
       this.#exec('import', ['-version']).then(
         () => true,
@@ -208,12 +228,87 @@ export class X11DesktopProvider implements DesktopProvider {
         },
         () => false,
       ),
+      this.#atspi.available(),
     ]);
     return {
       computerUse: screen !== undefined && capture,
       stream,
+      ...(accessibility ? { accessibility } : {}),
       ...(screen ? { screen } : {}),
     };
+  }
+
+  async accessibilityTree(
+    query: AccessibilityQuery,
+  ): Promise<AccessibilityTree> {
+    const atspi = this.#requireAtspi();
+    if (query.root) return atspi.tree(query.root, query);
+    const id =
+      query.window ?? (await this.#xdotool(['getactivewindow'])).trim();
+    if (!/^\d+$/.test(id)) throw new Error('No window is focused');
+    const [title, pid] = await Promise.all([
+      this.#xdotool(['getwindowname', id]).then((name) =>
+        name.replace(/\n$/, ''),
+      ),
+      this.#xdotool(['getwindowpid', id]).then(
+        (output) => Number(output.trim()) || undefined,
+        () => undefined,
+      ),
+    ]);
+    const handle = await atspi.findWindow({
+      title,
+      ...(pid ? { pid } : {}),
+    });
+    if (!handle) {
+      throw new Error(
+        `Window "${title}" exposes no accessibility tree. ${NO_TREE_HINT}`,
+      );
+    }
+    await atspi.wake(handle);
+    return { ...(await atspi.tree(handle, query)), window: title };
+  }
+
+  accessibilityElement(
+    handle: string,
+  ): Promise<AccessibilityElement | undefined> {
+    return this.#requireAtspi().element(handle);
+  }
+
+  #requireAtspi(): AtspiClient {
+    if (!this.#display) {
+      throw new Error('No desktop is available');
+    }
+    return this.#atspi;
+  }
+
+  /**
+   * The accessibility bus: AT_SPI_BUS_ADDRESS, the AT_SPI_BUS property the
+   * bus launcher sets on the root window, or the session bus launcher. The
+   * root window works for daemons started outside the desktop session.
+   */
+  async #atspiAddress(connectBus: AtspiConnector): Promise<string> {
+    const fromEnv = this.#env.AT_SPI_BUS_ADDRESS?.trim();
+    if (fromEnv) return fromEnv;
+    const property = await this.#exec('xprop', ['-root', 'AT_SPI_BUS']).catch(
+      () => '',
+    );
+    const fromRoot = /=\s*"([^"]+)"/.exec(property)?.[1];
+    if (fromRoot) return fromRoot;
+    const session = this.#env.DBUS_SESSION_BUS_ADDRESS?.trim();
+    if (!session) throw new Error('No accessibility bus was found');
+    const bus = await connectBus(session);
+    try {
+      const [address] = await withTimeout(
+        bus.call('org.a11y.Bus', '/org/a11y/bus', 'org.a11y.Bus', 'GetAddress'),
+        'The accessibility bus launcher did not answer',
+      );
+      if (typeof address !== 'string' || address === '') {
+        throw new Error('The accessibility bus launcher returned no address');
+      }
+      return address;
+    } finally {
+      bus.close();
+    }
   }
 
   async screenSize(): Promise<ScreenSize> {

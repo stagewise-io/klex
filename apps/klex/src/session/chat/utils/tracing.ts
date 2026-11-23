@@ -54,10 +54,10 @@ export function startChildSpan(name: string, options?: SpanOptions): Span {
 /**
  * Name of the root span of a chat session trace: `session {name}`.
  *
- * Every chat session — main, god, and extension-owned child sessions — uses
+ * Every chat session — main and extension-owned child sessions — uses
  * this one scheme so traces are grouped by stable session role in the
  * tracing backend. Session names must therefore be low-cardinality role
- * names (`main`, `god`, `consult`, `memory-retrieval`, ...), never
+ * names (`main`, `consult`, `memory-retrieval`, ...), never
  * per-instance values; instance identity lives in `klex.session.id`.
  */
 export function sessionSpanName(sessionContext: SessionContext): string {

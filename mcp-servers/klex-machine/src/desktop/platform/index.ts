@@ -1,7 +1,11 @@
 import type { DesktopProvider } from '../provider.js';
 import { DesktopService, type DesktopServiceOptions } from '../service.js';
+import { MacosDesktopProvider } from './macos.js';
+import { WindowsDesktopProvider } from './windows.js';
 import { X11DesktopProvider } from './x11.js';
 
+export { MacosDesktopProvider, toMacosChord } from './macos.js';
+export { toWindowsKeyCombo, WindowsDesktopProvider } from './windows.js';
 export {
   DEFAULT_VNC_SOCKET_PATH,
   toXdotoolCombo,
@@ -11,7 +15,8 @@ export {
 /**
  * The desktop provider for a platform, or none where klex-machine has no
  * desktop support. Linux uses X11 from `DISPLAY` and the VNC socket at
- * `KLEX_MACHINE_VNC_SOCKET`; what it can actually do is left to `probe()`.
+ * `KLEX_MACHINE_VNC_SOCKET`; macOS and Windows use the signed-in user's
+ * desktop. What each can actually do is left to `probe()`.
  */
 export function createDesktopProvider(
   env: NodeJS.ProcessEnv = process.env,
@@ -19,6 +24,8 @@ export function createDesktopProvider(
 ): DesktopProvider | undefined {
   if (env.KLEX_MACHINE_DESKTOP?.toLowerCase() === 'off') return undefined;
   switch (platform) {
+    case 'darwin':
+      return new MacosDesktopProvider({ env });
     case 'linux':
       return new X11DesktopProvider({
         env,
@@ -27,6 +34,8 @@ export function createDesktopProvider(
           ? { vncSocketPath: env.KLEX_MACHINE_VNC_SOCKET }
           : {}),
       });
+    case 'win32':
+      return new WindowsDesktopProvider({ env });
     default:
       return undefined;
   }

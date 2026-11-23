@@ -226,6 +226,7 @@ function pushNotificationConnection(
 ): McpConnection {
   return {
     ...connection('chat'),
+    metadata: { protocolEra: 'modern' },
     supportsPushNotifications: true,
     pushNotifications,
   } as unknown as McpConnection;
@@ -454,6 +455,145 @@ function pendingQueueServer(events: PushNotification[]) {
 }
 
 describe('MCP Push Notification worker', () => {
+  it.each(['modern', 'legacy', undefined] as const)(
+    'recovers across eras and starts subscriptions/listen only for modern (era=%s)',
+    async (protocolEra) => {
+      const listen = vi.fn(async () => ({
+        closed: new Promise<void>(() => undefined),
+      }));
+      const getEvents = vi.fn(async () => ({ events: [], hasMore: false }));
+      const server = pushNotificationConnection({ listen, getEvents });
+      server.metadata.protocolEra = protocolEra;
+      if (protocolEra === 'legacy')
+        server.metadata.protocolVersion = '2025-11-25';
+      const { mcp } = setup(
+        { chat: { url: 'https://chat.example/mcp' } },
+        async () => server,
+      );
+
+      try {
+        await mcp.start();
+        await waitForNamespace(mcp, 'chat');
+        await vi.waitFor(() => expect(getEvents).toHaveBeenCalledOnce());
+        if (protocolEra === 'modern') {
+          expect(listen).toHaveBeenCalledOnce();
+        } else {
+          expect(listen).not.toHaveBeenCalled();
+        }
+      } finally {
+        await mcp.close();
+      }
+    },
+  );
+
+  it.each(['modern', 'legacy', undefined] as const)(
+    'makes no push requests without the capability (era=%s)',
+    async (protocolEra) => {
+      const {
+        server: supportedServer,
+        getEvents,
+        acknowledgeEvents,
+      } = pendingQueueServer([]);
+      const server = { ...supportedServer, supportsPushNotifications: false };
+      server.metadata.protocolEra = protocolEra;
+      let connectOptions: ConnectMcpServerOptions | undefined;
+      const { mcp } = setup(
+        { chat: { url: 'https://chat.example/mcp' } },
+        async (options) => {
+          connectOptions = options;
+          return server;
+        },
+      );
+      const listener = vi.fn();
+      mcp.onPushNotification(listener);
+      try {
+        await mcp.start();
+        await waitForNamespace(mcp, 'chat');
+        await connectOptions?.onPushNotification(
+          server,
+          liveNotification(pushNotification),
+        );
+        await mcp.acknowledgeDeliveredEvents();
+        expect(listener).not.toHaveBeenCalled();
+        expect(server.pushNotifications.listen).not.toHaveBeenCalled();
+        expect(getEvents).not.toHaveBeenCalled();
+        expect(acknowledgeEvents).not.toHaveBeenCalled();
+      } finally {
+        await mcp.close();
+      }
+    },
+  );
+
+  it('recovers legacy pending events and queues unsolicited notifications without listen', async () => {
+    let connectOptions: ConnectMcpServerOptions | undefined;
+    const { server, pending, getEvents, acknowledgeEvents } =
+      pendingQueueServer([pushNotification]);
+    const initialRecovery = deferred<{
+      events: PushNotification[];
+      hasMore: boolean;
+    }>();
+    getEvents.mockReturnValueOnce(initialRecovery.promise);
+    server.metadata.protocolEra = 'legacy';
+    server.metadata.protocolVersion = '2025-11-25';
+    const { mcp } = setup(
+      { chat: { url: 'https://chat.example/mcp' } },
+      async (options) => {
+        connectOptions = options;
+        return server;
+      },
+    );
+    const listener = vi.fn();
+    const unsubscribe = mcp.onPushNotification(listener);
+
+    try {
+      await mcp.start();
+      await waitForNamespace(mcp, 'chat');
+      await vi.waitFor(() => expect(getEvents).toHaveBeenCalledOnce());
+      expect(connectOptions).toBeDefined();
+      await connectOptions?.onPushNotification(
+        server,
+        liveNotification(numberedEvent(2)),
+      );
+      expect(listener).not.toHaveBeenCalled();
+      initialRecovery.resolve({ events: [pushNotification], hasMore: false });
+      await vi.waitFor(() => expect(listener).toHaveBeenCalledTimes(2));
+      expect(listener).toHaveBeenNthCalledWith(1, {
+        namespace: 'chat',
+        event: pushNotification,
+      });
+      expect(listener).toHaveBeenNthCalledWith(2, {
+        namespace: 'chat',
+        event: numberedEvent(2),
+      });
+      expect(acknowledgeEvents).not.toHaveBeenCalled();
+      await mcp.acknowledgeDeliveredEvents();
+      expect(pending).toHaveLength(0);
+      expect(acknowledgeEvents).toHaveBeenCalledWith(
+        { eventIds: [pushNotification.eventId, numberedEvent(2).eventId] },
+        expect.anything(),
+      );
+
+      // A listener gap must re-drive pending recovery without a subscription.
+      unsubscribe();
+      pending.push(numberedEvent(3));
+      await connectOptions?.onPushNotification(
+        server,
+        liveNotification(numberedEvent(3)),
+      );
+      // Let the queued unsolicited notification observe the listener gap.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      mcp.onPushNotification(listener);
+      await vi.waitFor(() => expect(listener).toHaveBeenCalledTimes(3));
+      await mcp.acknowledgeDeliveredEvents();
+      expect(acknowledgeEvents).toHaveBeenCalledTimes(2);
+      expect(pending).toHaveLength(0);
+      expect(server.pushNotifications.listen).not.toHaveBeenCalled();
+      expect(getEvents).toHaveBeenCalledTimes(2);
+    } finally {
+      await mcp.close();
+    }
+  });
+
   it('subscribes before draining and acknowledges only after the flush', async () => {
     const order: string[] = [];
     const closed = deferred<void>();
@@ -661,35 +801,71 @@ describe('MCP Push Notification worker', () => {
     await mcp.close();
   });
 
-  it('retries listener-triggered recovery after a transient failure', async () => {
-    const { server, pending, getEvents } = pendingQueueServer([
-      pushNotification,
-    ]);
-    const { mcp } = setup(
-      { chat: { url: 'https://chat.example/mcp' } },
-      async () => server,
-    );
+  it.each(['modern', 'legacy', undefined] as const)(
+    'retries listener-triggered recovery after a transient failure (era=%s)',
+    async (protocolEra) => {
+      const { server, pending, getEvents } = pendingQueueServer([
+        pushNotification,
+      ]);
+      server.metadata.protocolEra = protocolEra;
+      const { mcp } = setup(
+        { chat: { url: 'https://chat.example/mcp' } },
+        async () => server,
+      );
 
-    // Listener gap: the event stays pending with no delivered id to flush.
-    await mcp.start();
-    await vi.waitFor(() => expect(getEvents).toHaveBeenCalledOnce());
-    expect(pending).toHaveLength(1);
+      // Listener gap: the event stays pending with no delivered id to flush.
+      await mcp.start();
+      await vi.waitFor(() => expect(getEvents).toHaveBeenCalledOnce());
+      // Legacy recovery starts immediately, without awaiting listen first.
+      // Let its delivery attempt finish while there is still no listener.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(pending).toHaveLength(1);
 
-    getEvents.mockRejectedValueOnce(new Error('transient'));
-    const listener = vi.fn();
-    mcp.onPushNotification(listener);
-    await vi.waitFor(() => expect(getEvents).toHaveBeenCalledTimes(2));
-    expect(listener).not.toHaveBeenCalled();
+      getEvents.mockRejectedValueOnce(new Error('transient'));
+      const listener = vi.fn();
+      mcp.onPushNotification(listener);
+      await vi.waitFor(() => expect(getEvents).toHaveBeenCalledTimes(2));
+      expect(listener).not.toHaveBeenCalled();
 
-    // The retry runs after the first backoff step without another trigger.
-    await vi.waitFor(() => expect(listener).toHaveBeenCalledOnce(), {
-      timeout: 3_000,
-    });
-    expect(getEvents).toHaveBeenCalledTimes(3);
-    await mcp.acknowledgeDeliveredEvents();
-    expect(pending).toHaveLength(0);
-    await mcp.close();
-  });
+      // The retry runs after the first backoff step without another trigger.
+      await vi.waitFor(() => expect(listener).toHaveBeenCalledOnce(), {
+        timeout: 3_000,
+      });
+      expect(getEvents).toHaveBeenCalledTimes(3);
+      await mcp.acknowledgeDeliveredEvents();
+      expect(pending).toHaveLength(0);
+      await mcp.close();
+    },
+  );
+
+  it.each(['legacy', undefined] as const)(
+    'retries initial recovery without listen (era=%s)',
+    async (protocolEra) => {
+      const { server, pending, getEvents } = pendingQueueServer([
+        pushNotification,
+      ]);
+      server.metadata.protocolEra = protocolEra;
+      getEvents.mockRejectedValueOnce(new Error('transient'));
+      const { mcp } = setup(
+        { chat: { url: 'https://chat.example/mcp' } },
+        async () => server,
+      );
+      const listener = vi.fn();
+      mcp.onPushNotification(listener);
+      try {
+        await mcp.start();
+        await vi.waitFor(() => expect(listener).toHaveBeenCalledOnce(), {
+          timeout: 3_000,
+        });
+        expect(getEvents).toHaveBeenCalledTimes(2);
+        await mcp.acknowledgeDeliveredEvents();
+        expect(pending).toHaveLength(0);
+        expect(server.pushNotifications.listen).not.toHaveBeenCalled();
+      } finally {
+        await mcp.close();
+      }
+    },
+  );
 
   it('redelivers to a listener that registers while initial recovery is running', async () => {
     const first = numberedEvent(1);

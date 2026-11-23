@@ -1,7 +1,9 @@
-import { chmod, rm } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { chmod, copyFile, mkdir, rm } from 'node:fs/promises';
+import { dirname, resolve } from 'node:path';
 
 import { build } from 'esbuild';
+
+import { buildMacosHelper } from './native/macos/build.mjs';
 
 const packageRoot = import.meta.dirname;
 const outputFile = resolve(packageRoot, 'dist/index.js');
@@ -13,7 +15,9 @@ await build({
   format: 'esm',
   target: 'node24',
   outfile: outputFile,
-  external: ['node-pty'],
+  // dbus-next loads these only for transports and bus discovery klex-machine
+  // never uses; it always connects to an explicit unix:socket address.
+  external: ['node-pty', 'usocket', 'x11'],
   alias: {
     '@stagewise/mcp-extension-client': resolve(
       packageRoot,
@@ -35,5 +39,19 @@ await build({
   legalComments: 'eof',
 });
 if (process.platform !== 'win32') await chmod(outputFile, 0o755);
+
+// The macOS desktop helper is Swift and builds only on macOS. Other hosts,
+// such as the Linux release job, copy one built on a macOS runner.
+const macosHelper = resolve(packageRoot, 'dist/macos/klex-desktop-helper');
+const prebuiltMacosHelper = process.env.KLEX_MACHINE_MACOS_HELPER_PREBUILT;
+if (prebuiltMacosHelper) {
+  await mkdir(dirname(macosHelper), { recursive: true });
+  await copyFile(resolve(prebuiltMacosHelper), macosHelper);
+  await chmod(macosHelper, 0o755);
+  console.log('Copied prebuilt dist/macos/klex-desktop-helper');
+} else if (process.platform === 'darwin') {
+  await buildMacosHelper(macosHelper);
+  console.log('Built dist/macos/klex-desktop-helper');
+}
 
 console.log('Build complete: dist/index.js');

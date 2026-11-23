@@ -1,7 +1,6 @@
 export {
   createSoul,
   createSoulExt,
-  createSoulExtGod,
   readSoul,
   type Soul,
   type SoulDependencies,

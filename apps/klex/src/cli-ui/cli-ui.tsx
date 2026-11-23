@@ -20,7 +20,6 @@ import { type Toast, ToastContext } from './hooks/use-toast';
 import { AgentIdentityScreen } from './screens/agent-identity';
 import { CloudScreen } from './screens/cloud';
 import { DebugInformationScreen } from './screens/debug-information';
-import { GodMessagesScreen } from './screens/god-messages';
 import { HomeScreen } from './screens/home';
 import { LogViewerScreen } from './screens/log-viewer';
 import { McpScreen } from './screens/mcp';
@@ -376,7 +375,6 @@ function ScreenRouter({
             navigation.navigate('debug-information')
           }
           onOpenLogs={() => navigation.navigate('logs')}
-          onOpenGodMessages={() => navigation.navigate('god-messages')}
           onBack={() => navigation.goBack()}
         />
       );
@@ -432,13 +430,6 @@ function ScreenRouter({
       return (
         <LogViewerScreen
           logStore={logStore}
-          onBack={() => navigation.goBack()}
-        />
-      );
-    case 'god-messages':
-      return (
-        <GodMessagesScreen
-          apiClient={apiClient}
           onBack={() => navigation.goBack()}
         />
       );

@@ -35,9 +35,6 @@ vi.mock('@/session/chat/extensions/context-compaction', () => ({
 vi.mock('../../context-compaction/compaction-prompt.md', () => ({
   default: '',
 }));
-vi.mock('../../soul/system-prompt-part/no-soul-god.md', () => ({
-  default: '',
-}));
 vi.mock('../../soul/generation-prompt.md', () => ({ default: '' }));
 vi.mock('../../audio-input-optimizer/audio-system-prompt.md', () => ({
   default: '',

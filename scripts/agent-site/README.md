@@ -11,7 +11,7 @@ pnpm format
 pnpm format:check
 ```
 
-The artifact tests require both builds first. Preview marketing with `pnpm --filter @klex/website preview`; preview docs with `node scripts/agent-site/preview.mjs docs --port 4174`. Vite development remains the interactive frontend development server; protocol checks use the built preview, not Vite dev.
+The artifact tests require both builds first. Preview marketing with `pnpm --filter @klex/website preview`; preview docs with `node scripts/agent-site/preview.mjs docs --port 4174`. Vite development also serves live marketing Markdown for `/`, `/brand`, `/press` and their `.md` mirrors, using the production negotiation and extraction helpers. Locale renders are cached until a watched source changes. For example: `curl http://localhost:5173/ -H 'Accept: text/markdown' -H 'Accept-Language: de'`. Legal/discovery artifacts and full deployment-protocol checks still use the built preview. Run `pnpm exec vitest run scripts/agent-site/dev.test.mjs` to check live Vite Markdown without building first.
 
 ## Content contract
 
@@ -43,6 +43,12 @@ Patterns match canonical pathnames: exact `/page`, `*` within one segment, and `
 
 Marketing emits a private build diagnostic at `.vercel/output/content-report.json`: meaningful main-text characters, raw HTML size, SVG size, H1 count and heading skips. The ratio is explicitly a diagnostic, not a reproduction of Ora's undocumented calculation. Static office polygon/polyline runs are now extracted automatically into a content-hashed same-origin SVG sprite served with one-year immutable caching. External use references preserve paint order and inherited theme variables; bot portal hosts, human figures, React islands and animated artwork remain inline. Homepage HTML drops by about 114 KB (roughly 27%); the 5% text ratio target is not yet met.
 
+## Localized marketing Markdown
+
+The website build renders independent locale-specific marketing markup from the same translation catalogs, then converts each semantic main to Markdown. The packaged function selects a variant at the existing URL (including `/index.md`, `/brand.md`, and `/press.md`): valid `klex-language` cookie first, then quality-ranked `Accept-Language` for absent/invalid/`auto` cookies, then English. Regional tags match their supported base language. Localized Markdown responses include `Content-Language`, `Vary: Accept, Accept-Language, Cookie`, and all three no-store cache headers; other negotiated responses keep `Vary: Accept`. No locale URL or query parameter is required. HTML rendering and docs routes are unchanged. Legal Markdown remains English; dated source artifacts retain their exact bytes. Static-only `dist` hosting does not provide language negotiation; use the packaged function deployment.
+
+`llms.txt`, `llms-full.txt`, and discovery metadata remain English. Only marketing page Markdown is localized by this feature.
+
 ## Progressive animated mascots
 
 The 11 prerendered animated feature mascots now render cached image placeholders on the server and the first client render. IntersectionObserver upgrades them near the viewport using a lazy-loaded runtime component. Suspense/error boundaries retain the image when loading is pending or fails; reduced motion retains the image. Reserved dimensions avoid layout collapse. On-ready callbacks restore current pause/resume, speech and reaction state, and the tool conveyor waits for the live handle before issuing movement commands. Hero/workflow/office mascots were already runtime-mounted and remain unchanged.
@@ -63,9 +69,9 @@ Both builds produce Vercel Build Output API v3 artifacts. Configure the projects
 
 The local preview interprets the generated route inventory and invokes the **packaged** function entrypoint. It is an integration harness, not a substitute for Vercel preview validation. Actual provider rewrite behavior, original request paths, aliases, runtime support and CDN handling remain deployment acceptance checks.
 
-Marketing HTML routes support HTML and Markdown using Accept media ranges and quality values. Exact exclusions override wildcards; quality ties and an absent/wildcard Accept prefer HTML. Unsupported representations return 406. Explicit Markdown mirrors remain available independently. Errors retain 404, negotiate HTML/Markdown/problem JSON, and include recovery guidance. API misses always use RFC 9457 problem JSON. HEAD returns the GET headers without its body; mutations receive 405 with Allow.
+Marketing HTML routes support HTML and Markdown using Accept media ranges and quality values. Exact exclusions override wildcards; quality ties and an absent/wildcard Accept prefer HTML. Unsupported representations return 406. Explicit Markdown mirrors (`/index.md`, `/brand.md`, `/press.md`) always return Markdown regardless of Accept. Errors retain 404, negotiate HTML/Markdown/problem JSON, and include recovery guidance. API misses always use RFC 9457 problem JSON. HEAD returns the GET headers without its body; mutations receive 405 with Allow.
 
-Negotiated HTML/Markdown and dynamic errors use `Cache-Control`, `CDN-Cache-Control`, and `Vercel-CDN-Cache-Control: no-store`, plus `Vary: Accept`. This deliberately sacrifices CDN HTML caching to avoid cross-representation cache pollution. Static assets remain static. Revisit caching only after proving variant isolation on the real CDN.
+Negotiated HTML/Markdown and dynamic errors use `Cache-Control`, `CDN-Cache-Control`, and `Vercel-CDN-Cache-Control: no-store`, plus `Vary: Accept` (widened to `Accept, Accept-Language, Cookie` for localized Markdown). This deliberately sacrifices CDN HTML caching to avoid cross-representation cache pollution. Static assets remain static. Revisit caching only after proving variant isolation on the real CDN.
 
 ## Audit outcomes and remaining acceptance checks
 

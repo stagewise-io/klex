@@ -581,14 +581,14 @@ const instinctConfigSchema = z
     /** Kill switch. When false, steps never run instinct. */
     enabled: z.boolean().default(true),
     /** Shared deadline for classification plus all reactions. */
-    timeoutMs: z.number().int().positive().max(120_000).default(8_000),
-    /** Deadline of the classifier call alone (bounded by `timeoutMs`). */
+    timeoutMs: z.number().int().positive().max(120_000).default(12_000),
+    /** Total classifier deadline across all fallback attempts (bounded by `timeoutMs`). */
     classifierTimeoutMs: z
       .number()
       .int()
       .positive()
       .max(120_000)
-      .default(4_000),
+      .default(10_000),
     /** Character budget for the last five messages together. */
     historyCharacterCap: z
       .number()
@@ -610,6 +610,22 @@ const instinctConfigSchema = z
       .positive()
       .max(100_000)
       .default(2_000),
+    // Schema-11 fields stay last so migrated files keep their key order.
+    /**
+     * Per-model timer, restarted for every fallback attempt. An entry's own
+     * `attemptTimeoutMs` takes precedence.
+     */
+    attemptTimeoutMs: z.number().int().positive().max(120_000).default(5_000),
+    /**
+     * Idle time after which classification starts with the first model
+     * again instead of the last model that succeeded.
+     */
+    fallbackResetIdleMs: z
+      .number()
+      .int()
+      .positive()
+      .max(86_400_000)
+      .default(600_000),
   })
   .strict();
 

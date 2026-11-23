@@ -402,6 +402,11 @@ export interface StepCompleteEvent {
    */
   requestRejected: boolean;
   /**
+   * True when the provider reported that the request exceeded the model's
+   * context window. Context compaction compacts before the turn retries.
+   */
+  contextOverflow?: boolean;
+  /**
    * Summary of the step's instinct phase. Absent when instinct did not
    * run (skipped step, no participating extension, or instinct disabled).
    */
@@ -934,7 +939,7 @@ export interface ExtensionDeps {
    * to. Extends `ToolProvider` with push notifications, server statuses,
    * and tool call history. Extensions can use the full MCP surface.
    *
-   * `null` for `god` and `child` sessions, which have no MCP access.
+   * `null` for `child` sessions, which have no MCP access.
    * Extensions that require MCP should check for `null` in their
    * constructor.
    */
@@ -943,7 +948,7 @@ export interface ExtensionDeps {
   /**
    * Stable identifier of the session that owns this extension. Used for
    * observability correlation. The default session uses `default`;
-   * god and child sessions normally use UUIDs.
+   * child sessions normally use UUIDs.
    */
   sessionId: string;
 

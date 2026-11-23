@@ -20,6 +20,7 @@ import {
   classifyGenerationError,
   type GenerationErrorClassification,
   type GenerationStallError,
+  isContextOverflowError,
 } from '@/utils/llm';
 
 import type {
@@ -172,6 +173,7 @@ export class GenerationRunner {
     let modelFallbackOccurred = false;
     let requestRejected = false;
     let salvagedRejection = false;
+    let contextOverflow = false;
     let repairedMissingItems = false;
 
     const model = this.deps.model;
@@ -326,6 +328,8 @@ export class GenerationRunner {
               ? classifyGenerationError(responseError)
               : null;
           lastClassification = classification;
+          contextOverflow =
+            classification !== null && isContextOverflowError(responseError);
           if (!isAborted && !classification?.isAbort)
             generationFailure = summarizeGenerationFailure(
               responseError,
@@ -383,6 +387,7 @@ export class GenerationRunner {
         }
         const classification = classifyGenerationError(e);
         lastClassification = classification;
+        contextOverflow = !classification.isAbort && isContextOverflowError(e);
         if (!isAborted && !classification.isAbort)
           generationFailure = summarizeGenerationFailure(
             e,
@@ -458,6 +463,7 @@ export class GenerationRunner {
         toolCalls: [],
         modelFallbackOccurred: false,
         requestRejected: true,
+        ...(contextOverflow && { contextOverflow: true }),
       };
     }
 
@@ -482,6 +488,7 @@ export class GenerationRunner {
         toolCalls: [],
         modelFallbackOccurred: false,
         requestRejected: false,
+        ...(contextOverflow && { contextOverflow: true }),
       };
     }
 
@@ -532,6 +539,7 @@ export class GenerationRunner {
       toolCalls,
       modelFallbackOccurred,
       requestRejected: salvagedRejection,
+      ...(contextOverflow && { contextOverflow: true }),
     };
   }
 

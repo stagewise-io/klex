@@ -80,6 +80,9 @@
             "noRestrictedImports": {
               "level": "error",
               "options": {
+                "paths": {
+                  "dbus-next": "Native desktop access belongs in src/desktop/platform/."
+                },
                 "patterns": [
                   {
                     "group": ["**/platform", "**/platform/**"],
@@ -108,7 +111,8 @@
                   "node:net": "Native desktop access belongs in src/desktop/platform/.",
                   "node:fs": "Native desktop access belongs in src/desktop/platform/.",
                   "node:fs/promises": "Native desktop access belongs in src/desktop/platform/.",
-                  "node:os": "Native desktop access belongs in src/desktop/platform/."
+                  "node:os": "Native desktop access belongs in src/desktop/platform/.",
+                  "dbus-next": "Native desktop access belongs in src/desktop/platform/."
                 },
                 "patterns": [
                   {

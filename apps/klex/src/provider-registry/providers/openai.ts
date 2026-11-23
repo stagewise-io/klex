@@ -102,6 +102,7 @@ const MODEL_FALLBACKS = [
 const MODEL_CATALOG = [
   ...(
     [
+      ['gpt-6.1-terra', 'GPT-6.1 Terra', 1_050_000],
       ['gpt-6-astra', 'GPT-6 Astra', 1_050_000],
       ['gpt-5.6-sol', 'GPT-5.6 Sol', 1_050_000],
       ['gpt-5.6-terra', 'GPT-5.6 Terra', 1_050_000],

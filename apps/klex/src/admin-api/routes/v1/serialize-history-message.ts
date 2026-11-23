@@ -193,8 +193,8 @@ function serializePart(
 }
 
 /**
- * Serializes a persisted message for the session history API. Unlike the
- * God Messages preview serializer, this keeps the stored AI SDK shape and
+ * Serializes a persisted message for the session history API, keeping the
+ * stored AI SDK shape and
  * full tool inputs/outputs; only inline binary data is redacted and
  * provider metadata is opt-in.
  */

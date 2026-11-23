@@ -19,10 +19,12 @@ import {
   isValidSkillNamespace,
   parseSkillId,
   type SkillDocument,
+  validateReference,
   validateSkill,
 } from './skill-format';
 import {
   MAX_METADATA_BYTES,
+  MAX_REFERENCES_PER_SKILL,
   RESERVED_SKILL_NAMESPACES,
   TEMPLATE_SKILL_NAMESPACE,
 } from './skills-config';
@@ -52,6 +54,8 @@ export interface Skill extends SkillDocument, SkillUsage {
   id: string;
   /** Source of the skill: the namespace of its contributor. */
   namespace: string;
+  /** Reference file names (`references/<name>.md`), sorted. */
+  references: string[];
 }
 
 export interface SkillContent {
@@ -95,6 +99,13 @@ export interface SkillNamespaceHandle {
     metadata: Record<string, unknown>,
   ): Promise<Skill | null>;
   delete(name: string): Promise<boolean>;
+  /** Creates or replaces a reference file; counts as a content change. Null when the skill is unknown. */
+  putReference(
+    name: string,
+    reference: string,
+    content: string,
+  ): Promise<Skill | null>;
+  deleteReference(name: string, reference: string): Promise<boolean>;
   currentTurn(): number;
 }
 
@@ -108,11 +119,22 @@ export interface SkillRegistry {
   get(id: string): Skill | null;
   /** Full `SKILL.md` content. */
   read(id: string): string | null;
+  /** Content of one reference file. */
+  readReference(id: string, reference: string): string | null;
+  /** Admin reference write; sets `userEdited`. Null when the skill is unknown. */
+  putReference(
+    id: string,
+    reference: string,
+    content: string,
+  ): Promise<Skill | null>;
+  deleteReference(id: string, reference: string): Promise<boolean>;
   /** All skills with this bare name, sorted by id. */
   resolveName(name: string): readonly Skill[];
   /** Admin content change; sets `userEdited`. Null when unknown. */
   update(id: string, patch: SkillPatch): Promise<Skill | null>;
   delete(id: string): Promise<boolean>;
+  /** Checks run before any managed deletion, including template replacement. */
+  addDeletionGuard(guard: (id: string) => void): () => void;
   /**
    * Makes the `templates` namespace hold exactly these skills: creates new,
    * rewrites changed and deletes missing ones. Validates all input before
@@ -140,6 +162,7 @@ class SkillRegistryModule implements SkillRegistry {
   private readonly namespaces = new Map<string, SkillDocumentStore>();
   private readonly claims = new Map<string, string>();
   private readonly handles = new Map<string, SkillNamespaceHandle>();
+  private readonly deletionGuards = new Set<(id: string) => void>();
   private records: Record<string, StoredSkillUsage> = {};
   /**
    * Read-only stand-ins for documents without persisted bookkeeping. Never
@@ -190,6 +213,47 @@ class SkillRegistryModule implements SkillRegistry {
     return this.namespaces.get(parsed.namespace)?.read(parsed.name) ?? null;
   }
 
+  readReference(id: string, reference: string): string | null {
+    const parsed = parseSkillId(id);
+    if (!parsed) return null;
+    return (
+      this.namespaces
+        .get(parsed.namespace)
+        ?.readReference(parsed.name, reference) ?? null
+    );
+  }
+
+  putReference(
+    id: string,
+    reference: string,
+    content: string,
+  ): Promise<Skill | null> {
+    return this.enqueue(async () => {
+      const parsed = parseSkillId(id);
+      if (!parsed) return null;
+      return this.putSkillReference(
+        parsed.namespace,
+        parsed.name,
+        reference,
+        content,
+        true,
+      );
+    });
+  }
+
+  deleteReference(id: string, reference: string): Promise<boolean> {
+    return this.enqueue(async () => {
+      const parsed = parseSkillId(id);
+      if (!parsed) return false;
+      return this.deleteSkillReference(
+        parsed.namespace,
+        parsed.name,
+        reference,
+        true,
+      );
+    });
+  }
+
   resolveName(name: string): readonly Skill[] {
     if (!isValidSkillName(name)) return [];
     return [...this.namespaces.keys()]
@@ -230,6 +294,13 @@ class SkillRegistryModule implements SkillRegistry {
     });
   }
 
+  addDeletionGuard(guard: (id: string) => void): () => void {
+    this.deletionGuards.add(guard);
+    return () => {
+      this.deletionGuards.delete(guard);
+    };
+  }
+
   replaceTemplateSkills(skills: readonly SkillDocument[]): Promise<Skill[]> {
     return this.enqueue(async () => {
       const namespace = TEMPLATE_SKILL_NAMESPACE;
@@ -241,6 +312,10 @@ class SkillRegistryModule implements SkillRegistry {
           );
         }
         next.set(skill.name, normalize(skill));
+      }
+      // Reject the entire replacement before changing any document.
+      for (const existing of this.listNamespace(namespace)) {
+        if (!next.has(existing.name)) this.checkDeletion(existing.id);
       }
       for (const { name, description, body } of next.values()) {
         await this.putSkill(namespace, name, { description, body });
@@ -307,6 +382,14 @@ class SkillRegistryModule implements SkillRegistry {
       setMetadata: (name, metadata) =>
         this.enqueue(() => this.setSkillMetadata(namespace, name, metadata)),
       delete: (name) => this.enqueue(() => this.deleteSkill(namespace, name)),
+      putReference: (name, reference, content) =>
+        this.enqueue(() =>
+          this.putSkillReference(namespace, name, reference, content, false),
+        ),
+      deleteReference: (name, reference) =>
+        this.enqueue(() =>
+          this.deleteSkillReference(namespace, name, reference, false),
+        ),
       currentTurn: () => this.turn,
     };
   }
@@ -369,15 +452,75 @@ class SkillRegistryModule implements SkillRegistry {
     return this.getSkill(namespace, name);
   }
 
+  private async putSkillReference(
+    namespace: string,
+    name: string,
+    reference: string,
+    content: string,
+    userEdited: boolean,
+  ): Promise<Skill | null> {
+    const store = this.namespaces.get(namespace);
+    if (!store?.get(name)) return null;
+    const problem = validateReference(reference, content.trim());
+    if (problem) throw new SkillValidationError(problem);
+    const existing = store.readReference(name, reference);
+    if (
+      existing === null &&
+      store.listReferences(name).length >= MAX_REFERENCES_PER_SKILL
+    )
+      throw new SkillValidationError(
+        `A skill holds at most ${MAX_REFERENCES_PER_SKILL} references`,
+      );
+    if (existing !== content.trim()) {
+      await store.writeReference(name, reference, content);
+      await this.touch(formatSkillId(namespace, name), userEdited);
+    }
+    return this.getSkill(namespace, name);
+  }
+
+  private async deleteSkillReference(
+    namespace: string,
+    name: string,
+    reference: string,
+    userEdited: boolean,
+  ): Promise<boolean> {
+    const store = this.namespaces.get(namespace);
+    if (!store?.get(name)) return false;
+    if (!(await store.deleteReference(name, reference))) return false;
+    await this.touch(formatSkillId(namespace, name), userEdited);
+    return true;
+  }
+
+  private async touch(id: string, userEdited: boolean): Promise<void> {
+    const record = this.materialize(id);
+    record.updatedAt = new Date().toISOString();
+    record.updatedTurn = this.turn;
+    record.userEdited = userEdited;
+    await this.persistSafely();
+  }
+
   private async deleteSkill(namespace: string, name: string): Promise<boolean> {
     const store = this.namespaces.get(namespace);
     if (!store?.get(name)) return false;
-    await store.delete(name);
     const id = formatSkillId(namespace, name);
+    this.checkDeletion(id);
+    await store.delete(name);
     delete this.records[id];
     this.synthesized.delete(id);
     await this.persistSafely();
     return true;
+  }
+
+  private checkDeletion(id: string): void {
+    for (const guard of this.deletionGuards) {
+      try {
+        guard(id);
+      } catch (error) {
+        throw new SkillValidationError(
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    }
   }
 
   private listNamespace(namespace: string): Skill[] {
@@ -400,6 +543,10 @@ class SkillRegistryModule implements SkillRegistry {
       name: document.name,
       description: document.description,
       body: document.body,
+      references: [
+        ...(this.namespaces.get(namespace)?.listReferences(document.name) ??
+          []),
+      ],
       createdAt: record.createdAt,
       updatedAt: record.updatedAt,
       lastReadAt: record.lastReadAt,

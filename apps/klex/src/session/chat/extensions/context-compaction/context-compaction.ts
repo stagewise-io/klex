@@ -65,32 +65,88 @@ export const COMPACTION_HYSTERESIS_RATIO = 0.1;
  */
 export const RAW_TAIL_THRESHOLD_RATIO = 0.2;
 
+/**
+ * Share of the compaction threshold that the raw tail may occupy when it
+ * is extended back to the latest substantive user input. Beyond this the
+ * input is summarized with the rest, so a long autonomous run since the
+ * last user message cannot keep the window above the context limit.
+ */
+export const PINNED_TAIL_THRESHOLD_RATIO = 0.5;
+
 /** Rough serialized-characters-per-token ratio for raw tail sizing. */
 export const RAW_TAIL_CHARS_PER_TOKEN = 4;
 
 /**
+ * Token allowance for a file part referenced by URL. Its serialized size
+ * is only the URL, but providers bill images and documents by content.
+ */
+export const RAW_TAIL_MEDIA_TOKENS = 1_500;
+
+const MEDIA_TYPES = new Set([
+  'file',
+  'image',
+  'media',
+  'image-url',
+  'file-url',
+]);
+
+/** Counts media referenced by URL anywhere in a part, including tool outputs. */
+function countUrlMedia(value: unknown, depth = 0): number {
+  if (depth > 20 || typeof value !== 'object' || value === null) return 0;
+  if (Array.isArray(value))
+    return value.reduce<number>(
+      (sum, item) => sum + countUrlMedia(item, depth + 1),
+      0,
+    );
+  const record = value as Record<string, unknown>;
+  let count = 0;
+  const url = record.url ?? record.image;
+  if (
+    typeof url === 'string' &&
+    /^[a-z][a-z0-9+.-]*:/i.test(url) &&
+    !/^data:/i.test(url) &&
+    (typeof record.mediaType === 'string' ||
+      (typeof record.type === 'string' && MEDIA_TYPES.has(record.type)))
+  )
+    count++;
+  for (const child of Object.values(record))
+    count += countUrlMedia(child, depth + 1);
+  return count;
+}
+
+function estimateMessageChars(message: ExtendedUIMessage): number {
+  return (
+    JSON.stringify(message).length +
+    countUrlMedia(message.parts) *
+      RAW_TAIL_MEDIA_TOKENS *
+      RAW_TAIL_CHARS_PER_TOKEN
+  );
+}
+
+/**
  * Picks the checkpoint anchor: the message right before the raw tail.
  *
- * The raw tail is the newest run of messages whose cumulative serialized
+ * The raw tail is the newest run of messages whose cumulative estimated
  * size stays within `maxTailChars`. It includes the last assistant onward
- * and the latest substantive user input whenever earlier raw messages can
- * be summarized. Otherwise, a non-empty suffix at a UI message boundary
- * keeps tool calls and their results together while freeing some space.
+ * and, when the tail from it stays within `maxPinnedTailChars`, the latest
+ * substantive user input whenever earlier raw messages can be summarized.
+ * Otherwise, a non-empty suffix at a UI message boundary keeps tool calls
+ * and their results together while freeing some space.
  * Returns `null` when fewer than two raw messages remain.
  */
 export function selectCheckpointAnchor(
   window: readonly ExtendedUIMessage[],
   maxTailChars: number,
+  maxPinnedTailChars = Number.POSITIVE_INFINITY,
 ): { anchorIndex: number } | null {
   const firstRawIndex = isCheckpointHeader(window[0]) ? 1 : 0;
   if (window.length - firstRawIndex < 2) return null;
 
+  const sizes = window.map(estimateMessageChars);
   let tailStart = window.length;
   let tailChars = 0;
   for (let i = window.length - 1; i >= firstRawIndex; i--) {
-    const message = window[i];
-    if (!message) continue;
-    const size = JSON.stringify(message).length;
+    const size = sizes[i] ?? 0;
     if (tailChars + size > maxTailChars) break;
     tailChars += size;
     tailStart = i;
@@ -118,13 +174,17 @@ export function selectCheckpointAnchor(
         (part) =>
           part.type === 'file' ||
           part.type === 'data-context' ||
-          part.type === 'data-god-message' ||
           (part.type === 'text' &&
             !/<(?:todo-reminder|resource|time|timezone)>/.test(part.text)),
       ),
   );
   // Defer if the active input is first: no raw anchor can preserve that turn.
-  if (latestUser >= firstRawIndex) tailStart = Math.min(tailStart, latestUser);
+  if (latestUser >= firstRawIndex) {
+    let pinnedChars = 0;
+    for (let i = latestUser; i < window.length; i++) pinnedChars += sizes[i]!;
+    if (pinnedChars <= maxPinnedTailChars)
+      tailStart = Math.min(tailStart, latestUser);
+  }
 
   const anchorIndex = tailStart - 1;
   if (anchorIndex < firstRawIndex) return null;
@@ -162,6 +222,7 @@ class ContextCompactionExt implements Extension {
   private awaitingCheckpointAnchor: string | null = null;
 
   private compacting = false;
+  private inFlight: Promise<void> | null = null;
   private cachedThreshold: number | null = null;
   private latestSummary: string | null = null;
 
@@ -236,6 +297,13 @@ class ContextCompactionExt implements Extension {
   }
 
   async onStepComplete(event: StepCompleteEvent): Promise<void> {
+    // A rejected request reports no usage, so the threshold below can never
+    // fire once the window no longer fits. The step awaits this hook, and
+    // the turn applies the checkpoint at the boundary before its retry.
+    if (event.contextOverflow) {
+      await this.compactAfterOverflow();
+      return;
+    }
     if (event.generation === null) return;
 
     const inputTokens = event.generation.usage.inputTokens ?? 0;
@@ -301,8 +369,35 @@ class ContextCompactionExt implements Extension {
         },
         'Context size threshold exceeded — triggering compaction',
       );
-      void this.runCompaction();
+      void this.startCompaction('threshold');
     }
+  }
+
+  private async compactAfterOverflow(): Promise<void> {
+    if (this.inFlight) await this.inFlight;
+    const anchorId = this.awaitingCheckpointAnchor;
+    if (anchorId !== null && this.deps.checkpoints.isPending(anchorId)) {
+      this.deps.logger.info(
+        { anchorId },
+        'Context window exceeded — pending checkpoint applies before retry',
+      );
+      return;
+    }
+    this.deps.logger.warn(
+      { historyLength: this.deps.getHistory().length },
+      'Context window exceeded — forcing compaction',
+    );
+    await this.startCompaction('context-overflow');
+  }
+
+  private startCompaction(
+    trigger: 'threshold' | 'context-overflow',
+  ): Promise<void> {
+    const run = this.runCompaction(trigger).finally(() => {
+      if (this.inFlight === run) this.inFlight = null;
+    });
+    this.inFlight = run;
+    return run;
   }
 
   /** True when the window header covers the given anchor. */
@@ -321,7 +416,9 @@ class ContextCompactionExt implements Extension {
     );
   }
 
-  private async runCompaction(): Promise<void> {
+  private async runCompaction(
+    trigger: 'threshold' | 'context-overflow',
+  ): Promise<void> {
     this.compacting = true;
 
     let span: Span | null = null;
@@ -329,6 +426,7 @@ class ContextCompactionExt implements Extension {
     try {
       const childSpan = startChildSpan('context_compaction', {
         attributes: {
+          'compaction.trigger': trigger,
           'compaction.lastStepInputTokens': this.lastStepInputTokens,
           'compaction.postCompactionBaseline': this.postCompactionBaseline,
           'compaction.threshold': this.getCompactionThreshold(),
@@ -391,13 +489,15 @@ class ContextCompactionExt implements Extension {
     const history = this.deps.getHistory();
     span.setAttribute('compaction.historyLength', history.length);
 
-    const maxTailChars =
-      this.getCompactionThreshold() *
-      RAW_TAIL_THRESHOLD_RATIO *
-      RAW_TAIL_CHARS_PER_TOKEN;
-    const selection = selectCheckpointAnchor(history, maxTailChars);
+    const thresholdChars =
+      this.getCompactionThreshold() * RAW_TAIL_CHARS_PER_TOKEN;
+    const selection = selectCheckpointAnchor(
+      history,
+      thresholdChars * RAW_TAIL_THRESHOLD_RATIO,
+      thresholdChars * PINNED_TAIL_THRESHOLD_RATIO,
+    );
     if (!selection) {
-      this.deps.logger.debug(
+      this.deps.logger.info(
         { totalHistory: history.length },
         'No checkpoint anchor available — skipping compaction',
       );
@@ -571,6 +671,10 @@ class ContextCompactionExt implements Extension {
                 'Chat model fallback also returned content-filter — compaction aborted',
               );
             }
+            this.deps.logger.warn(
+              { failureReason: fallbackResult.failureReason },
+              'Compaction failed — no model produced a summary',
+            );
             span.addEvent('compaction.failed', {
               reason: 'all-models-failed-including-chat',
               failureReason: fallbackResult.failureReason,
@@ -583,6 +687,10 @@ class ContextCompactionExt implements Extension {
         }
       }
 
+      this.deps.logger.warn(
+        { failureReason: result.failureReason },
+        'Compaction failed — no model produced a summary',
+      );
       span.addEvent('compaction.failed', {
         reason: 'all-models-failed',
         failureReason: result.failureReason,

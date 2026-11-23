@@ -68,7 +68,7 @@ export const createSoulRoute = createRoute({
   tags: ['Soul'],
   summary: 'Create or re-create a soul from administrator instructions',
   description:
-    'Uses a one-shot chat model call with up to three attempts in configured model order, each bounded to 60 seconds. Does not start a god session. Always generates from scratch without the old soul in model input, replacing any saved soul only after generation succeeds.',
+    'Uses a one-shot chat model call with up to three attempts in configured model order, each bounded to 60 seconds. Does not start a chat session. Always generates from scratch without the old soul in model input, replacing any saved soul only after generation succeeds.',
   request,
   responses: {
     201: {

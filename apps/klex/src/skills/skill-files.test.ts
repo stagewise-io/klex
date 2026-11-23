@@ -157,7 +157,7 @@ describe('skill store', () => {
       {
         skill: skill.name,
         error: expect.objectContaining({
-          message: 'SKILL.md changed while opening',
+          message: 'File changed while opening',
         }),
       },
       'Skipping skill without readable SKILL.md',

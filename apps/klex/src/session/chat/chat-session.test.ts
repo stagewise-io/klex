@@ -33,7 +33,7 @@ import {
   type ChatSessionDependencies,
   createChatSession,
 } from './chat-session';
-import { createSoulExt, createSoulExtGod } from './extensions/soul';
+import { createSoulExt } from './extensions/soul';
 import type { Turn, TurnDependencies } from './turn';
 import { BackoffManager } from './utils/backoff-manager';
 
@@ -142,7 +142,7 @@ it.each(['alone', 'before-soul', 'after-soul'] as const)(
   },
 );
 
-it.each(['standard', 'god', 'without-extension'] as const)(
+it.each(['standard', 'without-extension'] as const)(
   'checks soul availability before realtime bootstrap in %s mode',
   async (mode) => {
     const directory = await mkdtemp(join(tmpdir(), 'klex-soul-realtime-'));
@@ -162,7 +162,6 @@ it.each(['standard', 'god', 'without-extension'] as const)(
       mcp: null,
       extensionFactories: [
         ...(mode === 'standard' ? [createSoulExt] : []),
-        ...(mode === 'god' ? [createSoulExtGod] : []),
         {
           identifier: 'test/context-assembly',
           create: () => ({ getSystemPromptPart: assemblePrompt }),

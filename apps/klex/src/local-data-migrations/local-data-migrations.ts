@@ -1,5 +1,3 @@
-import { configV10ToV11 } from './config/v10-to-v11/migration';
-import { configV11 } from './config/v10-to-v11/schemas';
 import { configV1ToV2 } from './config/v1-to-v2/migration';
 import { configV1, configV2 } from './config/v1-to-v2/schemas';
 import { configV2ToV3 } from './config/v2-to-v3/migration';
@@ -18,6 +16,10 @@ import { configV8ToV9 } from './config/v8-to-v9/migration';
 import { configV9 } from './config/v8-to-v9/schemas';
 import { configV9ToV10 } from './config/v9-to-v10/migration';
 import { configV10 } from './config/v9-to-v10/schemas';
+import { configV10ToV11 } from './config/v10-to-v11/migration';
+import { configV11 } from './config/v10-to-v11/schemas';
+import { configV11ToV12 } from './config/v11-to-v12/migration';
+import { configV12 } from './config/v11-to-v12/schemas';
 import { episodicSearchV1ToV2 } from './episodic-search-index/v1-to-v2/migration';
 import { learningStateV1ToV2 } from './learning-extension-state/v1-to-v2/migration';
 import {
@@ -45,6 +47,7 @@ export const LOCAL_DATA_MIGRATIONS = {
       configV9,
       configV10,
       configV11,
+      configV12,
     ],
     migrations: [
       configV1ToV2,
@@ -57,6 +60,7 @@ export const LOCAL_DATA_MIGRATIONS = {
       configV8ToV9,
       configV9ToV10,
       configV10ToV11,
+      configV11ToV12,
     ],
   },
   'learning-extension-state': {

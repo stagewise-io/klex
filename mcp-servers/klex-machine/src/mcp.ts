@@ -125,10 +125,18 @@ class MachineMcpModule implements MachineMcp {
       async () => {
         const pushNotifications =
           requestCapabilities.getStore()?.pushNotifications === true;
-        const desktop =
-          this.#desktop && (await this.#desktop.capabilities()).computerUse
-            ? this.#desktop
-            : undefined;
+        const desktopCapabilities = this.#desktop
+          ? await this.#desktop.capabilities()
+          : undefined;
+        const desktop = desktopCapabilities?.computerUse
+          ? this.#desktop
+          : undefined;
+        const accessibility =
+          desktop !== undefined && desktopCapabilities?.accessibility === true;
+        const desktopHint =
+          desktop === undefined && desktopCapabilities?.hint
+            ? ` The graphical desktop tools are unavailable. If the user asks for computer use, tell them: ${desktopCapabilities.hint}`
+            : '';
         const server = new McpServer(
           {
             name: 'klex-machine',
@@ -139,7 +147,7 @@ class MachineMcpModule implements MachineMcp {
           },
           {
             capabilities: {},
-            instructions: `UNRESTRICTED MACHINE ACCESS. Filesystem and shell operations run with the permissions of the server OS user. Relative paths resolve from ${defaultCwd}. Operating system: ${process.platform}.${desktop ? ' A graphical desktop is available through the desktop_* tools.' : ''}${pushNotifications ? ' Watcher outcomes and requested shell-exit notifications arrive as push notifications.' : ''}`,
+            instructions: `UNRESTRICTED MACHINE ACCESS. Filesystem and shell operations run with the permissions of the server OS user. Relative paths resolve from ${defaultCwd}. Operating system: ${process.platform}.${desktop ? ' A graphical desktop is available through the desktop_* tools.' : ''}${desktopHint}${accessibility ? ' For standard apps, read desktop_accessibility_tree before taking a screenshot and click elements by ref; use screenshots for canvas, video and visual checks.' : ''}${pushNotifications ? ' Watcher outcomes and requested shell-exit notifications arrive as push notifications.' : ''}`,
           },
         );
 
@@ -149,8 +157,12 @@ class MachineMcpModule implements MachineMcp {
             store.acknowledge(principalId, eventIds),
         });
         if (desktop)
-          registerDesktopTools(server, desktop, principalId, (path) =>
-            paths.resolve(path),
+          registerDesktopTools(
+            server,
+            desktop,
+            principalId,
+            (path) => paths.resolve(path),
+            { accessibility },
           );
         if (pushNotifications) {
           server.registerTool(

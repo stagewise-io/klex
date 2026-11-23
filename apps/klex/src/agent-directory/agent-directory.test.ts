@@ -50,7 +50,7 @@ describe('AgentDirectory', () => {
     ).toMatchObject({
       _klex: {
         store: 'config',
-        schemaVersion: 11,
+        schemaVersion: 12,
         compatibilityVersion: 8,
       },
       configVersion: 2,
@@ -79,7 +79,13 @@ describe('AgentDirectory', () => {
     const stored = JSON.parse(
       await readFile(join(created.directory, 'config.json'), 'utf8'),
     );
-    expect(stored.instinct).toMatchObject({ enabled: true, timeoutMs: 8_000 });
+    expect(stored.instinct).toMatchObject({
+      enabled: true,
+      timeoutMs: 12_000,
+      classifierTimeoutMs: 10_000,
+      attemptTimeoutMs: 5_000,
+      fallbackResetIdleMs: 600_000,
+    });
     expect(stored).not.toHaveProperty('preflight');
     expect(stored).not.toHaveProperty('episodeFinishIdleTriggerTimeMs');
     expect(stored).not.toHaveProperty('memoryWriteIntervalMs');

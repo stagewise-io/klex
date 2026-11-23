@@ -6,6 +6,7 @@ import { join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 
+import { atspiSocketPath } from '../src/desktop/platform/atspi.js';
 import {
   createDesktopProvider,
   toXdotoolCombo,
@@ -19,6 +20,7 @@ import {
   type DesktopProviderFixture,
   describeDesktopProviderContract,
 } from './desktop-provider-contract.js';
+import { fakeAtspi, sampleApplication } from './fake-atspi.js';
 
 const VERSION = Buffer.from('RFB 003.008\n', 'latin1');
 const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
@@ -29,6 +31,10 @@ interface FakeX11 {
   /** ImageMagick `import` is installed. */
   imagemagick?: boolean;
   vnc?: 'listening' | 'missing' | 'refusing';
+  /** Accessibility is enabled and this bus answers. */
+  atspi?: ReturnType<typeof fakeAtspi>;
+  /** Overrides for xdotool output by subcommand. */
+  xdotool?: Record<string, string>;
 }
 
 /** An X11 provider whose exec, launch and socket dependencies are fakes. */
@@ -66,6 +72,8 @@ async function fakeX11(
         getactivewindow: '11\n',
         getwindowname: 'Terminal\n',
         getwindowgeometry: 'WINDOW=11\nX=0\nY=0\nWIDTH=800\nHEIGHT=600\n',
+        getwindowpid: '777\n',
+        ...fake.xdotool,
       };
       return Buffer.from(outputs[args[0] ?? ''] ?? '');
     }
@@ -83,6 +91,13 @@ async function fakeX11(
       run,
       launch: async () => ({ pid: 4242 }),
       connect: (path) => connect(path),
+      connectBus: () => Promise.reject(new Error('No accessibility bus')),
+      ...(fake.atspi
+        ? {
+            connectBus: fake.atspi.connect,
+            env: { AT_SPI_BUS_ADDRESS: 'unix:path=/tmp/a11y' },
+          }
+        : {}),
       ...options,
     }),
     async close() {
@@ -115,6 +130,22 @@ describeDesktopProviderContract(
   () => fakeX11({ display: true, imagemagick: false, vnc: 'listening' }),
 );
 describeDesktopProviderContract(
+  'X11 with an accessibility bus',
+  { computerUse: true, stream: false, accessibility: true },
+  () =>
+    fakeX11({
+      display: true,
+      imagemagick: true,
+      vnc: 'missing',
+      atspi: fakeAtspi([sampleApplication().app]),
+    }),
+);
+describeDesktopProviderContract(
+  'X11 without an accessibility bus',
+  { computerUse: true, stream: false },
+  () => fakeX11({ display: true, imagemagick: true, vnc: 'missing' }),
+);
+describeDesktopProviderContract(
   'headless Linux without DISPLAY or VNC',
   { computerUse: false, stream: false },
   () => fakeX11({ vnc: 'missing' }, { display: undefined }),
@@ -126,14 +157,9 @@ describeDesktopProviderContract(
 );
 
 describe('createDesktopProvider', () => {
-  it.each(['darwin', 'win32', 'freebsd'] as const)(
-    'has no provider on %s',
-    (platform) => {
-      expect(
-        createDesktopProvider({ DISPLAY: ':0' }, platform),
-      ).toBeUndefined();
-    },
-  );
+  it.each(['freebsd'] as const)('has no provider on %s', (platform) => {
+    expect(createDesktopProvider({ DISPLAY: ':0' }, platform)).toBeUndefined();
+  });
 
   it('uses X11 on Linux unless the desktop is turned off', () => {
     expect(createDesktopProvider({}, 'linux')).toBeInstanceOf(
@@ -296,5 +322,330 @@ describe('X11DesktopProvider', () => {
     expect(toXdotoolCombo('Ctrl+Alt+Delete')).toBe('ctrl+alt+Delete');
     expect(() => toXdotoolCombo('ctrl+')).toThrow('Invalid key combo');
     expect(() => toXdotoolCombo('ctrl+$(x)')).toThrow('Unsupported key name');
+  });
+});
+
+describe('X11 accessibility', () => {
+  const query = { interactiveOnly: true, maxDepth: 30, maxNodes: 300 };
+
+  it('reports accessibility from the probe alone, with no setting', async () => {
+    const atspi = fakeAtspi([sampleApplication().app]);
+    const withBus = await fakeX11(
+      { display: true, imagemagick: true, vnc: 'missing', atspi },
+      { display: ':1', env: { AT_SPI_BUS_ADDRESS: 'unix:path=/tmp/a11y' } },
+    );
+    const withoutBus = await fakeX11({
+      display: true,
+      imagemagick: true,
+      vnc: 'missing',
+    });
+    try {
+      expect((await withBus.provider.probe()).accessibility).toBe(true);
+      expect(await withoutBus.provider.probe()).not.toHaveProperty(
+        'accessibility',
+      );
+    } finally {
+      await withBus.close?.();
+      await withoutBus.close?.();
+    }
+  });
+
+  it('leaves accessibility off with the whole desktop when KLEX_MACHINE_DESKTOP=off', () => {
+    expect(
+      createDesktopProvider(
+        { DISPLAY: ':0', KLEX_MACHINE_DESKTOP: 'off' },
+        'linux',
+      ),
+    ).toBeUndefined();
+  });
+
+  it('reports nothing on a headless machine', async () => {
+    const atspi = fakeAtspi([sampleApplication().app]);
+    const fixture = await fakeX11(
+      { vnc: 'missing', atspi },
+      { display: undefined },
+    );
+    try {
+      expect(await fixture.provider.probe()).toEqual({
+        computerUse: false,
+        stream: false,
+      });
+      expect(atspi.connections).toEqual([]);
+    } finally {
+      await fixture.close?.();
+    }
+  });
+
+  it('prints controls of the focused window, skipping hidden nodes, wrappers and passwords', async () => {
+    const atspi = fakeAtspi([sampleApplication().app]);
+    const fixture = await fakeX11({ display: true, imagemagick: true, atspi });
+    try {
+      const tree = await fixture.provider.accessibilityTree?.(query);
+      expect(tree).toMatchObject({
+        application: 'xfce4-terminal',
+        window: 'Terminal',
+        truncated: false,
+      });
+      expect(
+        tree?.nodes.map(({ depth, role, name, value, states, bounds }) => ({
+          depth,
+          role,
+          name,
+          value,
+          states,
+          bounds,
+        })),
+      ).toEqual([
+        {
+          depth: 0,
+          role: 'frame',
+          name: 'Terminal',
+          value: undefined,
+          states: [],
+          bounds: { x: 0, y: 0, width: 800, height: 600 },
+        },
+        {
+          depth: 1,
+          role: 'push button',
+          name: 'Save',
+          value: undefined,
+          states: ['focused'],
+          bounds: { x: 100, y: 50, width: 80, height: 30 },
+        },
+        {
+          depth: 1,
+          role: 'entry',
+          name: 'Search',
+          value: 'hello',
+          states: [],
+          bounds: { x: 200, y: 50, width: 300, height: 30 },
+        },
+        {
+          depth: 1,
+          role: 'password text',
+          name: 'Password',
+          value: undefined,
+          states: [],
+          bounds: { x: 200, y: 100, width: 300, height: 30 },
+        },
+        {
+          depth: 1,
+          role: 'check box',
+          name: 'Remember',
+          value: undefined,
+          states: ['unchecked', 'disabled'],
+          bounds: { x: 200, y: 150, width: 20, height: 20 },
+        },
+      ]);
+      expect(atspi.calls).toContainEqual({
+        destination: ':1.42',
+        member: 'GetAttributes',
+        address: 'unix:path=/tmp/a11y',
+      });
+
+      const all = await fixture.provider.accessibilityTree?.({
+        ...query,
+        interactiveOnly: false,
+      });
+      expect(all?.nodes.map(({ name }) => name)).toContain('Status');
+      expect(all?.nodes.map(({ name }) => name)).not.toContain('Hidden');
+      expect(all?.nodes.map(({ role }) => role)).not.toContain('panel');
+    } finally {
+      await fixture.close?.();
+    }
+  });
+
+  it('marks trees cut by maxDepth or maxNodes as truncated', async () => {
+    const fixture = await fakeX11({
+      display: true,
+      imagemagick: true,
+      atspi: fakeAtspi([sampleApplication().app]),
+    });
+    try {
+      const shallow = await fixture.provider.accessibilityTree?.({
+        ...query,
+        maxDepth: 1,
+      });
+      expect(shallow?.nodes.map(({ role }) => role)).toEqual(['frame']);
+      expect(shallow?.truncated).toBe(true);
+      const small = await fixture.provider.accessibilityTree?.({
+        ...query,
+        maxNodes: 2,
+      });
+      expect(small?.nodes).toHaveLength(2);
+      expect(small?.truncated).toBe(true);
+    } finally {
+      await fixture.close?.();
+    }
+  });
+
+  it('matches the window by title when its process is unknown', async () => {
+    const fixture = await fakeX11({
+      display: true,
+      imagemagick: true,
+      atspi: fakeAtspi([sampleApplication().app]),
+      xdotool: { getwindowpid: '' },
+    });
+    try {
+      const tree = await fixture.provider.accessibilityTree?.(query);
+      expect(tree?.nodes[0]?.name).toBe('Terminal');
+    } finally {
+      await fixture.close?.();
+    }
+  });
+
+  it('explains how to get a tree when the window exposes none', async () => {
+    const fixture = await fakeX11({
+      display: true,
+      imagemagick: true,
+      atspi: fakeAtspi([sampleApplication().app]),
+      xdotool: { getwindowpid: '1\n', getwindowname: 'Canvas game\n' },
+    });
+    try {
+      await expect(fixture.provider.accessibilityTree?.(query)).rejects.toThrow(
+        /Window "Canvas game" exposes no accessibility tree.*--force-renderer-accessibility.*desktop_screenshot/,
+      );
+    } finally {
+      await fixture.close?.();
+    }
+  });
+
+  it('re-reads elements live and reports removed ones as gone', async () => {
+    const { app, save } = sampleApplication();
+    const atspi = fakeAtspi([app]);
+    const fixture = await fakeX11({ display: true, imagemagick: true, atspi });
+    try {
+      const tree = await fixture.provider.accessibilityTree?.(query);
+      const handle = tree?.nodes.find(({ name }) => name === 'Save')?.handle;
+      expect(handle).toBeDefined();
+      expect(
+        await fixture.provider.accessibilityElement?.(handle ?? ''),
+      ).toMatchObject({ role: 'push button', name: 'Save' });
+      atspi.remove(save);
+      expect(
+        await fixture.provider.accessibilityElement?.(handle ?? ''),
+      ).toBeUndefined();
+      await expect(
+        fixture.provider.accessibilityTree?.({ ...query, root: handle }),
+      ).rejects.toThrow('gone');
+    } finally {
+      await fixture.close?.();
+    }
+  });
+
+  it('treats hidden elements and children of removed ones as gone', async () => {
+    const { app, save } = sampleApplication();
+    const atspi = fakeAtspi([app]);
+    const fixture = await fakeX11({ display: true, imagemagick: true, atspi });
+    try {
+      const tree = await fixture.provider.accessibilityTree?.(query);
+      const handleOf = (name: string) =>
+        tree?.nodes.find((node) => node.name === name)?.handle ?? '';
+      atspi.hide(save);
+      expect(
+        await fixture.provider.accessibilityElement?.(handleOf('Save')),
+      ).toBeUndefined();
+      const panel = app.windows[0]?.children?.[0];
+      if (!panel) throw new Error('sample has no panel');
+      atspi.remove(panel);
+      expect(
+        await fixture.provider.accessibilityElement?.(handleOf('Search')),
+      ).toBeUndefined();
+    } finally {
+      await fixture.close?.();
+    }
+  });
+
+  it('stops walking once maxNodes elements are kept', async () => {
+    const atspi = fakeAtspi([sampleApplication().app]);
+    const fixture = await fakeX11({ display: true, imagemagick: true, atspi });
+    try {
+      await fixture.provider.accessibilityTree?.({ ...query, maxNodes: 1 });
+      const roleReads = atspi.calls.filter(
+        ({ member }) => member === 'GetRoleName',
+      ).length;
+      expect(roleReads).toBeLessThan(4);
+    } finally {
+      await fixture.close?.();
+    }
+  });
+
+  it('gives up on a session bus launcher that never answers', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    try {
+      const provider = new X11DesktopProvider({
+        display: ':1',
+        env: { DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/1000/bus' },
+        vncSocketPath: '/nonexistent/vnc.sock',
+        connect: () => {
+          throw new Error('no socket');
+        },
+        connectBus: async () => ({
+          closed: false,
+          call: () => new Promise<never>(() => undefined),
+          close() {},
+        }),
+        run: async (file) => {
+          if (file === 'xprop') throw new Error('no property');
+          return Buffer.from(file === 'xdotool' ? '1280 800\n' : '');
+        },
+      });
+      const probe = provider.probe();
+      await vi.advanceTimersByTimeAsync(2_500);
+      expect(await probe).not.toHaveProperty('accessibility');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('finds the bus from the root window, then from the session bus', async () => {
+    const atspi = fakeAtspi([sampleApplication().app], {
+      a11yAddress: 'unix:path=/run/user/1000/at-spi/bus_1',
+    });
+    const fromRoot = new X11DesktopProvider({
+      display: ':1',
+      env: {},
+      connectBus: atspi.connect,
+      run: async (file, args) => {
+        if (file === 'xprop' && args.join(' ') === '-root AT_SPI_BUS') {
+          return Buffer.from(
+            'AT_SPI_BUS(STRING) = "unix:abstract=/tmp/dbus-x"\n',
+          );
+        }
+        if (file === 'xdotool') return Buffer.from('1280 800\n');
+        return Buffer.from('');
+      },
+    });
+    expect((await fromRoot.probe()).accessibility).toBe(true);
+    expect(atspi.connections).toEqual(['unix:abstract=/tmp/dbus-x']);
+
+    atspi.connections.length = 0;
+    const fromSession = new X11DesktopProvider({
+      display: ':1',
+      env: { DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/1000/bus' },
+      connectBus: atspi.connect,
+      run: async (file) => {
+        if (file === 'xprop') throw new Error('no property');
+        return Buffer.from(file === 'xdotool' ? '1280 800\n' : '');
+      },
+    });
+    expect((await fromSession.probe()).accessibility).toBe(true);
+    expect(atspi.connections).toEqual([
+      'unix:path=/run/user/1000/bus',
+      'unix:path=/run/user/1000/at-spi/bus_1',
+    ]);
+  });
+
+  it('reads socket paths from D-Bus addresses', () => {
+    expect(atspiSocketPath('unix:path=/run/user/1000/at-spi/bus_1')).toBe(
+      '/run/user/1000/at-spi/bus_1',
+    );
+    expect(
+      atspiSocketPath('unix:abstract=/tmp/dbus-AbC,guid=0123456789abcdef'),
+    ).toBe('\0/tmp/dbus-AbC');
+    expect(atspiSocketPath('tcp:host=x,port=1;unix:path=/a%20b')).toBe('/a b');
+    expect(() => atspiSocketPath('tcp:host=x,port=1')).toThrow(
+      'No Unix socket',
+    );
   });
 });

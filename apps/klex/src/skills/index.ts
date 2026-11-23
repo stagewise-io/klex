@@ -11,6 +11,7 @@ export {
   parseSkillId,
   type SkillDocument,
   serializeSkill,
+  validateReference,
   validateSkill,
 } from './skill-format';
 export {
@@ -32,6 +33,8 @@ export {
   MAX_METADATA_BYTES,
   MAX_NAME_LENGTH,
   MAX_PROMPT_LIST_CHARACTERS,
+  MAX_REFERENCE_LENGTH,
+  MAX_REFERENCES_PER_SKILL,
   RESERVED_SKILL_NAMESPACES,
   SKILL_NAME_PATTERN,
   TEMPLATE_SKILL_NAMESPACE,

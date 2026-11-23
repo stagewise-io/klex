@@ -9,7 +9,6 @@ export type Screen =
   | 'debug-information'
   | 'logs'
   | 'usage'
-  | 'god-messages'
   | 'agent-identity';
 
 export interface CliUiDependencies {

@@ -753,9 +753,51 @@ describe('ChatSession instinct integration', () => {
     }
   });
 
-  it('uses ordered Chat models through generation when Instincts is empty without changing config', async () => {
+  it.each([
+    {
+      purpose: 'memory',
+      memory: [
+        { providerId: 'test', modelId: 'memory' },
+        { providerId: 'test', modelId: 'backup-memory' },
+      ],
+      compaction: [{ providerId: 'test', modelId: 'compaction' }],
+    },
+    {
+      purpose: 'compaction',
+      memory: [],
+      compaction: [{ providerId: 'test', modelId: 'compaction' }],
+    },
+  ] as const)(
+    'prefers ordered $purpose models over Chat when Instincts is empty',
+    async ({ purpose, memory, compaction }) => {
+      const { session, send, contexts, configValue, resolver } = harness();
+      configValue.modelSelection.instincts = [];
+      configValue.modelSelection.memory = [...memory];
+      configValue.modelSelection.compaction = [...compaction];
+      const expected = purpose === 'memory' ? memory : compaction;
+      const before = structuredClone(configValue.modelSelection);
+      try {
+        await session.start();
+        await send('Remember the project');
+        expect(resolver.resolveInstinctCandidates).toHaveBeenCalledWith(
+          expected.map((entry) => ({ ...entry, api: 'generation' })),
+        );
+        expect(contexts[0]?.classification).toMatchObject({
+          status: 'ok',
+          modelId: expected[0].modelId,
+        });
+        expect(configValue.modelSelection).toEqual(before);
+      } finally {
+        await session.close();
+      }
+    },
+  );
+
+  it('uses ordered Chat models through generation when Instincts, Memory and Compaction are empty without changing config', async () => {
     const { session, send, order, contexts, configValue, resolver } = harness();
     configValue.modelSelection.instincts = [];
+    configValue.modelSelection.memory = [];
+    configValue.modelSelection.compaction = [];
     const chatEntries = [
       {
         providerId: 'test',

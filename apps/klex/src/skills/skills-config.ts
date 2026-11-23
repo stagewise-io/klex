@@ -6,6 +6,9 @@
 export const MAX_NAME_LENGTH = 64;
 export const MAX_DESCRIPTION_LENGTH = 300;
 export const MAX_BODY_LENGTH = 4_000;
+/** Reference files per skill, flat under `references/<name>.md`. */
+export const MAX_REFERENCES_PER_SKILL = 5;
+export const MAX_REFERENCE_LENGTH = 8_000;
 /** Cap of the skill list in the main-session system prompt. */
 export const MAX_PROMPT_LIST_CHARACTERS = 6_000;
 /** Cap of the serialized namespace-owned metadata of one skill. */

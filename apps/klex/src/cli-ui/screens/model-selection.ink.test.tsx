@@ -276,9 +276,9 @@ describe('ModelSelectionScreen', () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
       view.stdin.write('\r');
       await vi.waitFor(() =>
-        expect(view.lastFrame()).toContain(
+        expect(view.lastFrame()?.replace(/\s+/g, ' ')).toContain(
           purpose === 'instincts'
-            ? 'Uses Chat models via generation'
+            ? 'Uses the first non-empty list of Memory, Compaction, then Chat models via generation'
             : 'No models',
         ),
       );

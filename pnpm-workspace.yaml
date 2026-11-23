@@ -17,6 +17,11 @@ allowBuilds:
   protobufjs: false
   sharp: true
 
+# dbus-next only loads usocket for unix:path/abstract addresses; klex-machine
+# connects through unix:socket, so the native addon is never installed.
+ignoredOptionalDependencies:
+  - usocket
+
 minimumReleaseAge: 2880
 
 # First-party packages are trusted and must be consumable immediately after

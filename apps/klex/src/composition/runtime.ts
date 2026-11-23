@@ -24,7 +24,6 @@ export interface RuntimeStartupModules {
   realtime?: RuntimeResource | undefined;
   mcp: RuntimeResource;
   telemetryManager: RuntimeResource;
-  godMessages: RuntimeResource;
 }
 
 export interface RuntimeStartupStep {
@@ -64,7 +63,6 @@ export function runtimeStartupOrder(
       : []),
     { name: 'mcp', resource: modules.mcp },
     { name: 'telemetry-manager', resource: modules.telemetryManager },
-    { name: 'god-messages', resource: modules.godMessages },
   ];
 }
 
@@ -133,7 +131,6 @@ function runtimeShutdownOrder(
 ): readonly RuntimeResource[] {
   const byName = new Map(started.map((step) => [step.name, step.resource]));
   return [
-    'god-messages',
     'telemetry-manager',
     'realtime',
     'mcp',

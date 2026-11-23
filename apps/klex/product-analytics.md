@@ -31,7 +31,7 @@ Every CLI- or env-controlled property (`deployment`, `telemetry_enabled_at_start
 Only in `klex_usage_window`:
 
 - Window and state: `window_reason` (`interval` / `shutdown`), `window_duration_s`, `cloud_enrolled`, `mcp_connected_count`. The last two are read when the event is built and are `null` in the shutdown window (MCP and cloud are already closed) or when unreadable.
-- Sessions: `sessions_active`, `sessions_started`, `sessions_ended`, `turns_total`, `steps_total`, `turns_per_session_max`, `steps_per_session_max`. A session is one chat session (default, god, or child). Counts are per session within the window, not per session lifetime.
+- Sessions: `sessions_active`, `sessions_started`, `sessions_ended`, `turns_total`, `steps_total`, `turns_per_session_max`, `steps_per_session_max`. A session is one chat session (default or child). Counts are per session within the window, not per session lifetime.
 - Runtime notes: `os_platform` is `darwin`, `linux`, `win32`, …. `os_release` is the kernel major only (`24`, `6`); on Windows it is `major.minor.build` (`10.0.22631`), because Windows 10 and 11 both report `10.0`.
 - Resources: `process_uptime_s`, `cpu_avg_pct` (average over the window, percent of one core, can exceed 100), `memory_rss_mb` and `memory_heap_used_mb` (at event time), `memory_rss_peak_mb` (peak since process start). These come from Node's process counters when the event is built. There is no background sampler, so short spikes inside a window show up only in the peak RSS.
 

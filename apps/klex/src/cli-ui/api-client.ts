@@ -197,27 +197,6 @@ export interface CloudEnrollResult {
   enrolledAt: string;
 }
 
-export interface GodMessageResponse {
-  sessionId: string;
-}
-
-export interface GodMessagesResponse {
-  messages: SerializedMessage[];
-  nextCursor: string | null;
-  hasMore: boolean;
-}
-
-export interface SerializedPart {
-  type: string;
-  [key: string]: unknown;
-}
-
-export interface SerializedMessage {
-  id: string;
-  role: string;
-  parts: SerializedPart[];
-}
-
 export interface IntrospectionNode {
   path: string[];
   state: Record<string, unknown> | null;
@@ -228,7 +207,7 @@ export interface SessionInfo {
   id: string;
   name: string;
   extensionIdentifier?: string;
-  kind: 'default' | 'god' | 'child';
+  kind: 'default' | 'child';
   parentId: string | null;
   modelPurpose: ModelPurpose;
   status: string;
@@ -521,38 +500,6 @@ export class AdminApiClient {
       method: 'PATCH',
       body: { instructions },
       signal,
-    });
-  }
-
-  // --- God Messages ---
-
-  sendGodMessage(text: string): Promise<GodMessageResponse> {
-    return this.request<GodMessageResponse>('/v1/god-messages', {
-      method: 'POST',
-      body: { content: [{ type: 'text', text }] },
-    });
-  }
-
-  getGodSession(): Promise<SessionInfo> {
-    return this.request<SessionInfo>('/v1/god-messages/session');
-  }
-
-  getGodMessages(
-    limit?: number,
-    cursor?: string,
-  ): Promise<GodMessagesResponse> {
-    const query = new URLSearchParams();
-    if (limit !== undefined) query.set('limit', String(limit));
-    if (cursor) query.set('cursor', cursor);
-    const qs = query.toString();
-    return this.request<GodMessagesResponse>(
-      `/v1/god-messages/messages${qs ? `?${qs}` : ''}`,
-    );
-  }
-
-  resetGodSession(): Promise<GodMessageResponse> {
-    return this.request<GodMessageResponse>('/v1/god-messages/reset', {
-      method: 'POST',
     });
   }
 

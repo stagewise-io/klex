@@ -260,12 +260,62 @@ export const entityIdSchema = z
   .describe(
     'Type-qualified memory name, e.g. person/Ada Lovelace. No .md extension.',
   );
-export const relationSchema = legacyRelationSchema.extend({
+// Released v4 relation contract: named targets, free-text relationship.
+const v4RelationSchema = legacyRelationSchema.extend({
   target: z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('entity'), id: entityIdSchema }).strict(),
     legacyRelationSchema.shape.target.options[1],
   ]),
 });
+// Characters that would break an Obsidian link `[[target|label]]`.
+const LINK_UNSAFE = /[[\]|\r\n]+/g;
+export const relationSchema = v4RelationSchema.extend({
+  relationship: text
+    .regex(/^[^[\]|\r\n]+$/, 'No [, ], | or line breaks')
+    .describe(
+      'Nature from this side, short: "manages", "teammate of", "reviews PRs of". Unknown: "talks with".',
+    ),
+});
+
+// Skill links name the skill file. Entity IDs never end in `.md`, so the
+// suffix distinguishes them from entities such as `project/SKILL`.
+const SKILL_LINK_SUFFIX = '/SKILL.md';
+const RELATION_LINK = /^\[\[([^[\]|\r\n]+)\|([^[\]|\r\n]+) \((\d{1,3})\)\]\]$/;
+
+/** Obsidian link with the relation in its display text: `[[person/Ada|manages (80)]]`. */
+export function formatRelationLink(relation: Relation): string {
+  const { target, relationship, strength } = relation;
+  const path =
+    target.kind === 'skill' ? `${target.id}${SKILL_LINK_SUFFIX}` : target.id;
+  return `[[${path}|${relationship} (${strength})]]`;
+}
+
+export function parseRelationLink(link: string): Relation {
+  const match = RELATION_LINK.exec(link);
+  if (!match) throw new Error(`Malformed relation link: ${link}`);
+  const [, path = '', relationship = '', strength = ''] = match;
+  return relationSchema.parse({
+    target: path.endsWith(SKILL_LINK_SUFFIX)
+      ? { kind: 'skill', id: path.slice(0, -SKILL_LINK_SUFFIX.length) }
+      : { kind: 'entity', id: path },
+    relationship,
+    strength: Number(strength),
+  });
+}
+
+/** Forward conversion of v1-v4 labels that would break a link. */
+function linkSafeRelations<T extends { relationship: string }>(
+  relations: readonly T[],
+): T[] {
+  return relations.map((relation) => ({
+    ...relation,
+    relationship:
+      relation.relationship
+        .replace(LINK_UNSAFE, ' ')
+        .replace(/\s+/g, ' ')
+        .trim() || 'talks with',
+  }));
+}
 
 export const entityFieldsSchema = z
   .object({
@@ -331,12 +381,23 @@ const oldFrontmatterSchema = z.union([
   v3FrontmatterSchema,
   uuidFrontmatterSchema,
 ]);
-const frontmatterSchema = v3FrontmatterSchema
+// Released v4: named files, object relations. Converted to v5 on startup.
+const v4FrontmatterSchema = v3FrontmatterSchema
   .omit({ Title: true, MergedFrom: true, RelatedTo: true, FormatVersion: true })
   .extend({
     FormatVersion: z.literal(4),
+    RelatedTo: z.array(v4RelationSchema).max(100),
+  });
+// v5 stores RelatedTo on disk as Obsidian links (see formatRelationLink).
+const frontmatterSchema = v4FrontmatterSchema
+  .omit({ RelatedTo: true, FormatVersion: true })
+  .extend({
+    FormatVersion: z.literal(5),
     RelatedTo: z.array(relationSchema).max(100),
   });
+const linkFrontmatterSchema = frontmatterSchema.extend({
+  RelatedTo: z.array(z.string()).max(100),
+});
 
 // Retain the original document contract for forward conversion of flat notes.
 const legacyFrontmatterSchema = uuidFrontmatterSchema.extend({
@@ -556,7 +617,15 @@ function serialize(entity: MemoryEntity): string {
   frontmatterSchema.parse(entity.frontmatter);
   entityIdSchema.parse(entity.id);
   validateSections(entity.sections);
-  const content = `---\n${stringify(entity.frontmatter)}---\n\n${Object.entries(
+  // FormatVersion first, so tools can sniff the version from the first line.
+  const { FormatVersion, ...rest } = entity.frontmatter;
+  const frontmatter = {
+    FormatVersion,
+    ...rest,
+    RelatedTo: rest.RelatedTo.map(formatRelationLink),
+  };
+  // No folding: a link must stay on one line.
+  const content = `---\n${stringify(frontmatter, { lineWidth: 0 })}---\n\n${Object.entries(
     entity.sections,
   )
     .map(([name, facts]) => `## ${name}\n\n${formatFacts(facts)}`)
@@ -570,12 +639,18 @@ function deserialize(
   content: string,
   id: string,
   folder?: string,
-): { entity: MemoryEntity; legacy: boolean; old?: LegacyFields } {
+): {
+  entity: MemoryEntity;
+  legacy: boolean;
+  outdated: boolean;
+  old?: LegacyFields;
+} {
   const match = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/.exec(content);
   if (!match?.[1] || match[2] === undefined)
     throw new Error('Missing entity frontmatter');
   const raw = parse(match[1], { maxAliasCount: 0 });
   let old: LegacyFields | undefined;
+  let v4: z.infer<typeof v4FrontmatterSchema> | undefined;
   let entityType: string;
   if (raw?.FormatVersion === 1) {
     const legacy = legacyFrontmatterSchema.parse(raw);
@@ -593,7 +668,8 @@ function deserialize(
     old = fields;
   } else {
     entityType = entityTypeSchema.parse(folder);
-    if (raw?.FormatVersion !== 4) {
+    if (raw?.FormatVersion === 4) v4 = v4FrontmatterSchema.parse(raw);
+    else if (raw?.FormatVersion !== 5) {
       const legacy = oldFrontmatterSchema.parse(raw);
       if ('Id' in legacy && legacy.Id !== id.split('/').at(-1))
         throw new Error('Legacy ID does not match filename');
@@ -601,14 +677,28 @@ function deserialize(
       old = fields;
     }
   }
-  const frontmatter = old
-    ? {
-        ...frontmatterSchema
-          .omit({ RelatedTo: true })
-          .parse({ ...old, FormatVersion: 4 }),
-        RelatedTo: old.RelatedTo as Relation[],
-      }
-    : frontmatterSchema.parse(raw);
+  let frontmatter: MemoryEntity['frontmatter'];
+  if (old)
+    frontmatter = {
+      ...frontmatterSchema
+        .omit({ RelatedTo: true })
+        .parse({ ...old, FormatVersion: 5 }),
+      // Legacy targets are repointed to names before the note is written.
+      RelatedTo: linkSafeRelations(old.RelatedTo) as Relation[],
+    };
+  else if (v4)
+    frontmatter = {
+      ...v4,
+      FormatVersion: 5,
+      RelatedTo: linkSafeRelations(v4.RelatedTo),
+    };
+  else {
+    const stored = linkFrontmatterSchema.parse(raw);
+    frontmatter = {
+      ...stored,
+      RelatedTo: stored.RelatedTo.map(parseRelationLink),
+    };
+  }
   const name = id.includes('/') ? id.slice(id.indexOf('/') + 1) : id;
   const sections: Record<string, Fact[]> = Object.create(null);
   for (const section of match[2].split(/^## /m).slice(1)) {
@@ -622,6 +712,7 @@ function deserialize(
   return {
     entity: { id, entityType, name, frontmatter, sections },
     legacy: !!old,
+    outdated: !!old || !!v4,
     old,
   };
 }
@@ -661,7 +752,7 @@ class EntityStoreModule implements EntityStore {
         name: normalizeEntityName(input.name),
         entityType: input.entityType,
         frontmatter: {
-          FormatVersion: 4,
+          FormatVersion: 5,
           CreatedAt: at,
           LastUpdatedAt: at,
           LastReadAt: null,
@@ -1061,13 +1152,17 @@ class EntityStoreModule implements EntityStore {
         if (!stat.isFile() || stat.size > 500_000)
           throw new Error('Invalid entity file');
         const content = await handle.readFile('utf8');
-        const { entity, legacy, old } = deserialize(content, id, type);
+        const { entity, legacy, outdated, old } = deserialize(
+          content,
+          id,
+          type,
+        );
         if (!legacy) entityIdSchema.parse(id);
         else legacyEntityIdSchema.parse(stem);
         const key = legacy ? stem : entityKey(id);
         if (ids.has(key)) throw new Error('Duplicate entity identity');
         ids.add(key);
-        documents.push({ file, entity, legacy, old, stem });
+        documents.push({ file, entity, legacy, outdated, old, stem });
       } catch (error) {
         throw new Error(`Invalid entity ${file}`, { cause: error });
       } finally {
@@ -1201,9 +1296,13 @@ class EntityStoreModule implements EntityStore {
       id: entity.id,
       content: serialize(entity),
     }));
-    if (moves.length) await this.commit({ moves, documents: snapshots });
-    else
-      for (const entity of final)
+    // Notes older than v5 are rewritten in place; older binaries refuse v5.
+    const rewrites = moves.length
+      ? snapshots
+      : snapshots.filter((_, index) => active[index]?.outdated);
+    if (rewrites.length) await this.commit({ moves, documents: rewrites });
+    for (const entity of final)
+      if (!this.entities.has(entityKey(entity.id)))
         this.entities.set(entityKey(entity.id), entity);
   }
 }
@@ -1212,6 +1311,8 @@ interface LoadedDocument {
   file: string;
   entity: MemoryEntity;
   legacy: boolean;
+  /** Stored before format v5; rewritten on startup. */
+  outdated: boolean;
   old?: LegacyFields;
   stem: string;
 }

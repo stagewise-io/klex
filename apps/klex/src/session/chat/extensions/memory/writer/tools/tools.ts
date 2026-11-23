@@ -48,11 +48,8 @@ import { rejectSecrets } from './secrets';
 
 // Writer input: a relation also names its reverse, so one call links both sides.
 const writerRelationSchema = relationSchema.extend({
-  inverse: z
-    .string()
-    .trim()
-    .min(1)
-    .max(200)
+  // Same rules as `relationship`: the inverse is stored as a link label.
+  inverse: relationSchema.shape.relationship
     .optional()
     .describe(
       'Entity targets: label from the target\'s side, e.g. relationship "requested" / inverse "requested by". Tool writes both sides.',

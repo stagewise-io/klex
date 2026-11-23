@@ -1,0 +1,63 @@
+---
+title: 模型
+description: 配置模型提供商，并为 Klex Bot 的不同任务选择模型。
+related:
+  - /bot/quickstart
+  - /bot/concepts/how-bots-work
+  - /cloud/hosted-vs-local
+---
+
+Klex Bot 使用你配置的提供商所提供的模型。Klex 支持多种提供商类型，包括 OpenAI、Anthropic、Google Gemini、本地 Ollama 及兼容的自定义端点。可用模型取决于你的提供商和账户。
+
+提供商是 Klex 连接的服务或端点；模型是该提供商提供的具体模型。配置提供商不会自动为每项任务选择模型。
+
+## 配置模型
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="云托管">
+
+1. 在 Klex Cloud 中打开你的 Bot，然后选择 **Models**。Bot 必须已连接，且你需要管理员权限才能更改模型。
+2. 如果尚未连接提供商，选择 **Add a provider**，选择提供商并完成设置。所需设置和登录步骤因提供商而异。
+3. 选择模型预设，或在模型表中为每种用途选择模型。检查所选模型，包括 Chat、记忆和压缩模型。
+
+</Tab>
+<Tab title="自托管">
+
+在自托管的 Klex 应用中：
+
+1. 打开 **Settings → Providers & Endpoints**，按下 `a`，然后选择提供商类型。输入所需设置并完成登录步骤。
+2. 打开 **Settings → Model Selection**，选择 **Chat**，然后从已配置的提供商添加模型。常规对话和生成 Soul 需要聊天模型。
+3. 检查其他用途，并根据需要添加兼容的模型。此界面提供记忆、咨询、图像输入、音频输入和语音的选项。
+
+</Tab>
+</Tabs>
+
+部分提供商会自动发现模型；其他提供商需要你手动添加模型信息。可用性和支持的功能因提供商和模型而异。
+
+## 为不同任务选择模型
+
+你可以将同一个模型用于多种用途，也可以为不同工作选择不同模型。请考虑模型是否支持所需输入，以及提供商的费用和延迟。使用前请检查提供商的条款和价格。
+
+对于聊天，你可以配置有序的模型列表。发生模型错误时，Klex 可以回退到另一个已配置的聊天模型。使用模型控件检查顺序。
+
+## Instincts 和模型用量
+
+Klex 可以使用 **Instincts** 模型在生成步骤前对上下文进行分类。如果未配置 Instincts 模型，Klex 会使用可用的 Chat 模型进行分类。这些调用可能增加模型用量和费用。请检查其价格并监控用量。
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="云托管">
+
+打开 Bot 的 **Models** 部分，在模型表中为 **Quick Decisions** 选择一个模型。这就是 Instincts 模型。
+
+</Tab>
+<Tab title="自托管">
+
+在 **Settings → Model Selection** 中选择 Instincts 模型。
+
+</Tab>
+</Tabs>
+
+默认情况下，动态推理力度以影子模式运行：它会评估建议的推理力度，但不会更改主模型的设置。影子分类仍可能使用模型并产生费用。
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

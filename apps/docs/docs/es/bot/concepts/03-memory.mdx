@@ -2,16 +2,16 @@
 title: Memoria de Klex Bot
 sidebar:
   label: Memoria
-description: Qué almacena la memoria de Klex Bot, dónde se guarda y cómo acceden a ella los administradores.
+description: Cómo utiliza un Klex Bot sus skills y experiencias anteriores en su trabajo.
 related:
   - /bot/concepts/data-directory
   - /bot/concepts/how-bots-work
   - /cloud/hosted-vs-local
 ---
 
-La memoria de Klex Bot admite **skills y aprendizajes** y puede recuperar contexto relevante de la actividad anterior del Bot. Se gestiona en el entorno propio del Bot, junto con las sesiones activas que lo mantienen en funcionamiento.
+La memoria ayuda a un Klex Bot a aprovechar lo aprendido y el contexto de trabajos anteriores. Combina **skills**, incluidos procedimientos aprendidos y preconfigurados, con conocimientos relevantes de la actividad del Bot.
 
-El Bot puede solicitar recuerdos en segundo plano; también puede aparecer contexto relevante sin una solicitud. Los recuerdos pueden ser incompletos o incorrectos, así que verifica los datos importantes. Una indicación de contexto puede orientar la búsqueda, pero no es un control de acceso.
+Un Bot puede usar skills para tareas conocidas y recuperar contexto anterior cuando resulte útil, como la terminología de un proyecto o una decisión previa. Puede solicitar recuerdos en segundo plano y también puede aparecer contexto relevante mientras trabaja. Consulta [Agent Skills](/bot/concepts/agent-skills) para saber más sobre los procedimientos reutilizables.
 
 <a id="where-chats-and-memory-are-stored"></a>
 
@@ -25,7 +25,9 @@ Los chats y la memoria se almacenan en el directorio de datos del Bot:
 Todos los datos de los Bots alojados en Cloud, incluida la memoria, están cifrados en tránsito y en reposo.
 
 <a id="how-administrators-access-them"></a>
+<a id="cómo-acceden-los-administradores"></a>
+<a id="review-chats-and-skills"></a>
 
-## Cómo acceden los administradores
+## Revisar chats y skills
 
-Los administradores pueden acceder a los chats y a la memoria mediante la Admin API del Bot. El panel de Klex Cloud sirve como interfaz y proxy inverso para la Admin API de cada Bot. Para obtener más información sobre el almacenamiento, consulta el [directorio de datos](/bot/concepts/data-directory).
+Los administradores pueden revisar los chats y las skills mediante la Admin API del Bot. El panel de Klex Cloud sirve como interfaz y proxy inverso para la Admin API de cada Bot. Para obtener más información sobre el almacenamiento, consulta el [directorio de datos](/bot/concepts/data-directory).

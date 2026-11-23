@@ -120,25 +120,16 @@ export default defineConfig({
         },
         {
           from: `${locale}/concepts/god-messages`,
-          to: `${locale}/bot/concepts/${['/de'].includes(locale) ? 'god-messages' : 'soul'}`,
+          to: `${locale}/bot/concepts/soul`,
         },
-        ...(['/de'].includes(locale)
-          ? []
-          : [
-              {
-                from: `${locale}/bot/concepts/god-messages`,
-                to: `${locale}/bot/concepts/soul`,
-              },
-            ]),
-        // German retains its Availability page until the locale review.
-        ...(locale === '/de'
-          ? []
-          : [
-              {
-                from: `${locale}/bot/reliability/availability`,
-                to: `${locale}/bot/reliability/updates`,
-              },
-            ]),
+        {
+          from: `${locale}/bot/concepts/god-messages`,
+          to: `${locale}/bot/concepts/soul`,
+        },
+        {
+          from: `${locale}/bot/reliability/availability`,
+          to: `${locale}/bot/reliability/updates`,
+        },
         ...unchanged.map((path) => ({
           from: `${locale}${path}`,
           to: `${locale}/bot${path}`,

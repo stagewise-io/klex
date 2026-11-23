@@ -29,7 +29,7 @@ Versions- und Verbindungsdetails finden Sie unter **Settings → Debug Informati
 
 Prüfen Sie den Weg vom Bot bis zur Nachrichtenquelle:
 
-1. **Prüfen Sie, ob der Bot läuft.** Kontrollieren Sie bei einem selbst gehosteten Bot dessen Prozess oder Dienst. Wenn Sie den optionalen Health-Listener aktiviert haben, prüfen Sie die Bereitschaft wie unter [Verfügbarkeit](/bot/reliability/availability#monitor-a-self-hosted-bot) beschrieben. Eine erfolgreiche Prüfung belegt nicht, dass Modell und Verbindungen funktionieren.
+1. **Prüfen Sie, ob der Bot läuft.** Kontrollieren Sie bei einem selbst gehosteten Bot dessen Prozess oder Dienst. Wenn Sie den optionalen Health-Listener aktiviert haben, prüfen Sie den Bereitschaftsendpunkt. Eine erfolgreiche Prüfung belegt nicht, dass Modell und Verbindungen funktionieren.
 2. **Prüfen Sie den Modellzugriff.** Stellen Sie sicher, dass ein Anbieter konfiguriert und ein Chatmodell ausgewählt ist. Prüfen Sie bei fehlgeschlagenen Anfragen das Konto und den Dienst des Anbieters. Siehe [Modelle](/bot/concepts/models).
 3. **Prüfen Sie Verbindung und Konto.** Kontrollieren Sie bei Nachrichten aus einer verbundenen App den Status des MCP-Servers, erforderliche Autorisierungen und den Zugriff des Bot-Kontos auf die Konversation. Die Zustellung von Ereignissen hängt auch von den Funktionen des Servers ab. Siehe [MCP und Klex Bots](/bot/concepts/mcp#if-a-connection-needs-attention).
 4. **Prüfen Sie verfügbare Aktivitäten und Logs.** Suchen Sie nach Fehlern um den Zeitpunkt der Anfrage. Nutzen Sie, sofern verfügbar, das Cloud-Dashboard oder die obigen Diagnosemöglichkeiten für selbst gehostete Bots. Logs und Aktivitäten können unvollständig sein; ein fehlender Eintrag allein zeigt nicht, wo die Zustellung fehlgeschlagen ist.

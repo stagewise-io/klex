@@ -29,7 +29,7 @@ Beim ersten `SIGTERM` beginnt für einen laufenden Bot im Headless-Modus eine Dr
 
 Setzen Sie vor dem Start von Klex `KLEX_DRAIN_TIMEOUT_MS`, um das Zeitlimit in Millisekunden zu ändern. Gültige Werte liegen zwischen `0` und `3600000`; `0` deaktiviert die Drain-Phase. Ein zweites `SIGTERM` oder `SIGINT`, zum Beispiel durch Strg+C, überspringt die verbleibende Wartezeit und startet das Herunterfahren. Wenn der Prozess noch startet, fährt er ohne die Drain-Phase des laufenden Bots herunter.
 
-Geben Sie Ihrer Dienstverwaltung oder Ihrem Orchestrator genügend Zeit für die Drain-Phase und die anschließenden Aufräumarbeiten, bevor die Beendigung erzwungen wird. Das standardmäßige Zeitlimit für die Aufräumarbeiten beträgt 15 Sekunden und gilt zusätzlich zum Drain-Zeitlimit. Bei den Standardwerten bietet beispielsweise ein Kubernetes-Wert von `terminationGracePeriodSeconds: 330` einen Puffer über beide Zeitlimits hinaus. Passen Sie ihn an, wenn Sie die Zeitlimits ändern. Während der Drain-Phase gibt die optionale Bereitschaftsprüfung 503 zurück. Siehe [Verfügbarkeit](/bot/reliability/availability#monitor-a-self-hosted-bot).
+Geben Sie Ihrer Dienstverwaltung oder Ihrem Orchestrator genügend Zeit für die Drain-Phase und die anschließenden Aufräumarbeiten, bevor die Beendigung erzwungen wird. Das standardmäßige Zeitlimit für die Aufräumarbeiten beträgt 15 Sekunden und gilt zusätzlich zum Drain-Zeitlimit. Bei den Standardwerten bietet beispielsweise ein Kubernetes-Wert von `terminationGracePeriodSeconds: 330` einen Puffer über beide Zeitlimits hinaus. Passen Sie ihn an, wenn Sie die Zeitlimits ändern. Während der Drain-Phase gibt die optionale Bereitschaftsprüfung 503 zurück.
 
 <a id="manage-access"></a>
 

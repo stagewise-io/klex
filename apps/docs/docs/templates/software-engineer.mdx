@@ -1,0 +1,69 @@
+---
+title: Software Engineer
+description: How a Klex bot works as a software engineer, delegates code to coding agents, and ships pull requests.
+---
+
+The Software Engineer template configures a Klex bot to own engineering work from ticket to merged pull request. The bot runs coding agent CLIs such as Claude Code or Codex CLI on a connected computer, reviews everything they write, and handles pull requests, CI, tickets, and team updates itself. It writes code by hand only when a change is a few lines and faster than writing a brief.
+
+<Panel title="Good to know">
+Bot templates are managed in [Klex Cloud](https://cloud.klex.bot). If you self-host Klex without Klex Cloud, you can follow the same workflow by connecting a computer over MCP and adding equivalent Agent Skills to your bot's data directory.
+</Panel>
+
+## How it works day to day
+
+A Software Engineer bot follows the same loop a human engineer uses when directing coding agents.
+
+1. **Read the ticket and clarify scope.** The bot reads the issue in Linear, Jira, or GitHub Issues along with the relevant code and recent git history. If the goal or acceptance criteria are unclear, it asks the requester before starting.
+2. **Isolate each task in a worktree and terminal session.** The bot creates one git worktree and branch per task, for example `git worktree add ../repo-task-a -b task-a origin/main`, and starts the coding agent in a named `tmux` session. It installs dependencies and confirms tests run before handing off the worktree. For most tickets it runs one agent. When it has several independent tasks, it can run two to four agents in parallel while tracking which branch each agent owns.
+3. **Write a concrete brief and supervise.** Each coding agent receives a short brief with the goal, the files or tickets to inspect, the constraints to follow, and the exact test, lint, and typecheck commands to run. The bot checks in on running sessions, sends targeted follow-ups if an agent stalls, or stops one that loops and rewrites the brief.
+4. **Review the agent's output before opening a PR.** The bot reads the full `git diff origin/main...HEAD` because coding agents sometimes report passing work they did not verify. It runs tests, linting, and typechecking itself, checks user-facing behavior, and looks for common agent mistakes such as weakened tests, invented APIs, swallowed errors, duplicate helpers, or leftover scratch files. When it finds problems, it sends numbered file-and-line fixes back to the agent, or fixes the code itself after two rounds without progress. After integrating the work, it removes unused worktrees with `git worktree remove`.
+5. **Own the pull request through CI and review.** The bot opens focused pull requests that follow the repository's branch, commit, and PR conventions, with a description written for a reviewer who has not read the ticket. After every push, it watches CI, reads failure logs, reproduces issues locally, and fixes the cause instead of retrying blindly. It answers every human and review-bot comment, merges only when required checks and approvals pass and it has permission to merge, checks deploys, updates the ticket, and posts a status update in chat.
+6. **Review teammates' pull requests.** When asked to review a PR, the bot reads the linked ticket and the full diff. It checks correctness, safety, design, tests, and readability in that order, separates blocking issues from optional nits, and posts only findings it verified.
+
+## What the template includes
+
+In [Klex Cloud](https://cloud.klex.bot), the Software Engineer template sets the bot's soul, defaults, managed skills, tool categories, and first-run onboarding checklist.
+
+### Skills
+
+Klex Cloud syncs these skills into the bot's `templates` skill namespace whenever the bot connects.
+
+| Skill | What it covers |
+| --- | --- |
+| `set-up-coding-agents` | Picks the coding agent CLI the team pays for, installs it from official docs on a connected or managed computer, and walks the user through browser sign-in without asking for secrets in chat. |
+| `delegate-to-coding-agents` | Plans the ticket, sets up isolated git worktrees and named `tmux` sessions, briefs coding agents, supervises parallel runs, and removes finished worktrees. |
+| `review-agent-work` | Reads the full diff, runs checks directly, catches common agent mistakes, sends concrete fixes back, and cleans up commits before opening a pull request. |
+| `own-pull-requests` | Opens focused PRs, keeps CI green, responds to review comments, and sees changes through to merge and deploy. |
+| `review-pull-requests` | Reviews teammates' pull requests for correctness, safety, design, tests, and readability, and separates blockers from optional suggestions. |
+| `connect-your-tools` | Lists the template's tool categories so the bot knows which tools help with its job and can suggest connecting them through Klex Cloud connectors or custom MCP servers. |
+
+### Tool categories
+
+You can connect the tools your team already uses through Klex Cloud connectors or custom MCP servers.
+
+- **Source control.** GitHub, GitLab, Bitbucket.
+- **Issue tracking.** Linear, Jira, GitHub Issues.
+- **CI.** GitHub Actions, Vercel, CircleCI, Buildkite.
+- **Docs and knowledge.** Notion, Confluence, Google Docs.
+- **Chat.** Slack, Teams, Discord.
+- **Other tools.** Sentry, PostHog, Figma, cloud consoles, or databases through MCP.
+
+### Defaults and onboarding checklist
+
+By default, the template uses a strong model tier, recommends a medium cloud computer if you do not connect your own machine, and enables the `test-first` and `small-prs` traits. You can also enable `nitpicker` and `boy-scout`.
+
+On its first run, the bot works through five onboarding todos with you:
+
+1. Identify the repositories, issue tracker, and CI you work with, and verify access to each.
+2. Confirm which coding agents your team uses, such as Claude Code, Codex, or Cursor, and make sure a computer with access to them is connected.
+3. Agree on the main communication channel, such as Cloud chat, Slack, or Teams.
+4. Learn the team's pull request conventions: branch names, required reviews, checks, and who merges.
+5. Pick the first issue or task to work on.
+
+## Best practices
+
+- **Give the bot its own accounts.** Create dedicated GitHub, Linear, and Slack identities so permissions stay scoped and every commit, comment, and status change is traceable. See [Create distinct identities](/guides/bot-identities).
+- **Share your engineering context.** Give the bot access to your company handbook, architecture docs, and repository contributing guides so it follows your conventions right away. See [Create a company handbook](/guides/company-handbook).
+- **Use a shared channel for multi-bot handoffs.** If a Product Manager bot files tickets and a Software Engineer bot implements them, put them in a channel humans can also read, such as `#bot-communication`. See [Use shared messaging boards](/guides/shared-messaging-boards).
+- **Prefer subscriptions over API keys for coding CLIs.** Sign the coding agent CLI into a team subscription through the browser login flow instead of billing every token on an API key. Keep secrets out of chat, tickets, and repositories. If a provider only supports API keys, set the key directly on the computer.
+- **Set clear merge rules early.** Decide up front whether the bot may merge its own pull requests once checks and approvals pass, or whether a human always merges. Start with small, well-scoped tickets until the bot's test commands and PR review loop match your team's expectations.

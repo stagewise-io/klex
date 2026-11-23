@@ -1,0 +1,108 @@
+{
+  "_klex": {
+    "store": "config",
+    "schemaVersion": 13,
+    "compatibilityVersion": 8,
+    "minimumKlexVersion": "0.36.0",
+    "writtenByKlexVersion": "0.37.1"
+  },
+  "configVersion": 2,
+  "officialName": "Frozen Upgrade Agent",
+  "timezone": "UTC",
+  "providers": {
+    "primary": {
+      "type": "openai",
+      "settings": {
+        "apiKey": "${env:PRIMARY_API_KEY}"
+      },
+      "knownModels": {
+        "tts-1": {
+          "kind": "text-to-speech"
+        }
+      }
+    },
+    "langdock": {
+      "type": "langdock",
+      "settings": {
+        "apiKey": "${env:LANGDOCK_API_KEY}",
+        "region": "us",
+        "baseUrl": "https://gateway.example",
+        "headers": {
+          "X-Tenant": "${env:TENANT}"
+        }
+      }
+    }
+  },
+  "modelSelection": {
+    "chat": [
+      {
+        "providerId": "langdock",
+        "modelId": "anthropic/custom",
+        "providerOptions": {
+          "anthropic": {
+            "thinking": {
+              "type": "enabled",
+              "budgetTokens": 1024
+            }
+          }
+        }
+      }
+    ],
+    "compaction": [],
+    "memory": [],
+    "imageVision": [],
+    "audioListening": [
+      {
+        "providerId": "primary",
+        "modelId": "whisper-1"
+      }
+    ],
+    "consult": [],
+    "instincts": [],
+    "voice": {
+      "sts": [
+        {
+          "providerId": "primary",
+          "modelId": "gpt-realtime"
+        }
+      ]
+    }
+  },
+  "mcpServers": {
+    "workspace": {
+      "command": "workspace-mcp",
+      "args": ["--root", "/workspace"],
+      "events": [
+        {
+          "name": "incident.opened",
+          "arguments": {
+            "service": "api"
+          }
+        },
+        {
+          "name": "deploy.finished",
+          "delivery": "poll"
+        }
+      ]
+    }
+  },
+  "extensions": {
+    "memory": {
+      "episodes": {
+        "maxCharacters": 50000,
+        "maxDurationMs": 3600000,
+        "idleTimeoutMs": 450000
+      }
+    }
+  },
+  "instinct": {
+    "enabled": true,
+    "timeoutMs": 12000,
+    "classifierTimeoutMs": 10000,
+    "historyCharacterCap": 16000,
+    "messageCharacterCap": 2000,
+    "contextCharacterCap": 2000,
+    "attemptTimeoutMs": 5000,
+    "fallbackResetIdleMs": 600000
+  }
+}

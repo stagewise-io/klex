@@ -6,10 +6,14 @@ import {
   isConfiguredSecretMarker,
   nextProviderInstanceId,
   parseSetupValue,
+  providerGroup,
   setupFieldsFromSchema,
 } from './providers';
 
 describe('provider instance ID', () => {
+  it('groups Langdock with gateways', () => {
+    expect(providerGroup('langdock')).toBe('Gateways & plans');
+  });
   it('uses the provider type and skips existing IDs', () => {
     expect(nextProviderInstanceId('openai', [])).toBe('openai');
     expect(nextProviderInstanceId('openai', ['openai'])).toBe('openai-2');

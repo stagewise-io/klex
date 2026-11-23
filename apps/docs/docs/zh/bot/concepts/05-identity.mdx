@@ -1,0 +1,36 @@
+---
+title: Klex Bot 的身份
+sidebar:
+  label: 身份
+description: Bot 的名称、Soul 和关联账户如何构成其身份。
+related:
+  - /bot/concepts/soul
+  - /bot/concepts/communication
+  - /bot/concepts/brain-and-computers
+---
+
+Klex Bot 有一个名称和一个 [Soul](/bot/concepts/soul)，后者描述其性格和优先事项。关联账户决定 Bot 在外部应用中如何显示以及可以访问什么。
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="云托管">
+
+在 Klex Cloud 中打开 Bot，选择其名称旁的 **Edit bot**。要进行更改，Bot 必须已连接，且你需要组织所有者或管理员权限。更改 **Name** 字段。
+
+</Tab>
+<Tab title="自托管">
+
+在 Klex 应用中，**Settings → Bot Identity** 显示 Bot 的正式名称，并允许你更新名称。
+
+</Tab>
+</Tabs>
+
+Bot 配置的名称会包含在其会话上下文中。
+
+<a id="identity-in-connected-apps"></a>
+
+## 关联应用中的身份
+
+在大多数关联应用中，Bot 通过自己的账户执行操作。请在应用内配置该账户的权限。有关如何连接环境，请参阅[连接](/bot/concepts/brain-and-computers)。
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

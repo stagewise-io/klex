@@ -1,0 +1,51 @@
+---
+title: Agent Skills
+description: Як Klex Bots використовують і зберігають Agent Skills для повторюваних завдань.
+related:
+  - /bot/concepts/memory
+  - /bot/concepts/data-directory
+---
+
+Agent Skill — це набір інструкцій для повторюваного завдання, який можна використовувати знову. Наприклад, Skill може описувати, як підготувати звіт про стан проєкту. Опис повідомляє Bot, коли застосовуються інструкції, а основний текст містить порядок дій.
+
+Klex дає Bot змогу знаходити доступні Skills і завантажувати процедуру, коли вона потрібна для завдання.
+
+<a id="where-skills-come-from"></a>
+
+## Звідки беруться Skills
+
+Skills можуть надходити з різних джерел:
+
+- **Template Skills** постачаються з Bot Templates.
+- **Learned Skills** формуються на основі досвіду Bot.
+- **Uploaded Skills** надають користувачі, щоб додати поведінку або знання.
+
+Кожен Bot зберігає свої Skills у власній [директорії даних](/bot/concepts/data-directory). Skill визначається простором імен і назвою, наприклад `learning/project-status`.
+
+Фоновий процес пам’яті аналізує активність і може перетворювати корисні висновки на Skills. Під час обробки подальшої активності він може оновлювати або видаляти Learned Skills; не кожна розмова призводить до створення Skill.
+
+Кожна Skill зберігається у файлі `SKILL.md` в каталозі `skills/{namespace}/{name}/`. Файл містить назву, опис та основний текст у форматі Markdown. Skill також може мати довідкові файли в папці `references/`.
+
+<a id="review-and-manage-skills"></a>
+
+## Перевірка та керування Skills
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Розміщений у Cloud">
+
+Керування Uploaded Skills через Cloud з’явиться незабаром. Uploaded Skills будуть єдиним типом Skills, яким користувачі зможуть керувати через Cloud.
+
+</Tab>
+<Tab title="Самостійно розміщений">
+
+Для перевірки Skills використовуйте Admin API Bot. Про локальний доступ та його обмеження безпеки див. [Перевірка активності Bot](/bot/guides/observability#access-the-local-admin-api).
+
+</Tab>
+</Tabs>
+
+Admin API Bot дає змогу отримати список Skills та їхній вміст, а також редагувати або видаляти їх. Використовуйте `GET /v1/skills` для отримання списку та `GET /v1/skills/{namespace}/{name}` для читання окремої Skill. Той самий повний шлях підтримує `PATCH` і `DELETE`. Для довідкових файлів є окремі маршрути API. Видалення може завершитися помилкою, якщо на Skill посилається сутність пам’яті.
+
+Перевіряйте точність Learned Skills. Процес пам’яті може з часом оновлювати або видаляти їх, зокрема Skills, відредаговані адміністратором. Редагування не захищає Learned Skill від подальших змін.
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

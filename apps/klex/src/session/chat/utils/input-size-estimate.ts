@@ -166,6 +166,7 @@ interface EstimateState {
   structuredCandidateCount: number;
   structuredCandidateChars: number;
   structuredScanTruncated: boolean;
+  structuredScanBudgetExhausted: boolean;
   repeatedLineScanTruncated: boolean;
 }
 
@@ -194,6 +195,7 @@ function createState(): EstimateState {
     structuredCandidateCount: 0,
     structuredCandidateChars: 0,
     structuredScanTruncated: false,
+    structuredScanBudgetExhausted: false,
     repeatedLineScanTruncated: false,
   };
 }
@@ -394,19 +396,25 @@ interface StructuredCandidate {
 
 // Keep path/ID scans linear; avoid unanchored backtracking over prompt text.
 function recordStructuredContent(state: EstimateState, text: string): void {
-  if (state.structuredScanTruncated) return;
+  if (state.structuredScanBudgetExhausted) return;
   const candidates: StructuredCandidate[] = [];
   collectUrlCandidates(state, text, candidates);
-  if (state.structuredCandidateCount >= MAX_STRUCTURED_CANDIDATES)
+  if (state.structuredCandidateCount >= MAX_STRUCTURED_CANDIDATES) {
     state.structuredScanTruncated = true;
-  if (!state.structuredScanTruncated)
+    state.structuredScanBudgetExhausted = true;
+  }
+  if (!state.structuredScanBudgetExhausted)
     collectFilepathCandidates(state, text, candidates);
-  if (state.structuredCandidateCount >= MAX_STRUCTURED_CANDIDATES)
+  if (state.structuredCandidateCount >= MAX_STRUCTURED_CANDIDATES) {
     state.structuredScanTruncated = true;
-  if (!state.structuredScanTruncated)
+    state.structuredScanBudgetExhausted = true;
+  }
+  if (!state.structuredScanBudgetExhausted)
     collectIdentifierCandidates(state, text, candidates);
-  if (state.structuredCandidateCount >= MAX_STRUCTURED_CANDIDATES)
+  if (state.structuredCandidateCount >= MAX_STRUCTURED_CANDIDATES) {
     state.structuredScanTruncated = true;
+    state.structuredScanBudgetExhausted = true;
+  }
 
   candidates.sort(
     (left, right) =>
@@ -573,15 +581,22 @@ function addStructuredCandidate(
 ): boolean {
   if (state.structuredCandidateCount >= MAX_STRUCTURED_CANDIDATES) {
     state.structuredScanTruncated = true;
+    state.structuredScanBudgetExhausted = true;
     return false;
   }
   state.structuredCandidateCount += 1;
   const length = end - start;
+  if (length > MAX_STRUCTURED_CANDIDATE_LENGTH) {
+    // Skip one oversized candidate, but keep collecting later content.
+    state.structuredScanTruncated = true;
+    return true;
+  }
   if (
-    length > MAX_STRUCTURED_CANDIDATE_LENGTH ||
-    state.structuredCandidateChars + length > MAX_STRUCTURED_CANDIDATE_CHARS
+    state.structuredCandidateChars + length >
+    MAX_STRUCTURED_CANDIDATE_CHARS
   ) {
     state.structuredScanTruncated = true;
+    state.structuredScanBudgetExhausted = true;
     return false;
   }
   state.structuredCandidateChars += length;

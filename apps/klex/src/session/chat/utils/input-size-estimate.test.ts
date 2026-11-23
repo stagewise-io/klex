@@ -178,8 +178,8 @@ describe('estimateInputSize', () => {
   });
 
   it('scans long unbroken history with bounded linear work', () => {
-    const longAlphaRun = 'g'.repeat(20_000);
-    const longHyphenRun = 'g-'.repeat(10_000);
+    const longAlphaRun = 'z'.repeat(20_000);
+    const longHyphenRun = 'z-'.repeat(10_000);
     const { attributes } = estimateInputSize({
       basePrompt: '',
       extensionSystemPromptParts: [],
@@ -192,5 +192,28 @@ describe('estimateInputSize', () => {
     expect(metric(attributes, 'identifier_units')).toBe(0);
     expect(metric(attributes, 'filepath_units')).toBe(0);
     expect(metric(attributes, 'structured_scan_truncated')).toBe(0);
+  });
+
+  it('continues collecting after oversized structured candidates', () => {
+    const oversizedUrl = `https://example.com/${'x'.repeat(5_000)}`;
+    const oversizedHexRun = 'g'.repeat(20_000);
+    const filepath = '/workspace/src/later/file.ts';
+    const identifier = '0123456789abcdef';
+    const { attributes } = estimateInputSize({
+      basePrompt: '',
+      extensionSystemPromptParts: [],
+      modelMessages: [
+        {
+          role: 'user',
+          content: `${oversizedUrl} ${oversizedHexRun} ${filepath} ${identifier}`,
+        },
+        { role: 'assistant', content: `${filepath} fedcba9876543210` },
+      ],
+      tools: {},
+    });
+
+    expect(metric(attributes, 'structured_scan_truncated')).toBe(1);
+    expect(metric(attributes, 'filepath_units')).toBeGreaterThan(0);
+    expect(metric(attributes, 'identifier_units')).toBeGreaterThan(0);
   });
 });

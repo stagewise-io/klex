@@ -454,7 +454,7 @@ const instinctSchema = z
   .strict();
 
 // The released transformation applies defaults and strips unknown root fields.
-export const configV12OutputSchema = z.object({
+export const configV13OutputSchema = z.object({
   configVersion: z.literal(2).default(2),
   officialName: z
     .string()
@@ -485,7 +485,7 @@ export const configV12OutputSchema = z.object({
     .optional(),
 });
 // Persisted validation requires configVersion.
-export const configV13Schema = configV12OutputSchema
+export const configV13Schema = configV13OutputSchema
   .extend({ configVersion: z.literal(2) })
   .strict();
-export type ConfigV12 = z.infer<typeof configV12OutputSchema>;
+export type ConfigV13 = z.infer<typeof configV13OutputSchema>;

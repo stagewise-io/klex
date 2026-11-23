@@ -1,89 +1,67 @@
 ---
 title: Início rápido
-description: Crie um bot Klex alojado na nuvem ou execute-o no seu computador.
+description: Crie um bot Klex no Cloud ou execute-o no seu computador.
 related:
   - /cloud/hosted-vs-local
   - /bot/concepts/brain-and-computers
 ---
 
-O Klex recomenda um bot alojado na nuvem para a maioria dos utilizadores. Também pode executar um bot no seu computador, com ou sem inscrição no Klex Cloud. Precisa de acesso a um fornecedor de modelos; para a configuração na nuvem precisa ainda de uma conta Klex Cloud.
+Crie um bot Klex para trabalhar consigo. O Klex recomenda o alojamento no Cloud para a maioria dos utilizadores; também pode executar um bot no seu computador.
 
-<div className="hosting-quickstart">
-<Tabs inline hash sync={false}>
-<Tab title="Alojado na nuvem" id="alojamento-na-nuvem">
-
+<a id="creating-your-bot"></a>
 <a id="criar-o-seu-bot"></a>
 
-## Criar um bot alojado na nuvem
+<div className="hosting-quickstart">
+<Tabs inline hash syncKey="hosting">
+<Tab title="Alojado no Cloud" id="alojamento-na-nuvem">
 
-1. Inicie sessão no [Klex Cloud](https://cloud.klex.bot) e comece a criar um bot.
-2. Escolha o alojamento na nuvem e siga os passos para dar um nome ao bot, definir a sua [alma](/bot/concepts/soul) e configurar fornecedores e modelos.
-3. Ligue as aplicações ou computadores de que o bot precisa. Consulte [Ligações](/bot/concepts/brain-and-computers) para gerir o seu acesso.
+<a id="criar-um-bot-alojado-na-nuvem"></a>
 
-Envie uma mensagem ao bot numa aplicação ligada para verificar se responde. Pode consultar a sua atividade no painel Cloud.
+## Configuração alojada no Cloud
+
+1. Inicie sessão no [Klex Cloud](https://cloud.klex.bot) e selecione **New bot**.
+2. Atribua um trabalho ao bot ou escolha um dos sugeridos, e personalize o seu nome e aspeto.
+3. Selecione **Create bot in cloud**.
+4. Reveja os seus traços de caráter e avance para **Models & Computer**.
+5. Ligue um fornecedor de IA e escolha os modelos que o bot deve usar, ou importe a configuração de modelos de outro bot. Termine a configuração quando o bot estabelecer ligação.
+6. Abra o chat do bot para começar.
+
+Pode ligar as aplicações e os computadores de que o bot precisa para trabalhar. Os servidores MCP compatíveis também podem enviar mensagens e eventos das aplicações que levem o bot a trabalhar. Consulte [MCP e bots Klex](/bot/concepts/mcp) para mais detalhes.
 
 </Tab>
 <Tab title="Auto-hospedado" id="auto-hospedagem">
 
+<a id="installation"></a>
 <a id="instalação"></a>
+<a id="instalar-o-klex-para-auto-hospedagem"></a>
+<a id="configuração-com-apoio-do-cloud"></a>
 
-## Instalar o Klex para auto-hospedagem
+## Configuração auto-hospedada
 
-Para executar o bot no seu computador, instale o Klex num terminal:
+1. Inicie sessão no [Klex Cloud](https://cloud.klex.bot), selecione **New bot** e escolha o trabalho e o aspeto do bot.
+2. Selecione **Or run it on your own computer** e depois **Set up on your computer**. Copie o comando completo fornecido pelo Klex Cloud, cole-o num terminal do computador onde o bot será executado e execute-o.
+3. Siga as instruções para configurar o caráter e os modelos do bot.
 
-**macOS, Linux ou WSL:**
-
-```sh
-curl -fsSL https://klex.bot/install.sh | sh
-```
-
-**Windows (PowerShell):**
-
-```powershell
-irm https://klex.bot/install.ps1 | iex
-```
-
-### Configuração com apoio do Cloud
-
-Inicie a configuração de um bot auto-hospedado no Klex Cloud e siga as instruções de inscrição. O bot é executado no seu computador; o Cloud fornece uma interface de administração.
-
-### Configuração independente
-
-Para executar o bot sem o inscrever no Cloud, inicie a aplicação interativa:
+Mantenha o bot em execução no seu computador para que possa trabalhar. Para o reiniciar, execute o seguinte comando num terminal e selecione o bot:
 
 ```sh
-klex --no-cloud
+klex
 ```
 
-1. Prima `a` para criar um bot e introduza o seu nome.
-2. Em **Settings → Providers & Endpoints**, configure um fornecedor de modelos. Em **Model Selection**, selecione um modelo válido para chat.
-3. Abra **Settings → Soul** e crie uma alma que descreva o caráter e o trabalho do bot.
-4. Em **Settings → MCP Servers**, ligue os servidores de que o bot precisa. Configure as permissões das suas contas nas aplicações ligadas.
+<a id="configuração-independente"></a>
+<a id="criar-um-bot-auto-hospedado-sem-o-menu-de-seleção"></a>
 
-Para receber eventos de um canal externo, ligue um servidor MCP que suporte as atualizações de recursos correspondentes, MCP Events ou a [extensão de notificações push](https://github.com/stagewise-io/klex/tree/main/packages/mcp-extension-push-notifications) do Klex.
+### Executar sem o Cloud
+
+A inscrição no Cloud é opcional. Para configurar um bot diretamente na aplicação Klex, siga o [guia de configuração independente](/bot/guides/standalone-setup). O guia também explica como [criar um bot sem o menu de seleção](/bot/guides/standalone-setup#create-a-bot-without-the-picker).
 
 </Tab>
 </Tabs>
 </div>
 
-## Criar um bot auto-hospedado sem o menu de seleção
-
-Para criar e iniciar um bot inscrito no Cloud, use um token de inscrição do Klex Cloud:
-
-```sh
-klex --create-bot --cloud-enroll-token <token>
-```
-
-Pode fornecer o token através de `KLEX_CLOUD_ENROLLMENT_TOKEN` em vez do argumento da linha de comandos. Acrescente `--headless` para executar o bot sem interface de terminal.
-
-Para criar um bot independente, indique um nome:
-
-```sh
-klex --create-bot --no-cloud --bot-name Ada
-```
-
-A criação não pode ser combinada com `--data-dir` nem com `KLEX_DATA_DIR`, que selecionam um bot existente. Configure um fornecedor e um modelo de chat antes de o bot começar a trabalhar.
-
-Se o bot não responder, consulte os [passos de resolução de problemas](/bot/guides/observability#if-a-bot-does-not-respond) (em inglês).
+Se o bot não responder, consulte os [passos de resolução de problemas](/bot/guides/observability#if-a-bot-does-not-respond).
 
 <script src="/quickstart-tabs.js" defer></script>
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

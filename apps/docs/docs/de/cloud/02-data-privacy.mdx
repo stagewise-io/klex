@@ -7,7 +7,7 @@ related:
   - /guides/prevent-information-theft
 ---
 
-Chats und Gedächtnis eines Bots werden in seinem [Datenverzeichnis](/bot/concepts/data-directory) gespeichert. Bei einem in Klex Cloud gehosteten Bot liegt das Verzeichnis in der Hosting-Umgebung. Bei einem selbst gehosteten Bot liegt es in der Umgebung, in der Sie den Bot betreiben. Administratoren können über die Admin API des Bots auf diese Daten zugreifen.
+Chats und Gedächtnis eines Bots werden in seinem [Datenverzeichnis](/bot/concepts/data-directory) gespeichert. Bei einem in Klex Cloud gehosteten Bot liegt das Verzeichnis in der Hosting-Umgebung. Bei einem selbst gehosteten Bot liegt es in der Umgebung, in der Sie den Bot betreiben. Administratoren können über die Admin API des Bots Chats und Skills prüfen.
 
 Alle Daten eines in Klex Cloud gehosteten Bots, einschließlich seines Gedächtnisses, sind bei der Übertragung und im Ruhezustand verschlüsselt. Diese Aussage beschreibt nicht die Verschlüsselung bei selbst gehosteten Bots. Schützen Sie Ihre eigene Hosting-Umgebung und Ihren Speicher entsprechend.
 
@@ -21,9 +21,18 @@ Für die Fehlersuche durch den Support können ausgewählte Mitarbeitende von Kl
 
 Die [Datenschutzerklärung](https://klex.bot/legal/privacy) und die [Vereinbarung zur Datenverarbeitung](https://klex.bot/legal/data-processing-agreement) beschreiben die Fehlersuche durch den Support, weitere Verarbeitung, Dienstleister und Aufbewahrung. Sie behandeln auch gesondert zulässige Verarbeitung für Sicherheits- oder Rechtszwecke. Prüfen Sie die für Ihren Anwendungsfall geltenden Bedingungen und die Richtlinien verbundener Anbieter.
 
-<a id="analytics-and-telemetry-for-a-self-hosted-bot"></a>
+## Analyse und Telemetrie
 
-## Analyse und Telemetrie für einen selbst gehosteten Bot
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Cloud-gehostet">
+
+Informationen zur Verarbeitung auf Cloud-Seite, zu Dienstleistern und zur Aufbewahrung finden Sie in der [Datenschutzerklärung](https://klex.bot/legal/privacy) und der [Vereinbarung zur Datenverarbeitung](https://klex.bot/legal/data-processing-agreement). Die Optionen für den selbst gehosteten Prozess beschreiben nicht die Berichterstattung auf Cloud-Seite.
+
+</Tab>
+<Tab title="Selbst gehostet">
+
+<a id="analytics-and-telemetry-for-a-self-hosted-bot"></a>
+<a id="analyse-und-telemetrie-für-einen-selbst-gehosteten-bot"></a>
 
 Klex verfügt über zwei getrennte Berichtssysteme. Die folgenden Einstellungen gelten für den selbst gehosteten Klex-Prozess. Sie beschreiben weder die Berichterstattung auf Cloud-Seite noch verbundene Dienste.
 
@@ -34,3 +43,9 @@ Um die Produktanalyse auszuschalten, starten Sie Klex mit `--no-analytics` oder 
 **Betriebliche Telemetrie** ist davon getrennt. Sie ist ausgeschaltet, wenn kein Telemetrie-Endpunkt konfiguriert ist. Sofern Telemetrie nicht ausdrücklich deaktiviert wurde, aktiviert die Angabe eines Endpunkts sie. Die standardmäßig aktivierte Stufe enthält sensible betriebliche Metadaten. Die Debug-Stufe kann zusätzlich Chatinhalte, Prompts und Tool-Payloads exportieren. Verwenden Sie nur einen Collector, dem Sie vertrauen, und beschränken Sie den Zugriff auf dessen Daten. Um Telemetrie unabhängig von anderen Einstellungen auszuschalten, verwenden Sie `--disable-telemetry` oder `KLEX_DISABLE_TELEMETRY=1`. Siehe die [Implementierungsdetails zur Telemetrie](https://github.com/stagewise-io/klex/blob/baff8a40ce9b896fdd17146dfe9906cefe7c2697/apps/klex/telemetry.md).
 
 Das Ausschalten eines Systems schaltet das andere nicht aus. Keine der beiden Einstellungen deaktiviert die Kommunikation mit Ihren konfigurierten Modellanbietern, MCP-Servern oder Ihrer Cloud-Verbindung.
+
+</Tab>
+</Tabs>
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

@@ -33,7 +33,12 @@ function page(labels, storage, hash = '') {
     readyState: 'complete',
     addEventListener: add,
     querySelectorAll: () => [group],
-    getElementById: (id) => (id === 'linked-self' ? group.panels[1] : null),
+    getElementById: (id) =>
+      id === 'linked-self'
+        ? group.panels[1]
+        : id === 'linked-cloud'
+          ? group.panels[0]
+          : null,
   };
   const window = { addEventListener: add };
   runInNewContext(source, {
@@ -70,7 +75,33 @@ test('localized choices persist across locales and linked panels take precedence
   await new Promise(setImmediate);
   assert.equal(linked.group.selected, 1);
   assert.equal(storage.get('klex-docs-hosting'), 'Cloud-hosted');
+  storage.set('klex-docs-hosting', 'Self-hosted');
+  const cloudLink = page(
+    ['클라우드 호스팅', '셀프 호스팅'],
+    storage,
+    '#linked-cloud',
+  );
+  await new Promise(setImmediate);
+  assert.equal(cloudLink.group.selected, 0);
+  assert.equal(storage.get('klex-docs-hosting'), 'Self-hosted');
+  storage.set('klex-docs-hosting', 'Cloud-hosted');
   const restored = page(['Cloud-gehostet', 'Selbst gehostet'], storage);
   await new Promise(setImmediate);
   assert.equal(restored.group.selected, 0);
+});
+
+test('Korean legacy cloud fragment belongs to the cloud panel', () => {
+  const quickstart = readFileSync(
+    new URL('../docs/ko/bot/01-quickstart.mdx', import.meta.url),
+    'utf8',
+  );
+  const anchor = '<a id="봇-만들기"></a>';
+  const cloudStart = quickstart.indexOf('<Tab title="클라우드 호스팅"');
+  const cloudEnd = quickstart.indexOf('</Tab>', cloudStart);
+  assert.ok(cloudStart >= 0 && cloudEnd > cloudStart);
+  assert.equal(quickstart.split(anchor).length - 1, 1);
+  assert.ok(
+    quickstart.indexOf(anchor) > cloudStart &&
+      quickstart.indexOf(anchor) < cloudEnd,
+  );
 });

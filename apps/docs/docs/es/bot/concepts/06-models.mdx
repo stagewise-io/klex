@@ -1,0 +1,69 @@
+---
+title: Modelos
+description: Configura un proveedor de modelos y selecciona modelos para las distintas tareas de un Klex Bot.
+related:
+  - /bot/quickstart
+  - /bot/concepts/how-bots-work
+  - /cloud/hosted-vs-local
+---
+
+Un Klex Bot usa modelos de los proveedores que configures. Klex admite varios tipos de proveedor, como OpenAI, Anthropic, Google Gemini, Ollama local y endpoints personalizados compatibles. Los modelos disponibles dependen del proveedor y de tu cuenta.
+
+Un proveedor es el servicio o endpoint al que se conecta Klex. Un modelo es un modelo específico disponible a través de ese proveedor. Configurar un proveedor no selecciona automáticamente un modelo para cada tarea.
+
+<a id="configure-models"></a>
+
+## Configurar modelos
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Alojado en la nube">
+
+1. En Klex Cloud, abre tu Bot y selecciona **Models**. El Bot debe estar conectado y necesitas acceso de administrador para cambiar sus modelos.
+2. Si no hay ningún proveedor conectado, selecciona **Add a provider**, elige un proveedor y completa su configuración. Los ajustes y pasos de inicio de sesión necesarios dependen del proveedor.
+3. Elige una configuración predefinida o selecciona modelos para cada propósito en la tabla. Revisa la selección, incluidos los modelos para chat, memoria y compactación.
+
+</Tab>
+<Tab title="Autoalojado">
+
+En la aplicación Klex autoalojada:
+
+1. Abre **Settings → Providers & Endpoints**, pulsa `a` y elige un tipo de proveedor. Introduce los ajustes necesarios y completa los pasos de inicio de sesión que correspondan.
+2. Abre **Settings → Model Selection**, elige **Chat** y añade un modelo de un proveedor configurado. Se necesita un modelo de chat para las conversaciones normales y para generar la Soul.
+3. Revisa los demás propósitos y añade modelos compatibles según sea necesario. La pantalla incluye opciones para memoria, consultas, entrada de imágenes, entrada de audio y voz.
+
+</Tab>
+</Tabs>
+
+Algunos proveedores detectan modelos automáticamente; otros requieren que añadas la información de los modelos manualmente. La disponibilidad y las capacidades admitidas dependen del proveedor y del modelo.
+
+<a id="choosing-models-for-different-tasks"></a>
+
+## Elegir modelos para distintas tareas
+
+Puedes usar el mismo modelo para varios propósitos o elegir modelos diferentes para cada tarea. Comprueba si el modelo admite la entrada necesaria y ten en cuenta el coste y la latencia del proveedor. Consulta sus condiciones y precios antes de usarlo.
+
+Para el chat, puedes configurar una lista ordenada de modelos. Si un modelo falla, Klex puede recurrir a otro modelo de chat configurado. Revisa el orden en los controles de modelos.
+
+<a id="instincts-and-model-usage"></a>
+
+## Instincts y uso de modelos
+
+Klex puede usar un modelo de **Instincts** para clasificar el contexto antes de un paso de generación. Si no hay un modelo de Instincts configurado, usa los modelos de Chat disponibles para la clasificación. Estas llamadas pueden aumentar el uso de modelos y los costes. Consulta el precio y supervisa el uso.
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Alojado en la nube">
+
+Abre la sección **Models** de tu Bot y selecciona un modelo para **Quick Decisions** en la tabla de modelos. Ese es el modelo de Instincts.
+
+</Tab>
+<Tab title="Autoalojado">
+
+Selecciona un modelo de Instincts en **Settings → Model Selection**.
+
+</Tab>
+</Tabs>
+
+Por defecto, Dynamic Effort funciona en modo shadow: evalúa un esfuerzo de razonamiento propuesto sin cambiar la configuración del modelo principal. La clasificación en modo shadow también puede usar un modelo y generar costes.
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

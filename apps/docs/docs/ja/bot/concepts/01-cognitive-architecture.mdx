@@ -1,0 +1,37 @@
+---
+title: Klex ボットのセッション
+sidebar:
+  order: 12
+description: Klex ボットが通常のセッションと独立したセッションを使ってタスクを処理する方法。
+related:
+  - /bot/concepts/how-bots-work
+  - /bot/concepts/memory
+---
+
+Klex ボットは、活動中のセッションや[記憶](/bot/concepts/memory)を管理する独自の環境で動作します。ボットは [MCP](/bot/concepts/mcp) で接続された外部のコンピューターやアプリで作業します。
+
+<a id="技術的基盤"></a>
+<a id="メインセッション"></a>
+
+<a id="the-technical-foundation"></a>
+<a id="main-session"></a>
+
+## 通常のセッション
+
+Klex では、通常のセッションから接続済みの MCP サーバーにアクセスできます。ボットはこのセッションで受信イベントを処理し、接続先で作業できます。実行できる操作は、接続先とその権限によって異なります。
+
+<a id="ユーティリティセッション"></a>
+
+<a id="utility-sessions"></a>
+
+## 独立したタスク
+
+ボットは内部タスクを独立したセッションで処理できます。例えば、複雑な問題について相談を依頼し、その結果を作業の参考にできます。複数の依頼が同時に処理されることや、決まった時間内に完了することは前提にしないでください。
+
+<a id="ゴッドセッション"></a>
+
+<a id="god-session"></a>
+
+<a id="god-messages"></a>
+
+ボットの環境や接続先については、[Klex ボットの仕組み](/bot/concepts/how-bots-work)を参照してください。

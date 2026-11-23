@@ -1,0 +1,33 @@
+---
+title: Sessões de um bot Klex
+sidebar:
+  order: 12
+description: Como um bot Klex usa a sessão habitual e sessões separadas para tarefas.
+related:
+  - /bot/concepts/how-bots-work
+  - /bot/concepts/memory
+---
+
+Um bot Klex é executado no seu próprio ambiente, que gere as suas sessões ativas e a sua [memória](/bot/concepts/memory). O bot trabalha em computadores e aplicações externos ligados por [MCP](/bot/concepts/mcp).
+
+<a id="o-fundamento-técnico"></a>
+<a id="sessão-principal"></a>
+<a id="the-technical-foundation"></a>
+<a id="main-session"></a>
+
+## Sessão habitual
+
+No Klex, a sessão habitual tem acesso aos servidores MCP ligados. Nela, o bot processa eventos recebidos e pode trabalhar nos ambientes ligados. As ações possíveis dependem das ligações e das respetivas permissões.
+
+<a id="sessões-utilitárias"></a>
+<a id="utility-sessions"></a>
+
+## Tarefas separadas
+
+Um bot pode usar sessões separadas para tarefas internas. Por exemplo, pode pedir uma consulta sobre uma questão difícil e ter em conta o resultado no seu trabalho.
+
+<a id="sessão-deus"></a>
+<a id="god-session"></a>
+<a id="god-messages"></a>
+
+Para saber mais sobre o ambiente e as ligações do bot, consulte [Como funcionam os bots Klex](/bot/concepts/how-bots-work).

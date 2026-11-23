@@ -18,8 +18,8 @@ This website and the documentation API are public, read-only information sources
 
 ## Documentation
 
-- [Quickstart](https://docs.klex.bot/quickstart.md): installation and prerequisites
-- [Architecture](https://docs.klex.bot/architecture.md): brain, durable state, and MCP boundaries
+- [Quickstart](https://docs.klex.bot/bot/quickstart.md): installation and prerequisites
+- [Architecture](https://docs.klex.bot/bot/concepts/how-bots-work.md): brain, durable state, and MCP boundaries
 - [Documentation index](https://docs.klex.bot/llms.txt): all available documentation
 - [Documentation pages API](https://docs.klex.bot/api/docs/pages.json): enumerate real routes
 - [OpenAPI](https://docs.klex.bot/openapi.json): read-only docs operations and schemas
@@ -304,6 +304,7 @@ class AgentBuild {
               .replace(/\\/g, '/')
               .replace(/\.mdx?$/, '')
               .split('/')
+              .filter((part) => !/^\(.+\)$/.test(part))
               .map((part) => part.replace(/^\d+-/, ''))
               .join('/')}`.replace(/\/index$/, '') || '/';
           return [route, `apps/docs/docs/${file}`];
@@ -558,6 +559,28 @@ class AgentBuild {
           src: route === '/' ? '^/$' : `^${escaped}/?$`,
           dest: route === '/' ? '/index.html' : `${route}/index.html`,
         });
+        // Serve the legacy quickstart URL as an alias so fragments survive.
+        const legacyQuickstart = route.replace(
+          /^(\/(?:ar|de|es|fr|hi|ja|ko|pt|ru|uk|zh))?\/bot\/quickstart$/,
+          '$1/quickstart',
+        );
+        if (legacyQuickstart !== route) {
+          routes.push({
+            src: `^${legacyQuickstart}/?$`,
+            dest: `${legacyQuickstart}/index.html`,
+          });
+        }
+        // Serve the legacy sessions URL as an alias so fragments survive.
+        const legacySessions = route.replace(
+          /^(\/(?:ar|de|es|fr|hi|ja|ko|pt|ru|uk|zh))?\/bot\/concepts\/cognitive-architecture$/,
+          '$1/concepts/cognitive-architecture',
+        );
+        if (legacySessions !== route) {
+          routes.push({
+            src: `^${legacySessions}/?$`,
+            dest: `${legacySessions}/index.html`,
+          });
+        }
       }
     }
     if (this.kind === 'marketing') {

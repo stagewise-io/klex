@@ -1,0 +1,45 @@
+---
+title: Mises à jour
+description: Préparez les mises à jour de Klex et protégez les données d’un Bot auto-hébergé.
+related:
+  - /bot/concepts/data-directory
+---
+
+<a id="monitor-a-bot"></a>
+<a id="monitor-a-self-hosted-bot"></a>
+
+Une mise à jour de Klex ne nécessite généralement pas de créer un nouveau Bot. Sa configuration, ses conversations et sa mémoire sont associées à son [répertoire de données](/bot/concepts/data-directory).
+
+## Mettre à jour et protéger votre Bot
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Hébergé dans le Cloud">
+
+Klex Cloud gère l’environnement d’exécution des Bots hébergés dans le Cloud. Ouvrez votre Bot dans le tableau de bord pour vérifier son état et examiner son activité après une modification. Pour en savoir plus sur les données dans le Cloud, consultez [Données et confidentialité](/cloud/data-privacy).
+
+</Tab>
+<Tab title="Auto-hébergé">
+
+<a id="update-a-self-hosted-installation"></a>
+
+Avant la mise à jour, consultez les notes de version pour connaître les instructions propres à cette version. Ensuite, vérifiez que le Bot démarre, que ses connexions fonctionnent et que les workflows importants produisent toujours les résultats attendus. Au démarrage, Klex vérifie les données locales prises en charge et les migre si nécessaire.
+
+Pour une installation gérée par l’installeur, l’application interactive peut proposer une mise à jour disponible. Appuyez sur `u` dans la bannière de mise à jour pour l’installer et redémarrer. Si des sessions sont actives, l’application avertit qu’elles seront interrompues et vous demande d’appuyer à nouveau sur `u`.
+
+Les mises à jour automatiques sont désactivées par défaut. Pour les activer sur une installation gérée, lancez Klex avec `--auto-update` ou définissez `KLEX_AUTO_UPDATE=1`. Utilisez `--no-auto-update` pour remplacer la variable d’environnement et les désactiver. Cela fonctionne en mode interactif et sans interface ; les autres types d’installation n’utilisent pas ce mécanisme de mise à jour.
+
+Klex recherche une mise à jour avant le démarrage du Bot et régulièrement pendant son exécution. Après l’installation d’une mise à jour en cours d’exécution, Klex suspend les nouvelles tâches et attend la fin du travail en cours avant de redémarrer. Le délai d’attente est limité à dix minutes de travail en cours ; un appel en temps réel actif suspend le chronomètre. Le travail peut être interrompu s’il ne se termine pas à temps. Surveillez les journaux et vérifiez le Bot après une mise à jour plutôt que de supposer que toutes les tâches sont terminées.
+
+<a id="protect-self-hosted-data"></a>
+
+### Sauvegarder les données
+
+Avant une mise à jour manuelle, [arrêtez le Bot auto-hébergé](/bot/guides/control-and-limits#stop-a-bot) et créez une sauvegarde sécurisée de son répertoire de données. Si les mises à jour automatiques sont désactivées, redémarrez une installation interactive gérée par l’installeur et utilisez la bannière de mise à jour. Si vous activez les mises à jour automatiques, prévoyez plutôt des sauvegardes régulières lorsque le Bot est arrêté. Le répertoire peut contenir des informations sensibles : limitez l’accès à la sauvegarde. Suivez les procédures de sauvegarde et de restauration de votre organisation.
+
+Évitez d’ouvrir un répertoire de données mis à jour avec une ancienne version de Klex sans avoir vérifié sa compatibilité. Si une mise à jour échoue, examinez l’erreur signalée et consultez les notes de version ou l’assistance Klex avant de modifier ou de supprimer les données du Bot.
+
+</Tab>
+</Tabs>
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

@@ -1,0 +1,47 @@
+---
+title: Agent Skills
+description: How Klex Bots use and store Agent Skills for recurring tasks.
+related:
+  - /bot/concepts/memory
+  - /bot/concepts/data-directory
+---
+
+An Agent Skill is a reusable set of instructions for a recurring task. For example, a skill might describe how to prepare a project status update. Its description tells the Bot when the instructions apply; its body contains the procedure.
+
+Klex makes available skills discoverable to the Bot, which can load a procedure when it applies to a task.
+
+## Where skills come from
+
+Skills can come from different sources:
+
+- **Template Skills** ship with Bot Templates.
+- **Learned Skills** develop from the Bot's experience.
+- **Uploaded Skills** are supplied by users to provide behavior or knowledge.
+
+Each Bot stores its skills in its own [data directory](/bot/concepts/data-directory); skills are identified by a namespace and name, such as `learning/project-status`.
+
+A background memory process reviews activity and can turn useful lessons into skills. It may update or remove learned skills as it processes later activity; a conversation does not necessarily produce a skill.
+
+Each skill is stored as a `SKILL.md` file under `skills/{namespace}/{name}/`. The file contains a name, a description, and a Markdown body. A skill can also have reference files in its `references/` folder.
+
+## Review and manage skills
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Cloud-hosted">
+
+Cloud management of Uploaded Skills is coming soon. Uploaded Skills will be the only skill type users can manage through Cloud.
+
+</Tab>
+<Tab title="Self-hosted">
+
+Use the Bot's Admin API to review skills. See [Review Bot activity](/bot/guides/observability#access-the-local-admin-api) for local access and its security limits.
+
+</Tab>
+</Tabs>
+
+The Bot’s Admin API can list skills, retrieve their contents, and edit or delete them. Use `GET /v1/skills` to list skills and `GET /v1/skills/{namespace}/{name}` to read one. The same qualified path supports `PATCH` and `DELETE`. Reference files have separate API routes. Deletion can fail if a memory entity references the skill.
+
+Review learned skills for accuracy. The memory process can update or remove them over time, including skills an administrator has edited; an edit does not lock a learned skill against later changes.
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

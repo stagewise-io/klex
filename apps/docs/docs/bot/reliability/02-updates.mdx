@@ -1,0 +1,45 @@
+---
+title: Updates
+description: Prepare for Klex updates and protect a self-hosted Bot’s data.
+related:
+  - /bot/concepts/data-directory
+---
+
+<a id="monitor-a-bot"></a>
+<a id="monitor-a-self-hosted-bot"></a>
+
+Updating Klex does not generally require creating a new Bot. A Bot’s configuration, chats, and memory are associated with its [data directory](/bot/concepts/data-directory).
+
+## Update and protect your Bot
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Cloud-hosted">
+
+Klex Cloud manages the runtime for Cloud-hosted Bots. Open your Bot in the dashboard to check its status and review its activity after a change. For information about Cloud data, see [Data and privacy](/cloud/data-privacy).
+
+</Tab>
+<Tab title="Self-hosted">
+
+<a id="update-a-self-hosted-installation"></a>
+
+Before updating, read the release notes for version-specific instructions. Afterward, check that the Bot starts, its connections work, and important workflows still produce the expected results. Klex checks supported local data at startup and migrates it when required.
+
+For an installer-managed installation, the interactive app can offer an available update. Press `u` in the update banner to install and restart. If sessions are active, the app warns that they will be interrupted and asks you to press `u` again.
+
+Automatic updates are off by default. To enable them for a managed installation, start Klex with `--auto-update` or set `KLEX_AUTO_UPDATE=1`. Use `--no-auto-update` to override the environment variable and disable them. This works in interactive and headless modes; other installation types do not use this updater.
+
+Klex checks for an update before starting the Bot and periodically while running. After an update is installed during operation, it pauses new work and waits for current work before restarting. The wait has a ten-minute busy-time budget; an active realtime call pauses the timer. Work can be interrupted if it does not finish in time. Monitor logs and check the Bot after an update rather than assuming every task completed.
+
+<a id="protect-self-hosted-data"></a>
+
+### Back up data
+
+Before a manual update, [stop the self-hosted Bot](/bot/guides/control-and-limits#stop-a-bot) and make a secure backup of its data directory. With automatic updates off, restart an installer-managed interactive installation and use the update banner. If you enable automatic updates, plan regular backups while the Bot is stopped instead. The directory can contain sensitive information, so restrict access to the backup. Follow your organization’s backup and recovery procedures.
+
+Avoid opening an updated data directory with an older Klex version unless you have verified that it is compatible. If an update fails, investigate the reported error and consult the release notes or Klex support before changing or deleting Bot data.
+
+</Tab>
+</Tabs>
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

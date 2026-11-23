@@ -4,10 +4,10 @@
   "type": "module",
   "scripts": {
     "dev": "blume dev",
-    "build": "blume build && node ../../scripts/agent-site/build.mjs docs",
+    "build": "blume build && node scripts/clean-hosting-markdown.mjs && node scripts/legacy-session-aliases.mjs && node ../../scripts/agent-site/build.mjs docs",
     "doctor": "blume doctor"
   },
   "dependencies": {
-    "blume": "^1.6.6"
+    "blume": "2.2.5"
   }
 }

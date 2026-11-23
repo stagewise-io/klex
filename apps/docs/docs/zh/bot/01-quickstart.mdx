@@ -1,0 +1,68 @@
+---
+title: 快速开始
+description: 在 Cloud 中创建 Klex 机器人，或在自己的计算机上运行机器人。
+related:
+  - /cloud/hosted-vs-local
+  - /bot/concepts/brain-and-computers
+---
+
+创建一个与你协作的 Klex 机器人。Klex 推荐大多数用户使用云托管，你也可以在自己的计算机上运行机器人。
+
+<a id="creating-your-bot"></a>
+
+<div className="hosting-quickstart">
+<Tabs inline hash syncKey="hosting">
+<Tab title="云托管" id="云托管">
+
+<a id="创建你的机器人"></a>
+<a id="创建云托管机器人"></a>
+
+## 云托管设置
+
+1. 登录 [Klex Cloud](https://cloud.klex.bot)，选择 **New bot**。
+2. 为机器人指定工作，或选择建议的工作，然后自定义其名称和外观。
+3. 选择 **Create bot in cloud**。
+4. 查看其性格特征，然后继续进入 **Models & Computer**。
+5. 连接 AI 提供商并选择机器人使用的模型，或从其他机器人导入模型设置。机器人连接后，完成设置。
+6. 打开机器人的聊天界面，开始使用。
+
+你可以连接机器人工作所需的应用和计算机。支持的 MCP 服务器还可以传递消息和应用事件，促使机器人工作。详情请参阅 [MCP 与 Klex 机器人](/bot/concepts/mcp)。
+
+</Tab>
+<Tab title="自托管" id="自托管">
+
+<a id="installation"></a>
+<a id="安装"></a>
+<a id="安装-klex-以自托管"></a>
+<a id="使用-cloud-辅助设置"></a>
+
+## 自托管设置
+
+1. 登录 [Klex Cloud](https://cloud.klex.bot)，选择 **New bot**，然后选择机器人的工作和外观。
+2. 选择 **Or run it on your own computer**，然后选择 **Set up on your computer**。复制 Klex Cloud 提供的完整命令，将其粘贴到运行机器人的计算机上的终端中并执行。
+3. 按照设置说明配置机器人的性格和模型。
+
+让机器人在计算机上保持运行，才能继续工作。要重新启动机器人，请在终端中运行以下命令并选择你的机器人：
+
+```sh
+klex
+```
+
+<a id="独立设置"></a>
+<a id="不使用选择菜单创建自托管机器人"></a>
+<a id="使用命令创建自托管机器人"></a>
+
+### 不使用 Cloud 运行
+
+注册 Cloud 是可选的。要直接在 Klex 应用中配置机器人，请参阅[独立设置指南](/bot/guides/standalone-setup)，其中也介绍了如何[不使用选择菜单创建机器人](/bot/guides/standalone-setup#create-a-bot-without-the-picker)。
+
+</Tab>
+</Tabs>
+</div>
+
+如果机器人没有响应，请参阅[故障排查](/bot/guides/observability#if-a-bot-does-not-respond)。
+
+<script src="/quickstart-tabs.js" defer></script>
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

@@ -1,0 +1,68 @@
+---
+title: Inicio rápido
+description: Cree un bot de Klex en Cloud o ejecútelo en su propia computadora.
+related:
+  - /cloud/hosted-vs-local
+  - /bot/concepts/brain-and-computers
+---
+
+Cree un bot de Klex para trabajar con usted. Klex recomienda el alojamiento en Cloud para la mayoría de los usuarios; también puede ejecutar un bot en su propia computadora.
+
+<a id="creating-your-bot"></a>
+<a id="crear-su-bot"></a>
+
+<div className="hosting-quickstart">
+<Tabs inline hash syncKey="hosting">
+<Tab title="Alojado en Cloud" id="alojamiento-en-la-nube">
+
+<a id="crear-un-bot-alojado-en-la-nube"></a>
+
+## Configuración alojada en Cloud
+
+1. Inicie sesión en [Klex Cloud](https://cloud.klex.bot) y seleccione **New bot**.
+2. Asigne un trabajo al bot o elija uno sugerido, y personalice su nombre y apariencia.
+3. Seleccione **Create bot in cloud**.
+4. Revise sus rasgos de carácter y continúe a **Models & Computer**.
+5. Conecte un proveedor de IA y elija los modelos que usará el bot, o importe la configuración de modelos de otro bot. Termine la configuración cuando el bot se conecte.
+6. Abra el chat del bot para empezar.
+
+Puede conectar las aplicaciones y computadoras que el bot necesite para su trabajo. Los servidores MCP compatibles también pueden enviar mensajes y eventos de aplicaciones que hagan que el bot trabaje. Consulte [MCP y los bots de Klex](/bot/concepts/mcp) para obtener más información.
+
+</Tab>
+<Tab title="Autoalojado" id="autoalojamiento">
+
+<a id="installation"></a>
+<a id="instalación"></a>
+
+<a id="instalar-klex-para-autoalojamiento"></a>
+<a id="configuración-con-asistencia-de-cloud"></a>
+
+## Configuración autoalojada
+
+1. Inicie sesión en [Klex Cloud](https://cloud.klex.bot), seleccione **New bot** y elija el trabajo y la apariencia del bot.
+2. Seleccione **Or run it on your own computer** y luego **Set up on your computer**. Copie el comando completo que proporciona Klex Cloud, péguelo en una terminal de la computadora donde se ejecutará el bot y ejecútelo.
+3. Siga las instrucciones para configurar el carácter y los modelos del bot.
+
+Mantenga el bot en ejecución en su computadora para que pueda trabajar. Para reiniciarlo, ejecute el siguiente comando en una terminal y seleccione su bot:
+
+```sh
+klex
+```
+
+<a id="configuración-independiente"></a>
+<a id="crear-un-bot-autoalojado-sin-el-menú-de-selección"></a>
+
+### Ejecutar sin Cloud
+
+El registro en Cloud es opcional. Para configurar un bot directamente en la aplicación de Klex, siga la [guía de configuración independiente](/bot/guides/standalone-setup). La guía también explica cómo [crear un bot sin el menú de selección](/bot/guides/standalone-setup#create-a-bot-without-the-picker).
+
+</Tab>
+</Tabs>
+</div>
+
+Si el bot no responde, consulte los [pasos de resolución de problemas](/bot/guides/observability#if-a-bot-does-not-respond).
+
+<script src="/quickstart-tabs.js" defer></script>
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

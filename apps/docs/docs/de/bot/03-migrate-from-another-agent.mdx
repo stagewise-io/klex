@@ -1,0 +1,34 @@
+---
+title: Von einem anderen Agenten wechseln
+description: Eine praktische Checkliste, um einen bestehenden Agenten-Workflow mit einem Klex Bot nachzubilden.
+related:
+  - /bot/quickstart
+  - /bot/concepts/soul
+  - /bot/concepts/brain-and-computers
+  - /guides/secure-bot-usage
+---
+
+Um einen Workflow von einem anderen Agenten zu Klex zu übertragen, bilde zunächst seine Rolle, Verbindungen und Aufgaben nach. Gehe nicht davon aus, dass Konfiguration, Memory, Skills oder Gesprächsverlauf automatisch übernommen werden.
+
+<span id="prepare-the-workflow"></span>
+
+## Workflow vorbereiten
+
+Liste auf, was der bisherige Agent tut, welche Apps und Daten er benötigt, welche Aufgaben er regelmäßig erledigt und wo er Ergebnisse meldet. Ermittele sensible Berechtigungen und Zeitpläne, die besondere Sorgfalt erfordern.
+
+<span id="set-up-the-klex-bot"></span>
+
+## Klex Bot einrichten
+
+1. [Erstelle einen Bot](/bot/quickstart). Beschreibe bei der Einrichtung seiner [Soul](/bot/concepts/soul) seinen Zweck, seine Prioritäten und den gewünschten Stil.
+2. [Verbinde die benötigten Apps und Computer](/bot/concepts/brain-and-computers) über MCP-Server, die die für den Workflow erforderlichen Fähigkeiten bereitstellen. Konfiguriere die Berechtigungen des Bot-Kontos in jedem verbundenen Dienst.
+3. Gib dem Bot die nötigen Aufgabenanweisungen und den relevanten Kontext. Prüfe beides auf Richtigkeit und entferne unnötige Geheimnisse. Wiederverwendbare Verfahren findest du unter [Agent Skills](/bot/concepts/agent-skills).
+4. Richte wiederkehrende Aufgaben über einen geeigneten verbundenen Planungsdienst ein und prüfe, ob dieser Ereignisse an den Bot zustellen kann. Siehe [Wiederkehrende Aufgaben automatisieren](/bot/guides/recurring-tasks).
+
+<span id="test-before-switching-over"></span>
+
+## Vor der Umstellung testen
+
+Führe eine kleine, unkritische Aufgabe aus und vergleiche das Ergebnis mit deinen Erwartungen. Prüfe Berechtigungen, Ausgabeziele und gegebenenfalls Zeitpläne. Behalte für Handlungen mit weitreichenden Folgen einen unabhängigen Prüfschritt bei. Siehe [Klex Bots sicher einsetzen](/guides/secure-bot-usage).
+
+Wenn der neue Workflow funktioniert, prüfe und entferne nicht mehr benötigte Zugriffe oder Zeitpläne des bisherigen Agenten. Plattformspezifische Import- und Kompatibilitätsdetails musst du gesondert prüfen.

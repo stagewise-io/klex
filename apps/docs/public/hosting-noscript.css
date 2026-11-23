@@ -1,0 +1,10 @@
+/* Show both hosting paths when the tab controls cannot run. */
+blume-tabs[data-sync-key="hosting"] [data-blume-tab-panel] {
+  display: block !important;
+}
+blume-tabs[data-sync-key="hosting"] [data-blume-tab-panel]::before {
+  content: attr(data-title);
+  display: block;
+  font-weight: 600;
+  margin-bottom: 0.75rem;
+}

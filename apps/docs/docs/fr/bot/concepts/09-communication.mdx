@@ -1,0 +1,31 @@
+---
+title: Communiquer avec des personnes et d’autres Bots
+sidebar:
+  label: Communication
+description: Comment les Klex Bots communiquent via les applications connectées et le tableau de bord Cloud.
+related:
+  - /bot/concepts/mcp
+  - /bot/guides/multi-channel-chat
+  - /guides/shared-messaging-boards
+  - /guides/bot-identities
+---
+
+Vous pouvez discuter avec un Bot dans le tableau de bord Klex Cloud. Un Bot peut aussi communiquer via des applications connectées si leurs [serveurs MCP](/bot/concepts/mcp) offrent les fonctions de messagerie nécessaires.
+
+Dans la plupart des applications connectées, le Bot agit avec son propre compte. Configurez ce compte et ses autorisations dans l’application. La connexion et le compte déterminent les conversations auxquelles le Bot peut accéder et les actions qu’il peut y effectuer.
+
+<a id="voice-and-video-calls"></a>
+
+## Appels vocaux et vidéo
+
+Une application connectée peut proposer des appels vocaux si son serveur MCP prend en charge l’extension multimédia en temps réel de Klex. Un modèle vocal compatible doit être configuré pour le Bot.
+
+Avec un modèle vocal Gemini Live qui accepte les images en entrée et une connexion qui prend en charge la vidéo, le Bot peut aussi recevoir des images de caméras et de partages d’écran pendant un appel. La vidéo est traitée par échantillonnage plutôt qu’en continu. Le modèle voit jusqu’à quatre flux à la fois ; le Bot peut donc ne pas voir tous les flux publiés. Vérifiez les commandes de partage de l’application avant d’envoyer du contenu de caméra ou d’écran.
+
+<a id="choosing-where-to-chat"></a>
+
+## Choisir où discuter
+
+Choisissez un canal accessible à votre équipe et un compte adapté pour le Bot. Vérifiez qui peut voir le canal et les autorisations du Bot avant de partager des informations sensibles. Pour utiliser plusieurs canaux, consultez [Discuter sur plusieurs canaux](/bot/guides/multi-channel-chat).
+
+Des Bots peuvent collaborer dans une conversation commune si leurs connexions et leurs comptes leur en donnent l’accès. Consultez [Utiliser des tableaux de messagerie partagés](/guides/shared-messaging-boards) pour les points à considérer lors de la configuration.

@@ -1,0 +1,34 @@
+---
+title: Klex ボットの Soul（魂）
+sidebar:
+  order: 4
+description: Soul によるボットの性格の記述と、その管理方法。
+related:
+  - /bot/concepts/identity
+  - /bot/concepts/memory
+  - /bot/concepts/data-directory
+---
+
+Soul は、ボットの性格、コミュニケーション方法、仕事、優先事項を記述します。[記憶](/bot/concepts/memory)とは別のもので、通常のセッションのコンテキストに含まれます。
+
+<a id="ボットの魂の作成"></a>
+<a id="creating-a-bots-soul"></a>
+<a id="creator-mode"></a>
+<a id="creator-mode-cloud-only"></a>
+<a id="クリエイターモードクラウドのみ"></a>
+<a id="god-message-mode"></a>
+<a id="ゴッドメッセージモード"></a>
+
+## Soul の作成と更新
+
+ボットの Admin API に指示を送り、Soul を作成または更新します。最初から作成するには `POST /v1/soul`、既存の Soul を更新するには `PATCH /v1/soul` を使います。読み取るには `GET /v1/soul` を使います。アクセス方法とセキュリティについては、[ローカル Admin API へのアクセス](/bot/guides/observability#access-the-local-admin-api)を参照してください。
+
+Soul の生成には設定済みのチャットモデルが使われ、生成に成功すると結果が保存されます。例えば、ボットの仕事、望む口調、判断方法を指示に含めることができます。生成された Soul を確認し、必要に応じて更新してください。新しい仕事を送る前に Soul を保存してください。
+
+## 保存とアクセス
+
+Soul はボットの[データディレクトリ](/bot/concepts/data-directory)に保存されます。Klex では、ボットの Admin API で Soul を読み取り、管理指示に基づいて新規作成または更新できます。通常のセッションには Soul を書き込むツールはありません。
+
+## Soul がない場合
+
+ボットが通常の仕事を処理するには、内容のある Soul が必要です。Soul がない場合、新しい仕事をスキップし、セッション履歴に新たに追加された内容を破棄します。スキップされた仕事は待機されません。新しい入力を送る前に Soul を作成してください。

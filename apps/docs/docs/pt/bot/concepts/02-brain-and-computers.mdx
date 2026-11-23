@@ -1,0 +1,33 @@
+---
+title: Ligações a computadores e aplicações
+sidebar:
+  label: Ligações
+description: Como o MCP liga um bot Klex a computadores e aplicações e como gerir o seu acesso.
+related:
+  - /bot/concepts/how-bots-work
+  - /bot/concepts/mcp
+  - /bot/quickstart
+---
+
+Um bot Klex trabalha em ambientes externos ligados através do MCP (Model Context Protocol). Um servidor MCP pode dar acesso a um computador completo ou a uma aplicação como o GitHub ou o Google Workspace. Os computadores também são ligados através do MCP.
+
+Uma ligação está ativa ou inativa. O ambiente próprio do bot mantém-no em funcionamento e gere a sua memória; é nos ambientes ligados que realiza o seu trabalho.
+
+## Escolher o que ligar
+
+- **Computadores**: fornecem um ambiente ligado onde o bot pode trabalhar.
+- **Aplicações**: disponibilizam o seu ambiente através de um servidor MCP.
+
+O Klex oferece vários servidores MCP integrados. Também pode ligar outros servidores MCP. A escolha depende das tarefas que pretende atribuir ao bot.
+
+## Gerir o acesso de um bot
+
+Uma ligação determina se o bot consegue aceder a um servidor MCP. Para a maioria dos MCP, o bot age através da sua própria conta ou identidade, configurada para esse bot com permissões e autorizações de acesso.
+
+- Ligue ou desligue os servidores MCP de um bot no painel Cloud.
+- Configure as permissões das contas e aplicações ligadas do bot diretamente nessas contas e aplicações.
+- Consulte a atividade do bot no painel.
+
+Ligar um servidor e conceder acesso a uma conta são decisões distintas. Verifique ambas ao decidir a que o bot pode aceder e o que pode fazer.
+
+Para uma visão geral, consulte [Como funcionam os bots Klex](/bot/concepts/how-bots-work). Para saber onde são guardadas as conversas e a memória, consulte [o diretório de dados](/bot/concepts/data-directory).

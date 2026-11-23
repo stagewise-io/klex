@@ -1,0 +1,34 @@
+---
+title: Identité du Klex Bot
+sidebar:
+  label: Identité
+description: Comment le nom, la Soul et les comptes connectés contribuent à l’identité d’un Bot.
+related:
+  - /bot/concepts/soul
+  - /bot/concepts/communication
+  - /bot/concepts/brain-and-computers
+---
+
+Un Klex Bot possède un nom et une [Soul](/bot/concepts/soul), qui décrit son caractère et ses priorités. Ses comptes connectés déterminent comment il apparaît et ce à quoi il peut accéder dans les applications externes.
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Hébergé dans le Cloud">
+
+Dans Klex Cloud, ouvrez votre Bot et sélectionnez **Edit bot** à côté de son nom. Le Bot doit être connecté et vous devez disposer du rôle de propriétaire ou d’administrateur de l’organisation pour effectuer des modifications. Modifiez le champ **Name**.
+
+</Tab>
+<Tab title="Auto-hébergé">
+
+Dans l’application Klex, **Settings → Bot Identity** affiche le nom officiel du Bot et permet de le modifier.
+
+</Tab>
+</Tabs>
+
+Le nom configuré du Bot est inclus dans le contexte de ses sessions.
+
+## Identité dans les applications connectées
+
+Dans la plupart des applications connectées, un Bot agit avec son propre compte. Configurez les autorisations de ce compte dans l’application elle-même. Consultez [Connexions](/bot/concepts/brain-and-computers) pour savoir comment connecter des environnements.
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

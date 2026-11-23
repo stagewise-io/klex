@@ -1,0 +1,45 @@
+---
+title: Connections to computers and apps
+sidebar:
+  label: Connections
+description: How MCP connects a Klex Bot to computers and apps, and how to manage access.
+related:
+  - /bot/concepts/how-bots-work
+  - /bot/concepts/mcp
+  - /bot/quickstart
+---
+
+A Klex Bot works in external environments connected through MCP (Model Context Protocol). An MCP server can expose a full computer or an app such as GitHub or Google Workspace. Computers are connected through MCP too.
+
+The Bot's own environment keeps it running and manages its memory. Connected computers and apps are where it carries out work.
+
+## Choose what to connect
+
+- **Computers** provide a connected environment where the Bot can work.
+- **Apps** expose an app environment through an MCP server.
+
+Klex offers a range of built-in MCP servers. You can also connect other MCP servers. Which environments to connect depends on the work you want the Bot to do.
+
+## Manage a Bot's access
+
+Connect the apps and computers your Bot needs for its job. For most MCPs, it acts through its own account or identity, with permissions configured for that Bot.
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Cloud-hosted">
+
+Open your Bot in Klex Cloud and use **Connectors** to manage its app connections and **Computers** to manage its connected computers. You can also review its **Activity**.
+
+</Tab>
+<Tab title="Self-hosted">
+
+In the Klex app, use **Settings → MCP Servers** to manage server connections. See [MCP and Klex Bots](/bot/concepts/mcp#add-a-remote-server-in-the-self-hosted-app) for the steps. Use **Settings → Logs** to review local diagnostics.
+
+</Tab>
+</Tabs>
+
+Configure permissions for the Bot's accounts and connected apps directly in those accounts and apps. Connecting a server and granting an account access are distinct decisions. Check both when deciding what a Bot can reach and do.
+
+For the bigger picture, see [How Klex Bots work](/bot/concepts/how-bots-work). For where chats and memory are stored, see [the data directory](/bot/concepts/data-directory).
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

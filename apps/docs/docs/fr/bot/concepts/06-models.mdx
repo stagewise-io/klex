@@ -1,0 +1,69 @@
+---
+title: Modèles
+description: Configurez un fournisseur et choisissez des modèles pour les différentes tâches d’un Klex Bot.
+related:
+  - /bot/quickstart
+  - /bot/concepts/how-bots-work
+  - /cloud/hosted-vs-local
+---
+
+Un Klex Bot utilise les modèles des fournisseurs que vous configurez. Klex prend en charge plusieurs types de fournisseurs, notamment OpenAI, Anthropic, Google Gemini, Ollama en local et les points de terminaison personnalisés compatibles. Les modèles disponibles dépendent de votre fournisseur et de votre compte.
+
+Un fournisseur est le service ou le point de terminaison auquel Klex se connecte ; un modèle est un modèle précis proposé par ce fournisseur. Configurer un fournisseur ne sélectionne pas automatiquement un modèle pour chaque tâche.
+
+<a id="configure-models"></a>
+
+## Configurer les modèles
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Hébergé dans le Cloud">
+
+1. Dans Klex Cloud, ouvrez votre Bot et sélectionnez **Models**. Votre Bot doit être connecté et vous devez disposer d’un accès administrateur pour modifier ses modèles.
+2. Si aucun fournisseur n’est connecté, sélectionnez **Add a provider**, choisissez un fournisseur et terminez sa configuration. Les paramètres et les étapes de connexion dépendent du fournisseur.
+3. Choisissez une configuration prédéfinie ou sélectionnez des modèles pour chaque usage dans le tableau. Vérifiez la sélection, notamment les modèles de Chat, de mémoire et de compaction.
+
+</Tab>
+<Tab title="Auto-hébergé">
+
+Dans l’application Klex auto-hébergée :
+
+1. Ouvrez **Settings → Providers & Endpoints**, appuyez sur `a` et choisissez un type de fournisseur. Saisissez les paramètres requis et effectuez les étapes de connexion nécessaires.
+2. Ouvrez **Settings → Model Selection**, choisissez **Chat** et ajoutez un modèle d’un fournisseur configuré. Un modèle de chat est nécessaire pour les conversations ordinaires et la génération de la Soul.
+3. Vérifiez les autres usages et ajoutez des modèles compatibles selon vos besoins. L’écran propose notamment des choix pour la mémoire, la consultation, les entrées d’image et audio, et la voix.
+
+</Tab>
+</Tabs>
+
+Certains fournisseurs découvrent les modèles automatiquement ; d’autres nécessitent de saisir leurs informations manuellement. La disponibilité et les capacités prises en charge varient selon le fournisseur et le modèle.
+
+<a id="choosing-models-for-different-tasks"></a>
+
+## Choisir des modèles selon les tâches
+
+Vous pouvez utiliser le même modèle pour plusieurs usages ou choisir des modèles différents selon le travail. Vérifiez si le modèle accepte les entrées requises, ainsi que le coût et la latence du fournisseur. Consultez les conditions et les tarifs du fournisseur avant utilisation.
+
+Pour le chat, vous pouvez configurer une liste ordonnée de modèles. Après une erreur de modèle, Klex peut passer à un autre modèle de chat configuré. Utilisez les commandes des modèles pour vérifier leur ordre.
+
+<a id="instincts-and-model-usage"></a>
+
+## Instincts et utilisation des modèles
+
+Klex peut utiliser un modèle **Instincts** pour classifier le contexte avant une étape de génération. Si aucun modèle Instincts n’est configuré, il utilise les modèles Chat disponibles pour cette classification. Ces appels peuvent augmenter l’utilisation des modèles et les coûts. Vérifiez les tarifs et surveillez l’utilisation.
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Hébergé dans le Cloud">
+
+Ouvrez la section **Models** de votre Bot et sélectionnez un modèle pour **Quick Decisions** dans le tableau. Il s’agit du modèle Instincts.
+
+</Tab>
+<Tab title="Auto-hébergé">
+
+Sélectionnez un modèle Instincts dans **Settings → Model Selection**.
+
+</Tab>
+</Tabs>
+
+Par défaut, l’effort dynamique fonctionne en mode fantôme : il évalue un niveau d’effort de raisonnement suggéré sans modifier les paramètres du modèle principal. Cette classification peut tout de même utiliser un modèle et entraîner des coûts.
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

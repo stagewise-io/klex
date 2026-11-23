@@ -1,0 +1,51 @@
+---
+title: Agent Skills
+description: Klex Bot 如何使用和存储 Agent Skills 来处理重复性任务。
+related:
+  - /bot/concepts/memory
+  - /bot/concepts/data-directory
+---
+
+Agent Skill 是一组可重复使用的指令，用于处理重复性任务。例如，一项 Skill 可以说明如何准备项目状态更新。描述告诉 Bot 何时适用这些指令，正文则包含操作步骤。
+
+Klex 让 Bot 能够发现可用的 Skills，并在适用于任务时加载相应步骤。
+
+<a id="where-skills-come-from"></a>
+
+## Skills 从何而来
+
+Skills 可以来自不同来源：
+
+- **Template Skills** 随 Bot Templates 一起提供。
+- **Learned Skills** 根据 Bot 的经验逐渐形成。
+- **Uploaded Skills** 由用户提供，用于添加行为或知识。
+
+每个 Bot 都将 Skills 存储在自己的[数据目录](/bot/concepts/data-directory)中。Skill 由命名空间和名称标识，例如 `learning/project-status`。
+
+后台记忆进程会检查活动，并可能将有用的经验转化为 Skills。处理后续活动时，它可能更新或删除 Learned Skills；并非每次对话都会产生 Skill。
+
+每项 Skill 都以 `SKILL.md` 文件的形式存储在 `skills/{namespace}/{name}/` 目录下。文件包含名称、描述和 Markdown 正文。Skill 也可以在 `references/` 文件夹中包含参考文件。
+
+<a id="review-and-manage-skills"></a>
+
+## 查看和管理 Skills
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Cloud 托管">
+
+通过 Cloud 管理 Uploaded Skills 的功能即将推出。Uploaded Skills 将是用户唯一能通过 Cloud 管理的 Skill 类型。
+
+</Tab>
+<Tab title="自行托管">
+
+使用 Bot 的 Admin API 查看 Skills。有关本地访问方式及其安全限制，请参阅[查看 Bot 活动](/bot/guides/observability#access-the-local-admin-api)。
+
+</Tab>
+</Tabs>
+
+Bot 的 Admin API 可以列出 Skills、读取内容，以及编辑或删除 Skills。使用 `GET /v1/skills` 获取列表，使用 `GET /v1/skills/{namespace}/{name}` 读取单项 Skill。同一完整路径支持 `PATCH` 和 `DELETE`。参考文件有单独的 API 路由。如果记忆实体引用了某项 Skill，删除可能会失败。
+
+请检查 Learned Skills 的准确性。记忆进程可能随时间更新或删除这些 Skills，包括管理员编辑过的 Skills；编辑不会阻止后续更改。
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

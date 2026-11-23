@@ -2,16 +2,16 @@
 title: La mémoire d’un bot Klex
 sidebar:
   label: Mémoire
-description: Ce que stocke la mémoire d’un bot Klex, où elle se trouve et comment les administrateurs y accèdent.
+description: Comment un bot Klex utilise ses skills et ses expériences passées dans son travail.
 related:
   - /bot/concepts/data-directory
   - /bot/concepts/how-bots-work
   - /cloud/hosted-vs-local
 ---
 
-La mémoire d’un bot Klex prend en charge les **skills et les apprentissages** et peut retrouver du contexte pertinent dans ses activités passées. Elle est gérée dans l’environnement propre du bot, avec les sessions actives qui assurent son fonctionnement.
+La mémoire aide un bot Klex à s’appuyer sur ses apprentissages et à utiliser le contexte de son travail passé. Elle réunit des **skills**, dont des procédures apprises et préconfigurées, et des connaissances pertinentes issues de son activité.
 
-Le bot peut demander un rappel en arrière-plan ; du contexte pertinent peut aussi apparaître sans demande. Un rappel peut être incomplet ou incorrect : vérifiez les détails importants. Une indication de contexte peut guider la recherche, mais ne constitue pas un contrôle d’accès.
+Un bot peut utiliser des skills pour les tâches familières et retrouver du contexte passé lorsque c’est utile, par exemple la terminologie d’un projet ou une décision antérieure. Il peut demander un rappel en arrière-plan ; du contexte pertinent peut aussi apparaître pendant son travail. Consultez [Agent Skills](/bot/concepts/agent-skills) pour en savoir plus sur les procédures réutilisables.
 
 <a id="where-chats-and-memory-are-stored"></a>
 
@@ -25,7 +25,9 @@ Les conversations et la mémoire sont stockées dans le répertoire de données 
 Toutes les données des bots hébergés dans le Cloud, y compris leur mémoire, sont chiffrées en transit et au repos.
 
 <a id="how-administrators-access-them"></a>
+<a id="comment-les-administrateurs-y-accèdent"></a>
+<a id="review-chats-and-skills"></a>
 
-## Comment les administrateurs y accèdent
+## Consulter les conversations et les skills
 
-Les administrateurs peuvent accéder aux conversations et à la mémoire par l’Admin API du bot. Le tableau de bord Klex Cloud sert d’interface et de proxy inverse pour l’Admin API de chaque bot. Pour en savoir plus, consultez le [répertoire de données](/bot/concepts/data-directory).
+Les administrateurs peuvent consulter les conversations et les skills via l’Admin API du bot. Le tableau de bord Klex Cloud sert d’interface et de proxy inverse pour l’Admin API de chaque bot. Pour en savoir plus sur le stockage, consultez le [répertoire de données](/bot/concepts/data-directory).

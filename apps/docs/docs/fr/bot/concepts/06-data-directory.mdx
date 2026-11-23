@@ -13,7 +13,18 @@ Chaque bot Klex stocke ses conversations et sa mémoire dans son répertoire de 
 
 Les administrateurs peuvent consulter les conversations et les Skills par l'Admin API du bot. Le tableau de bord Klex Cloud sert de proxy inverse et d'interface pour l'Admin API de chaque bot.
 
-## Trouver un bot auto-hébergé
+## Trouver et protéger les données du bot
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Hébergé dans le Cloud">
+
+Ouvrez le bot dans Klex Cloud pour consulter son activité. Son répertoire de données se trouve dans l'environnement hébergé. Consultez la page [Confidentialité des données](/cloud/data-privacy) pour savoir comment ces données sont protégées.
+
+</Tab>
+<Tab title="Auto-hébergé">
+
+<a id="find-a-self-hosted-bot"></a>
+<a id="trouver-un-bot-auto-hébergé"></a>
 
 Dans l'application Klex auto-hébergée, le démarrage interactif cherche par défaut les bots dans `~/.klex/agents`. Si `KLEX_HOME` est défini, il utilise le dossier `agents` sous ce chemin. Avec `--data-dir`, vous pouvez sélectionner directement un répertoire ; cette option est prioritaire sur `KLEX_DATA_DIR`.
 
@@ -23,10 +34,19 @@ Par exemple, pour ouvrir un bot dont vous connaissez déjà le répertoire de do
 klex --data-dir /path/to/bot
 ```
 
-Remplacez le chemin d'exemple par le répertoire réel du bot. Consultez le [démarrage rapide](/bot/quickstart) pour créer un bot et le configurer sans interface de terminal.
+Remplacez le chemin d'exemple par le répertoire réel du bot. Le [guide de configuration autonome](/bot/guides/standalone-setup) explique comment créer un bot sans Cloud ou l'exécuter sans interface de terminal.
 
-## Protéger les données
+<a id="protect-the-data"></a>
+<a id="protéger-les-données"></a>
+
+### Protéger un répertoire local
 
 Le répertoire peut contenir des informations sensibles, notamment la configuration et les identifiants. Limitez l'accès à l'aide des permissions de votre système d'exploitation et protégez les copies que vous créez. Sur les systèmes utilisant les modes de fichiers Unix, Klex demande des permissions réservées au propriétaire lors de la création du répertoire ; il ne modifie pas les permissions des répertoires existants. Windows utilise des listes de contrôle d'accès.
 
-Vérifiez vos procédures de sauvegarde et de restauration avant de supprimer ou de déplacer des données. Cette page ne décrit ni procédure de migration ou de restauration prise en charge, ni règles de conservation ou traitement des données par des tiers.
+Vérifiez vos procédures de sauvegarde et de restauration avant de supprimer ou de déplacer des données.
+
+</Tab>
+</Tabs>
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

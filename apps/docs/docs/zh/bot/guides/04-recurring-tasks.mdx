@@ -1,0 +1,34 @@
+---
+title: 自动执行重复任务
+sidebar:
+  label: 重复任务
+description: 使用已连接的日程服务和清晰的指令设置重复工作。
+related:
+  - /zh/bot/concepts/memory
+  - /zh/bot/concepts/agent-skills
+  - /zh/bot/guides/control-and-limits
+---
+
+对于重复工作，请使用能够向 Bot 传递事件的已连接日历或日程服务。该服务必须支持所需日程，并通过 MCP 连接提供必要功能。
+
+<a id="set-up-a-routine"></a>
+
+## 设置例行任务
+
+1. 连接日程服务并授权 Bot 的账户。确认 Bot 可以创建日程并接收事件。
+2. 告诉 Bot 要做什么、执行频率、时区以及结果发送位置。授予它所需应用和数据的访问权限。
+3. 让 Bot 创建日程，然后在日程服务中检查。在依赖该流程之前，请测试流程并检查结果。
+
+例如：“每周一 09:00 Europe/Berlin，总结项目中未关闭的 issue，并将摘要发布到项目频道。”Bot 需要可用的日程，以及访问 issue 来源和目标频道的权限。
+
+<a id="reminders-and-learned-procedures"></a>
+
+## 提醒和学习到的流程
+
+Bot 可以使用内部待办事项处理短期工作和一次性提醒。它们不是重复日程日历：对于重复日程，请使用合适的已连接服务。
+
+管理员可以通过 `GET` 和 `POST /v1/todos` 列出和创建待办事项，通过 `PATCH` 或 `DELETE /v1/todos/{id}` 更新或删除。列表在 Bot 的各个会话之间共享；更改会在它的下一步出现。提醒时间必须位于未来，并包含 UTC 偏移量或 `Z`。请在 Bot 的 OpenAPI 文档中检查路由是否可用。对于自行托管的 Bot，请参阅[本地 Admin API 访问](/zh/bot/guides/observability#access-the-local-admin-api)及其安全限制。
+
+Bot 还可以从经验中将可复用流程学习为 [Agent Skill](/zh/bot/concepts/agent-skills)，帮助它处理熟悉的工作。
+
+请确保例行任务到期时 Bot 及其连接可用，并对重要结果使用平常的监控或升级流程。

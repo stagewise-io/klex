@@ -1227,6 +1227,17 @@ describe('memory writer tools', () => {
       },
       'work-items/tasks',
     );
+    // Nested below an invariant tag: still needs the tracker ID.
+    await reject(
+      {
+        ...create(),
+        fields: fields({
+          title: 'CLOUD-255',
+          tags: ['work-items/issues/bugs'],
+        }),
+      },
+      'work-items/tasks',
+    );
     await reject(
       {
         ...create(),

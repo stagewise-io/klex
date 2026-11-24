@@ -26,6 +26,7 @@ import {
 } from './retrieval';
 import systemPromptPart from './system-prompt-part.md';
 import { createEntityStore } from './writer/entities';
+import { createWriterState } from './writer/state';
 
 /**
  * The only place old memory notes are converted (format 5/6 → flat format 7).
@@ -38,32 +39,34 @@ export async function migrateMemoryDocuments(
   logger: Pick<ModuleLogger, 'info' | 'warn'>,
   options: { dryRun?: boolean } = {},
 ): Promise<void> {
-  const entities = createEntityStore(
-    join(dataDirectory, 'extensions/io.stagewise/memory/entities'),
-    {
-      migrate: true,
-      dryRun: options.dryRun,
-      onConversionPlanned: (summary) => {
-        logger.info(
-          {
-            dryRun: summary.dryRun,
-            moved: summary.moved,
-            renamed: summary.renamed,
-            collisions: summary.collisions,
-            addedInverses: summary.addedInverses,
-          },
-          summary.dryRun
-            ? 'Memory migration planned (dry run, nothing written)'
-            : 'Migrating memory notes to flat titles and tags',
+  const memoryDirectory = join(dataDirectory, 'extensions/io.stagewise/memory');
+  const entities = createEntityStore(join(memoryDirectory, 'entities'), {
+    migrate: true,
+    dryRun: options.dryRun,
+    // Persist compatibility 4 before any note moves, even on installs that
+    // never wrote writer state, so older binaries refuse the flat layout.
+    beforeConversionWrite: () =>
+      createWriterState(memoryDirectory).update(() => undefined),
+    onConversionPlanned: (summary) => {
+      logger.info(
+        {
+          dryRun: summary.dryRun,
+          moved: summary.moved,
+          renamed: summary.renamed,
+          collisions: summary.collisions,
+          addedInverses: summary.addedInverses,
+        },
+        summary.dryRun
+          ? 'Memory migration planned (dry run, nothing written)'
+          : 'Migrating memory notes to flat titles and tags',
+      );
+      if (summary.droppedLinks.length)
+        logger.warn(
+          { droppedLinks: summary.droppedLinks },
+          'Memory migration drops links to notes that do not exist',
         );
-        if (summary.droppedLinks.length)
-          logger.warn(
-            { droppedLinks: summary.droppedLinks },
-            'Memory migration drops links to notes that do not exist',
-          );
-      },
     },
-  );
+  });
   await entities.start();
 }
 

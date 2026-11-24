@@ -1,0 +1,60 @@
+---
+title: Klex Bot 제어
+sidebar:
+  label: 제어
+description: Klex Bot을 중지하고 연결된 컴퓨터와 앱에 대한 접근을 관리합니다.
+related:
+  - /ko/bot/guides/observability
+  - /ko/bot/concepts/brain-and-computers
+  - /ko/guides/secure-bot-usage
+---
+
+Klex Bot을 중지하고 연결 및 계정을 통해 접근할 수 있는 대상을 관리할 수 있습니다.
+
+<a id="run-a-self-hosted-bot-without-the-picker"></a>
+<a id="stop-a-bot"></a>
+
+## 봇 중지
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="클라우드 호스팅">
+
+Klex Cloud에서 봇을 열고 호스팅 설정에서 **Stop**을 선택합니다.
+
+</Tab>
+<Tab title="셀프 호스팅">
+
+앱에서 실행 중인 봇을 중지하려면 앱을 닫습니다.
+
+<a id="stop-a-headless-bot"></a>
+
+헤드리스 봇은 서비스 관리자의 중지 명령을 사용합니다. 프로세스를 감독하는 경우 봇이 즉시 다시 시작되지 않도록 설정합니다.
+
+</Tab>
+</Tabs>
+
+<a id="manage-access"></a>
+
+## 접근 관리
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="클라우드 호스팅">
+
+Klex Cloud에서 봇의 **Connectors**를 열어 연결을 관리합니다.
+
+</Tab>
+<Tab title="셀프 호스팅">
+
+Klex 앱의 **Settings → MCP Servers**에서 서버를 확인, 수정 또는 제거할 수 있습니다. 단계와 OAuth 취소에 관한 주의사항은 [MCP와 Klex Bots](/ko/bot/concepts/mcp#add-a-remote-server-in-the-self-hosted-app)를 참고하세요.
+
+</Tab>
+</Tabs>
+
+봇이 사용하는 계정과 앱의 권한은 해당 계정과 앱에서 직접 설정합니다. 연결과 권한의 관계는 [컴퓨터와 앱 연결](/ko/bot/concepts/brain-and-computers)을 참고하세요.
+
+현재 Klex는 개별 작업을 승인하거나 제한하는 기능을 지원하지 않습니다. 이에 맞게 봇의 계정과 앱 권한을 설정하세요.
+
+대시보드에서 [봇의 활동을 확인](/ko/bot/guides/observability)할 수도 있습니다.
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

@@ -25,7 +25,12 @@ import { SessionInboxUrgency } from '@/session/inbox';
 import type { ChildSessionHandle } from '@/session/types';
 import type { SkillRegistry } from '@/skills';
 
-import { createEntityStore, type EntityStore } from './entities';
+import {
+  createEntityStore,
+  type EntityStore,
+  knownTags,
+  renderKnownTags,
+} from './entities';
 import { createWriterState, type WriterState } from './state';
 import prompt from './system-prompt.md';
 import { createWriterTools } from './tools';
@@ -376,6 +381,8 @@ class MemoryWriterExtension implements Extension {
           },
         );
         const selfName = this.options.selfName?.()?.trim() || undefined;
+        // Static for this session: defaults plus every tag in use right now.
+        const tagSnapshot = renderKnownTags(knownTags(this.entities.list()));
         this.abort = new AbortController();
         this.tools = createWriterTools({
           selfName,
@@ -401,7 +408,7 @@ class MemoryWriterExtension implements Extension {
               parts: [
                 {
                   type: 'text',
-                  text: `${selfName ? `<self name="${selfName}"/>\n\n` : ''}<previous-activities>\n${previousText}\n</previous-activities>\n\n<new-activities date="${date}">\n${newText}\n</new-activities>`,
+                  text: `${selfName ? `<self name="${selfName}"/>\n\n` : ''}<known-tags>\n${tagSnapshot}\n</known-tags>\n\n<previous-activities>\n${previousText}\n</previous-activities>\n\n<new-activities date="${date}">\n${newText}\n</new-activities>`,
                 },
               ],
             },

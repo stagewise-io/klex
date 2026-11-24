@@ -26,7 +26,9 @@ export const MEMORY_WRITER_STORE_DEFINITION: JsonStoreDefinition = {
   schemaVersion: 1,
   // 3: document format 6 removes strength and groups links by curated predicates.
   // Older binaries cannot preserve these lists or their inverse semantics.
-  compatibilityVersion: 3,
+  // 4: document format 7 flattens notes to `{Title}.md` with required Tags.
+  // Older binaries would read the root as untyped legacy notes.
+  compatibilityVersion: 4,
   minimumKlexVersion: '0.38.1',
   versions: [{ version: 1, schema: stateSchema }],
   migrations: [],

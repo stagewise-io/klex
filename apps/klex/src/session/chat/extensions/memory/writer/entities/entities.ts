@@ -42,6 +42,47 @@ const entityTypeSchema = z
   .string()
   .max(100)
   .regex(/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/);
+
+// Tags are the ontology: lowercase kebab-case segments nested with `/`.
+const TAG_CHARACTER = '[\\p{Ll}\\p{Lo}\\p{Lm}\\p{M}\\p{N}]';
+const TAG_SEGMENT = `${TAG_CHARACTER}+(?:-${TAG_CHARACTER}+)*`;
+const MAX_TAG_DEPTH = 4;
+export const tagSchema = z
+  .string()
+  .max(100)
+  .regex(
+    new RegExp(
+      `^${TAG_SEGMENT}(?:/${TAG_SEGMENT}){0,${MAX_TAG_DEPTH - 1}}$`,
+      'u',
+    ),
+    'Expected lowercase kebab-case segments joined by /, e.g. people/coworkers',
+  )
+  .describe(
+    'Ontology tag: lowercase kebab-case, nested with /, e.g. people/coworkers.',
+  );
+/** Converted folder path → tag: NFC, lowercase, other characters become `-`. */
+export function normalizeTag(path: string): string {
+  const segments = path
+    .normalize('NFC')
+    .toLowerCase()
+    .split('/')
+    .map((segment) =>
+      segment
+        .replace(/[^\p{Ll}\p{Lo}\p{Lm}\p{M}\p{N}]+/gu, '-')
+        .replace(/^-+|-+$/g, ''),
+    )
+    .filter(Boolean)
+    .slice(0, MAX_TAG_DEPTH);
+  const kept: string[] = [];
+  for (const segment of segments) {
+    if ([...kept, segment].join('/').length > 100) break;
+    kept.push(segment);
+  }
+  if (!kept.length && segments[0])
+    kept.push(segments[0].slice(0, 100).replace(/-+$/, ''));
+  return kept.join('/') || 'untagged';
+}
+const uniqueTags = (tags: readonly string[]): string[] => [...new Set(tags)];
 const keyPathSchema = z
   .string()
   .max(200)
@@ -216,26 +257,8 @@ export function normalizeEntityName(value: string): string {
   return name;
 }
 const entityKey = (id: string) => id.normalize('NFC').toLowerCase();
-// Shared folders have one spelling on both case-sensitive and insensitive disks.
-function canonicalParents(id: string, existing: Iterable<string>): string {
-  const parts = id.split('/');
-  for (const other of existing) {
-    const folders = other.split('/').slice(0, -1);
-    for (let i = 0; i < Math.min(parts.length - 1, folders.length); i++) {
-      const part = parts[i];
-      const folder = folders[i];
-      if (
-        part === undefined ||
-        folder === undefined ||
-        entityKey(part) !== entityKey(folder)
-      )
-        break;
-      parts[i] = folder;
-    }
-  }
-  return parts.join('/');
-}
-export const entityIdSchema = z
+/** Format 4–6 identity (`type/Name`, `type/namespace/Name`); forward-conversion reader only. */
+const typedEntityIdSchema = z
   .string()
   .max(301)
   .refine((id) => {
@@ -256,14 +279,36 @@ export const entityIdSchema = z
           !part.toLowerCase().endsWith('.md'),
       )
     );
-  }, 'Expected type/Name or type/namespace/Name, without .md')
+  }, 'Expected type/Name or type/namespace/Name, without .md');
+/** Format 7 identity: the flat title, which is also the filename. */
+export const entityIdSchema = z
+  .string()
+  .min(1)
+  .max(100)
+  .refine(
+    (id) =>
+      !id.includes('/') &&
+      normalizeNameSegment(id) === id &&
+      Buffer.byteLength(id) <= 200 &&
+      !id.toLowerCase().endsWith('.md'),
+    'Expected a memory title: one file name, no / and no .md',
+  )
   .describe(
-    'Type-qualified memory name, e.g. person/Ada Lovelace. No .md extension.',
+    'Memory title, unique across memory, e.g. Ada Lovelace or Mercury (company). No .md extension.',
   );
+/** Writer title → filename: one portable segment; `/` becomes a space. */
+export function normalizeTitle(value: string): string {
+  const title = normalizeNameSegment(value.replace(/\//g, ' '));
+  if (title.length < 2 || !entityIdSchema.safeParse(title).success)
+    throw new Error(
+      `Title "${value}" is not a usable file name; use at least two characters and no .md`,
+    );
+  return title;
+}
 // Released v4 relation contract: named targets, free-text relationship.
 const v4RelationSchema = legacyRelationSchema.extend({
   target: z.discriminatedUnion('kind', [
-    z.object({ kind: z.literal('entity'), id: entityIdSchema }).strict(),
+    z.object({ kind: z.literal('entity'), id: typedEntityIdSchema }).strict(),
     legacyRelationSchema.shape.target.options[1],
   ]),
 });
@@ -344,9 +389,20 @@ export const relationshipTypeSchema = z
   .describe(
     'Exact curated verb phrase from this entity to the target. Prefer a specific predicate; relatedTo is the fallback. Entity inverse is automatic.',
   );
-export const relationSchema = v5RelationSchema.omit({ strength: true }).extend({
-  relationship: relationshipTypeSchema,
-});
+// Format-6 relation contract: typed `type/Name` targets.
+const v6RelationSchema = v5RelationSchema
+  .omit({ strength: true })
+  .extend({ relationship: relationshipTypeSchema });
+// Format 7: entity targets are flat titles.
+export const relationSchema = z
+  .object({
+    target: z.discriminatedUnion('kind', [
+      z.object({ kind: z.literal('entity'), id: entityIdSchema }).strict(),
+      legacyRelationSchema.shape.target.options[1],
+    ]),
+    relationship: relationshipTypeSchema,
+  })
+  .strict();
 
 // Skill links name the skill file. Entity IDs never end in `.md`, so the
 // suffix distinguishes them from entities such as `project/SKILL`.
@@ -363,19 +419,28 @@ export function formatRelationLink(relation: Relation): string {
   return `[[${path}]]`;
 }
 
+function linkTarget(link: string): { kind: 'entity' | 'skill'; id: string } {
+  const match = RELATION_LINK.exec(link);
+  if (!match) throw new Error(`Malformed relation link: ${link}`);
+  const [, path = ''] = match;
+  return path.endsWith(SKILL_LINK_SUFFIX)
+    ? { kind: 'skill', id: path.slice(0, -SKILL_LINK_SUFFIX.length) }
+    : { kind: 'entity', id: path };
+}
+
 export function parseRelationLink(
   link: string,
   relationship: Relation['relationship'],
 ): Relation {
-  const match = RELATION_LINK.exec(link);
-  if (!match) throw new Error(`Malformed relation link: ${link}`);
-  const [, path = ''] = match;
-  return relationSchema.parse({
-    target: path.endsWith(SKILL_LINK_SUFFIX)
-      ? { kind: 'skill', id: path.slice(0, -SKILL_LINK_SUFFIX.length) }
-      : { kind: 'entity', id: path },
-    relationship,
-  });
+  return relationSchema.parse({ target: linkTarget(link), relationship });
+}
+
+// Format-6 reader: same plain links, typed targets.
+function parseV6RelationLink(
+  link: string,
+  relationship: Relation['relationship'],
+): Relation {
+  return v6RelationSchema.parse({ target: linkTarget(link), relationship });
 }
 
 // Validate the released v5 link before the shared conversion drops its label and strength.
@@ -402,14 +467,19 @@ const fallbackRelations = (
 
 export const entityFieldsSchema = z
   .object({
-    name: text
+    title: text
       .min(2)
+      .max(100)
       .describe(
-        'Canonical name as people write it. Becomes the filename; unique within its type (ignoring case). Slash preserves an existing namespace (org/repo); do not invent folder hierarchies. Other unsafe filename/link characters become spaces. Not a description.',
+        'Name as people write it; becomes the filename. Unique across all memory, ignoring case. Clash with a different thing: add a singular qualifier in parentheses, e.g. "Mercury (company)", "Ada Lovelace (Acme)". No slashes; unsafe filename/link characters become spaces. Not a description.',
       ),
-    entityType: entityTypeSchema.describe(
-      'Lowercase kebab-case kind the thing actually is. Reuse fitting existing type, else new. Wrong type: change it with updateEntity; its path changes and references follow.',
-    ),
+    tags: z
+      .array(tagSchema)
+      .min(1)
+      .max(20)
+      .describe(
+        'Ontology: what it is. At least one, even when the title has a qualifier, e.g. Julian → ["people"]. Reuse known tags; nest with /, e.g. people/coworkers. New tags: plural, lowercase kebab-case. Replaces the whole list.',
+      ),
     loadOn: z
       .array(loadMatcherSchema)
       .max(50)
@@ -483,9 +553,9 @@ const v5LinkFrontmatterSchema = v5FrontmatterSchema.extend({
 });
 // Format 6 removes strength and groups plain links by curated predicates in one conversion.
 // Runtime keeps a flat typed edge list; only the disk representation is grouped.
-const frontmatterSchema = v5FrontmatterSchema.extend({
+const v6FrontmatterSchema = v5FrontmatterSchema.extend({
   FormatVersion: z.literal(6),
-  RelatedTo: z.array(relationSchema).max(100),
+  RelatedTo: z.array(v6RelationSchema).max(100),
 });
 const relationListsShape = Object.fromEntries(
   relationshipTypeSchema.options.map((type) => [
@@ -493,6 +563,18 @@ const relationListsShape = Object.fromEntries(
     z.array(z.string()).max(100).optional(),
   ]),
 ) as Record<Relation['relationship'], z.ZodOptional<z.ZodArray<z.ZodString>>>;
+const v6LinkFrontmatterSchema = v6FrontmatterSchema
+  .omit({ RelatedTo: true })
+  .extend(relationListsShape)
+  .strict();
+// Format 7 flattens notes to `{Title}.md`; the ontology moves from the folder to Tags.
+const frontmatterSchema = v6FrontmatterSchema
+  .omit({ FormatVersion: true, RelatedTo: true })
+  .extend({
+    FormatVersion: z.literal(7),
+    Tags: z.array(tagSchema).min(1).max(20),
+    RelatedTo: z.array(relationSchema).max(100),
+  });
 const linkFrontmatterSchema = frontmatterSchema
   .omit({ RelatedTo: true })
   .extend(relationListsShape)
@@ -506,11 +588,8 @@ const legacyFrontmatterSchema = uuidFrontmatterSchema.extend({
 
 export type EntityFields = z.input<typeof entityFieldsSchema>;
 export interface MemoryEntity {
-  /** Derived from the filename. */
+  /** The title: derived from the filename, never stored in frontmatter. */
   id: string;
-  entityType: string;
-  /** Derived from the file name, not stored in frontmatter. */
-  name: string;
   frontmatter: z.infer<typeof frontmatterSchema>;
   sections: Record<string, Fact[]>;
 }
@@ -554,7 +633,7 @@ export interface EntityStore {
   ): Promise<MemoryEntity>;
   /**
    * Folds `dropId` into `keepId` (see `mergedEntity`), repoints every
-   * relation and whole-name mention targeting `dropId`, then deletes its file.
+   * relation targeting `dropId` (fact text is untouched), then deletes its file.
    * A temporary journal completes interrupted changes; no aliases are retained.
    */
   merge(
@@ -565,6 +644,8 @@ export interface EntityStore {
   ): Promise<MemoryEntity>;
   /** Environment-only API. Never exposed to the writer's tools. */
   recordRead(id: string): Promise<void>;
+  /** What startup converted to flat titles; null when nothing was converted. */
+  conversion(): FlatConversionSummary | null;
 }
 export type Relation = z.infer<typeof relationSchema>;
 const relationsSchema = z.array(relationSchema).max(100);
@@ -576,7 +657,7 @@ export function renderEntity(
 ): string {
   const identities = entity.frontmatter.LinkedIdentities;
   return [
-    `# ${entity.name}`,
+    `# ${entity.id}`,
     ...(identities.length
       ? [`IDs: ${identities.map(formatIdentity).join('; ')}`]
       : []),
@@ -650,8 +731,8 @@ function combineRelations(
 /**
  * `keep` after absorbing `drop`: sections joined by name, equal facts
  * combined (sources and `was:` history kept within caps), identities,
- * matchers and relations unioned. Relations between the two vanish; for a
- * shared target distinct predicates survive. Type, title and dates stay.
+ * matchers, tags and relations unioned. Relations between the two vanish; for
+ * a shared target distinct predicates survive. Title and dates stay.
  */
 export function mergedEntity(
   keep: MemoryEntity,
@@ -687,10 +768,11 @@ export function mergedEntity(
     sections,
     frontmatter: {
       ...frontmatter,
+      Tags: uniqueTags([...frontmatter.Tags, ...drop.frontmatter.Tags]),
       LinkedIdentities: identities,
       LoadOn: dedupeLoadOn(
         [...frontmatter.LoadOn, ...drop.frontmatter.LoadOn],
-        keep.name,
+        keep.id,
         identities,
       ),
       RelatedTo: combineRelations(
@@ -716,10 +798,11 @@ function serialize(entity: MemoryEntity): string {
   entityIdSchema.parse(entity.id);
   validateSections(entity.sections);
   // FormatVersion first, so tools can sniff the version from the first line.
-  const { FormatVersion, RelatedTo, ...rest } = entity.frontmatter;
+  const { FormatVersion, Tags, RelatedTo, ...rest } = entity.frontmatter;
   const relations = combineRelations(RelatedTo);
   const frontmatter = {
     FormatVersion,
+    Tags,
     ...rest,
     ...Object.fromEntries(
       relationshipTypeSchema.options.flatMap((type) => {
@@ -741,10 +824,19 @@ function serialize(entity: MemoryEntity): string {
   return content;
 }
 
+const folderOf = (id: string): string | undefined =>
+  id.includes('/') ? id.slice(0, id.lastIndexOf('/')) : undefined;
+
+/**
+ * Notes before format 7 come back already flattened in memory: format 7
+ * frontmatter with the folder path as the only tag, but still keyed by their
+ * old typed ID (or legacy stem) and with old link targets. The startup
+ * conversion assigns titles and rewrites targets before anything is written.
+ */
 function deserialize(
   content: string,
   id: string,
-  folder?: string,
+  folder: string | undefined = folderOf(id),
 ): {
   entity: MemoryEntity;
   legacy: boolean;
@@ -757,13 +849,13 @@ function deserialize(
   const raw = parse(match[1], { maxAliasCount: 0 });
   let old: LegacyFields | undefined;
   let v4: z.infer<typeof v4FrontmatterSchema> | undefined;
-  let entityType: string;
+  let tagSource = '';
   if (raw?.FormatVersion === 1) {
     const legacy = legacyFrontmatterSchema.parse(raw);
     if (legacy.Id !== id.split('/').at(-1))
       throw new Error('Legacy ID does not match filename');
-    entityType = entityTypeSchema.parse(legacy.EntityType);
-    if (folder !== undefined && folder !== entityType)
+    tagSource = entityTypeSchema.parse(legacy.EntityType);
+    if (folder !== undefined && folder !== tagSource)
       throw new Error('Legacy entity type does not match folder');
     const {
       EntityType: _type,
@@ -772,8 +864,16 @@ function deserialize(
       ...fields
     } = legacy;
     old = fields;
+  } else if (raw?.FormatVersion === 7) {
+    if (folder !== undefined)
+      throw new Error(
+        'Format 7 notes must sit directly in the memory root, not in a folder',
+      );
   } else {
-    entityType = entityTypeSchema.parse(folder);
+    if (folder === undefined)
+      throw new Error('Notes before format 7 must sit in a type folder');
+    entityTypeSchema.parse(folder.split('/')[0]);
+    tagSource = folder;
     if (raw?.FormatVersion === 4) v4 = v4FrontmatterSchema.parse(raw);
     else if (![5, 6].includes(raw?.FormatVersion)) {
       const legacy = oldFrontmatterSchema.parse(raw);
@@ -783,27 +883,44 @@ function deserialize(
       old = fields;
     }
   }
+  // The literal folder path becomes the only tag; a consolidator normalizes later.
+  const Tags = [normalizeTag(tagSource)];
   let frontmatter: MemoryEntity['frontmatter'];
   if (old)
     frontmatter = {
-      ...frontmatterSchema
+      ...v6FrontmatterSchema
         .omit({ RelatedTo: true })
         .parse({ ...old, FormatVersion: 6 }),
-      // Legacy targets are repointed to names before the note is written.
+      FormatVersion: 7,
+      Tags,
+      // Legacy targets are repointed to titles before the note is written.
       RelatedTo: fallbackRelations(old.RelatedTo),
     };
   else if (v4)
     frontmatter = {
       ...v4,
-      FormatVersion: 6,
+      FormatVersion: 7,
+      Tags,
       RelatedTo: fallbackRelations(v4.RelatedTo),
     };
   else if (raw?.FormatVersion === 5) {
     const stored = v5LinkFrontmatterSchema.parse(raw);
     frontmatter = {
       ...stored,
-      FormatVersion: 6,
+      FormatVersion: 7,
+      Tags,
       RelatedTo: fallbackRelations(stored.RelatedTo.map(parseV5RelationLink)),
+    };
+  } else if (raw?.FormatVersion === 6) {
+    const stored = v6LinkFrontmatterSchema.parse(raw);
+    const relations = relationshipTypeSchema.options.flatMap((type) =>
+      (stored[type] ?? []).map((link) => parseV6RelationLink(link, type)),
+    );
+    frontmatter = {
+      ...v6FrontmatterSchema.omit({ RelatedTo: true }).parse(stored),
+      FormatVersion: 7,
+      Tags,
+      RelatedTo: combineRelations(relations),
     };
   } else {
     const stored = linkFrontmatterSchema.parse(raw);
@@ -815,7 +932,6 @@ function deserialize(
       RelatedTo: combineRelations(relations),
     });
   }
-  const name = id.includes('/') ? id.slice(id.indexOf('/') + 1) : id;
   const sections: Record<string, Fact[]> = Object.create(null);
   for (const section of match[2].split(/^## /m).slice(1)) {
     const line = section.indexOf('\n');
@@ -826,21 +942,151 @@ function deserialize(
   }
   validateSections(sections);
   return {
-    entity: { id, entityType, name, frontmatter, sections },
+    entity: { id, frontmatter, sections },
     legacy: !!old,
-    outdated: raw?.FormatVersion !== 6,
+    outdated: raw?.FormatVersion !== 7,
     old,
   };
 }
 
+export interface FlatConversionSummary {
+  /** Notes moved from type folders to the memory root. */
+  moved: number;
+  /** Converted notes whose title differs from their old file name. */
+  renamed: { from: string; to: string }[];
+  /** Case-insensitive title clashes, resolved with qualifiers. */
+  collisions: string[][];
+  /** Entity links whose target note does not exist; dropped. */
+  droppedLinks: { entity: string; target: string }[];
+  /** Missing inverse links written on the target note. */
+  addedInverses: number;
+  /** Planned only; nothing was written. */
+  dryRun: boolean;
+}
+
+export interface EntityStoreOptions {
+  /** Plan the startup conversion and report it via `conversion()`; never write. */
+  dryRun?: boolean;
+  /**
+   * Only the application startup migration converts old notes. Every other
+   * store (the memory writer) refuses to start on unconverted notes instead
+   * of migrating them mid-session.
+   */
+  migrate?: boolean;
+  /** Called with the conversion plan before anything is written. */
+  onConversionPlanned?: (summary: FlatConversionSummary) => void;
+}
+
+const MAX_QUALIFIER = 60;
+function qualifiedTitle(leaf: string, qualifier: string): string {
+  const ending = ` (${qualifier.slice(0, MAX_QUALIFIER).trim()})`;
+  let base = leaf;
+  while (
+    base &&
+    (base.length + ending.length > 100 ||
+      Buffer.byteLength(base + ending) > 200)
+  )
+    base = base.slice(0, -1);
+  return normalizeNameSegment(`${base.trimEnd()}${ending}`);
+}
+
+/**
+ * Pure title planner for the one-time flattening; no I/O. Non-clashing leaves
+ * keep their name. Every member of a case-insensitive clash group (or a leaf
+ * clashing with an existing flat title) gets a qualifier: the top-level folder,
+ * else the full folder path, else the full path plus a number.
+ */
+export function planFlatTitles(
+  sources: readonly { folder: string; leaf: string }[],
+  reserved: readonly string[] = [],
+): { titles: string[]; collisions: string[][] } {
+  const taken = new Set(reserved.map(entityKey));
+  const groups = new Map<string, number[]>();
+  sources.forEach(({ leaf }, index) => {
+    const key = entityKey(leaf);
+    groups.set(key, [...(groups.get(key) ?? []), index]);
+  });
+  const titles: string[] = sources.map(() => '');
+  const clashing: number[][] = [];
+  // Plain names first, so a qualified title never takes a plain one.
+  for (const [key, members] of groups) {
+    const [only] = members;
+    const source = only === undefined ? undefined : sources[only];
+    if (
+      members.length === 1 &&
+      only !== undefined &&
+      source &&
+      source.leaf.length >= 2 &&
+      !taken.has(key)
+    ) {
+      titles[only] = source.leaf;
+      taken.add(key);
+    } else clashing.push(members);
+  }
+  const collisions: string[][] = [];
+  const levels = [
+    (folder: string) => folder.split('/')[0] ?? folder,
+    (folder: string) => folder.split('/').join(' '),
+  ];
+  for (const members of clashing) {
+    const group = members.flatMap((index) => {
+      const source = sources[index];
+      return source ? [{ index, ...source }] : [];
+    });
+    let chosen: string[] | undefined;
+    for (const level of levels) {
+      const candidates = group.map(({ leaf, folder }) =>
+        qualifiedTitle(leaf, level(folder)),
+      );
+      const keys = candidates.map(entityKey);
+      if (
+        new Set(keys).size === keys.length &&
+        keys.every((key) => !taken.has(key))
+      ) {
+        chosen = candidates;
+        break;
+      }
+    }
+    if (!chosen) {
+      const used = new Set<string>();
+      chosen = group.map(({ leaf, folder }) => {
+        const path = folder.split('/').join(' ');
+        let candidate = qualifiedTitle(leaf, path);
+        for (
+          let number = 2;
+          taken.has(entityKey(candidate)) || used.has(entityKey(candidate));
+          number++
+        )
+          candidate = qualifiedTitle(leaf, `${path} ${number}`);
+        used.add(entityKey(candidate));
+        return candidate;
+      });
+    }
+    group.forEach(({ index }, position) => {
+      const title = chosen[position] ?? '';
+      titles[index] = title;
+      taken.add(entityKey(title));
+    });
+    collisions.push(chosen);
+  }
+  return { titles, collisions };
+}
+
 class EntityStoreModule implements EntityStore {
   private readonly entities = new Map<string, MemoryEntity>();
-  private readonly folders = new Set<string>();
   private starting: Promise<void> | undefined;
   private work = Promise.resolve();
   private interrupted = false;
+  private summary: FlatConversionSummary | null = null;
 
-  constructor(private readonly directory: string) {}
+  constructor(
+    private readonly directory: string,
+    private readonly options: EntityStoreOptions = {},
+  ) {}
+
+  conversion(): FlatConversionSummary | null {
+    return structuredClone(this.summary);
+  }
 
   start(): Promise<void> {
     this.starting ??= this.load();
@@ -863,28 +1109,23 @@ class EntityStoreModule implements EntityStore {
       const at = new Date().toISOString();
       const identities = dedupeIdentities(input.linkedIdentities);
       this.checkIdentities(identities);
+      const id = this.availableId(normalizeTitle(input.title));
       const entity: MemoryEntity = {
-        id: this.availableId(input.entityType, input.name),
-        name: normalizeEntityName(input.name),
-        entityType: input.entityType,
+        id,
         frontmatter: {
-          FormatVersion: 6,
+          FormatVersion: 7,
+          Tags: uniqueTags(input.tags),
           CreatedAt: at,
           LastUpdatedAt: at,
           LastReadAt: null,
           LinkedIdentities: identities,
-          LoadOn: dedupeLoadOn(
-            input.loadOn,
-            normalizeEntityName(input.name),
-            identities,
-          ),
+          LoadOn: dedupeLoadOn(input.loadOn, id, identities),
           RelatedTo: combineRelations(input.relatedTo),
           TrustScore: 2,
           AuthorityScore: 5,
         },
         sections: structuredClone(sections),
       };
-      entity.name = entity.id.slice(entity.id.indexOf('/') + 1);
       await this.persist(entity);
       return structuredClone(entity);
     });
@@ -916,10 +1157,10 @@ class EntityStoreModule implements EntityStore {
         ...Object.entries(sections),
       ]);
       const previousId = entity.id;
-      entity.entityType = patch.entityType ?? entity.entityType;
-      entity.name = normalizeEntityName(patch.name ?? entity.name);
-      entity.id = this.availableId(entity.entityType, entity.name, previousId);
-      entity.name = entity.id.slice(entity.id.indexOf('/') + 1);
+      entity.id = this.availableId(
+        patch.title === undefined ? entity.id : normalizeTitle(patch.title),
+        previousId,
+      );
       const previous = entity.frontmatter;
       const identities = patch.linkedIdentities
         ? dedupeIdentities(patch.linkedIdentities)
@@ -927,10 +1168,11 @@ class EntityStoreModule implements EntityStore {
       this.checkIdentities(identities, previousId);
       entity.frontmatter = {
         ...previous,
+        Tags: patch.tags ? uniqueTags(patch.tags) : previous.Tags,
         LinkedIdentities: identities,
         LoadOn: dedupeLoadOn(
           patch.loadOn ?? previous.LoadOn,
-          entity.name,
+          entity.id,
           identities,
         ),
         RelatedTo: combineRelations(patch.relatedTo ?? previous.RelatedTo),
@@ -1022,32 +1264,28 @@ class EntityStoreModule implements EntityStore {
       const owner = owners.get(identityKey(identity));
       if (owner)
         throw new Error(
-          `Linked identity "${formatIdentity(identity)}" already belongs to entity ${owner.id} (${owner.name}); update that entity instead`,
+          `Linked identity "${formatIdentity(identity)}" already belongs to entity "${owner.id}"; update that entity instead`,
         );
     }
   }
 
-  private availableId(type: string, raw: string, self?: string): string {
-    const id = canonicalParents(
-      `${entityTypeSchema.parse(type)}/${normalizeEntityName(raw)}`,
-      [
-        ...[...this.entities.values()].map((entity) => entity.id),
-        ...[...this.folders].map((path) => `${path}/__probe`),
-      ],
-    );
-    entityIdSchema.parse(id);
-    const other = this.entities.get(entityKey(id));
+  /** Titles are unique across the whole memory root, ignoring case and NFC. */
+  private availableId(title: string, self?: string): string {
+    entityIdSchema.parse(title);
+    const other = this.entities.get(entityKey(title));
     if (other && other.id !== self)
       throw new Error(
-        `Entity ${other.id} already exists; update it or choose a more specific name`,
+        `Title "${title}" is already used by "${other.id}" (tags: ${other.frontmatter.Tags.join(', ')}). Same thing: update "${other.id}" instead. Different thing: pick a title with a singular qualifier in parentheses, e.g. "${title} (company)".`,
       );
-    return id;
+    return title;
   }
 
   private enqueue<T>(action: () => Promise<T>): Promise<T> {
     const previous = this.work;
     const result = this.start().then(() =>
       previous.then(() => {
+        if (this.options.dryRun)
+          throw new Error('Dry-run memory store is read-only');
         if (this.interrupted)
           throw new Error('Memory change interrupted; restart to finish it');
         return action();
@@ -1068,6 +1306,8 @@ class EntityStoreModule implements EntityStore {
 
   // Walk one component at a time; recursive mkdir/lstat of only the final
   // parent would follow an intermediate symlink outside the memory root.
+  // Format-7 titles are flat (no folders), so this only does work for legacy
+  // nested journal paths replayed before the startup conversion.
   private async checkParents(path: string, create = false): Promise<boolean> {
     let folder = this.directory;
     for (const part of path.split('/').slice(0, -1)) {
@@ -1095,22 +1335,24 @@ class EntityStoreModule implements EntityStore {
       }
       if (!info.isDirectory())
         throw new Error('Memory parent must be a plain directory');
-      this.folders.add(relative(this.directory, folder).split(sep).join('/'));
     }
     return true;
   }
 
-  private file(entity: MemoryEntity): string {
-    return join(this.directory, `${entityIdSchema.parse(entity.id)}.md`);
+  private async persist(entity: MemoryEntity): Promise<void> {
+    await this.writeDocument(
+      `${entityIdSchema.parse(entity.id)}.md`,
+      serialize(entity),
+    );
+    this.entities.set(entityKey(entity.id), structuredClone(entity));
   }
 
-  private async persist(entity: MemoryEntity): Promise<void> {
-    const content = serialize(entity);
+  private async writeDocument(path: string, content: string): Promise<void> {
     if (Buffer.byteLength(content) > 500_000)
       throw new Error('Entity exceeds size limit');
     await this.ensureDirectory();
-    const file = this.file(entity);
-    await this.checkParents(`${entity.id}.md`, true);
+    const file = join(this.directory, path);
+    await this.checkParents(path, true);
     const temporary = `${file}.${randomUUID()}.tmp`;
     try {
       await writeFile(temporary, content, { flag: 'wx', mode: 0o600 });
@@ -1121,7 +1363,6 @@ class EntityStoreModule implements EntityStore {
         await handle.close();
       }
       await rename(temporary, file);
-      this.entities.set(entityKey(entity.id), structuredClone(entity));
     } finally {
       await rm(temporary, { force: true });
     }
@@ -1174,12 +1415,12 @@ class EntityStoreModule implements EntityStore {
         await rm(file);
     }
     for (const document of journal.documents) {
-      const { entity } = deserialize(
-        document.content,
-        document.id,
-        document.id.split('/')[0],
-      );
-      await this.persist(entity);
+      // Journals from before format 7 hold nested notes: restore them verbatim;
+      // the startup conversion then flattens them like any other old note.
+      if (document.id.includes('/'))
+        await this.writeDocument(`${document.id}.md`, document.content);
+      else
+        await this.persist(deserialize(document.content, document.id).entity);
     }
     // Remove only empty former parent folders, never recursively.
     for (const move of journal.moves) {
@@ -1188,9 +1429,6 @@ class EntityStoreModule implements EntityStore {
       while (folder !== this.directory) {
         try {
           await rmdir(folder);
-          this.folders.delete(
-            relative(this.directory, folder).split(sep).join('/'),
-          );
         } catch (error) {
           if (
             ['ENOENT', 'ENOTEMPTY', 'EEXIST'].includes(
@@ -1218,12 +1456,10 @@ class EntityStoreModule implements EntityStore {
     const next = new Map(this.entities);
     for (const { from } of journal.moves) next.delete(entityKey(from));
     for (const { id, content } of journal.documents)
-      next.set(
-        entityKey(id),
-        deserialize(content, id, id.split('/')[0]).entity,
-      );
+      next.set(entityKey(id), deserialize(content, id).entity);
     const documents: MovesJournal['documents'] = [];
     for (const entity of next.values()) {
+      // Relations only: prose mentions of a plain title may mean someone else.
       const rewritten = replaceReferences(entity, replacements);
       if (
         JSON.stringify(rewritten) !==
@@ -1245,6 +1481,10 @@ class EntityStoreModule implements EntityStore {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
     if (pending) {
+      if (this.options.dryRun)
+        throw new Error(
+          'An interrupted memory change is pending; start without dry run to finish it',
+        );
       await this.applyMoves(pending);
       await rm(join(this.directory, '.moves.json'));
       this.entities.clear();
@@ -1258,7 +1498,6 @@ class EntityStoreModule implements EntityStore {
     ) => {
       const stem = name.slice(0, -3).normalize('NFC');
       const id = folder ? `${folder}/${stem}` : stem;
-      const type = folder?.split('/')[0];
       const handle = await open(
         file,
         constants.O_RDONLY |
@@ -1273,14 +1512,15 @@ class EntityStoreModule implements EntityStore {
         const { entity, legacy, outdated, old } = deserialize(
           content,
           id,
-          type,
+          folder,
         );
-        if (!legacy) entityIdSchema.parse(id);
-        else legacyEntityIdSchema.parse(stem);
+        if (legacy) legacyEntityIdSchema.parse(stem);
+        else if (folder) typedEntityIdSchema.parse(id);
+        else entityIdSchema.parse(id);
         const key = legacy ? stem : entityKey(id);
         if (ids.has(key)) throw new Error('Duplicate entity identity');
         ids.add(key);
-        documents.push({ file, entity, legacy, outdated, old, stem });
+        documents.push({ file, entity, legacy, outdated, old, stem, folder });
       } catch (error) {
         throw new Error(`Invalid entity ${file}`, { cause: error });
       } finally {
@@ -1321,7 +1561,6 @@ class EntityStoreModule implements EntityStore {
           if (previous && previous !== path)
             throw new Error('Memory folder casing conflicts');
           folders.set(entityKey(path), path);
-          this.folders.add(path);
           await walk(file, path);
         } else if (entry.name.endsWith('.md')) {
           if (!entry.isFile()) throw new Error('Entity must be a regular file');
@@ -1349,55 +1588,54 @@ class EntityStoreModule implements EntityStore {
           );
         owners.set(key, entity.id);
       }
-    const used = new Set(
-      active.filter(({ legacy }) => !legacy).map(({ entity }) => entity.id),
-    );
+    // One-time flattening: every note before format 7 moves to `{Title}.md`.
+    // Old typed IDs (and legacy stems) map to titles; clashes get qualifiers.
+    const converting = active
+      .filter(({ outdated }) => outdated)
+      .sort((a, b) => a.file.localeCompare(b.file));
+    if (
+      (converting.length || merged.size) &&
+      !this.options.migrate &&
+      !this.options.dryRun
+    )
+      throw new Error(
+        'Memory notes are not migrated yet; the startup migration must finish first',
+      );
+    const sources = converting.map(({ entity, old, folder }) => {
+      if (!old)
+        return {
+          folder: folder ?? '',
+          leaf: entity.id.slice(entity.id.lastIndexOf('/') + 1),
+        };
+      // Legacy titles may carry a namespace (org/repo); it joins the folder path.
+      const parts = normalizeEntityName(old.Title).split('/');
+      const leaf = parts.pop() ?? '';
+      const path = [folder ?? entity.frontmatter.Tags[0] ?? '', ...parts].join(
+        '/',
+      );
+      if (parts.length) entity.frontmatter.Tags = [normalizeTag(path)];
+      return { folder: path, leaf: leaf.length >= 2 ? leaf : 'Untitled' };
+    });
+    const flat = active
+      .filter(({ outdated }) => !outdated)
+      .map(({ entity }) => entity.id);
+    const { titles, collisions } = planFlatTitles(sources, flat);
     const replacements = new Map<string, string>();
     const moves: MovesJournal['moves'] = [];
-    for (const document of active.sort((a, b) =>
-      a.file.localeCompare(b.file),
-    )) {
-      const { entity, old, stem } = document;
-      if (!old) continue;
-      const base = normalizeEntityName(old.Title);
-      const name = base.length >= 2 ? base : 'Untitled';
-      let candidate = canonicalParents(`${entity.entityType}/${name}`, [
-        ...used,
-        ...[...folders.values()].map((path) => `${path}/__probe`),
-      ]);
-      const occupied = () =>
-        [...used].some((id) => entityKey(id) === entityKey(candidate));
-      for (let suffix = 2; occupied(); suffix++) {
-        const parts = name.split('/');
-        const ending = ` ${suffix}`;
-        let leaf = parts.pop() ?? '';
-        const parents = parts.length ? `${parts.join('/')}/` : '';
-        while (
-          leaf.length + ending.length > 100 ||
-          Buffer.byteLength(leaf + ending) > 200 ||
-          parents.length + leaf.length + ending.length > 200 ||
-          Buffer.byteLength(parents + leaf + ending) > 400
-        ) {
-          if (!leaf)
-            throw new Error('Cannot suffix memory name within path limit');
-          leaf = leaf.slice(0, -1);
-        }
-        parts.push(`${normalizeNameSegment(leaf)}${ending}`);
-        candidate = canonicalParents(
-          `${entity.entityType}/${parts.join('/')}`,
-          [...used, ...[...folders.values()].map((path) => `${path}/__probe`)],
-        );
-      }
-      used.add(candidate);
-      replacements.set(stem, candidate);
+    const renamed: FlatConversionSummary['renamed'] = [];
+    converting.forEach((document, index) => {
+      const title = titles[index];
+      if (!title) throw new Error('Unplanned memory title');
+      const from = document.legacy ? document.stem : document.entity.id;
+      replacements.set(from, title);
+      if (title !== document.stem) renamed.push({ from, to: title });
       moves.push({
-        from: stem,
-        to: candidate,
+        from,
+        to: title,
         path: relative(this.directory, document.file).split(sep).join('/'),
       });
-      entity.id = candidate;
-      entity.name = candidate.slice(candidate.indexOf('/') + 1);
-    }
+      document.entity.id = title;
+    });
     for (const { entity, old } of active)
       for (const alias of old?.MergedFrom ?? [])
         if (!replacements.has(alias)) replacements.set(alias, entity.id);
@@ -1411,20 +1649,76 @@ class EntityStoreModule implements EntityStore {
         path: relative(this.directory, document.file).split(sep).join('/'),
       });
     }
-    const final = active.map(({ entity }) =>
-      replaceReferences(entity, replacements),
+    // Link targets resolve exactly, then ignoring case (hand-typed links).
+    const byKey = new Map<string, string>(
+      flat.map((id) => [entityKey(id), id]),
     );
+    for (const [from, to] of replacements) byKey.set(entityKey(from), to);
+    const resolve = (id: string) =>
+      replacements.get(id) ?? byKey.get(entityKey(id));
+    const droppedLinks: FlatConversionSummary['droppedLinks'] = [];
+    const final = active.map(({ entity, outdated }) =>
+      outdated
+        ? retargetRelations(
+            rewriteProse(entity, replacements),
+            resolve,
+            (target) => droppedLinks.push({ entity: entity.id, target }),
+          )
+        : entity,
+    );
+    // Pair every converted entity link with its fixed inverse on the target.
+    let addedInverses = 0;
+    if (converting.length) {
+      const byTitle = new Map(
+        final.map((entity) => [entityKey(entity.id), entity]),
+      );
+      for (const entity of final)
+        for (const { target, relationship } of entity.frontmatter.RelatedTo) {
+          if (target.kind !== 'entity') continue;
+          const other = byTitle.get(entityKey(target.id));
+          if (!other || other === entity) continue;
+          const inverse = RELATION_INVERSES[relationship];
+          const relations = other.frontmatter.RelatedTo;
+          if (
+            relations.length >= 100 ||
+            relations.some(
+              (relation) =>
+                relation.relationship === inverse &&
+                relation.target.kind === 'entity' &&
+                entityKey(relation.target.id) === entityKey(entity.id),
+            )
+          )
+            continue;
+          other.frontmatter.RelatedTo = [
+            ...relations,
+            {
+              target: { kind: 'entity', id: entity.id },
+              relationship: inverse,
+            },
+          ];
+          addedInverses++;
+        }
+    }
     // Serialize everything before publishing the journal: invalid inputs leave
     // every original file untouched. Snapshots make replay independent of names.
     const snapshots = final.map((entity) => ({
       id: entity.id,
       content: serialize(entity),
     }));
-    // Older notes are rewritten in place; older binaries refuse format 6.
-    const rewrites = moves.length
-      ? snapshots
-      : snapshots.filter((_, index) => active[index]?.outdated);
-    if (rewrites.length) await this.commit({ moves, documents: rewrites });
+    if (moves.length) {
+      this.summary = {
+        moved: converting.filter(({ folder }) => folder !== undefined).length,
+        renamed,
+        collisions,
+        droppedLinks,
+        addedInverses,
+        dryRun: !!this.options.dryRun,
+      };
+      this.options.onConversionPlanned?.(structuredClone(this.summary));
+    }
+    // Older binaries refuse format 7 (and compatibility 4) before touching it.
+    if (moves.length && !this.options.dryRun)
+      await this.commit({ moves, documents: snapshots });
     for (const entity of final)
       if (!this.entities.has(entityKey(entity.id)))
         this.entities.set(entityKey(entity.id), entity);
@@ -1435,27 +1729,31 @@ interface LoadedDocument {
   file: string;
   entity: MemoryEntity;
   legacy: boolean;
-  /** Stored before format 6; rewritten on startup. */
+  /** Stored before format 7; flattened on startup. */
   outdated: boolean;
   old?: LegacyFields;
   stem: string;
+  /** Folder path below the memory root; absent for root-level notes. */
+  folder?: string;
 }
 
 /** Historical fields used only by the forward document conversion. */
 type LegacyFields = Omit<z.infer<typeof v3FrontmatterSchema>, 'FormatVersion'>;
+// Journals written before format 7 (v0.38.0, format 6) hold typed nested IDs.
+const journalIdSchema = z.union([entityIdSchema, typedEntityIdSchema]);
 const movesJournalSchema = z
   .object({
     moves: z.array(
       z
         .object({
           from: z.string().min(1),
-          to: entityIdSchema,
+          to: journalIdSchema,
           path: z
             .string()
             .refine(
               (path) =>
                 path.endsWith('.md') &&
-                (entityIdSchema.safeParse(path.slice(0, -3)).success ||
+                (journalIdSchema.safeParse(path.slice(0, -3)).success ||
                   legacyEntityIdSchema.safeParse(path.slice(0, -3)).success),
               'Unsafe memory source path',
             )
@@ -1465,7 +1763,7 @@ const movesJournalSchema = z
     ),
     documents: z.array(
       z
-        .object({ id: entityIdSchema, content: z.string().max(500_000) })
+        .object({ id: journalIdSchema, content: z.string().max(500_000) })
         .strict(),
     ),
   })
@@ -1479,13 +1777,9 @@ function validateJournal(journal: MovesJournal): void {
     const key = entityKey(document.id);
     if (ids.has(key)) throw new Error('Duplicate journal document');
     ids.add(key);
-    const { entity, legacy } = deserialize(
-      document.content,
-      document.id,
-      document.id.split('/')[0],
-    );
+    const { entity, legacy } = deserialize(document.content, document.id);
     if (legacy) throw new Error('Journal must contain current documents');
-    serialize(entity);
+    if (!document.id.includes('/')) serialize(entity);
   }
   for (const move of journal.moves)
     if (!ids.has(entityKey(move.to)))
@@ -1493,15 +1787,50 @@ function validateJournal(journal: MovesJournal): void {
 }
 
 /**
- * Rewrite qualified names (or legacy IDs) in links, facts, and fact history.
- * Match whole references, never substrings, and never rewrite citation IDs.
+ * Repoint entity targets in every predicate list. Unresolved targets stay, or
+ * are dropped and reported when `onMissing` is given. Skill targets never change.
  */
+function retargetRelations(
+  entity: MemoryEntity,
+  resolve: (id: string) => string | undefined,
+  onMissing?: (target: string) => void,
+): MemoryEntity {
+  const relations = entity.frontmatter.RelatedTo.flatMap((relation) => {
+    if (relation.target.kind !== 'entity') return [relation];
+    const id = resolve(relation.target.id);
+    if (id !== undefined)
+      return [{ ...relation, target: { kind: 'entity' as const, id } }];
+    if (!onMissing) return [relation];
+    onMissing(relation.target.id);
+    return [];
+  });
+  return {
+    ...entity,
+    frontmatter: {
+      ...entity.frontmatter,
+      RelatedTo: combineRelations(relations, [entity.id]),
+    },
+  };
+}
+
+/** Runtime rename/merge: relations only. A plain title in prose may mean someone else. */
 function replaceReferences(
   entity: MemoryEntity,
   replacements: ReadonlyMap<string, string>,
 ): MemoryEntity {
   if (!replacements.size) return entity;
-  const id = entity.id;
+  return retargetRelations(entity, (id) => replacements.get(id));
+}
+
+/**
+ * One-time conversion only: rewrite whole typed IDs (or legacy IDs) in facts,
+ * fact history and citation labels. Never substrings, never citation IDs.
+ */
+function rewriteProse(
+  entity: MemoryEntity,
+  replacements: ReadonlyMap<string, string>,
+): MemoryEntity {
+  if (!replacements.size) return entity;
   const pattern = new RegExp(
     `(?<![\\p{L}\\p{N}_/-])(?:${[...replacements.keys()]
       .sort((a, b) => b.length - a.length)
@@ -1524,38 +1853,12 @@ function replaceReferences(
       ...version(fact),
       history: fact.history.map(version),
     }));
-  const { RelatedTo, ...frontmatter } = entity.frontmatter;
-  return {
-    ...entity,
-    id,
-    sections,
-    frontmatter: {
-      ...frontmatter,
-      RelatedTo: RelatedTo.some(
-        ({ target }) => target.kind === 'entity' && replacements.has(target.id),
-      )
-        ? combineRelations(
-            RelatedTo.map((relation) =>
-              relation.target.kind === 'entity' &&
-              replacements.has(relation.target.id)
-                ? {
-                    ...relation,
-                    target: {
-                      kind: 'entity',
-                      id:
-                        replacements.get(relation.target.id) ??
-                        relation.target.id,
-                    },
-                  }
-                : relation,
-            ),
-            [id],
-          )
-        : RelatedTo,
-    },
-  };
+  return { ...entity, sections };
 }
 
-export function createEntityStore(directory: string): EntityStore {
-  return new EntityStoreModule(directory);
+export function createEntityStore(
+  directory: string,
+  options: EntityStoreOptions = {},
+): EntityStore {
+  return new EntityStoreModule(directory, options);
 }

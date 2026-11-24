@@ -212,21 +212,35 @@ it('migrates entity documents during application startup without a configured mo
     file,
     '---\nFormatVersion: 5\nCreatedAt: 2026-11-17T10:00:00.000Z\nLastUpdatedAt: 2026-11-17T11:00:00.000Z\nLastReadAt: null\nLinkedIdentities: []\nLoadOn: []\nRelatedTo:\n  - "[[project/Klex|works on (80)]]"\nTrustScore: 2\nAuthorityScore: 5\n---\n\n## General\n\n- Engineer [old](history:abc)\n',
   );
-  const metadata = join(dirname(dirname(file)), '.obsidian', 'workspace.json');
+  const entitiesRoot = dirname(dirname(file));
+  const project = join(entitiesRoot, 'project/Klex.md');
+  await mkdir(dirname(project), { recursive: true });
+  await writeFile(
+    project,
+    '---\nFormatVersion: 5\nCreatedAt: 2026-11-17T10:00:00.000Z\nLastUpdatedAt: 2026-11-17T11:00:00.000Z\nLastReadAt: null\nLinkedIdentities: []\nLoadOn: []\nRelatedTo: []\nTrustScore: 2\nAuthorityScore: 5\n---\n\n## General\n\n- Agent runtime [old](history:abc)\n',
+  );
+  const metadata = join(entitiesRoot, '.obsidian', 'workspace.json');
   await mkdir(dirname(metadata), { recursive: true });
   await writeFile(metadata, '{"editor":"obsidian"}\n');
   const hiddenNote = join(dirname(metadata), 'not-an-entity.md');
   await writeFile(hiddenNote, 'Editor metadata, not an entity');
   const { app } = await boot(root);
-  const converted = await readFile(file, 'utf8');
-  expect(converted).toContain('FormatVersion: 6');
-  expect(converted).toContain('relatedTo:\n  - "[[project/Klex]]"');
+  // Startup flattens before the writer starts: folders become literal tags.
+  await expect(readFile(file, 'utf8')).rejects.toThrow('ENOENT');
+  await expect(readFile(project, 'utf8')).rejects.toThrow('ENOENT');
+  const flat = join(entitiesRoot, 'Ada.md');
+  const converted = await readFile(flat, 'utf8');
+  expect(converted).toContain('FormatVersion: 7\nTags:\n  - person\n');
+  expect(converted).toContain('relatedTo:\n  - "[[Klex]]"');
   expect(converted).not.toContain('RelatedTo:');
   expect(converted).not.toContain('|works on (80)');
   expect(converted).toContain('- Engineer [old](history:abc)');
+  const flatProject = await readFile(join(entitiesRoot, 'Klex.md'), 'utf8');
+  expect(flatProject).toContain('Tags:\n  - project\n');
+  expect(flatProject).toContain('relatedTo:\n  - "[[Ada]]"');
   await app.close();
   await boot(root);
-  expect(await readFile(file, 'utf8')).toBe(converted);
+  expect(await readFile(flat, 'utf8')).toBe(converted);
   expect(await readFile(metadata, 'utf8')).toBe('{"editor":"obsidian"}\n');
   expect(await readFile(hiddenNote, 'utf8')).toBe(
     'Editor metadata, not an entity',

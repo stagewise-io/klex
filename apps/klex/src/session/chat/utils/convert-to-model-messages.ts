@@ -7,6 +7,10 @@ import {
 } from 'ai';
 import { stringify } from 'yaml';
 
+import {
+  materializeMemories,
+  materializeSkills,
+} from '@/session/chat/extensions/memory/loading';
 import type { ContextDataUIPart } from '@/session/inbox';
 
 import type { DataPartTransformers } from '../extensions/extension-api';
@@ -41,8 +45,9 @@ import { projectSandboxToolMedia } from './project-sandbox-media';
 export const convertToModelMessagesExtended = async (
   messages: ExtendedUIMessage[],
   transformers: DataPartTransformers,
+  onMemoryMetrics?: Parameters<typeof materializeMemories>[1],
 ): ReturnType<typeof convertToModelMessages> => {
-  const materialized = materializeContextParts(messages);
+  const materialized = materializeContextParts(materializeSkills(messages));
   // Find the last user message index.
   let lastUserMsgIdx = -1;
   for (let i = materialized.length - 1; i >= 0; i--) {
@@ -54,9 +59,12 @@ export const convertToModelMessagesExtended = async (
 
   if (lastUserMsgIdx === -1) {
     return projectSandboxToolMedia(
-      await convertToModelMessages<ExtendedUIMessage>(materialized, {
-        convertDataPart: makeConvertDataPart(transformers),
-      }),
+      await convertToModelMessages<ExtendedUIMessage>(
+        materializeMemories(materialized, onMemoryMetrics),
+        {
+          convertDataPart: makeConvertDataPart(transformers),
+        },
+      ),
     );
   }
 
@@ -93,9 +101,12 @@ export const convertToModelMessagesExtended = async (
   });
 
   return projectSandboxToolMedia(
-    await convertToModelMessages<ExtendedUIMessage>(filtered, {
-      convertDataPart: makeConvertDataPart(transformers),
-    }),
+    await convertToModelMessages<ExtendedUIMessage>(
+      materializeMemories(filtered, onMemoryMetrics),
+      {
+        convertDataPart: makeConvertDataPart(transformers),
+      },
+    ),
   );
 };
 

@@ -100,7 +100,413 @@ afterEach(async () => {
   );
 });
 
+describe('snapshot storage', () => {
+  it('keeps checkpoint-tail references through restart and evicts by logical bytes', async () => {
+    const { history, directory, setMaxBytes } = await setup();
+    const annotated = (id: string, body: string) => {
+      const value = message(id);
+      value.parts.push({
+        type: 'data-loadedMemories',
+        data: { note: body },
+      } as never);
+      return value;
+    };
+    const recorder = history.openRecorder(meta());
+    const anchor = annotated('anchor', 'old'.repeat(1000));
+    const tail = annotated('tail', 'current'.repeat(1000));
+    recorder.scheduleSync(() => [anchor, tail]);
+    await history.flush();
+    const header = {
+      id: 'checkpoint',
+      role: 'user',
+      parts: [
+        { type: CHECKPOINT_PART_TYPE, data: { summary: 'retained summary' } },
+      ],
+    } as unknown as ExtendedUIMessage;
+    await recorder.commitCheckpoint(header, anchor.id, () => [anchor, tail]);
+    setMaxBytes(1);
+    await history.enforceSizeCap();
+    const raw = createClient({
+      url: `file:${join(directory, SESSION_HISTORY_RELATIVE_PATH)}`,
+    });
+    try {
+      expect(
+        (await raw.execute('SELECT content FROM memory_snapshots')).rows.map(
+          (row) => row.content,
+        ),
+      ).toEqual(['current'.repeat(1000)]);
+      expect(
+        (
+          await history.loadWindow('default', { fallbackMaxBytes: 1 })
+        ).entries.map((entry) => entry.message),
+      ).toEqual([header, tail]);
+      await history.close();
+      const restarted = await setup({ directory });
+      const window = await restarted.history.loadWindow('default', {
+        fallbackMaxBytes: 1,
+      });
+      expect(window.entries.map((entry) => entry.message)).toEqual([
+        header,
+        tail,
+      ]);
+      const replacement = restarted.history.openRecorder(meta());
+      replacement.seed(window);
+      replacement.scheduleSync(() =>
+        window.entries.map((entry) => entry.message),
+      );
+      const before = (
+        await raw.execute(
+          'SELECT content, content_revision FROM messages ORDER BY ord',
+        )
+      ).rows;
+      await restarted.history.flush();
+      expect(
+        (
+          await raw.execute(
+            'SELECT content, content_revision FROM messages ORDER BY ord',
+          )
+        ).rows,
+      ).toEqual(before);
+    } finally {
+      raw.close();
+    }
+  });
+
+  it('shares versions across sessions, preserves edits and releases only unreferenced snapshots', async () => {
+    const { history, directory } = await setup();
+    const raw = createClient({
+      url: `file:${join(directory, SESSION_HISTORY_RELATIVE_PATH)}`,
+    });
+    const annotated = (id: string, body: string) => {
+      const value = message(id);
+      value.parts.push({
+        type: 'data-loadedMemories',
+        data: { note: body },
+      } as never);
+      value.parts.push({
+        type: 'data-loadedMemorySections',
+        data: { section: body },
+      } as never);
+      return value;
+    };
+    try {
+      const first = history.openRecorder(meta());
+      const second = history.openRecorder(meta({ sessionId: 'other' }));
+      let values = [annotated('a', 'before'), annotated('b', 'before')];
+      first.scheduleSync(() => values);
+      second.scheduleSync(() => [annotated('c', 'before')]);
+      await history.flush();
+      expect(
+        (await raw.execute('SELECT * FROM memory_snapshots')).rows,
+      ).toHaveLength(1);
+      values = [values[1]!, annotated('inserted', 'after'), values[0]!];
+      first.scheduleSync(() => values);
+      await history.flush();
+      expect(
+        (
+          await history.loadWindow('default', { fallbackMaxBytes: 1e6 })
+        ).entries.map((entry) => entry.message),
+      ).toEqual(values);
+      expect(
+        (await history.readActivity({ maxBytes: 1e6 })).map(
+          (entry) => entry.message,
+        ),
+      ).toEqual(values);
+      expect(
+        (await history.getMessages(first.instanceId, { limit: 1 }))?.messages[0]
+          ?.message,
+      ).toEqual(values[2]);
+      first.scheduleSync(() => []);
+      await history.flush();
+      expect(
+        (await raw.execute('SELECT content FROM memory_snapshots')).rows.map(
+          (row) => row.content,
+        ),
+      ).toEqual(['before']);
+      second.scheduleSync(() => []);
+      await history.flush();
+      expect(
+        (await raw.execute('SELECT * FROM memory_snapshots')).rows,
+      ).toHaveLength(0);
+    } finally {
+      raw.close();
+    }
+  });
+
+  it('rolls back snapshot insertion atomically on message failure and retries', async () => {
+    const { history, directory } = await setup();
+    const raw = createClient({
+      url: `file:${join(directory, SESSION_HISTORY_RELATIVE_PATH)}`,
+    });
+    try {
+      const recorder = history.openRecorder(meta());
+      const value = message('atomic');
+      value.parts.push({
+        type: 'data-loadedMemories',
+        data: { note: 'immutable' },
+      } as never);
+      await raw.execute(
+        "CREATE TRIGGER reject_snapshot_message BEFORE INSERT ON messages BEGIN SELECT RAISE(FAIL, 'injected'); END",
+      );
+      recorder.scheduleSync(() => [value]);
+      await history.flush();
+      expect(
+        (await raw.execute('SELECT * FROM memory_snapshots')).rows,
+      ).toHaveLength(0);
+      await raw.execute('DROP TRIGGER reject_snapshot_message');
+      recorder.scheduleSync(() => [value]);
+      await history.flush();
+      expect(
+        (await history.getMessages(recorder.instanceId, { limit: 10 }))
+          ?.messages[0]?.message,
+      ).toEqual(value);
+    } finally {
+      raw.close();
+    }
+  });
+
+  it.each(['missing', 'corrupt'])(
+    'rejects %s snapshot bodies instead of substituting current facts',
+    async (mode) => {
+      const { history, directory } = await setup();
+      const recorder = history.openRecorder(meta());
+      const value = message('broken');
+      value.parts.push({
+        type: 'data-loadedMemories',
+        data: { note: 'immutable' },
+      } as never);
+      recorder.scheduleSync(() => [value]);
+      await history.flush();
+      const raw = createClient({
+        url: `file:${join(directory, SESSION_HISTORY_RELATIVE_PATH)}`,
+      });
+      try {
+        await raw.execute(
+          mode === 'missing'
+            ? 'DELETE FROM memory_snapshots'
+            : "UPDATE memory_snapshots SET content = 'changed'",
+        );
+        await expect(
+          history.loadWindow('default', { fallbackMaxBytes: 1e6 }),
+        ).rejects.toThrow(/snapshot/);
+        await expect(
+          history.getMessages(recorder.instanceId, { limit: 10 }),
+        ).rejects.toThrow(/snapshot/);
+        await expect(history.readActivity({})).rejects.toThrow(/snapshot/);
+      } finally {
+        raw.close();
+      }
+    },
+  );
+
+  it('migrates a released v4 database without rewriting inline messages and recovers migration failure', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'klex-history-v4-'));
+    directories.push(directory);
+    const path = join(directory, SESSION_HISTORY_RELATIVE_PATH);
+    const raw = createClient({ url: `file:${path}` });
+    await raw.executeMultiple(
+      await readFile(
+        new URL(
+          '../local-data-migration-fixtures/sessions-v3.sql',
+          import.meta.url,
+        ),
+        'utf8',
+      ),
+    );
+    await SESSION_HISTORY_STORE_DEFINITION.migrations
+      .find((step) => step.to === 4)!
+      .up(raw);
+    await raw.execute(
+      "UPDATE meta SET value = '4' WHERE key = 'schemaVersion'",
+    );
+    const before = (await raw.execute('SELECT * FROM messages')).rows;
+    raw.close();
+    const migrate = (store: SqliteStoreDefinition) =>
+      createLocalData({
+        logging: logger,
+        dataDirectory: directory,
+        klexVersion: KLEX_VERSION,
+        stores: [store],
+      }).start();
+    await expect(
+      migrate({
+        ...SESSION_HISTORY_STORE_DEFINITION,
+        migrations: SESSION_HISTORY_STORE_DEFINITION.migrations.map((step) =>
+          step.to === 5
+            ? {
+                ...step,
+                up: async (client) => {
+                  await step.up(client);
+                  throw new Error('injected');
+                },
+              }
+            : step,
+        ),
+      }),
+    ).rejects.toThrow(/restored/);
+    const restored = createClient({ url: `file:${path}` });
+    expect((await restored.execute('SELECT * FROM messages')).rows).toEqual(
+      before,
+    );
+    expect(
+      (
+        await restored.execute(
+          "SELECT name FROM sqlite_master WHERE name = 'memory_snapshots'",
+        )
+      ).rows,
+    ).toHaveLength(0);
+    restored.close();
+    await migrate(SESSION_HISTORY_STORE_DEFINITION);
+    const bytes = await readFile(path);
+    await migrate(SESSION_HISTORY_STORE_DEFINITION);
+    expect(await readFile(path)).toEqual(bytes);
+    await expect(
+      migrate({
+        ...SESSION_HISTORY_STORE_DEFINITION,
+        schemaVersion: 4,
+        migrations: SESSION_HISTORY_STORE_DEFINITION.migrations.filter(
+          (step) => step.to <= 4,
+        ),
+      }),
+    ).rejects.toThrow(/schema=5.*schema=4/);
+    expect(await readFile(path)).toEqual(bytes);
+    const migrated = createClient({ url: `file:${path}` });
+    expect((await migrated.execute('SELECT * FROM messages')).rows).toEqual(
+      before,
+    );
+    migrated.close();
+    const { history } = await setup({ directory });
+    expect(
+      (await history.loadWindow('default', { fallbackMaxBytes: 1e6 })).entries
+        .length,
+    ).toBeGreaterThan(0);
+  });
+});
+
 describe('canonical activity queries', () => {
+  it('measures repeated snapshots in SQLite and restores a bounded large window', async () => {
+    const { history, directory } = await setup();
+    const recorder = history.openRecorder(meta());
+    const snapshot = JSON.stringify({
+      version: 1,
+      kind: 'skill',
+      title: 'scale',
+      sections: [],
+      body: 'current fact '.repeat(2000),
+    });
+    const values = Array.from({ length: 160 }, (_, index) => {
+      const value = message(`snapshot-${index}`);
+      value.parts.push({
+        type: 'data-loadedMemories',
+        data: { 'skills/learning/scale/SKILL.md': snapshot },
+      } as never);
+      return value;
+    });
+    recorder.scheduleSync(() => values);
+    await history.flush();
+    const client = createClient({
+      url: `file:${join(directory, SESSION_HISTORY_RELATIVE_PATH)}`,
+    });
+    try {
+      const result = await client.execute(
+        'SELECT COUNT(*) AS count, SUM(byte_size) AS bytes FROM messages',
+      );
+      expect(Number(result.rows[0]?.count)).toBe(160);
+      const bytes = Number(result.rows[0]?.bytes);
+      expect(bytes).toBeGreaterThan(Buffer.byteLength(snapshot) * 160);
+      const physical = await client.execute(
+        'SELECT SUM(length(CAST(content AS BLOB))) AS bytes FROM messages',
+      );
+      const snapshots = await client.execute(
+        'SELECT COUNT(*) AS count, SUM(length(CAST(content AS BLOB))) AS bytes FROM memory_snapshots',
+      );
+      expect(Number(snapshots.rows[0]?.count)).toBe(1);
+      const physicalBytes =
+        Number(physical.rows[0]?.bytes) + Number(snapshots.rows[0]?.bytes);
+      expect(physicalBytes).toBeLessThan(bytes / 20);
+      const pageCount = Number(
+        (await client.execute('PRAGMA page_count')).rows[0]?.page_count,
+      );
+      const pageSize = Number(
+        (await client.execute('PRAGMA page_size')).rows[0]?.page_size,
+      );
+      console.info('memory snapshot SQLite retention', {
+        messages: 160,
+        snapshotBytes: Buffer.byteLength(snapshot),
+        logicalBytes: bytes,
+        physicalBytes,
+        allocatedBytes: pageCount * pageSize,
+      });
+      const window = await history.loadWindow('default', {
+        fallbackMaxBytes: 150000,
+      });
+      expect(window.entries.length).toBeGreaterThan(0);
+      expect(window.entries.length).toBeLessThan(160);
+      expect(window.entries.at(-1)?.message).toEqual(values.at(-1));
+    } finally {
+      client.close();
+    }
+  });
+  it('round-trips additive memory and invocation parts across registered startup and recorder resync', async () => {
+    const { history, directory } = await setup();
+    const recorder = history.openRecorder(meta());
+    const value = message('annotated');
+    value.parts.push(
+      ...([
+        {
+          type: 'data-loadedMemories',
+          data: {
+            'skills/learned/example/SKILL.md':
+              '{"version":1,"kind":"skill","title":"example","body":"procedure"}',
+          },
+        },
+        { type: 'data-loadedMemorySections', data: {} },
+        {
+          type: 'data-availableSkills',
+          data: [{ name: 'learned/example', description: 'Example skill' }],
+        },
+        {
+          type: 'data-activeSkills',
+          data: {
+            version: 1,
+            window: 'checkpoint-window',
+            skills: { 'learned/example': ['guide'] },
+          },
+        },
+        {
+          type: 'data-mcpInvocations',
+          data: [
+            {
+              id: 'invocation',
+              executionId: 'execution',
+              namespace: 'slack',
+              name: 'send',
+              input: { channel: 'C1' },
+            },
+          ],
+        },
+      ] as unknown as ExtendedUIMessage['parts']),
+    );
+    recorder.scheduleSync(() => [value]);
+    await history.flush();
+    await history.close();
+    const restarted = await setup({ directory });
+    const restored = await restarted.history.loadWindow('default', {
+      fallbackMaxBytes: 100000,
+    });
+    expect(restored.entries.map((entry) => entry.message)).toEqual([value]);
+    const next = restarted.history.openRecorder(meta());
+    next.seed(restored);
+    next.scheduleSync(() => restored.entries.map((entry) => entry.message));
+    await restarted.history.flush();
+    expect(
+      (
+        await restarted.history.loadWindow('default', {
+          fallbackMaxBytes: 100000,
+        })
+      ).entries.map((entry) => entry.message),
+    ).toEqual([value]);
+  });
   it('keeps revisions stable across other recorder syncs and restarts', async () => {
     const { history, directory } = await setup();
     const first = history.openRecorder(meta());
@@ -202,7 +608,7 @@ describe('canonical activity queries', () => {
           "SELECT value FROM meta WHERE key = 'schemaVersion'",
         )
       ).rows[0]?.value,
-    ).toBe('4');
+    ).toBe('5');
     migrated.close();
     const bytes = await readFile(path);
     await migrate(SESSION_HISTORY_STORE_DEFINITION);
@@ -216,7 +622,7 @@ describe('canonical activity queries', () => {
           (step) => step.to <= 3,
         ),
       }),
-    ).rejects.toThrow(/schema=4.*schema=3/);
+    ).rejects.toThrow(/schema=5.*schema=3/);
     expect(await readFile(path)).toEqual(bytes);
     const second = await setup({ directory });
     expect(await second.history.activityManifest()).toEqual(sources);
@@ -417,7 +823,9 @@ describe('session history sync', () => {
       initSql: SESSION_HISTORY_INIT_SQL.replace(
         '  generation_error TEXT,\n',
         '',
-      ).replace('  content_revision TEXT,\n', ''),
+      )
+        .replace('  content_revision TEXT,\n', '')
+        .replace(/CREATE TABLE memory_snapshots[\s\S]*$/, ''),
       migrations: SESSION_HISTORY_STORE_DEFINITION.migrations.filter(
         (migration) => migration.to <= 2,
       ),
@@ -469,7 +877,7 @@ describe('session history sync', () => {
       name: 'old',
     });
     await history.close();
-    await expect(migrate(v2)).rejects.toThrow(/schema=4.*schema=2/);
+    await expect(migrate(v2)).rejects.toThrow(/schema=5.*schema=2/);
   });
 
   it('persists and deduplicates zero-message failures through sync, end, and restart', async () => {

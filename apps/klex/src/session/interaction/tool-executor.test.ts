@@ -2,6 +2,7 @@ import { jsonSchema, type Tool } from 'ai';
 import { describe, expect, it, vi } from 'vitest';
 
 import { testLogger as logger } from '@/session/chat/test-helpers';
+import type { ToolRequestContext } from '@/tool-provider';
 
 import { ToolExecutor } from './tool-executor';
 
@@ -35,6 +36,84 @@ function createExecutor(
 }
 
 describe('ToolExecutor', () => {
+  it('retains deduplicated correlated invocations on failure and ignores another execution', async () => {
+    const executor = createExecutor(async (_input, options) => {
+      const context = options.context as ToolRequestContext;
+      const invocation = {
+        id: 'invocation-1',
+        executionId: context.executionId,
+        namespace: 'slack',
+        name: 'send',
+        input: { channel: 'C1' },
+      };
+      context.onMcpInvocation?.(invocation);
+      context.onMcpInvocation?.(invocation);
+      context.onMcpInvocation?.({
+        ...invocation,
+        id: 'wrong',
+        executionId: 'other-execution',
+      });
+      throw new Error('sandbox failed after invoking');
+    });
+    const result = await executor.execute({
+      executionId: 'execution-1',
+      name: 'example',
+      input: {},
+    });
+    expect(result.status).toBe('error');
+    expect(result.mcpInvocations).toEqual([
+      {
+        id: 'invocation-1',
+        executionId: 'execution-1',
+        namespace: 'slack',
+        name: 'send',
+        input: { channel: 'C1' },
+      },
+    ]);
+  });
+
+  it('retains invocation evidence on cancellation and isolates concurrent runtime instances', async () => {
+    const started = Promise.withResolvers<void>();
+    const cancelled = createExecutor(async (_input, options) => {
+      const context = options.context as ToolRequestContext;
+      context.onMcpInvocation?.({
+        id: 'same-id',
+        executionId: context.executionId,
+        namespace: 'slack',
+        name: 'send',
+        input: { channel: 'cancelled' },
+      });
+      started.resolve();
+      return new Promise(() => {});
+    });
+    const other = createExecutor(async (_input, options) => {
+      const context = options.context as ToolRequestContext;
+      context.onMcpInvocation?.({
+        id: 'same-id',
+        executionId: context.executionId,
+        namespace: 'slack',
+        name: 'send',
+        input: { channel: 'other' },
+      });
+      return { done: true };
+    });
+    const request = { executionId: 'same-outer', name: 'example', input: {} };
+    const pending = cancelled.execute(request);
+    const successful = other.execute(request);
+    await started.promise;
+    cancelled.abort();
+    const [failed, completed] = await Promise.all([pending, successful]);
+    expect(failed).toMatchObject({
+      status: 'error',
+      code: 'aborted',
+      mcpInvocations: [{ input: { channel: 'cancelled' } }],
+    });
+    expect(completed).toMatchObject({
+      status: 'success',
+      mcpInvocations: [{ input: { channel: 'other' } }],
+    });
+  });
+
   it('executes the same execution id at most once', async () => {
     const execute = vi.fn(async () => ({ value: 1 }));
     const executor = createExecutor(execute);

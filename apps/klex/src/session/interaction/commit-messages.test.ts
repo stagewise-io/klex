@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
+import {
+  createMemoryLoader,
+  materializeMemories,
+} from '@/session/chat/extensions/memory/loading';
+import type { MemoryEntity } from '@/session/chat/extensions/memory/writer/entities';
+
 import { toCanonicalMessage } from './commit-messages';
 
 describe('realtime canonical messages', () => {
@@ -81,6 +87,118 @@ describe('realtime canonical messages', () => {
       });
     },
   );
+
+  it('preserves genuine section reads for automatic refresh without flattening their body', () => {
+    const output = {
+      memorySection: 1,
+      filename: 'extensions/io.stagewise/memory/entities/person/Ada.md',
+      sectionName: 'Work',
+      snapshot: JSON.stringify({
+        version: 1,
+        kind: 'detail',
+        title: 'Ada',
+        section: 'Work',
+        sections: [],
+        body: 'Private detail',
+      }),
+    };
+    const event = {
+      type: 'tool-result' as const,
+      eventId: 'read',
+      timestamp,
+      result: {
+        executionId: 'exec',
+        status: 'success' as const,
+        toolName: 'readMemorySection',
+        output,
+      },
+    };
+    expect(toCanonicalMessage(event)).toMatchObject({
+      role: 'assistant',
+      parts: [
+        {
+          type: 'dynamic-tool',
+          toolName: 'readMemorySection',
+          state: 'output-available',
+          output,
+        },
+      ],
+    });
+    expect(
+      toCanonicalMessage({
+        ...event,
+        result: { ...event.result, toolName: 'other' },
+      }).role,
+    ).toBe('user');
+  });
+
+  it('refreshes a realtime section at the next prepared context boundary', async () => {
+    const filename = 'extensions/io.stagewise/memory/entities/person/Ada.md';
+    const current = {
+      id: 'person/Ada',
+      name: 'Ada',
+      entityType: 'person',
+      frontmatter: { LoadOn: [], LinkedIdentities: [] },
+      sections: {
+        General: [{ text: 'Base secret' }],
+        Work: [{ text: 'Old detail' }],
+      },
+    } as unknown as MemoryEntity;
+    const loader = createMemoryLoader({
+      entities: { snapshot: async () => [current] },
+      skills: { snapshot: async () => [] },
+      logger: { debug: () => {}, warn: () => {} } as never,
+    });
+    const execute = loader.tools.readMemorySection!.execute! as unknown as (
+      input: { filename: string; sectionName: string },
+      options: { toolCallId: string; messages: [] },
+    ) => Promise<{
+      memorySection: number;
+      filename: string;
+      sectionName: string;
+      snapshot: string;
+    }>;
+    const output = await execute(
+      { filename, sectionName: 'Work' },
+      { toolCallId: 'read', messages: [] },
+    );
+    const read = toCanonicalMessage({
+      type: 'tool-result',
+      eventId: 'read',
+      timestamp,
+      result: {
+        executionId: 'read',
+        status: 'success',
+        toolName: 'readMemorySection',
+        output,
+      },
+    });
+    current.sections.Work = [{ text: 'New detail', sources: [], history: [] }];
+    const latest = {
+      id: 'next',
+      role: 'user' as const,
+      parts: await loader.prepare([read], {
+        modelId: 'test',
+        displayName: 'Test',
+        contextSize: 128000,
+        inputCapabilities: {},
+      }),
+    };
+    const rendered = JSON.stringify(materializeMemories([read, latest]));
+    expect(rendered).toContain('New detail');
+    expect(rendered).not.toContain('Base secret');
+    expect(rendered).not.toContain('<memory filename');
+    expect(
+      JSON.stringify(
+        await loader.prepare([], {
+          modelId: 'test',
+          displayName: 'Test',
+          contextSize: 128000,
+          inputCapabilities: {},
+        }),
+      ),
+    ).not.toContain('New detail');
+  });
 
   it('projects paired tool activity as canonical context', () => {
     const call = toCanonicalMessage({

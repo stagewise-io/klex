@@ -136,6 +136,23 @@ function setupDefaultMocks() {
 
 // --- tests ---
 
+describe('Step — memory annotation preparation', () => {
+  it('defers generation instead of failing fatally when preparation cannot commit', async () => {
+    setupDefaultMocks();
+    const deps = makeDeps({ messages: [makeUserMessage()] });
+    vi.mocked(
+      deps.extensionHandler.prepareHistoryAnnotations,
+    ).mockRejectedValue(new Error('History changed repeatedly'));
+    const result = await createStep(deps).run();
+    expect(result).toMatchObject({
+      shouldContinue: true,
+      fatalError: false,
+      generationFailed: true,
+    });
+    expect(convertToModelMessagesExtended).not.toHaveBeenCalled();
+  });
+});
+
 describe('Step — effort snapshot', () => {
   it.each(['shadow', 'automatic'] as const)(
     '%s only changes wire controls when automatic',
@@ -816,6 +833,7 @@ describe('Step — extension handler hooks', () => {
     expect(convertToModelMessagesExtended).toHaveBeenCalledWith(
       preProcessedHistory,
       expect.anything(),
+      expect.any(Function),
     );
   });
 

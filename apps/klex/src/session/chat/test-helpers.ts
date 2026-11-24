@@ -50,6 +50,7 @@ export function makeExtensionHandler() {
     runStepCompleteHooks: vi.fn(() => Promise.resolve()),
     getDataPartTransformers: vi.fn(() => ({})),
     getOwnedDataPartKeys: vi.fn(() => new Set<string>()),
+    prepareHistoryAnnotations: vi.fn(() => Promise.resolve()),
     getProvisionalStepContext: vi.fn(() => Promise.resolve({ parts: [] })),
     getTools: vi.fn(() => ({})),
     getSystemPromptParts: vi.fn(() => []),

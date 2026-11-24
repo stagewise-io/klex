@@ -16,6 +16,16 @@ Owns message history, inbox, extension handler, fallback manager, backoff manage
 
 **Loop:** processes one turn per iteration. Each iteration first flushes `pendingImmediate`, so input queued between turns (backoff wait, transcript writes, idle checkpoint apply) is in history before any decision. Goes idle only when the inbox deferred buffer is empty, no idle-time input is pending, no backoff retry is due, and every non-deferrable input appended to history was consumed by a clean step. An empty inbox alone never means idle: immediate input goes straight to history. If a turn fails completely (all models exhausted) and no new input arrives, applies exponential backoff. A turn that fails because the provider rejected the request skips backoff and its termination counter; the session stays alive and the next inbox input starts a fresh turn. Fatal errors terminate immediately.
 
+## Snapshot memory, skills, and recall
+
+Before each model call, including leased generation, the memory writer prepares a coherent entity snapshot behind its managed write queue and matches every message in the retained context window. Generated memory annotations are excluded from matching. Entities use upstream format 7: flat title filenames, required nested tags, and curated inverse relationships. Only explicit `LoadOn` rules or `LinkedIdentities` load an entity; titles never match implicitly. Event rules use `eventDataPattern` against MCP occurrence data or Push Notification data; structured host-boundary invocation records support `toolCallPattern`.
+
+The latest message carries one `loadedMemories` map, including an empty map. Immutable snapshot strings are content-addressed by session history and hydrated before use. Rendering emits deduplicated user-role `<memory>` blocks and `<memory-update>` diffs within the smaller of 8,000 tokens or 10% of context. Entities include General and additional-section headings; `readMemorySection` loads only the requested `<memory-detail>` and refreshes successful reads later.
+
+Skills advertise a dedicated `<available-skills>` catalogue and change blocks. `loadSkill(skill, reference?)` and automatic rules share active subscriptions, restored after compaction as `<skill>` and optional `<skill-reference>` blocks. Preparation forks subscription state and commits only after the captured history is accepted. Full idle durably clears subscriptions without retracting already-visible context; a later compaction removes inactive skills.
+
+Legacy proactive retrieval remains implemented but is not started. Main and consult sessions use `recallFromMemory(question)` instead: an isolated read-only helper receives loaded memory/skill context, reads retained history and memory on demand, must call `answerRecall`, and closes on completion, cancellation, or failure. It has no write tools, MCP access, or recursive recall. Recall tool input/output is excluded from automatic literal matching.
+
 ## Agent-level MCP Event watches
 
 The main-session MCP ingress exposes `listMcpEvents`, `watchMcpEvents` and

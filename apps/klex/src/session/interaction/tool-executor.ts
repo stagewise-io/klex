@@ -6,7 +6,7 @@ import { z } from 'zod';
 import type { ModuleLogger } from '@stagewise/logger';
 
 import { isAlwaysForbiddenTelemetryAttribute } from '@/telemetry-policy';
-import type { ToolRequestContext } from '@/tool-provider';
+import type { McpInvocation, ToolRequestContext } from '@/tool-provider';
 
 import {
   DEFAULT_TOOL_RESULT_MAX_BYTES,
@@ -163,6 +163,8 @@ export class ToolExecutor implements SessionToolRuntime {
   private async executeOnce(
     request: InteractionToolRequest,
   ): Promise<InteractionToolResult> {
+    const invocations = new Map<string, McpInvocation>();
+    let finished = false;
     const startedAt = performance.now();
     const conversationEpoch = this.deps.getConversationEpoch?.();
     const toolSpan = trace
@@ -181,6 +183,7 @@ export class ToolExecutor implements SessionToolRuntime {
       });
     const toolContext = trace.setSpan(context.active(), toolSpan);
     const finish = (result: InteractionToolResult): InteractionToolResult => {
+      finished = true;
       const durationMs = performance.now() - startedAt;
       const success = result.status === 'success';
       if (toolSpan.isRecording()) {
@@ -220,7 +223,15 @@ export class ToolExecutor implements SessionToolRuntime {
         'Tool call completed',
       );
       toolSpan.end();
-      return result;
+      return {
+        ...result,
+        ...(request.name === 'readMemorySection'
+          ? { toolName: request.name }
+          : {}),
+        ...(invocations.size
+          ? { mcpInvocations: [...invocations.values()] }
+          : {}),
+      };
     };
 
     return context.with(toolContext, async () => {
@@ -316,6 +327,10 @@ export class ToolExecutor implements SessionToolRuntime {
           executionId: request.executionId,
           signal,
           sessionId: this.deps.sessionId,
+          onMcpInvocation: (invocation) => {
+            if (!finished && invocation.executionId === request.executionId)
+              invocations.set(invocation.id, structuredClone(invocation));
+          },
         };
         const execution = Promise.resolve(
           tool.execute(validation.value, {

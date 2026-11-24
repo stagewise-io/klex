@@ -33,7 +33,9 @@ import {
   type ChatSessionDependencies,
   createChatSession,
 } from './chat-session';
+import { createDataPart } from './extensions/extension-api';
 import { createSoulExt } from './extensions/soul';
+import type { ExtendedUIMessage } from './message-types';
 import type { Turn, TurnDependencies } from './turn';
 import { BackoffManager } from './utils/backoff-manager';
 
@@ -153,7 +155,21 @@ it.each(['standard', 'without-extension'] as const)(
       child: scope,
       removeChild: vi.fn(),
     });
+    const onIdle = vi.fn();
     const assemblePrompt = vi.fn(() => 'Additional instructions.');
+    const prepareMemory = vi.fn(
+      async (): Promise<ExtendedUIMessage['parts']> => [
+        createDataPart('loadedMemories', {
+          'skills/test/bootstrap/SKILL.md': JSON.stringify({
+            version: 1,
+            kind: 'skill',
+            title: 'Bootstrap',
+            sections: [],
+            body: 'Prepared lease memory',
+          }),
+        }) as unknown as ExtendedUIMessage['parts'][number],
+      ],
+    );
     const session = createChatSession({
       logging: createLogger({ name: 'soul-realtime' }),
       config: { get: () => value } as unknown as Config,
@@ -164,7 +180,12 @@ it.each(['standard', 'without-extension'] as const)(
         ...(mode === 'standard' ? [createSoulExt] : []),
         {
           identifier: 'test/context-assembly',
-          create: () => ({ getSystemPromptPart: assemblePrompt }),
+          create: () => ({
+            getSystemPromptPart: assemblePrompt,
+            onIdle,
+            dataPartTransformers: { loadedMemories: () => [] },
+            prepareHistoryAnnotations: prepareMemory,
+          }),
         },
       ],
       introspectionScope: scope(),
@@ -192,6 +213,7 @@ it.each(['standard', 'without-extension'] as const)(
               'Session extensions blocked interaction context preparation',
             );
             expect(assemblePrompt).not.toHaveBeenCalled();
+            expect(prepareMemory).not.toHaveBeenCalled();
           } finally {
             await lease.release('setup-failed');
           }
@@ -210,11 +232,24 @@ it.each(['standard', 'without-extension'] as const)(
           );
         }
         expect(assemblePrompt).toHaveBeenCalledOnce();
+        expect(prepareMemory).toHaveBeenCalledOnce();
+        expect(JSON.stringify(prepared.context.messages)).toContain(
+          'Prepared lease memory',
+        );
+        expect(
+          session
+            .getMessages()
+            .at(-1)
+            ?.parts.filter(
+              (part) => (part.type as string) === 'data-loadedMemories',
+            ),
+        ).toHaveLength(1);
         prepared.rollback();
       } finally {
         await lease.release();
       }
       await expect(session.waitForIdle(3_000)).resolves.toBe(true);
+      expect(onIdle).not.toHaveBeenCalled();
     } finally {
       await session.close();
       await rm(directory, { recursive: true, force: true });
@@ -303,6 +338,7 @@ it('exposes a sanitized zero-message provider failure through HTTP and clears it
     child: scope,
     removeChild: vi.fn(),
   });
+  const onIdle = vi.fn();
   let turnCount = 0;
   createTurnMock.mockImplementation((deps: TurnDependencies): Turn => {
     const number = ++turnCount;
@@ -326,7 +362,9 @@ it('exposes a sanitized zero-message provider failure through HTTP and clears it
     modelResolver: resolver,
     dataDirectory: directory,
     mcp: null,
-    extensionFactories: [],
+    extensionFactories: [
+      { identifier: 'test/idle-observer', create: () => ({ onIdle }) },
+    ],
     introspectionScope: scope(),
     sessionContext: { kind: 'default', name: 'main', sessionId: 'default' },
     basePrompt: 'Test.',
@@ -405,9 +443,11 @@ it('exposes a sanitized zero-message provider failure through HTTP and clears it
       record,
     );
 
+    expect(onIdle).not.toHaveBeenCalled();
     model = working;
     recovery.resolve();
     await expect(session.waitForIdle(5000)).resolves.toBe(true);
+    expect(onIdle).toHaveBeenCalledOnce();
     const recovered = await app.request('/v1/sessions');
     expect(recovered.status).toBe(200);
     const recoveredPage = sessionHistoryListResponseSchema.parse(

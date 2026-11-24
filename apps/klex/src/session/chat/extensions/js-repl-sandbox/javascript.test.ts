@@ -5,10 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
 import type { ExtensionDeps, ResolvedModel } from '../extension-api';
+import { encodingCases, encodingErrors } from './encoding.fixture';
 import { InMemoryToolProvider } from './in-memory-tool-provider.fixture';
 import { createJavaScriptTool, type JavaScriptTool } from './javascript';
 import { createJsReplSandboxExt } from './js-repl-sandbox';
-import { encodingCases, encodingErrors } from './encoding.fixture';
 
 vi.mock('./system-prompt-part.md', () => ({
   default: readFileSync(
@@ -81,6 +81,84 @@ describe('JavaScriptTool', () => {
       ).resolves.toBe('undefined');
     },
   );
+
+  it('captures actual dynamic invocations before dispatch, including failure, without discovery or credentials', async () => {
+    const onMcpInvocation = vi.fn();
+    const controller = new AbortController();
+    vi.spyOn(provider, 'invoke').mockRejectedValue(new Error('remote failure'));
+    await expect(
+      javaScriptTool.execute({
+        code: 'await tools.search("same"); const namespace = "git.hub", name = "same"; return await mcp[namespace][name]({ channel: "C1", token: "private", nested: { password: "secret", user: "U1" } });',
+        context: {
+          executionId: 'outer-execution',
+          sessionId: 'session-1',
+          signal: controller.signal,
+          onMcpInvocation,
+        },
+      }),
+    ).rejects.toThrow('remote failure');
+    expect(onMcpInvocation).toHaveBeenCalledTimes(1);
+    expect(onMcpInvocation).toHaveBeenCalledWith({
+      id: expect.any(String),
+      executionId: 'outer-execution',
+      namespace: 'git.hub',
+      name: 'same',
+      input: { channel: 'C1', nested: { user: 'U1' } },
+    });
+    expect(provider.invoke).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ token: 'private' }),
+      expect.anything(),
+    );
+  });
+
+  it('retains multiple invocation records when cancellation follows partial output', async () => {
+    const records = vi.fn();
+    const started = Promise.withResolvers<void>();
+    const controller = new AbortController();
+    vi.spyOn(provider, 'invoke').mockImplementation(
+      async (reference, input, context) => {
+        if (reference.name === 'wait') {
+          started.resolve();
+          return new Promise((_, reject) => {
+            context.signal.addEventListener(
+              'abort',
+              () => reject(context.signal.reason),
+              { once: true },
+            );
+          });
+        }
+        return input;
+      },
+    );
+    const execution = javaScriptTool.execute({
+      code: 'console.log(await mcp["git.hub"]["same"]({ value: 1 })); await mcp["git.hub"]["wait"]({ value: 2 });',
+      signal: controller.signal,
+      context: {
+        executionId: 'cancelled-outer',
+        sessionId: 'session-1',
+        signal: controller.signal,
+        onMcpInvocation: records,
+      },
+    });
+    const rejected = expect(execution).rejects.toThrow('cancelled');
+    await started.promise;
+    controller.abort(new Error('cancelled'));
+    await rejected;
+    expect(
+      records.mock.calls.map(([record]) => [
+        record.executionId,
+        record.name,
+        record.input,
+      ]),
+    ).toEqual([
+      ['cancelled-outer', 'same', { value: 1 }],
+      ['cancelled-outer', 'wait', { value: 2 }],
+    ]);
+    expect(new Set(records.mock.calls.map(([record]) => record.id)).size).toBe(
+      2,
+    );
+  });
 
   it('exposes only runInSandbox and delegates execution', async () => {
     expect(Object.keys(javaScriptTool.tools)).toEqual(['runInSandbox']);

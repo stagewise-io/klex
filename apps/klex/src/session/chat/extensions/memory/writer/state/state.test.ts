@@ -30,7 +30,7 @@ async function startup(root: string) {
   const local = createLocalData({
     logging,
     dataDirectory: root,
-    klexVersion: '0.38.1',
+    klexVersion: '0.38.2',
     stores: [store],
   });
   try {
@@ -77,11 +77,11 @@ describe('registered memory writer state', () => {
     expect(restored.get().future).toEqual({ keep: true });
     expect(JSON.parse(await readFile(file, 'utf8'))._klex).toMatchObject({
       schemaVersion: 1,
-      compatibilityVersion: 4,
-      minimumKlexVersion: '0.38.1',
+      compatibilityVersion: 5,
+      minimumKlexVersion: '0.38.2',
     });
   });
-  it.each([1, 2])(
+  it.each([1, 2, 3, 4])(
     'raises compatibility %s of existing state; the startup migration then flattens notes',
     async (compatibilityVersion) => {
       const { root, file } = await fixture();
@@ -127,17 +127,18 @@ describe('registered memory writer state', () => {
       const upgraded = JSON.parse(await readFile(file, 'utf8'));
       expect(upgraded.cursor).toBe('history:cursor');
       expect(upgraded._klex).toMatchObject({
-        compatibilityVersion: 4,
-        minimumKlexVersion: '0.38.1',
+        compatibilityVersion: 5,
+        minimumKlexVersion: '0.38.2',
       });
       const before = await readFile(file, 'utf8');
       await startup(root);
       expect(await readFile(file, 'utf8')).toBe(before);
       // v0.38.0 (compatibility 2) and format-6 main builds (compatibility 3)
-      // refuse compatibility 4 in preflight, before touching any file.
+      // refuse compatibility 5 in preflight, before touching any file.
       for (const [old, klexVersion, minimumKlexVersion] of [
         [2, '0.38.0', '0.37.1'],
         [3, '0.38.1', '0.38.1'],
+        [4, '0.38.1', '0.38.1'],
       ] as const) {
         const oldReader = createLocalData({
           logging,
@@ -179,7 +180,7 @@ describe('registered memory writer state', () => {
     await expect(readFile(file, 'utf8')).rejects.toThrow('ENOENT');
     await migrateMemoryDocuments(root, logger);
     expect(JSON.parse(await readFile(file, 'utf8'))._klex).toMatchObject({
-      compatibilityVersion: 4,
+      compatibilityVersion: 5,
     });
     await expect(readFile(entityFile, 'utf8')).rejects.toThrow('ENOENT');
     const oldReader = createLocalData({
@@ -199,6 +200,34 @@ describe('registered memory writer state', () => {
     } finally {
       await oldReader.close();
     }
+  });
+  it('migrates already-flat event rules at startup and marks compatibility before publishing', async () => {
+    const { root, file } = await fixture();
+    const entityFile = join(dirname(file), 'entities/Ada.md');
+    await mkdir(dirname(entityFile), { recursive: true });
+    const old =
+      '---\nFormatVersion: 7\nTags: [people/coworkers]\nCreatedAt: 2026-11-17T10:00:00.000Z\nLastUpdatedAt: 2026-11-17T11:00:00.000Z\nLastReadAt: null\nLinkedIdentities: []\nLoadOn:\n  - type: pushNotificationMetadataPattern\n    server: slack\n    conditions:\n      - path: metadata.userId\n        match: exact\n        value: U1\nTrustScore: 2\nAuthorityScore: 5\n---\n\n## General\n\n- Engineer [old](history:abc)\n';
+    await writeFile(entityFile, old);
+    await startup(root);
+    const logger = { info: () => undefined, warn: () => undefined };
+    await migrateMemoryDocuments(root, logger, { dryRun: true });
+    expect(await readFile(entityFile, 'utf8')).toBe(old);
+    await expect(readFile(file, 'utf8')).rejects.toThrow('ENOENT');
+    await expect(
+      createEntityStore(dirname(entityFile)).start(),
+    ).rejects.toThrow('not migrated yet');
+    await migrateMemoryDocuments(root, logger);
+    const bytes = await readFile(entityFile, 'utf8');
+    expect(bytes).toContain('eventDataPattern');
+    expect(bytes).toContain('metadata.userId');
+    expect(bytes).toContain('people/coworkers');
+    expect(bytes).toContain('Engineer [old](history:abc)');
+    expect(
+      JSON.parse(await readFile(file, 'utf8'))._klex.compatibilityVersion,
+    ).toBe(5);
+    await startup(root);
+    await migrateMemoryDocuments(root, logger);
+    expect(await readFile(entityFile, 'utf8')).toBe(bytes);
   });
   it.each(['newer', 'invalid'])(
     'rejects %s data before mutation',

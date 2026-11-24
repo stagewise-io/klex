@@ -5,7 +5,8 @@ const MEMORY_TAG = /<(\s*\/?\s*memory\b)/giu;
 
 /**
  * Wraps retrieval output so the main session and filters can recognize it.
- * The only way memory may enter the main session. Memory tags inside `text`
+ * The legacy recall-result ingress, distinct from auto-load data parts.
+ * Memory tags inside `text`
  * are defused, so content can neither close the block early nor open a
  * forged one.
  */

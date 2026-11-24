@@ -1,3 +1,5 @@
+import { createDataPart } from '@/session/chat/extensions/extension-api';
+import { detailResultSchema } from '@/session/chat/extensions/memory/loading';
 import type { ExtendedUIMessage } from '@/session/chat/message-types';
 import type { ContextDataUIPart } from '@/session/inbox';
 
@@ -95,8 +97,33 @@ export function toCanonicalMessage(
         },
         `Tool ${event.request.name} was called during the call with input ${JSON.stringify(event.request.input)}.`,
       );
-    case 'tool-result':
-      return contextMessage(
+    case 'tool-result': {
+      // Section reads must remain structured so the next context assembly can
+      // refresh the subscription and apply the same bounded detail renderer.
+      const detail =
+        event.result.status === 'success' &&
+        event.result.toolName === 'readMemorySection'
+          ? detailResultSchema.safeParse(event.result.output)
+          : null;
+      if (detail?.success)
+        return {
+          id: event.eventId,
+          role: 'assistant',
+          parts: [
+            {
+              type: 'dynamic-tool',
+              toolName: 'readMemorySection',
+              toolCallId: event.result.executionId,
+              state: 'output-available',
+              input: {
+                filename: detail.data.filename,
+                sectionName: detail.data.sectionName,
+              },
+              output: detail.data,
+            },
+          ],
+        };
+      const message = contextMessage(
         event.eventId,
         {
           kind: 'realtime-tool-result',
@@ -108,5 +135,14 @@ export function toCanonicalMessage(
           ? `Tool result: ${JSON.stringify(event.result.output)}`
           : `Tool failed (${event.result.code}): ${event.result.error}`,
       );
+      if (event.result.mcpInvocations?.length)
+        message.parts.push(
+          createDataPart(
+            'mcpInvocations',
+            event.result.mcpInvocations,
+          ) as ExtendedUIMessage['parts'][number],
+        );
+      return message;
+    }
   }
 }

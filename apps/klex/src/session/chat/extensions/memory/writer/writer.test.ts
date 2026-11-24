@@ -166,8 +166,11 @@ async function fixture(completion: 'normal' | 'failed' | 'skip' = 'normal') {
       return handle;
     },
   );
+  const detachRecall = vi.fn();
+  const attachSource = vi.fn(() => detachRecall);
   const factory = createMemoryWriterExt({
     activities,
+    recall: { attachSource },
     skillReader: registry,
     legacyLearningDirectory: join(root, 'legacy'),
   });
@@ -209,6 +212,8 @@ async function fixture(completion: 'normal' | 'failed' | 'skip' = 'normal') {
     child,
     children,
     activities,
+    attachSource,
+    detachRecall,
     terminate: () => {
       terminated = true;
     },
@@ -216,6 +221,17 @@ async function fixture(completion: 'normal' | 'failed' | 'skip' = 'normal') {
 }
 
 describe('oldest-first memory writer', () => {
+  it('registers its managed read-only recall source on start and detaches it on close', async () => {
+    const h = await fixture();
+    expect(h.attachSource).not.toHaveBeenCalled();
+    await h.extension.onStart?.();
+    expect(h.attachSource).toHaveBeenCalledWith({
+      snapshot: expect.any(Function),
+      getHistory: expect.any(Function),
+    });
+    await h.extension.onClose?.();
+    expect(h.detachRecall).toHaveBeenCalledOnce();
+  });
   it('limits a first run to the newest 21 days and 3,000 messages', () => {
     const now = Date.parse('2026-11-16T12:00:00Z');
     const sources = (ages: number[]) =>

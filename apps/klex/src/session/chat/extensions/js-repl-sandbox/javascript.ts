@@ -11,6 +11,7 @@ import z from 'zod';
 
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
+import { isAlwaysForbiddenTelemetryAttribute } from '@/telemetry-policy';
 import {
   assertJsonValue,
   type JsonValue,
@@ -41,6 +42,7 @@ export const JAVASCRIPT_SANDBOX_LIMITS = Object.freeze({
 
 export interface JavaScriptExecution {
   code: string;
+  context?: ToolRequestContext;
   signal?: AbortSignal;
 }
 
@@ -88,7 +90,11 @@ class JavaScriptToolModule implements JavaScriptTool {
         .json()
         .describe('Console lines and returned JSON, in execution order.'),
       execute: async ({ code }, options) =>
-        this.execute({ code, signal: options.abortSignal }),
+        this.execute({
+          code,
+          signal: options.abortSignal,
+          context: options.context as ToolRequestContext | undefined,
+        }),
     },
   } satisfies ToolSet;
 
@@ -247,6 +253,7 @@ class JavaScriptToolModule implements JavaScriptTool {
         input.code,
         snapshot,
         abort,
+        input.context,
       );
     } finally {
       if (this.activeAbort === abort) this.activeAbort = undefined;
@@ -261,6 +268,7 @@ class JavaScriptToolModule implements JavaScriptTool {
     source: string,
     snapshot: ToolSnapshot,
     abort: AbortController,
+    outerContext?: ToolRequestContext,
   ): Promise<JsonValue> {
     return new Promise((resolve, reject) => {
       let settled = false;
@@ -338,10 +346,11 @@ class JavaScriptToolModule implements JavaScriptTool {
           invalidate(new Error('Provider request limit exceeded'));
           return;
         }
-        void this.dispatch(
-          message.request,
-          contextFrom(executionId, abort, this.sessionId),
-        )
+        void this.dispatch(message.request, {
+          ...contextFrom(executionId, abort, this.sessionId),
+          executionId: outerContext?.executionId ?? executionId,
+          onMcpInvocation: outerContext?.onMcpInvocation,
+        })
           .then((result) => {
             if (settled) return;
             assertJsonValue(result);
@@ -405,6 +414,22 @@ class JavaScriptToolModule implements JavaScriptTool {
         result = await this.deps.provider.describe(request.reference, context);
         break;
       case 'invoke':
+        // Validate and bound the complete input before dispatch. Never store a
+        // truncated argument as complete evidence. Credential leaves are absent.
+        assertJsonValue(request.input);
+        assertSerializedSize(
+          request.input,
+          JAVASCRIPT_SANDBOX_LIMITS.maximumProviderResponseBytes,
+          'Provider invocation input',
+        );
+        context.signal.throwIfAborted();
+        context.onMcpInvocation?.({
+          id: randomUUID(),
+          executionId: context.executionId,
+          namespace: request.reference.namespace,
+          name: request.reference.name,
+          input: withoutCredentials(request.input) as typeof request.input,
+        });
         result = await this.deps.provider.invoke(
           request.reference,
           request.input,
@@ -415,6 +440,17 @@ class JavaScriptToolModule implements JavaScriptTool {
     assertJsonValue(result);
     return result;
   }
+}
+
+function withoutCredentials(value: JsonValue): JsonValue {
+  if (Array.isArray(value)) return value.map(withoutCredentials);
+  if (value && typeof value === 'object')
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([key]) => !isAlwaysForbiddenTelemetryAttribute(key))
+        .map(([key, entry]) => [key, withoutCredentials(entry)]),
+    );
+  return value;
 }
 
 function contextFrom(

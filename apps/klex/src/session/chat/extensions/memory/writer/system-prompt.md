@@ -107,7 +107,7 @@ Create a work-item entity for what matters later: what it is about, decisions wi
 Literal triggers that load the entity. Never repeat in facts. Never per-message values (ts, message or comment IDs).
 
 - LinkedIdentities `{server, match}`: server = MCP source (`slack`, `linear`, `github`); match = event metadata keys and values, copied exactly. Unique across memory. `identityId`, `workspaceId`, `installationId` = receiving account, not sender.
-- LoadOn: contentPattern = short verbatim token (`ENG-42`, `acme/web`), ≤60 chars, never a description. pushNotificationMetadataPattern / toolCallPattern only for patterns identities cannot express.
+- LoadOn: contentPattern = short verbatim token (`ENG-42`, `acme/web`), ≤60 chars, never a description. eventDataPattern (Events and Push Notification data, not transport envelopes) / toolCallPattern only for patterns identities cannot express.
 
 # Skills
 

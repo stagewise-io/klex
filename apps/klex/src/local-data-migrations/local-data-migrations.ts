@@ -33,6 +33,12 @@ import { modelCallsV2ToV3 } from './model-calls/v2-to-v3/migration';
 import { sessionsV1ToV2 } from './sessions/v1-to-v2/migration';
 import { sessionsV2ToV3 } from './sessions/v2-to-v3/migration';
 import { sessionsV3ToV4 } from './sessions/v3-to-v4/migration';
+import { sessionsV4ToV5 } from './sessions/v4-to-v5/migration';
+import { skillRegistryV1ToV2 } from './skill-registry/v1-to-v2/migration';
+import {
+  skillRegistryV1,
+  skillRegistryV2,
+} from './skill-registry/v1-to-v2/schemas';
 
 // Data-only and append-only: CI compares import identities and array prefixes.
 export const LOCAL_DATA_MIGRATIONS = {
@@ -72,6 +78,17 @@ export const LOCAL_DATA_MIGRATIONS = {
     migrations: [learningStateV1ToV2],
   },
   'model-calls': { migrations: [modelCallsV1ToV2, modelCallsV2ToV3] },
-  sessions: { migrations: [sessionsV1ToV2, sessionsV2ToV3, sessionsV3ToV4] },
+  sessions: {
+    migrations: [
+      sessionsV1ToV2,
+      sessionsV2ToV3,
+      sessionsV3ToV4,
+      sessionsV4ToV5,
+    ],
+  },
   'episodic-search-index': { migrations: [episodicSearchV1ToV2] },
+  'skill-registry': {
+    versions: [skillRegistryV1, skillRegistryV2],
+    migrations: [skillRegistryV1ToV2],
+  },
 };

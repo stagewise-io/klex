@@ -8,6 +8,7 @@ import {
   readCurrentJsonStore,
   writeJsonStoreDocument,
 } from '@/local-data';
+import { LOCAL_DATA_MIGRATIONS } from '@/local-data-migrations';
 import { KLEX_VERSION } from '@/release';
 
 export const SKILLS_DIRECTORY = 'skills';
@@ -34,7 +35,7 @@ const skillUsageSchema = z
   })
   .passthrough();
 
-const skillRegistryPayloadSchema = z
+export const skillRegistryPayloadSchema = z
   .object({
     turn: position,
     skills: z.record(z.string(), skillUsageSchema),
@@ -46,11 +47,11 @@ export const SKILL_REGISTRY_STORE_DEFINITION: JsonStoreDefinition = {
   id: 'skill-registry',
   relativePath: `${SKILLS_DIRECTORY}/${REGISTRY_FILE}`,
   required: false,
-  schemaVersion: 1,
-  compatibilityVersion: 1,
-  minimumKlexVersion: '0.28.0',
-  versions: [{ version: 1, schema: skillRegistryPayloadSchema }],
-  migrations: [],
+  schemaVersion: 2,
+  compatibilityVersion: 2,
+  minimumKlexVersion: '0.38.2',
+  versions: LOCAL_DATA_MIGRATIONS['skill-registry'].versions,
+  migrations: LOCAL_DATA_MIGRATIONS['skill-registry'].migrations,
 };
 
 /** Persisted bookkeeping of one skill, keyed by qualified id. */

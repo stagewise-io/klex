@@ -28,8 +28,9 @@ export const MEMORY_WRITER_STORE_DEFINITION: JsonStoreDefinition = {
   // Older binaries cannot preserve these lists or their inverse semantics.
   // 4: document format 7 flattens notes to `{Title}.md` with required Tags.
   // Older binaries would read the root as untyped legacy notes.
-  compatibilityVersion: 4,
-  minimumKlexVersion: '0.38.1',
+  // 5: eventDataPattern replaces the old persisted event matcher name.
+  compatibilityVersion: 5,
+  minimumKlexVersion: '0.38.2',
   versions: [{ version: 1, schema: stateSchema }],
   migrations: [],
 };

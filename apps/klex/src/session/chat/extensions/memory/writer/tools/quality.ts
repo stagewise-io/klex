@@ -84,7 +84,7 @@ export function copiedValues(fields: {
   loadOn?: readonly (
     | { type: 'contentPattern'; pattern: string }
     | {
-        type: 'pushNotificationMetadataPattern';
+        type: 'eventDataPattern';
         conditions: readonly { match: string; value: string }[];
       }
     | {

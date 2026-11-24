@@ -164,7 +164,7 @@ export const loadMatcherSchema = z.discriminatedUnion('type', [
     .strict(),
   z
     .object({
-      type: z.literal('pushNotificationMetadataPattern'),
+      type: z.literal('eventDataPattern'),
       server: serverSchema,
       conditions: z
         .array(conditionSchema)
@@ -485,7 +485,7 @@ export const entityFieldsSchema = z
       .max(50)
       .default([])
       .describe(
-        'Dedicated auto-load triggers; any one fires. Name and LinkedIdentities already trigger; never repeat them.',
+        'Explicit auto-load triggers; any one fires. Names do not trigger automatically: add deliberate contentPattern aliases when useful. LinkedIdentities already trigger; do not repeat them.',
       ),
     relatedTo: z.array(relationSchema).max(100).default([]),
     linkedIdentities: z
@@ -610,6 +610,8 @@ export const sectionNameSchema = z
 
 export interface EntityStore {
   start(): Promise<void>;
+  /** Coherent read serialized behind managed writes and journal recovery. */
+  snapshot(): Promise<MemoryEntity[]>;
   list(): MemoryEntity[];
   get(id: string): MemoryEntity | null;
   create(
@@ -672,21 +674,15 @@ export function renderEntity(
   ].join('\n\n');
 }
 
-// A matcher equal to the title or a linked identity adds nothing: both already load.
+// Linked identities already load; preserve deliberate name/alias content patterns.
 function dedupeLoadOn(
   matchers: readonly LoadMatcher[],
-  title: string,
   identities: readonly LinkedIdentity[],
 ): LoadMatcher[] {
   const seen = new Set(identities.map(identityKey));
   return matchers.filter((matcher) => {
-    if (
-      matcher.type === 'contentPattern' &&
-      matcher.pattern.toLowerCase() === title.toLowerCase()
-    )
-      return false;
     const key =
-      matcher.type === 'pushNotificationMetadataPattern' &&
+      matcher.type === 'eventDataPattern' &&
       matcher.conditions.every((condition) => condition.match === 'exact')
         ? identityKey({
             server: matcher.server,
@@ -772,7 +768,6 @@ export function mergedEntity(
       LinkedIdentities: identities,
       LoadOn: dedupeLoadOn(
         [...frontmatter.LoadOn, ...drop.frontmatter.LoadOn],
-        keep.id,
         identities,
       ),
       RelatedTo: combineRelations(
@@ -842,11 +837,28 @@ function deserialize(
   legacy: boolean;
   outdated: boolean;
   old?: LegacyFields;
+  matcherUpgrade: boolean;
 } {
   const match = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/.exec(content);
   if (!match?.[1] || match[2] === undefined)
     throw new Error('Missing entity frontmatter');
   const raw = parse(match[1], { maxAliasCount: 0 });
+  // Forward conversion only: new writes use the canonical discriminator.
+  const matcherUpgrade =
+    Array.isArray(raw?.LoadOn) &&
+    raw.LoadOn.some(
+      (item: unknown) =>
+        item &&
+        typeof item === 'object' &&
+        'type' in item &&
+        item.type === 'pushNotificationMetadataPattern',
+    );
+  if (matcherUpgrade)
+    raw.LoadOn = raw.LoadOn.map((item: Record<string, unknown>) =>
+      item?.type === 'pushNotificationMetadataPattern'
+        ? { ...item, type: 'eventDataPattern' }
+        : item,
+    );
   let old: LegacyFields | undefined;
   let v4: z.infer<typeof v4FrontmatterSchema> | undefined;
   let tagSource = '';
@@ -945,6 +957,7 @@ function deserialize(
     entity: { id, frontmatter, sections },
     legacy: !!old,
     outdated: raw?.FormatVersion !== 7,
+    matcherUpgrade,
     old,
   };
 }
@@ -1105,6 +1118,9 @@ class EntityStoreModule implements EntityStore {
     this.starting ??= this.load();
     return this.starting;
   }
+  snapshot(): Promise<MemoryEntity[]> {
+    return this.enqueue(async () => this.list());
+  }
   list(): MemoryEntity[] {
     return structuredClone([...this.entities.values()]);
   }
@@ -1132,7 +1148,7 @@ class EntityStoreModule implements EntityStore {
           LastUpdatedAt: at,
           LastReadAt: null,
           LinkedIdentities: identities,
-          LoadOn: dedupeLoadOn(input.loadOn, id, identities),
+          LoadOn: dedupeLoadOn(input.loadOn, identities),
           RelatedTo: combineRelations(input.relatedTo),
           TrustScore: 2,
           AuthorityScore: 5,
@@ -1183,11 +1199,7 @@ class EntityStoreModule implements EntityStore {
         ...previous,
         Tags: patch.tags ? uniqueTags(patch.tags) : previous.Tags,
         LinkedIdentities: identities,
-        LoadOn: dedupeLoadOn(
-          patch.loadOn ?? previous.LoadOn,
-          entity.id,
-          identities,
-        ),
+        LoadOn: dedupeLoadOn(patch.loadOn ?? previous.LoadOn, identities),
         RelatedTo: combineRelations(patch.relatedTo ?? previous.RelatedTo),
         LastUpdatedAt: new Date().toISOString(),
       };
@@ -1503,6 +1515,7 @@ class EntityStoreModule implements EntityStore {
       this.entities.clear();
     }
     const documents: LoadedDocument[] = [];
+    let matcherUpgrade = false;
     const ids = new Set<string>();
     const readDocument = async (
       file: string,
@@ -1522,11 +1535,9 @@ class EntityStoreModule implements EntityStore {
         if (!stat.isFile() || stat.size > 500_000)
           throw new Error('Invalid entity file');
         const content = await handle.readFile('utf8');
-        const { entity, legacy, outdated, old } = deserialize(
-          content,
-          id,
-          folder,
-        );
+        const parsed = deserialize(content, id, folder);
+        const { entity, legacy, outdated, old } = parsed;
+        matcherUpgrade ||= parsed.matcherUpgrade;
         if (legacy) legacyEntityIdSchema.parse(stem);
         else if (folder) typedEntityIdSchema.parse(id);
         else entityIdSchema.parse(id);
@@ -1607,7 +1618,7 @@ class EntityStoreModule implements EntityStore {
       .filter(({ outdated }) => outdated)
       .sort((a, b) => a.file.localeCompare(b.file));
     if (
-      (converting.length || merged.size) &&
+      (converting.length || merged.size || matcherUpgrade) &&
       !this.options.migrate &&
       !this.options.dryRun
     )
@@ -1720,7 +1731,7 @@ class EntityStoreModule implements EntityStore {
       id: entity.id,
       content: serialize(entity),
     }));
-    if (moves.length) {
+    if (moves.length || matcherUpgrade) {
       this.summary = {
         moved: converting.filter(({ folder }) => folder !== undefined).length,
         renamed,
@@ -1731,8 +1742,8 @@ class EntityStoreModule implements EntityStore {
       };
       this.options.onConversionPlanned?.(structuredClone(this.summary));
     }
-    // Older binaries refuse format 7 (and compatibility 4) before touching it.
-    if (moves.length && !this.options.dryRun) {
+    // Persist the compatibility floor before changing either layout or matchers.
+    if ((moves.length || matcherUpgrade) && !this.options.dryRun) {
       await this.options.beforeConversionWrite?.();
       await this.commit({ moves, documents: snapshots });
     }

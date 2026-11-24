@@ -52,6 +52,23 @@ async function readRegistryFile(dir: string) {
 const content = { description: 'Fix the build.', body: 'Run pnpm build.' };
 
 describe('skill references', () => {
+  it('snapshots complete documents and metadata behind queued mutations', async () => {
+    const { registry } = await started();
+    registry.claimNamespace('memory', 'learning');
+    const learning = registry.forNamespace('learning');
+    const write = learning.put('deploy', content);
+    const read = registry.snapshot();
+    await write;
+    const captured = await read;
+    expect(captured[0]!.body).toBe(content.body);
+    const metadata = learning.setMetadata('deploy', {
+      loadOn: [{ type: 'contentPattern', pattern: 'deploy' }],
+    });
+    const next = registry.snapshot();
+    await metadata;
+    expect((await next)[0]!.metadata.loadOn).toHaveLength(1);
+    expect(captured[0]!.metadata.loadOn).toBeUndefined();
+  });
   it('writes, reloads, limits and deletes reference files with the skill', async () => {
     const { registry, dir } = await started();
     registry.claimNamespace('memory', 'learning');

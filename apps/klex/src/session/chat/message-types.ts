@@ -1,6 +1,7 @@
 import type { UIMessage } from 'ai';
 
 import type { ContextDataUIPart } from '@/session/inbox';
+import type { McpInvocation } from '@/tool-provider';
 
 import type { AgentUITools } from './tools';
 
@@ -32,6 +33,7 @@ export type CheckDataUIPart = Record<string, never>;
  * consumption, and transformation.
  */
 export type CustomUIDataParts = {
+  mcpInvocations: McpInvocation[];
   context: ContextDataUIPart;
   continue: ContinueDataUIPart;
   check: CheckDataUIPart;

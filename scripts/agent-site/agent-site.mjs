@@ -552,6 +552,36 @@ class AgentBuild {
       },
     ];
     if (this.kind === 'docs') {
+      // The deployment needs HTTP redirects for the moved template and its mirrors.
+      const redirects = JSON.parse(
+        await readFile(
+          resolve(this.directory, 'dist/blume-redirects.json'),
+          'utf8',
+        ).catch((error) => {
+          if (error.code === 'ENOENT') return '[]';
+          throw error;
+        }),
+      );
+      for (const redirect of redirects) {
+        if (
+          !/^\/(?:ar\/|de\/|es\/|fr\/|hi\/|ja\/|ko\/|pt\/|ru\/|uk\/|zh\/)?templates\/software-engineer(?:\.mdx?)?$/.test(
+            redirect.from,
+          )
+        )
+          continue;
+        const escaped = redirect.from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        routes.push({
+          src:
+            '^' +
+            escaped +
+            (redirect.from.endsWith('.md') || redirect.from.endsWith('.mdx')
+              ? ''
+              : '/?') +
+            '$',
+          status: redirect.status,
+          headers: { Location: redirect.to },
+        });
+      }
       for (const page of this.docsPages) {
         const route = page.route === '/' ? '/' : page.route.replace(/\/$/, '');
         const escaped = route.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

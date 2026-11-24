@@ -113,6 +113,16 @@ it('filters docs aggregates and removes Markdown mirrors without removing HTML p
       agents: ['/bot/quickstart'],
       markdown: ['/bot/concepts/how-bots-work'],
     });
+    await save(
+      'dist/blume-redirects.json',
+      ['', '/de'].flatMap((prefix) =>
+        ['', '.md', '.mdx'].map((suffix) => ({
+          from: `${prefix}/templates/software-engineer${suffix}`,
+          to: `${prefix}/guides/software-engineer${suffix}`,
+          status: 301,
+        })),
+      ),
+    );
     await save('dist/agent-readability.json', {
       description: 'Docs',
       artifacts: {},
@@ -171,6 +181,25 @@ it('filters docs aggregates and removes Markdown mirrors without removing HTML p
       ),
     ).toBe(true);
     for (const prefix of ['', '/de']) {
+      for (const suffix of ['', '.md', '.mdx']) {
+        const route = routes.find(
+          (item) =>
+            item.headers?.Location ===
+            `${prefix}/guides/software-engineer${suffix}`,
+        );
+        expect(route?.status).toBe(301);
+        expect(
+          new RegExp(route.src).test(
+            `${prefix}/templates/software-engineer${suffix}`,
+          ),
+        ).toBe(true);
+        if (!suffix)
+          expect(
+            new RegExp(route.src).test(
+              `${prefix}/templates/software-engineer/`,
+            ),
+          ).toBe(true);
+      }
       expect(routes).toContainEqual({
         src: `^${prefix}/quickstart/?$`,
         dest: `${prefix}/quickstart/index.html`,

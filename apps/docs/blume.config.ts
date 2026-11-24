@@ -78,6 +78,24 @@ export default defineConfig({
   redirects: [
     // English: pre-tab URLs → current (re-sectioned) paths.
     { from: '/', to: '/bot' },
+    // Preserve the original template URL in every locale.
+    ...[
+      '',
+      '/zh',
+      '/ja',
+      '/ko',
+      '/de',
+      '/fr',
+      '/es',
+      '/pt',
+      '/hi',
+      '/uk',
+      '/ru',
+      '/ar',
+    ].map((locale) => ({
+      from: `${locale}/templates/software-engineer`,
+      to: `${locale}/guides/software-engineer`,
+    })),
     // Use cases are being reworked; keep the old route usable in the meantime.
     { from: '/bot/use-cases', to: '/bot', status: 302 },
     { from: '/architecture', to: '/bot/concepts/how-bots-work' },

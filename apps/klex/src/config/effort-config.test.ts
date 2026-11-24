@@ -72,7 +72,9 @@ describe('effort config forward migration', () => {
       },
       _klex: undefined,
     });
-    expect(migrated._klex.schemaVersion).toBe(13);
+    expect(migrated._klex.schemaVersion).toBe(
+      CONFIG_STORE_DEFINITION.schemaVersion,
+    );
     const config = createConfig({
       logging,
       dataDirectory: dir,

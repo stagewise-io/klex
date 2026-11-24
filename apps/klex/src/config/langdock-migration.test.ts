@@ -62,7 +62,7 @@ it('migrates the frozen v12 payload unchanged through startup, and is idempotent
     ...original,
     _klex: {
       ...original._klex,
-      schemaVersion: 13,
+      schemaVersion: CONFIG_STORE_DEFINITION.schemaVersion,
       minimumKlexVersion: '0.36.0',
       writtenByKlexVersion: '0.37.1',
     },
@@ -148,14 +148,17 @@ it('restores failed v12 migration bytes and retries cleanly', async () => {
   ).rejects.toThrow(/restored/);
   expect(await readFile(path, 'utf8')).toBe(bytes);
   await start();
-  expect(JSON.parse(await readFile(path, 'utf8'))._klex.schemaVersion).toBe(13);
+  expect(JSON.parse(await readFile(path, 'utf8'))._klex.schemaVersion).toBe(
+    CONFIG_STORE_DEFINITION.schemaVersion,
+  );
 });
 
 it.each(['invalid', 'newer'])(
   'rejects %s config without mutation',
   async (kind) => {
     const value = JSON.parse(await fixture('config-v12-langdock-baseline'));
-    if (kind === 'newer') value._klex.schemaVersion = 14;
+    if (kind === 'newer')
+      value._klex.schemaVersion = CONFIG_STORE_DEFINITION.schemaVersion + 1;
     else value.providers.primary.settings.apiKey = 42;
     const bytes = JSON.stringify(value);
     const { path, start } = await setup(bytes);

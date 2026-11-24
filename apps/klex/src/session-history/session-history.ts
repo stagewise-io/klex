@@ -23,6 +23,11 @@ import {
   SESSION_HISTORY_RELATIVE_PATH,
   SESSION_HISTORY_STORE_DEFINITION,
 } from './schema';
+import {
+  decodeSnapshots,
+  encodeSnapshots,
+  pruneSnapshots,
+} from './snapshot-codec';
 import type {
   ActivityMessage,
   ActivityQuery,
@@ -326,9 +331,10 @@ class SessionHistoryModule implements SessionHistory {
             sql: `SELECT content FROM messages WHERE session_id = 'default' AND ord = ?`,
             args: [source.ordinal],
           });
-          message = JSON.parse(
+          message = await decodeSnapshots(
+            client,
             toText(content.rows[0]?.content),
-          ) as ExtendedUIMessage;
+          );
           remaining -= source.bytes;
         }
         result.push({ ...source, message });
@@ -470,9 +476,12 @@ class SessionHistoryModule implements SessionHistory {
     const { meta } = recorder;
     const now = this.nowIso();
     const content = JSON.stringify(header);
+    const snapshotStatements: InStatement[] = [];
+    const storedContent = encodeSnapshots(content, snapshotStatements);
     const ord = await this.peekOrd(client, meta.sessionId);
     await client.batch(
       [
+        ...snapshotStatements,
         {
           sql: `INSERT INTO messages (
                   session_id, ord, instance_id, message_id, role, content,
@@ -484,7 +493,7 @@ class SessionHistoryModule implements SessionHistory {
             meta.instanceId,
             header.id,
             header.role,
-            content,
+            storedContent,
             Buffer.byteLength(content, 'utf8'),
             now,
             anchor.ord,
@@ -749,6 +758,7 @@ class SessionHistoryModule implements SessionHistory {
     // their `ord` and are excluded from the order check. Rows evicted by the
     // size cap stay known, so updates to them affect nothing and they are
     // never restored.
+    const interned = new Set<string>();
     const nextEntries = new Map<string, RecordedEntry>();
     const touched = new Set<string>([meta.instanceId]);
     const removedByInstance = new Map<string, number>();
@@ -757,10 +767,17 @@ class SessionHistoryModule implements SessionHistory {
     let messageCount = recorder.messageCount;
     for (const message of snapshot) {
       if (nextEntries.has(message.id)) continue;
-      const content = JSON.stringify(message);
-      const hash = hashContent(content);
-      const bytes = Buffer.byteLength(content, 'utf8');
+      const logicalContent = JSON.stringify(message);
+      const hash = hashContent(logicalContent);
+      const bytes = Buffer.byteLength(logicalContent, 'utf8');
       const previous = recorder.entries.get(message.id);
+      // Reordered unchanged messages are rewritten too. Budgets/revisions stay logical.
+      const unchanged =
+        previous?.hash === hash &&
+        (previous.isCheckpoint || previous.ord > lastOrd);
+      const content = unchanged
+        ? logicalContent
+        : encodeSnapshots(logicalContent, statements, interned);
       if (previous?.isCheckpoint) {
         nextEntries.set(message.id, { ...previous, hash, seen: true });
         if (previous.hash === hash) continue;
@@ -894,6 +911,7 @@ class SessionHistoryModule implements SessionHistory {
       ),
     );
 
+    statements.push(pruneSnapshots);
     await client.batch(statements, 'write');
     this.nextOrds.set(meta.sessionId, nextOrd);
     recorder.entries = nextEntries;
@@ -1092,6 +1110,7 @@ class SessionHistoryModule implements SessionHistory {
 
     // `execute` steps the pragma once and frees a single page;
     // `executeMultiple` runs it to completion.
+    await client.execute(pruneSnapshots);
     await client.executeMultiple('PRAGMA incremental_vacuum;');
     this.notifyActivity();
     this.deps.logger.info(
@@ -1170,20 +1189,24 @@ class SessionHistoryModule implements SessionHistory {
         return {
           hasCheckpoint: true,
           entries: [
-            toWindowEntry(
+            await toWindowEntry(
+              client,
               checkpoint.ord,
               checkpoint.instanceId,
               checkpoint.content,
               true,
             ),
-            ...tail.rows.map((row) =>
-              toWindowEntry(
-                toNumber(row.ord),
-                toText(row.instance_id),
-                toText(row.content),
-                false,
+            ...(await Promise.all(
+              tail.rows.map((row) =>
+                toWindowEntry(
+                  client,
+                  toNumber(row.ord),
+                  toText(row.instance_id),
+                  toText(row.content),
+                  false,
+                ),
               ),
-            ),
+            )),
           ],
         };
       }
@@ -1213,7 +1236,8 @@ class SessionHistoryModule implements SessionHistory {
           bytes += size;
           beforeOrd = toNumber(row.ord);
           entries.push(
-            toWindowEntry(
+            await toWindowEntry(
+              client,
               beforeOrd,
               toText(row.instance_id),
               toText(row.content),
@@ -1295,36 +1319,40 @@ class SessionHistoryModule implements SessionHistory {
     instanceId: string,
     query: SessionHistoryMessagesQuery,
   ): Promise<SessionHistoryMessagesPage | undefined> {
-    const session = await this.getSession(instanceId);
-    if (!session) return undefined;
-    const client = this.requireClient();
-    const result = await client.execute({
-      sql: `SELECT ord, content, persisted_at FROM messages
+    return this.enqueueResult(async () => {
+      const session = await this.getSession(instanceId);
+      if (!session) return undefined;
+      const client = this.requireClient();
+      const result = await client.execute({
+        sql: `SELECT ord, content, persisted_at FROM messages
             WHERE instance_id = ? AND (? IS NULL OR ord < ?)
             ORDER BY ord DESC
             LIMIT ?`,
-      args: [
-        instanceId,
-        query.beforeSeq ?? null,
-        query.beforeSeq ?? null,
-        query.limit + 1,
-      ],
+        args: [
+          instanceId,
+          query.beforeSeq ?? null,
+          query.beforeSeq ?? null,
+          query.limit + 1,
+        ],
+      });
+      const hasMore = result.rows.length > query.limit;
+      const messages: SessionHistoryMessage[] = await Promise.all(
+        result.rows
+          .slice(0, query.limit)
+          .reverse()
+          .map(async (row) => ({
+            seq: toNumber(row.ord),
+            persistedAt: toText(row.persisted_at),
+            message: await decodeSnapshots(client, toText(row.content)),
+          })),
+      );
+      return {
+        messages,
+        hasMore,
+        nextCursor: hasMore ? (messages[0]?.seq ?? null) : null,
+        trimmedMessageCount: session.trimmedMessageCount,
+      };
     });
-    const hasMore = result.rows.length > query.limit;
-    const messages: SessionHistoryMessage[] = result.rows
-      .slice(0, query.limit)
-      .reverse()
-      .map((row) => ({
-        seq: toNumber(row.ord),
-        persistedAt: toText(row.persisted_at),
-        message: parseMessage(toText(row.content)),
-      }));
-    return {
-      messages,
-      hasMore,
-      nextCursor: hasMore ? (messages[0]?.seq ?? null) : null,
-      trimmedMessageCount: session.trimmedMessageCount,
-    };
   }
 
   private requireClient(): Client {
@@ -1337,27 +1365,24 @@ class SessionHistoryModule implements SessionHistory {
   }
 }
 
-function parseMessage(content: string): ExtendedUIMessage {
-  const message: ExtendedUIMessage = JSON.parse(content);
-  return message;
-}
-
 function hashContent(content: string): string {
   return createHash('sha1').update(content).digest('base64');
 }
 
-function toWindowEntry(
+async function toWindowEntry(
+  client: Client,
   ord: number,
   instanceId: string,
   content: string,
   isCheckpoint: boolean,
-): SessionHistoryWindowEntry {
+): Promise<SessionHistoryWindowEntry> {
+  const message = await decodeSnapshots(client, content);
   return {
-    message: parseMessage(content),
+    message,
     ord,
     instanceId,
     isCheckpoint,
-    hash: hashContent(content),
+    hash: hashContent(JSON.stringify(message)),
   };
 }
 

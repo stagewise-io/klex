@@ -63,10 +63,10 @@ import { createImageInputOptimizerExt } from '@/session/chat/extensions/image-in
 import { createJsReplSandboxExt } from '@/session/chat/extensions/js-repl-sandbox';
 import { createMcpIngressExt } from '@/session/chat/extensions/mcp-ingress';
 import {
-  createMemoryExt,
   createMemoryWriterExt,
   migrateMemoryDocuments,
 } from '@/session/chat/extensions/memory';
+import { createMemoryRecall } from '@/session/chat/extensions/memory/recall';
 import { createNameLoaderExt } from '@/session/chat/extensions/name-loader';
 import { createReadAttachmentExt } from '@/session/chat/extensions/read-attachment/read-attachment';
 import { createSkillsExt } from '@/session/chat/extensions/skills';
@@ -713,6 +713,14 @@ class ApplicationModule implements Application {
     // Shared canonical reader; grouping and progress belong to each consumer.
     const activities = createActivityHistory(sessionHistory);
     const episodeSummaryLog = createEpisodeSummaryLog();
+    const memoryRecall = createMemoryRecall({
+      time: {
+        timeUpdatePeriod: TIME_UPDATE_PERIOD_SECONDS,
+        timezone,
+      },
+      activities,
+      skills: skillRegistry,
+    });
     // Sessions and the admin API share the agent-wide todos file.
     const todoList = createTodoList();
     const todosExt = createTodosExt({ todoList });
@@ -735,10 +743,14 @@ class ApplicationModule implements Application {
         hasVoiceModel: () =>
           providerRegistry.resolveRealtimeProvider() !== undefined,
       }),
-      createMemoryExt({ activities }),
+      // Legacy proactive retrieval is disabled, not removed. Keep its code and
+      // persisted search index for now; on-demand recall replaces its session.
+      memoryRecall.extension,
       createMemoryWriterExt({
         activities,
+        recall: memoryRecall,
         skillReader: skillRegistry,
+        loadingSkills: skillRegistry,
         selfName: () => config.get().officialName,
         legacyLearningDirectory: join(
           dataDirectory,
@@ -751,7 +763,11 @@ class ApplicationModule implements Application {
         summaryLog: episodeSummaryLog,
       }),
       createConsultExt({
-        childExtensionFactories: [createSoulExt, defaultTimeExt],
+        childExtensionFactories: [
+          createSoulExt,
+          defaultTimeExt,
+          memoryRecall.extension,
+        ],
         maxActiveSessions: 2,
         maxReportsPerSession: 3,
         maxContextMessages: 5,

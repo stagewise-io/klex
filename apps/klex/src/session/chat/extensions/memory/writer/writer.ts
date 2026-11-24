@@ -13,6 +13,7 @@ import type {
   Extension,
   ExtensionDeps,
   ExtensionFactory,
+  ResolvedModel,
   StepCompleteEvent,
 } from '@/session/chat/extensions/extension-api';
 import {
@@ -20,6 +21,12 @@ import {
   importLegacySkills,
   LEARNING_SKILL_NAMESPACE,
 } from '@/session/chat/extensions/learning';
+import {
+  createMemoryLoader,
+  type MemoryLoader,
+} from '@/session/chat/extensions/memory/loading';
+import type { MemoryRecall } from '@/session/chat/extensions/memory/recall';
+import type { ExtendedUIMessage } from '@/session/chat/message-types';
 import { LINES_FORMAT_PROMPT } from '@/session/chat/utils/history-view';
 import { SessionInboxUrgency } from '@/session/inbox';
 import type { ChildSessionHandle } from '@/session/types';
@@ -59,11 +66,17 @@ export function firstRunStart(
 
 export interface MemoryWriterExtOptions {
   activities: ActivityHistory;
+  recall?: Pick<MemoryRecall, 'attachSource'>;
   skillReader: Pick<
     SkillRegistry,
     'list' | 'get' | 'readReference' | 'addDeletionGuard'
   >;
   legacyLearningDirectory: string;
+  /** Default-session opt-in; child writers never inherit automatic loading. */
+  loadingSkills?: Pick<
+    SkillRegistry,
+    'snapshot' | 'readReference' | 'recordRead'
+  >;
   /** Bot's configured name, read per chunk. */
   selfName?: () => string | undefined;
 }
@@ -101,6 +114,16 @@ class MemoryWriterExtension implements Extension {
   private readonly dataDirectory: string;
   private readonly state: WriterState;
   private readonly entities: EntityStore;
+  private readonly loader: MemoryLoader | undefined;
+  private detachRecallSource: (() => void) | undefined;
+
+  readonly dataPartTransformers = {
+    availableSkills: () => [],
+    activeSkills: () => [],
+    loadedMemories: () => [],
+    loadedMemorySections: () => [],
+    memoryLoadingStatus: () => [],
+  };
 
   constructor(
     private readonly deps: ExtensionDeps,
@@ -109,6 +132,19 @@ class MemoryWriterExtension implements Extension {
     this.dataDirectory = deps.getDataDir(true);
     this.state = createWriterState(this.dataDirectory);
     this.entities = createEntityStore(join(this.dataDirectory, 'entities'));
+    if (options.loadingSkills) {
+      this.loader = createMemoryLoader({
+        entities: {
+          snapshot: async () => {
+            if (!this.ready || this.closed)
+              throw new Error('Memory source unavailable');
+            return this.entities.snapshot();
+          },
+        },
+        skills: options.loadingSkills,
+        logger: deps.logger,
+      });
+    }
   }
 
   // Memory is not worth an outage: bad notes or a failed import pause the
@@ -164,10 +200,42 @@ class MemoryWriterExtension implements Extension {
         'Memory contains broken references; stop the bot before repairing files',
       );
     this.ready = true;
+    this.detachRecallSource = this.options.recall?.attachSource({
+      snapshot: async () => {
+        if (!this.ready || this.closed)
+          throw new Error('Memory source unavailable');
+        return this.entities.snapshot();
+      },
+      getHistory: () => this.deps.getHistory(),
+    });
     this.unsubscribe = this.options.activities.subscribe(() => {
       if (!this.parentActive) this.wake();
     });
     this.wake();
+  }
+
+  prepareHistoryAnnotations(
+    history: readonly ExtendedUIMessage[],
+    model: ResolvedModel,
+    signal?: AbortSignal,
+  ): Promise<ExtendedUIMessage['parts']> {
+    return this.loader?.prepare(history, model, signal) ?? Promise.resolve([]);
+  }
+
+  getTools(): ToolSet {
+    return this.loader?.tools ?? {};
+  }
+
+  onHistoryAnnotationsCommitted(parts: ExtendedUIMessage['parts']): void {
+    this.loader?.commit(parts);
+  }
+
+  onIdle(): ExtendedUIMessage['parts'] | undefined {
+    return this.loader?.idle();
+  }
+
+  getCheckpointCarry(): Promise<ExtendedUIMessage['parts']> {
+    return this.loader?.carry(this.deps.getHistory()) ?? Promise.resolve([]);
   }
 
   onStepStart(): void {
@@ -198,6 +266,8 @@ class MemoryWriterExtension implements Extension {
 
   async onClose(): Promise<void> {
     this.closed = true;
+    this.detachRecallSource?.();
+    this.detachRecallSource = undefined;
     this.unsubscribe?.();
     clearTimeout(this.retry);
     this.abort?.abort();

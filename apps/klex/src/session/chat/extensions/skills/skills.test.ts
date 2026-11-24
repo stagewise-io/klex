@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ModuleLogger } from '@stagewise/logger';
 
+import { createMemoryLoader } from '@/session/chat/extensions/memory/loading';
 import { DEFAULT_SESSION_ID } from '@/session/types';
 import { makeDeps } from '@/shared-utilities/test-utils';
 import { createSkillRegistry, MAX_PROMPT_LIST_CHARACTERS } from '@/skills';
@@ -68,7 +69,12 @@ function step(overrides: Partial<StepCompleteEvent> = {}): StepCompleteEvent {
   };
 }
 
-type ReadSkillTool = { execute: (input: { id: string }) => Promise<string> };
+type LoadSkillTool = {
+  execute: (input: {
+    skill: string;
+    reference?: string;
+  }) => Promise<Record<string, unknown>>;
+};
 
 describe('skill list rendering', () => {
   it('renders nothing without skills', () => {
@@ -138,12 +144,17 @@ describe('skills extension', () => {
     const ext = createSkillsExt(registry).create(makeDeps());
     await ext.onStart?.();
     const prompt = ext.getSystemPromptPart?.() ?? '';
-    expect(prompt).toContain('- alpha/fix-build: Fix the build.');
-    expect(prompt).toContain('- beta/fix-build: Other fix.');
-
-    const tool = ext.getTools?.({} as never)
-      .readSkill as unknown as ReadSkillTool;
-    expect(await tool.execute({ id: 'beta/fix-build' })).toContain('Other.');
+    expect(prompt).toContain('loadSkill');
+    expect(prompt).toContain('<skill name=');
+    const loader = createMemoryLoader({
+      entities: { snapshot: async () => [] },
+      skills: registry,
+      logger,
+    });
+    const tool = loader.tools.loadSkill as unknown as LoadSkillTool;
+    expect(await tool.execute({ skill: 'beta/fix-build' })).toEqual({
+      loaded: 'beta/fix-build',
+    });
     await vi.waitFor(() =>
       expect(registry.get('beta/fix-build')?.readCount).toBe(1),
     );
@@ -159,12 +170,16 @@ describe('skills extension', () => {
     await registry
       .forNamespace('alpha')
       .put('fix-build', { description: 'F.', body: 'F.' });
-    const ext = createSkillsExt(registry).create(makeDeps());
-    const tool = ext.getTools?.({} as never)
-      .readSkill as unknown as ReadSkillTool;
-    expect(await tool.execute({ id: 'fix-build' })).toBe(
-      'Unknown skill "fix-build". Available: alpha/fix-build, alpha/aaa',
-    );
+    const loader = createMemoryLoader({
+      entities: { snapshot: async () => [] },
+      skills: registry,
+      logger,
+    });
+    const tool = loader.tools.loadSkill as unknown as LoadSkillTool;
+    expect(await tool.execute({ skill: 'fix-build' })).toEqual({
+      error: 'Unknown skill',
+      available: ['alpha/aaa', 'alpha/fix-build'],
+    });
   });
 
   it('ticks once per successful completed default-session turn', async () => {

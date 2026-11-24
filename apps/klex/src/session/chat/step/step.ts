@@ -539,6 +539,31 @@ class StepModule implements Step {
 
           // --- Stage 1: Copy ---
           transformSpan.addEvent('history_copy.start');
+          try {
+            await this.deps.extensionHandler.prepareHistoryAnnotations(
+              this.deps.messages,
+              resolvedModel,
+              this.stepAbort.signal,
+            );
+          } catch (error) {
+            transformSpan.end();
+            if (this.stepAbort.signal.aborted) return abortPreparation();
+            this.deps.logger.warn(
+              { error },
+              'History annotation preparation deferred; retrying with a fresh window',
+            );
+            return complete({
+              shouldContinue: true,
+              forceNextStep: false,
+              fatalError: false,
+              fatalErrorReason: null,
+              generationFailed: true,
+              generation: null,
+              toolCalls: [],
+              modelFallbackOccurred: false,
+              requestRejected: false,
+            });
+          }
           const messagesCopy = structuredClone(this.deps.messages);
           // Ephemeral instinct parts exist only in this attempt's clone.
           if (instinctEphemeral.length > 0) {
@@ -621,6 +646,8 @@ class StepModule implements Step {
           let modelMessages: ModelMessage[] = await convertInferenceHistory(
             this.deps.extensionHandler,
             preResult.history,
+            (metrics) =>
+              this.deps.logger.debug(metrics, 'Memory context rendered'),
           );
           if (this.stepAbort.signal.aborted) {
             transformSpan.end();

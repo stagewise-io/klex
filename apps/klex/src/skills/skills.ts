@@ -114,6 +114,8 @@ export interface SkillRegistry {
   start(): Promise<void>;
   /** Flushes the activity clock. */
   close(): Promise<void>;
+  /** Coherent document and metadata read behind managed mutations. */
+  snapshot(): Promise<readonly Skill[]>;
   /** All skills, sorted by id. */
   list(): readonly Skill[];
   get(id: string): Skill | null;
@@ -191,6 +193,10 @@ class SkillRegistryModule implements SkillRegistry {
     await this.enqueue(async () => {
       if (this.turnDirty) await this.persist();
     });
+  }
+
+  snapshot(): Promise<readonly Skill[]> {
+    return this.enqueue(async () => structuredClone(this.list()));
   }
 
   list(): readonly Skill[] {

@@ -43,8 +43,8 @@ export async function migrateMemoryDocuments(
   const entities = createEntityStore(join(memoryDirectory, 'entities'), {
     migrate: true,
     dryRun: options.dryRun,
-    // Persist compatibility 4 before any note moves, even on installs that
-    // never wrote writer state, so older binaries refuse the flat layout.
+    // Persist compatibility 5 before layout or matcher conversion, including
+    // installs without writer state, so older binaries refuse converted notes.
     beforeConversionWrite: () =>
       createWriterState(memoryDirectory).update(() => undefined),
     onConversionPlanned: (summary) => {

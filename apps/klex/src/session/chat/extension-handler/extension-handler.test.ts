@@ -21,6 +21,7 @@ import type {
   ResolvedModel,
   StepCompleteEvent,
 } from '../extensions/extension-api';
+import { createDataPart } from '../extensions/extension-api';
 import type { ExtendedUIMessage } from '../message-types';
 import { getExtensionIdentifier } from '../utils/tracing';
 import { createExtensionHandler } from './extension-handler';
@@ -163,7 +164,10 @@ function factoryWith(
       getTools: overrides.getTools,
       getSystemPromptPart: overrides.getSystemPromptPart,
       onStepStart: overrides.onStepStart,
+      onIdle: overrides.onIdle,
       getProvisionalStepContext: overrides.getProvisionalStepContext,
+      prepareHistoryAnnotations: overrides.prepareHistoryAnnotations,
+      onHistoryAnnotationsCommitted: overrides.onHistoryAnnotationsCommitted,
       historyTransformer: overrides.historyTransformer,
       contextTransformer: overrides.contextTransformer,
       onStepComplete: overrides.onStepComplete,
@@ -174,6 +178,220 @@ function factoryWith(
 }
 
 // --- tests ---
+
+it('runs full-idle hooks synchronously and isolates hook failures', () => {
+  const idle = vi.fn();
+  const handler = createExtensionHandler({
+    ...HANDLER_OPTS,
+    factories: [
+      factoryWith({
+        onIdle: () => {
+          throw new Error('idle failure');
+        },
+      }),
+      factoryWith({ onIdle: idle }),
+    ],
+  });
+  handler.runIdleHooks();
+  expect(idle).toHaveBeenCalledOnce();
+});
+
+describe('ExtensionHandler — history annotation preparation', () => {
+  it('commits extension state only for accepted annotations and persists idle state without injecting input', async () => {
+    const history = [makeMessage('trigger')];
+    const committed = vi.fn();
+    let calls = 0;
+    const handler = createExtensionHandler({
+      ...HANDLER_OPTS,
+      factories: [
+        factoryWith({
+          dataPartTransformers: { loadedMemories: () => [] },
+          prepareHistoryAnnotations: async () => {
+            if (++calls === 1)
+              history[0]!.parts = [{ type: 'text', text: 'unrelated' }];
+            return [annotation(String(calls))];
+          },
+          onHistoryAnnotationsCommitted: committed,
+          onIdle: () => [annotation('idle')],
+        }),
+      ],
+    });
+    await handler.prepareHistoryAnnotations(history, mockResolvedModel);
+    expect(committed).toHaveBeenCalledExactlyOnceWith([annotation('2')]);
+    handler.runIdleHooks(history);
+    expect(history).toHaveLength(1);
+    expect(history[0]!.parts).toEqual([
+      { type: 'text', text: 'unrelated' },
+      annotation('idle'),
+    ]);
+  });
+  function annotation(value: string) {
+    return createDataPart('loadedMemories', {
+      note: value,
+    }) as unknown as ExtendedUIMessage['parts'][number];
+  }
+  function annotatedFactory(
+    prepare: NonNullable<Extension['prepareHistoryAnnotations']>,
+  ) {
+    return factoryWith({
+      dataPartTransformers: { loadedMemories: () => [] },
+      prepareHistoryAnnotations: prepare,
+    });
+  }
+
+  it('replaces only the latest owned annotation and preserves older snapshots', async () => {
+    const history = [makeMessage('old'), makeMessage('latest')];
+    history[0]!.parts.push(annotation('historical'));
+    history[1]!.parts.push(annotation('stale'), annotation('duplicate'));
+    const old = structuredClone(history[0]);
+    const prepare = vi.fn(async (snapshot: readonly ExtendedUIMessage[]) => {
+      snapshot[0]!.parts.length = 0;
+      return [annotation('current')];
+    });
+    const handler = createExtensionHandler({
+      ...HANDLER_OPTS,
+      factories: [annotatedFactory(prepare)],
+    });
+    await handler.prepareHistoryAnnotations(history, mockResolvedModel);
+    await handler.prepareHistoryAnnotations(history, mockResolvedModel);
+    expect(history[0]).toEqual(old);
+    expect(history[1]!.parts).toEqual([
+      { type: 'text', text: 'latest' },
+      annotation('current'),
+    ]);
+    expect(prepare).toHaveBeenCalledTimes(2);
+  });
+
+  it('discards staged results and recollects after an append or in-place edit', async () => {
+    const history = [makeMessage('first')];
+    let calls = 0;
+    const handler = createExtensionHandler({
+      ...HANDLER_OPTS,
+      factories: [
+        annotatedFactory(async (snapshot) => {
+          calls++;
+          if (calls === 1) history.push(makeMessage('new'));
+          if (calls === 2)
+            history[0]!.parts = [{ type: 'text', text: 'edited' }];
+          return [annotation(JSON.stringify(snapshot))];
+        }),
+      ],
+    });
+    await handler.prepareHistoryAnnotations(history, mockResolvedModel);
+    expect(calls).toBe(3);
+    expect(history[0]!.parts).toEqual([{ type: 'text', text: 'edited' }]);
+    expect(JSON.stringify(history[1])).toContain('edited');
+    expect(history[1]!.parts).toHaveLength(2);
+  });
+
+  it('recollects after deletion and defers repeated contention without committing stale annotations', async () => {
+    const history = [makeMessage('old'), makeMessage('latest')];
+    let calls = 0;
+    const handler = createExtensionHandler({
+      ...HANDLER_OPTS,
+      factories: [
+        annotatedFactory(async (snapshot) => {
+          if (++calls === 1) history.shift();
+          return [annotation(JSON.stringify(snapshot))];
+        }),
+      ],
+    });
+    await handler.prepareHistoryAnnotations(history, mockResolvedModel);
+    expect(calls).toBe(2);
+    expect(history).toHaveLength(1);
+    expect(JSON.stringify(history)).not.toContain('msg-old');
+    const contested = [makeMessage('first')];
+    let attempts = 0;
+    const competing = createExtensionHandler({
+      ...HANDLER_OPTS,
+      factories: [
+        annotatedFactory(async () => {
+          contested.push(makeMessage(`arrived-${++attempts}`));
+          return [annotation('stale')];
+        }),
+      ],
+    });
+    await expect(
+      competing.prepareHistoryAnnotations(contested, mockResolvedModel),
+    ).rejects.toThrow('History changed repeatedly');
+    expect(attempts).toBe(3);
+    expect(contested).toHaveLength(4);
+    expect(
+      contested.every((item) =>
+        item.parts.every((part) => part.type === 'text'),
+      ),
+    ).toBe(true);
+  });
+
+  it('commits nothing on provider failure or cancellation', async () => {
+    const history = [makeMessage('first')];
+    const before = structuredClone(history);
+    const handler = createExtensionHandler({
+      ...HANDLER_OPTS,
+      factories: [
+        annotatedFactory(async () => [annotation('staged')]),
+        factoryWith({
+          prepareHistoryAnnotations: async () => {
+            throw new Error('failed');
+          },
+        }),
+      ],
+    });
+    await expect(
+      handler.prepareHistoryAnnotations(history, mockResolvedModel),
+    ).rejects.toThrow('failed');
+    expect(history).toEqual(before);
+    const controller = new AbortController();
+    const cancelled = createExtensionHandler({
+      ...HANDLER_OPTS,
+      factories: [
+        annotatedFactory(async () => {
+          controller.abort(new Error('cancelled'));
+          return [annotation('staged')];
+        }),
+      ],
+    });
+    await expect(
+      cancelled.prepareHistoryAnnotations(
+        history,
+        mockResolvedModel,
+        controller.signal,
+      ),
+    ).rejects.toThrow('cancelled');
+    expect(history).toEqual(before);
+  });
+
+  it('rejects unowned annotations without changing history', async () => {
+    const history = [makeMessage('first')];
+    const handler = createExtensionHandler({
+      ...HANDLER_OPTS,
+      factories: [
+        factoryWith({
+          prepareHistoryAnnotations: async () => [annotation('unowned')],
+        }),
+      ],
+    });
+    await expect(
+      handler.prepareHistoryAnnotations(history, mockResolvedModel),
+    ).rejects.toThrow('Invalid or duplicate');
+    expect(history).toEqual([makeMessage('first')]);
+  });
+
+  it('creates a normal carrier when preparing an empty window', async () => {
+    const history: ExtendedUIMessage[] = [];
+    const handler = createExtensionHandler({
+      ...HANDLER_OPTS,
+      factories: [annotatedFactory(async () => [annotation('current')])],
+    });
+    await handler.prepareHistoryAnnotations(history, mockResolvedModel);
+    expect(history).toHaveLength(1);
+    expect(history[0]).toMatchObject({
+      id: expect.any(String),
+      role: 'user',
+      parts: [annotation('current')],
+    });
+  });
+});
 
 describe('ExtensionHandler — skill namespaces', () => {
   function registry() {

@@ -110,6 +110,55 @@ async function migrate(root: string, options: EntityStoreOptions = {}) {
 }
 
 describe('flat titled entities', () => {
+  it('converts released event matcher names through journaled startup without changing behavior or facts', async () => {
+    const { root } = await fixture();
+    const old = legacyNote(3).replace(
+      'LoadOn: []',
+      'LoadOn:\n  - type: pushNotificationMetadataPattern\n    server: slack\n    conditions:\n      - path: conversationId\n        match: exact\n        value: C1',
+    );
+    const file = await seed(root, `person/${legacyId}.md`, old);
+    const converted = await migrate(root);
+    const value = converted.get('Alex Smith');
+    expect(value?.frontmatter.LoadOn).toEqual([
+      {
+        type: 'eventDataPattern',
+        server: 'slack',
+        conditions: [{ path: 'conversationId', match: 'exact', value: 'C1' }],
+      },
+    ]);
+    const destination = join(root, 'Alex Smith.md');
+    const bytes = await readFile(destination, 'utf8');
+    expect(bytes).toContain('Engineer [old](history:abc)');
+    expect(bytes).not.toContain('pushNotificationMetadataPattern');
+    await expect(readFile(file)).rejects.toMatchObject({ code: 'ENOENT' });
+    await restart(root);
+    expect(await readFile(destination, 'utf8')).toBe(bytes);
+    // Already-flat format-7 documents need the matcher-only conversion too.
+    await writeFile(
+      destination,
+      bytes.replace('eventDataPattern', 'pushNotificationMetadataPattern'),
+    );
+    expect((await migrate(root)).get('Alex Smith')?.frontmatter.LoadOn).toEqual(
+      value?.frontmatter.LoadOn,
+    );
+    expect(await readFile(destination, 'utf8')).toBe(bytes);
+  });
+
+  it('queues immutable snapshots behind managed creation and rename', async () => {
+    const { store } = await fixture();
+    const creation = store.create(fields(), sections());
+    const firstRead = store.snapshot();
+    const created = await creation;
+    const first = await firstRead;
+    expect(first.map((entity) => entity.id)).toEqual([created.id]);
+    const rename = store.update(created.id, { title: 'Renamed' }, {});
+    const nextRead = store.snapshot();
+    const renamed = await rename;
+    expect((await nextRead).map((entity) => entity.id)).toEqual([renamed.id]);
+    expect(first[0]!.id).toBe('Alex Smith');
+    first[0]!.sections.General = [];
+    expect((await store.snapshot())[0]!.sections.General).toHaveLength(1);
+  });
   it('uses the title as filename at the root, with Tags and no title frontmatter', async () => {
     const { store, root } = await fixture();
     const entity = await store.create(fields(), sections());
@@ -424,7 +473,7 @@ describe('flat titled entities', () => {
         loadOn: [
           { type: 'contentPattern', pattern: 'alex smith' },
           {
-            type: 'pushNotificationMetadataPattern',
+            type: 'eventDataPattern',
             server: 'slack',
             conditions: [{ path: 'user', match: 'exact', value: 'U1' }],
           },
@@ -432,7 +481,12 @@ describe('flat titled entities', () => {
       },
       { General: [general], Details: [fact('Details')] },
     );
-    expect(entity.frontmatter.LoadOn).toEqual([]);
+    expect(entity.frontmatter.LoadOn).toEqual([
+      { type: 'contentPattern', pattern: 'alex smith' },
+    ]);
+    expect((await restart(root)).get(entity.id)?.frontmatter.LoadOn).toEqual(
+      entity.frontmatter.LoadOn,
+    );
     expect(renderEntity(entity)).toBe(
       '# Alex Smith\n\nIDs: slack user=U1\n\n## General\n- Lives in Berlin',
     );
@@ -455,7 +509,7 @@ describe('flat titled entities', () => {
     ])
       expect(() =>
         loadMatcherSchema.parse({
-          type: 'pushNotificationMetadataPattern',
+          type: 'eventDataPattern',
           server: 'slack',
           conditions: [condition],
         }),
@@ -493,11 +547,18 @@ describe('flat titled entities', () => {
     await expect(
       store.merge(keep.id, drop.id, 'stale', entityRevision(drop)),
     ).rejects.toThrow('read both');
-    const merged = await store.merge(
+    const merging = store.merge(
       keep.id,
       drop.id,
       entityRevision(keep),
       entityRevision(drop),
+    );
+    const captured = store.snapshot();
+    const merged = await merging;
+    const snapshot = await captured;
+    expect(snapshot.some((item) => item.id === drop.id)).toBe(false);
+    expect(snapshot.find((item) => item.id === keep.id)?.sections).toEqual(
+      merged.sections,
     );
     expect(merged.sections.General?.map(({ text }) => text)).toEqual([
       'Engineer',

@@ -2,7 +2,7 @@ import type { SqliteStoreDefinition } from '@/local-data';
 import { LOCAL_DATA_MIGRATIONS } from '@/local-data-migrations';
 
 /** Schema version — increment when adding migrations. */
-export const SESSION_HISTORY_SCHEMA_VERSION = 4;
+export const SESSION_HISTORY_SCHEMA_VERSION = 5;
 
 /** Relative path of the session-history database inside the data directory. */
 export const SESSION_HISTORY_RELATIVE_PATH = 'sessions.sqlite';
@@ -65,6 +65,30 @@ CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions (parent_instance_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_ended ON sessions (ended_at, updated_at);
 CREATE INDEX IF NOT EXISTS idx_messages_instance_ord ON messages (instance_id, ord);
 CREATE INDEX IF NOT EXISTS idx_messages_session_checkpoint ON messages (session_id, is_checkpoint, ord);
+CREATE TABLE memory_snapshots (hash TEXT PRIMARY KEY, content TEXT NOT NULL);
+CREATE TABLE message_memory_snapshots (
+  session_id TEXT NOT NULL, ord INTEGER NOT NULL, hash TEXT NOT NULL,
+  PRIMARY KEY (session_id, ord, hash)
+);
+CREATE INDEX idx_message_memory_snapshot_hash ON message_memory_snapshots(hash);
+CREATE TRIGGER messages_memory_insert AFTER INSERT ON messages BEGIN
+  INSERT OR IGNORE INTO message_memory_snapshots
+  SELECT NEW.session_id, NEW.ord, json_extract(value.value, '$.snapshotRef')
+  FROM json_each(NEW.content, '$.parts') AS part, json_each(part.value, '$.data') AS value
+  WHERE json_extract(part.value, '$.type') IN ('data-loadedMemories', 'data-loadedMemorySections')
+    AND value.type = 'object' AND json_type(value.value, '$.snapshotRef') = 'text';
+END;
+CREATE TRIGGER messages_memory_update AFTER UPDATE OF content, ord, session_id ON messages BEGIN
+  DELETE FROM message_memory_snapshots WHERE session_id = OLD.session_id AND ord = OLD.ord;
+  INSERT OR IGNORE INTO message_memory_snapshots
+  SELECT NEW.session_id, NEW.ord, json_extract(value.value, '$.snapshotRef')
+  FROM json_each(NEW.content, '$.parts') AS part, json_each(part.value, '$.data') AS value
+  WHERE json_extract(part.value, '$.type') IN ('data-loadedMemories', 'data-loadedMemorySections')
+    AND value.type = 'object' AND json_type(value.value, '$.snapshotRef') = 'text';
+END;
+CREATE TRIGGER messages_memory_delete AFTER DELETE ON messages BEGIN
+  DELETE FROM message_memory_snapshots WHERE session_id = OLD.session_id AND ord = OLD.ord;
+END;
 `;
 
 /**
@@ -85,15 +109,19 @@ export const SESSION_HISTORY_STORE_DEFINITION: SqliteStoreDefinition = {
   required: false,
   createIfMissing: true,
   schemaVersion: SESSION_HISTORY_SCHEMA_VERSION,
-  // Older binaries reject schema v4; no separate floor is needed.
+  // Older binaries must not read storage-only snapshot references.
   compatibilityVersion: 1,
-  // First release shipping stable canonical activity revisions.
-  minimumKlexVersion: '0.28.1',
+  // First binary hydrating content-addressed memory snapshots.
+  minimumKlexVersion: '0.38.2',
   // Must run before the first table exists; afterwards it has no effect.
   initPragmas: ['PRAGMA auto_vacuum = INCREMENTAL'],
   initSql: SESSION_HISTORY_INIT_SQL,
   migrations: SESSION_HISTORY_MIGRATIONS,
   validate: async (client) => {
+    await client.execute('SELECT hash, content FROM memory_snapshots LIMIT 1');
+    await client.execute(
+      'SELECT session_id, ord, hash FROM message_memory_snapshots LIMIT 1',
+    );
     await client.execute(
       'SELECT instance_id, generation_error FROM sessions LIMIT 1',
     );

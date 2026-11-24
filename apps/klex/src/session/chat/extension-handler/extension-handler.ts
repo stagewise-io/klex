@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 
 import { context, SpanStatusCode } from '@opentelemetry/api';
@@ -122,6 +123,8 @@ export interface ExtensionHandler {
    */
   runStepStartHooks: () => Promise<void>;
 
+  runIdleHooks(history?: ExtendedUIMessage[]): void;
+
   /**
    * Call `onStart` on all extensions that define it, sequentially in
    * factory order. Used during session startup to initialize owned
@@ -161,6 +164,13 @@ export interface ExtensionHandler {
    * strings are filtered out.
    */
   getSystemPromptParts: () => string[];
+
+  /** Stage and atomically replace extension-owned annotations before cloning. */
+  prepareHistoryAnnotations: (
+    history: ExtendedUIMessage[],
+    model: ResolvedModel,
+    signal?: AbortSignal,
+  ) => Promise<void>;
 
   /**
    * Collect provisional context parts for one generation attempt. Providers
@@ -513,6 +523,38 @@ class ExtensionHandlerModule implements ExtensionHandler {
     );
   }
 
+  runIdleHooks(history: ExtendedUIMessage[] = []): void {
+    for (const ext of this.extensions) {
+      try {
+        const parts = ext.onIdle?.();
+        const latest = history.at(-1);
+        if (parts?.length && latest) {
+          const owned = this.getOwnedDataPartKeys(
+            this.identifiersByExtension.get(ext)!,
+          );
+          if (
+            parts.some(
+              (part) =>
+                !part.type.startsWith('data-') ||
+                !owned.has(part.type.slice(5)),
+            )
+          )
+            throw new Error('Invalid idle annotation');
+          const keys = new Set(parts.map((part) => part.type));
+          latest.parts = [
+            ...latest.parts.filter((part) => !keys.has(part.type)),
+            ...structuredClone(parts),
+          ];
+        }
+      } catch (error) {
+        this.extensionDeps.logger.error(
+          { error, extensionIdentifier: this.identifiersByExtension.get(ext) },
+          'Extension onIdle hook failed',
+        );
+      }
+    }
+  }
+
   async runStepStartHooks(): Promise<void> {
     const extensions = this.extensions.filter((ext) => ext.onStepStart);
 
@@ -650,6 +692,61 @@ class ExtensionHandlerModule implements ExtensionHandler {
     }
 
     return { parts };
+  }
+
+  async prepareHistoryAnnotations(
+    history: ExtendedUIMessage[],
+    model: ResolvedModel,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const providers = this.extensions.filter(
+      (ext) => ext.prepareHistoryAnnotations,
+    );
+    if (!providers.length) return;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      signal?.throwIfAborted();
+      const captured = JSON.stringify(history);
+      const snapshot = structuredClone(history);
+      const staged: ExtendedUIMessage['parts'] = [];
+      const commits: (() => void)[] = [];
+      const keys = new Set<string>();
+      for (const ext of providers) {
+        const parts = await ext.prepareHistoryAnnotations!(
+          structuredClone(snapshot),
+          model,
+          signal,
+        );
+        commits.push(() => ext.onHistoryAnnotationsCommitted?.(parts));
+        const owner = this.identifiersByExtension.get(ext)!;
+        const owned = this.getOwnedDataPartKeys(owner);
+        for (const part of parts) {
+          if (
+            !part.type.startsWith('data-') ||
+            !owned.has(part.type.slice(5)) ||
+            keys.has(part.type)
+          ) {
+            throw new Error('Invalid or duplicate history annotation');
+          }
+          keys.add(part.type);
+          staged.push(part);
+        }
+      }
+      signal?.throwIfAborted();
+      if (captured !== JSON.stringify(history)) continue;
+      if (!staged.length) return;
+      let latest = history.at(-1);
+      if (!latest) {
+        latest = { id: randomUUID(), role: 'user', parts: [] };
+        history.push(latest);
+      }
+      latest.parts = [
+        ...latest.parts.filter((part) => !keys.has(part.type)),
+        ...structuredClone(staged),
+      ];
+      for (const commit of commits) commit();
+      return;
+    }
+    throw new Error('History changed repeatedly during annotation preparation');
   }
 
   async runHistoryTransformers(

@@ -1257,6 +1257,11 @@ class ChatSessionModule implements AgentSession {
       contextSize: request.model.contextSize,
       inputCapabilities: request.model.inputCapabilities,
     };
+    await this.extensionHandler.prepareHistoryAnnotations(
+      this.messages,
+      model,
+      request.signal,
+    );
     // Capture history and the forwarded-update watermark as one synchronous
     // boundary. Events accepted after this point stay in the lease update
     // stream instead of being mistaken for bootstrap context.
@@ -1268,6 +1273,8 @@ class ChatSessionModule implements AgentSession {
       extensionHandler: this.extensionHandler,
       model,
       baseInstructions: voiceSystemPrompt,
+      onMemoryMetrics: (metrics) =>
+        this.deps.logger.debug(metrics, 'Memory context rendered'),
     });
 
     this.leaseTools = assembled.tools;
@@ -1499,6 +1506,8 @@ class ChatSessionModule implements AgentSession {
           !hasUnconsumedInput
         ) {
           this.setRuntimeState('idle');
+          this.extensionHandler.runIdleHooks(this.messages);
+          this.scheduleTranscriptSync();
           this.memoryOnlyInput = null;
           this.resolveIdleWaiters(true);
           this.sessionSpan.addEvent('session.idle', {

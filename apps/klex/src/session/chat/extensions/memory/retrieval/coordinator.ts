@@ -327,7 +327,7 @@ class MemoryRetrievalCoordinatorImpl implements MemoryRetrievalCoordinator {
   }
 
   /**
-   * The only path from memory into the main session. Wraps every text in a
+   * The legacy recall path into the main session. Wraps every text in a
    * `<memory>` block; callers pass raw memory text.
    */
   private deliverToMain(text: string, urgency: SessionInboxUrgency): void {

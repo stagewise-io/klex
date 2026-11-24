@@ -3,6 +3,7 @@ import type { ModelMessage, ToolSet } from 'ai';
 
 import type { ModelInputCapabilities } from '@/config';
 import type { SessionInboxEvent } from '@/session/inbox';
+import type { McpInvocation } from '@/tool-provider';
 
 export type InteractionMode = 'realtime';
 
@@ -47,7 +48,10 @@ export interface InteractionToolRequest {
   readonly input: JSONValue;
 }
 
-export type InteractionToolResult =
+export type InteractionToolResult = {
+  readonly mcpInvocations?: McpInvocation[];
+  readonly toolName?: string;
+} & (
   | {
       readonly executionId: string;
       readonly status: 'success';
@@ -67,7 +71,8 @@ export type InteractionToolResult =
         | 'result-too-large';
       readonly error: string;
       readonly retryable: boolean;
-    };
+    }
+);
 
 export type RealtimeCommitEvent =
   | {

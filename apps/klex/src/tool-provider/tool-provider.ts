@@ -152,9 +152,20 @@ export interface ToolDescription {
   outputSchema?: JsonObject;
 }
 
+/** Host-observed MCP attempt, correlated with the enclosing tool execution. */
+export interface McpInvocation {
+  id: string;
+  executionId: string;
+  namespace: string;
+  name: string;
+  input: JsonObject;
+}
+
 export interface ToolRequestContext {
   executionId: string;
   signal: AbortSignal;
+  /** Synchronous host-only observer; never exposed to the guest. */
+  onMcpInvocation?: (invocation: McpInvocation) => void;
   /**
    * UUID of the session that initiated the tool request, when available.
    * Used for associating MCP tool calls with sessions in observability.

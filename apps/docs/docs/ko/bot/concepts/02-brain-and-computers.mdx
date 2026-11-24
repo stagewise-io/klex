@@ -1,0 +1,49 @@
+---
+title: 컴퓨터와 앱 연결
+sidebar:
+  label: 연결
+description: MCP로 Klex Bot을 컴퓨터와 앱에 연결하고 접근 권한을 관리하는 방법입니다.
+related:
+  - /bot/concepts/how-bots-work
+  - /bot/concepts/mcp
+  - /bot/quickstart
+---
+
+Klex Bot은 MCP(Model Context Protocol)를 통해 연결된 외부 환경에서 작업합니다. MCP 서버는 컴퓨터 전체나 GitHub, Google Workspace 같은 앱을 제공할 수 있습니다. 컴퓨터도 MCP를 통해 연결합니다.
+
+Bot 자체 환경은 Bot의 실행과 메모리를 관리합니다. Bot은 연결된 컴퓨터와 앱에서 작업을 수행합니다.
+
+<a id="choose-what-to-connect"></a>
+
+## 연결할 대상 선택하기
+
+- **컴퓨터**는 Bot이 작업할 수 있는 연결된 환경을 제공합니다.
+- **앱**은 MCP 서버를 통해 앱 환경을 제공합니다.
+
+Klex에는 다양한 기본 제공 MCP 서버가 있으며, 다른 MCP 서버도 연결할 수 있습니다. Bot에게 맡길 작업에 따라 연결할 환경을 선택하세요.
+
+<a id="manage-a-bots-access"></a>
+
+## Bot의 접근 권한 관리하기
+
+Bot의 업무에 필요한 앱과 컴퓨터를 연결하세요. 대부분의 MCP에서 Bot은 자신의 계정이나 ID를 사용하며, 해당 Bot에 설정된 권한으로 작업합니다.
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="클라우드 호스팅">
+
+Klex Cloud에서 Bot을 열고 **Connectors**에서 앱 연결을, **Computers**에서 연결된 컴퓨터를 관리하세요. **Activity**에서 Bot의 활동도 확인할 수 있습니다.
+
+</Tab>
+<Tab title="셀프 호스팅">
+
+Klex 앱의 **Settings → MCP Servers**에서 서버 연결을 관리하세요. 자세한 단계는 [MCP와 Klex Bot](/bot/concepts/mcp#add-a-remote-server-in-the-self-hosted-app)을 참고하세요. **Settings → Logs**에서 로컬 진단 정보를 확인할 수 있습니다.
+
+</Tab>
+</Tabs>
+
+Bot의 계정과 연결된 앱에 대한 권한은 각 계정과 앱에서 직접 설정하세요. 서버 연결과 계정 접근 권한 부여는 별개의 결정입니다. Bot이 접근하고 수행할 수 있는 작업을 정할 때 둘 다 확인하세요.
+
+전체적인 설명은 [Klex Bot의 작동 방식](/bot/concepts/how-bots-work)을, 채팅과 메모리의 저장 위치는 [데이터 디렉터리](/bot/concepts/data-directory)를 참고하세요.
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

@@ -65,6 +65,7 @@ import { createMcpIngressExt } from '@/session/chat/extensions/mcp-ingress';
 import {
   createMemoryExt,
   createMemoryWriterExt,
+  migrateMemoryDocuments,
 } from '@/session/chat/extensions/memory';
 import { createNameLoaderExt } from '@/session/chat/extensions/name-loader';
 import { createReadAttachmentExt } from '@/session/chat/extensions/read-attachment/read-attachment';
@@ -374,6 +375,7 @@ class ApplicationModule implements Application {
             });
             interactiveLocalData = localData;
             await localData.start();
+            await migrateMemoryDocuments(directory);
             if (!cli.cloudEnabled) return false;
 
             cloud = createCloudConnectivity({
@@ -475,7 +477,10 @@ class ApplicationModule implements Application {
         stores: KLEX_LOCAL_DATA_STORES,
       });
     this.own(localData);
-    if (!interactiveLocalData) await localData.start();
+    if (!interactiveLocalData) {
+      await localData.start();
+      await migrateMemoryDocuments(dataDirectory);
+    }
     interactiveLocalData = undefined;
 
     const config = createConfig({

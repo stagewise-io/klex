@@ -201,6 +201,44 @@ async function boot(dataDirectory: string) {
   return { app, get, post };
 }
 
+it('migrates entity documents during application startup without a configured model', async () => {
+  const root = await directory();
+  const file = join(
+    root,
+    'extensions/io.stagewise/memory/entities/person/Ada.md',
+  );
+  await mkdir(dirname(file), { recursive: true });
+  await writeFile(
+    file,
+    '---\nFormatVersion: 5\nCreatedAt: 2026-11-17T10:00:00.000Z\nLastUpdatedAt: 2026-11-17T11:00:00.000Z\nLastReadAt: null\nLinkedIdentities: []\nLoadOn: []\nRelatedTo:\n  - "[[project/Klex|works on (80)]]"\nTrustScore: 2\nAuthorityScore: 5\n---\n\n## General\n\n- Engineer [old](history:abc)\n',
+  );
+  const { app } = await boot(root);
+  const converted = await readFile(file, 'utf8');
+  expect(converted).toContain('FormatVersion: 6');
+  expect(converted).toContain('relatedTo:\n  - "[[project/Klex]]"');
+  expect(converted).not.toContain('RelatedTo:');
+  expect(converted).not.toContain('|works on (80)');
+  expect(converted).toContain('- Engineer [old](history:abc)');
+  await app.close();
+  await boot(root);
+  expect(await readFile(file, 'utf8')).toBe(converted);
+});
+
+it('aborts application startup on invalid memory before exposing the API', async () => {
+  const root = await directory();
+  const file = join(
+    root,
+    'extensions/io.stagewise/memory/entities/person/Ada.md',
+  );
+  await mkdir(dirname(file), { recursive: true });
+  const invalid = '---\nFormatVersion: 99\n---\n';
+  await writeFile(file, invalid);
+  await expect(boot(root)).rejects.toThrow('Invalid entity');
+  expect(observed.admin).toBeUndefined();
+  expect(observed.history).toBeUndefined();
+  expect(await readFile(file, 'utf8')).toBe(invalid);
+});
+
 async function legacyDirectory() {
   const root = await directory();
   const database = createClient({

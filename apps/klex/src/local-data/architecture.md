@@ -73,7 +73,8 @@ For every agent:
 3. Load the central registry.
 4. Run local-data recovery and full-registry read-only preflight.
 5. If required, checkpoint and migrate.
-6. Only then start tracing, config, Cloud connectivity, model logging, MCP, the API, and UI.
+6. Run mandatory memory-document conversion under the same directory lock, after registered compatibility upgrades and before Cloud connectivity or any memory consumer. This runs in both picker and headless startup even without a configured model or writer; failure aborts startup. The document snapshot journal provides retry recovery independently of JSON/SQLite checkpoints.
+7. Only then start tracing, config, Cloud connectivity, model logging, MCP, the API, and UI.
 
 Agent discovery may inspect metadata without mutation. Incompatible or corrupt agents remain visible but disabled with a reason.
 

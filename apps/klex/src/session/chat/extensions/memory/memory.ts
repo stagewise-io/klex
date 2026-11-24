@@ -23,6 +23,18 @@ import {
   renderObservation,
 } from './retrieval';
 import systemPromptPart from './system-prompt-part.md';
+import { createEntityStore } from './writer/entities';
+
+/** Run under the application directory lock, after local-data preflight and
+ * compatibility upgrades, before any optional memory extension starts. */
+export async function migrateMemoryDocuments(
+  dataDirectory: string,
+): Promise<void> {
+  const entities = createEntityStore(
+    join(dataDirectory, 'extensions/io.stagewise/memory/entities'),
+  );
+  await entities.start();
+}
 
 /** Observation batches sent per step; the rest drains on later steps. */
 const MAX_OBSERVATION_BATCHES_PER_STEP = 4;

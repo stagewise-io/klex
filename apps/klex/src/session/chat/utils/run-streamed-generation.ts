@@ -231,6 +231,11 @@ export async function runStreamedGeneration(
     if (!iteratorDone) void Promise.resolve(iterator.return?.()).catch(noop);
   }
 
+  // UI stream conversion may consume an error chunk without throwing. Preserve
+  // the provider failure instead of misclassifying it as an empty response.
+  if (message.parts.length === 0 && streamError !== undefined)
+    throw streamError;
+
   if (
     message.parts.length === 0 &&
     !(params.allowEmptyStop && finishReason === 'stop')

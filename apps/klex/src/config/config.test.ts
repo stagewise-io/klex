@@ -297,7 +297,7 @@ describe('config v2', () => {
     await prepareConfigStore(dataDirectory);
     const migrated = JSON.parse(await readFile(configPath, 'utf8'));
     expect(migrated._klex).toMatchObject({
-      schemaVersion: 13,
+      schemaVersion: CONFIG_STORE_DEFINITION.schemaVersion,
       compatibilityVersion: 8,
     });
     expect(migrated.modelSelection).toEqual(completeV2Config.modelSelection);
@@ -468,7 +468,7 @@ describe('config v2', () => {
     expect(persisted).not.toHaveProperty('telemetry');
     expect(persisted._klex).toMatchObject({
       store: 'config',
-      schemaVersion: 13,
+      schemaVersion: CONFIG_STORE_DEFINITION.schemaVersion,
     });
     expect(persisted.extensions).toEqual({
       memory: {
@@ -507,7 +507,9 @@ describe('config v2', () => {
       string,
       unknown
     >;
-    expect(persisted._klex).toMatchObject({ schemaVersion: 13 });
+    expect(persisted._klex).toMatchObject({
+      schemaVersion: CONFIG_STORE_DEFINITION.schemaVersion,
+    });
     expect(persisted).not.toHaveProperty('episodeFinishIdleTriggerTimeMs');
     expect(persisted).not.toHaveProperty('memoryWriteIntervalMs');
     expect(persisted).not.toHaveProperty('memoryWriteStepInterval');
@@ -601,7 +603,7 @@ describe('config v2', () => {
     });
     expect(migrated.extensions).toEqual(completeV5StoredConfig.extensions);
     expect(migrated._klex).toMatchObject({
-      schemaVersion: 13,
+      schemaVersion: CONFIG_STORE_DEFINITION.schemaVersion,
       compatibilityVersion: 8,
     });
     await prepareConfigStore(dataDirectory);
@@ -667,7 +669,7 @@ describe('config v2', () => {
         },
         _klex: {
           ...original._klex,
-          schemaVersion: 13,
+          schemaVersion: CONFIG_STORE_DEFINITION.schemaVersion,
           minimumKlexVersion: '0.36.0',
           writtenByKlexVersion: KLEX_VERSION,
         },
@@ -816,7 +818,7 @@ describe('config v2', () => {
     await prepareConfigStore(dataDirectory);
     expect(
       JSON.parse(await readFile(configPath, 'utf8'))._klex.schemaVersion,
-    ).toBe(13);
+    ).toBe(CONFIG_STORE_DEFINITION.schemaVersion);
   });
 
   it.each(['tts', 'stt'])(
@@ -1370,7 +1372,7 @@ describe('config v2', () => {
     );
     expect(persisted._klex).toMatchObject({
       store: 'config',
-      schemaVersion: 13,
+      schemaVersion: CONFIG_STORE_DEFINITION.schemaVersion,
     });
     expect(parseKlexConfig(persisted).configVersion).toBe(2);
     await config.close();

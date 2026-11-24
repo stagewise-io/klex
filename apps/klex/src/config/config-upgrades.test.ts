@@ -185,7 +185,7 @@ describe('frozen persisted config upgrades', () => {
         ...expected,
         _klex: {
           store: 'config',
-          schemaVersion: 13,
+          schemaVersion: CONFIG_STORE_DEFINITION.schemaVersion,
           compatibilityVersion: 8,
           minimumKlexVersion: '0.36.0',
           writtenByKlexVersion: KLEX_VERSION,
@@ -228,7 +228,11 @@ describe('frozen persisted config upgrades', () => {
       JSON.stringify(
         {
           ...payload,
-          _klex: { ..._klex, schemaVersion: 13, minimumKlexVersion: '0.36.0' },
+          _klex: {
+            ..._klex,
+            schemaVersion: CONFIG_STORE_DEFINITION.schemaVersion,
+            minimumKlexVersion: '0.36.0',
+          },
         },
         null,
         2,
@@ -426,7 +430,7 @@ describe('frozen persisted config upgrades', () => {
       instinct: { ...originalPayload.instinct, ...liftedInstinct },
     });
     expect(_klex).toMatchObject({
-      schemaVersion: 13,
+      schemaVersion: CONFIG_STORE_DEFINITION.schemaVersion,
       minimumKlexVersion: '0.36.0',
     });
     const beforeStartup = await snapshot(directory);
@@ -504,7 +508,7 @@ describe('frozen persisted config upgrades', () => {
       instinct: { ...payload.instinct, ...liftedInstinct },
     });
     expect(_klex).toMatchObject({
-      schemaVersion: 13,
+      schemaVersion: CONFIG_STORE_DEFINITION.schemaVersion,
       minimumKlexVersion: '0.36.0',
     });
   });
@@ -592,7 +596,9 @@ describe('frozen persisted config upgrades', () => {
       ...expectedPayload,
       instinct: { ...expectedPayload.instinct, ...liftedInstinct },
     });
-    expect(_klex).toMatchObject({ schemaVersion: 13 });
+    expect(_klex).toMatchObject({
+      schemaVersion: CONFIG_STORE_DEFINITION.schemaVersion,
+    });
   });
 
   it('lifts only released instinct defaults in 11→12 and keeps user values', async () => {
@@ -675,7 +681,9 @@ describe('frozen persisted config upgrades', () => {
       await readFile(configPath, 'utf8'),
     );
     expect(migrated.instinct).toMatchObject(liftedInstinct);
-    expect(_klex).toMatchObject({ schemaVersion: 13 });
+    expect(_klex).toMatchObject({
+      schemaVersion: CONFIG_STORE_DEFINITION.schemaVersion,
+    });
     const before = await snapshot(directory);
     await expect(
       start(

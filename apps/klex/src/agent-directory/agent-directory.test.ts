@@ -4,7 +4,7 @@ import { basename, join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { createConfig } from '@/config';
+import { CONFIG_STORE_DEFINITION, createConfig } from '@/config';
 import { createDirectoryLock } from '@/directory-lock';
 import { createLocalData } from '@/local-data';
 import { KLEX_LOCAL_DATA_STORES } from '@/local-data-registry';
@@ -50,7 +50,7 @@ describe('AgentDirectory', () => {
     ).toMatchObject({
       _klex: {
         store: 'config',
-        schemaVersion: 13,
+        schemaVersion: CONFIG_STORE_DEFINITION.schemaVersion,
         compatibilityVersion: 8,
       },
       configVersion: 2,

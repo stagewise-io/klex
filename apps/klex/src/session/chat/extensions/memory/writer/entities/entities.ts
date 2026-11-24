@@ -1295,11 +1295,17 @@ class EntityStoreModule implements EntityStore {
         if (entry.isSymbolicLink())
           throw new Error('Memory parent must be a plain directory');
         if (entry.isDirectory()) {
+          // Obsidian and other editors own hidden metadata directories, not entities.
+          if (entry.name.startsWith('.')) continue;
           const path = prefix
             ? `${prefix}/${entry.name.normalize('NFC')}`
             : entry.name;
-          if (!prefix) entityTypeSchema.parse(entry.name);
-          else {
+          if (!prefix) {
+            if (!entityTypeSchema.safeParse(entry.name).success)
+              throw new Error(
+                `Invalid memory entity type folder "${file}"; expected lowercase kebab-case`,
+              );
+          } else {
             const name = path.slice(path.indexOf('/') + 1);
             if (
               !name ||

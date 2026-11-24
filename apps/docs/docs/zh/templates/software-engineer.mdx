@@ -1,0 +1,69 @@
+---
+title: Software Engineer
+description: 了解 Klex Bot 如何作为软件工程师工作、将代码委派给编码代理并交付拉取请求。
+---
+
+Software Engineer 模板将 Klex Bot 配置为负责从工单到合并拉取请求的工程工作。Bot 在已连接的计算机上运行 Claude Code 或 Codex CLI 等编码代理的 CLI，审查它们编写的所有内容，并自行处理拉取请求、CI、工单和团队更新。只有修改仅涉及几行代码且手写比编写任务说明更快时，Bot 才会亲自编写代码。
+
+<Panel title="提示">
+Bot 模板在 [Klex Cloud](https://cloud.klex.bot) 中管理。如果你在不使用 Klex Cloud 的情况下自行托管 Klex，可以通过 MCP 连接计算机，并向 Bot 的数据目录添加等效的 Agent Skills，以使用相同的工作流程。
+</Panel>
+
+## 日常工作方式
+
+Software Engineer Bot 遵循与人类工程师指导编码代理相同的工作循环。
+
+1. **阅读工单并明确范围。** Bot 阅读 Linear、Jira 或 GitHub Issues 中的工单、相关代码和最近的 Git 历史。如果目标或验收标准不清楚，会在开始前询问提出请求的人。
+2. **将每项任务隔离在 worktree 和终端会话中。** Bot 为每项任务创建一个 Git worktree 和分支，例如使用 `git worktree add ../repo-task-a -b task-a origin/main`，并在命名的 `tmux` 会话中启动编码代理。交付 worktree 前，Bot 安装依赖并确认测试可以运行。大多数工单使用一个代理；有多个独立任务时，可以并行运行两到四个代理，并跟踪各自的分支。
+3. **编写具体任务说明并监督。** 每个代理都会收到目标、需要检查的文件或工单、约束条件，以及准确的测试、lint 和类型检查命令。Bot 检查运行中的会话，代理停滞时发送针对性指示；代理陷入循环时将其停止并重写说明。
+4. **打开 PR 前审查结果。** 编码代理有时会报告未验证的工作已通过，因此 Bot 会阅读完整的 `git diff origin/main...HEAD`。它亲自运行测试、lint 和类型检查，检查用户可见行为，并查找被削弱的测试、虚构的 API、被吞掉的错误、重复的辅助函数和遗留临时文件。发现问题时，它会按编号发送具体文件和行的修复要求；两轮没有进展后自行修复。集成工作后，使用 `git worktree remove` 删除未使用的 worktree。
+5. **在 CI 和审查期间负责拉取请求。** Bot 按仓库的分支、提交和 PR 规范打开范围明确的 PR，并为没有读过工单的审查者编写说明。每次 push 后，它监控 CI、阅读失败日志、在本地复现问题并修复原因，而不是盲目重试。它回复所有人类和审查机器人的评论，只有所需检查和批准通过且有合并权限时才合并，然后检查部署、更新工单并在聊天中报告状态。
+6. **审查队友的拉取请求。** 受邀审查时，Bot 阅读关联工单和完整 diff，按顺序检查正确性、安全性、设计、测试和可读性，区分阻塞问题与可选建议，并只发布已核实的发现。
+
+## 模板包含的内容
+
+在 [Klex Cloud](https://cloud.klex.bot) 中，Software Engineer 模板设置 Bot 的 soul、默认值、托管 skills、工具类别和首次入门清单。
+
+### Skills
+
+每次 Bot 连接时，Klex Cloud 都会尝试将这些 skills 同步到 Bot 的 `templates` 命名空间。同步需要支持 template skills 的 Bot 版本，也可能失败。
+
+| Skill | 作用 |
+| --- | --- |
+| `set-up-coding-agents` | 选择团队付费使用的编码代理 CLI，按照官方文档在已连接或受管理的计算机上安装，并指导用户通过浏览器登录，不在聊天中索要秘密信息。 |
+| `delegate-to-coding-agents` | 规划工单，设置隔离的 Git worktree 和命名的 `tmux` 会话，向编码代理布置任务，监督并行运行并删除已完成的 worktree。 |
+| `review-agent-work` | 阅读完整 diff，亲自运行检查，发现常见错误，发送具体修复要求，并在打开 PR 前整理提交。 |
+| `own-pull-requests` | 打开范围明确的 PR，保持 CI 通过，回复审查评论，并跟进合并和部署。 |
+| `review-pull-requests` | 按正确性、安全性、设计、测试和可读性审查队友的 PR，区分阻塞问题和可选建议。 |
+| `connect-your-tools` | 列出模板的工具类别，让 Bot 了解有用的工具，并建议通过 Klex Cloud 连接器或自定义 MCP 服务器连接。 |
+
+### 工具类别
+
+你可以通过 Klex Cloud 连接器或自定义 MCP 服务器连接团队已使用的工具。
+
+- **源代码管理。** GitHub, GitLab, Bitbucket.
+- **工单跟踪。** Linear, Jira, GitHub Issues.
+- **CI。** GitHub Actions, Vercel, CircleCI, Buildkite.
+- **文档和知识。** Notion, Confluence, Google Docs.
+- **聊天。** Slack, Teams, Discord.
+- **其他工具。** Sentry、PostHog、Figma、云控制台，或通过 MCP 连接的数据库。
+
+### 默认值和入门清单
+
+默认情况下，模板使用高性能模型档位；如果你没有连接自己的计算机，它会推荐中等规格的云计算机，并启用 `test-first` 和 `small-prs` 特性。你也可以启用 `nitpicker` 和 `boy-scout`。
+
+Cloud 会在 Bot 连接时尝试添加以下初始待办事项。这要求 Bot 支持待办事项 API：
+
+1. 确定使用的仓库、工单跟踪工具和 CI，并验证对各项的访问权限。
+2. 确认团队使用的编码代理，例如 Claude Code、Codex 或 Cursor，并连接能够访问它们的计算机。
+3. 确定主要沟通渠道，例如 Cloud 聊天、Slack 或 Teams。
+4. 了解团队的 PR 规范：分支名称、所需审查和检查，以及由谁合并。
+5. 选择第一项工单或任务。
+
+## 最佳实践
+
+- **为 Bot 提供专用账户。** 创建专用的 GitHub、Linear 和 Slack 身份，以限制权限并追踪每次提交、评论和状态变更。参阅[创建独立身份](/zh/guides/bot-identities)。
+- **共享工程背景。** 让 Bot 访问公司手册、架构文档和仓库贡献指南。参阅[创建公司手册](/zh/guides/company-handbook)。
+- **使用共享频道交接 Bot 之间的工作。** 如果 Product Manager Bot 创建工单、Software Engineer Bot 实现工单，应将它们放在人员也能阅读的频道中，例如 `#bot-communication`。参阅[使用共享消息板](/zh/guides/shared-messaging-boards)。
+- **编码 CLI 优先使用订阅而非 API 密钥。** 通过浏览器让 CLI 登录团队订阅，而不是通过 API 密钥按 token 计费。不要将秘密信息放在聊天、工单或仓库中。如果提供商只支持 API 密钥，请直接在计算机上设置。
+- **尽早制定合并规则。** 提前决定检查和批准通过后 Bot 是否可以合并自己的 PR，还是始终由人类合并。在测试命令和 PR 审查流程符合团队预期之前，先从范围明确的小工单开始。

@@ -1,0 +1,69 @@
+---
+title: Software Engineer
+description: Wie ein Klex Bot als Software Engineer arbeitet, Code an Coding Agents delegiert und Pull Requests abschließt.
+---
+
+Das Template Software Engineer richtet einen Klex Bot dafür ein, Entwicklungsaufgaben vom Ticket bis zum gemergten Pull Request zu übernehmen. Der Bot führt CLIs von Coding Agents wie Claude Code oder Codex CLI auf einem verbundenen Computer aus, prüft deren gesamte Arbeit und kümmert sich selbst um Pull Requests, CI, Tickets und Team-Updates. Code schreibt er nur dann von Hand, wenn eine Änderung wenige Zeilen umfasst und schneller ist als ein Briefing.
+
+<Panel title="Gut zu wissen">
+Bot Templates werden in [Klex Cloud](https://cloud.klex.bot) verwaltet. Wenn du Klex ohne Klex Cloud selbst hostest, kannst du denselben Ablauf nutzen: Verbinde einen Computer über MCP und füge gleichwertige Agent Skills zum Datenverzeichnis deines Bots hinzu.
+</Panel>
+
+## So funktioniert die tägliche Arbeit
+
+Ein Software Engineer Bot folgt demselben Ablauf wie ein Mensch, der Coding Agents anleitet.
+
+1. **Ticket lesen und Umfang klären.** Der Bot liest das Ticket in Linear, Jira oder GitHub Issues sowie den relevanten Code und die jüngste Git-Historie. Sind Ziel oder Abnahmekriterien unklar, fragt er vor Beginn nach.
+2. **Aufgaben in Worktrees und Terminal-Sessions isolieren.** Für jede Aufgabe erstellt er einen Git-Worktree und Branch, etwa mit `git worktree add ../repo-task-a -b task-a origin/main`, und startet den Coding Agent in einer benannten `tmux`-Session. Vor der Übergabe installiert er Abhängigkeiten und prüft, ob die Tests laufen. Meist nutzt er einen Agent; bei mehreren unabhängigen Aufgaben kann er zwei bis vier parallel ausführen und ihre Branches nachverfolgen.
+3. **Konkret briefen und beaufsichtigen.** Jeder Coding Agent erhält Ziel, relevante Dateien oder Tickets, Vorgaben sowie genaue Test-, Lint- und Typprüfungsbefehle. Der Bot kontrolliert laufende Sessions, fragt bei Stillstand gezielt nach oder stoppt einen Agent in einer Schleife und formuliert das Briefing neu.
+4. **Ergebnis vor dem PR prüfen.** Der Bot liest den gesamten `git diff origin/main...HEAD`, da Coding Agents manchmal ungeprüfte Arbeit als bestanden melden. Er führt Tests, Linting und Typprüfung selbst aus, prüft das Nutzerverhalten und sucht nach geschwächten Tests, erfundenen APIs, verschluckten Fehlern, doppelten Hilfsfunktionen und temporären Dateien. Bei Problemen sendet er nummerierte Korrekturen mit Datei und Zeile oder behebt sie nach zwei erfolglosen Runden selbst. Nach der Integration entfernt er ungenutzte Worktrees mit `git worktree remove`.
+5. **Pull Request durch CI und Review begleiten.** Der Bot erstellt fokussierte PRs nach den Branch-, Commit- und PR-Konventionen des Repos und erklärt sie für Reviewer ohne Ticketkenntnis. Nach jedem Push überwacht er CI, liest Fehlerlogs, reproduziert Probleme lokal und behebt die Ursache. Er beantwortet alle Kommentare von Menschen und Review-Bots, mergt nur mit erforderlichen Prüfungen, Freigaben und Berechtigung, prüft Deployments, aktualisiert das Ticket und meldet den Status im Chat.
+6. **Pull Requests im Team prüfen.** Auf Anfrage liest der Bot das verknüpfte Ticket und den gesamten Diff. Er prüft in dieser Reihenfolge Korrektheit, Sicherheit, Design, Tests und Lesbarkeit, trennt Blocker von optionalen Anmerkungen und meldet nur überprüfte Befunde.
+
+## Was das Template enthält
+
+In [Klex Cloud](https://cloud.klex.bot) legt das Template Software Engineer Soul, Standardwerte, verwaltete Skills, Tool-Kategorien und die Onboarding-Checkliste des Bots fest.
+
+### Skills
+
+Klex Cloud versucht bei jeder Verbindung des Bots, diese Skills in dessen Skill-Namespace `templates` zu synchronisieren. Das erfordert eine Bot-Version mit Unterstützung für Template Skills und kann fehlschlagen.
+
+| Skill | Umfang |
+| --- | --- |
+| `set-up-coding-agents` | Wählt die vom Team bezahlte Coding-Agent-CLI, installiert sie nach offizieller Anleitung auf einem verbundenen oder verwalteten Computer und begleitet die Browser-Anmeldung, ohne im Chat nach Geheimnissen zu fragen. |
+| `delegate-to-coding-agents` | Plant das Ticket, richtet isolierte Git-Worktrees und benannte `tmux`-Sessions ein, brieft Coding Agents, überwacht parallele Läufe und entfernt abgeschlossene Worktrees. |
+| `review-agent-work` | Liest den gesamten Diff, führt Prüfungen selbst aus, erkennt typische Fehler, sendet konkrete Korrekturen und bereinigt Commits vor dem PR. |
+| `own-pull-requests` | Erstellt fokussierte PRs, hält CI grün, beantwortet Review-Kommentare und begleitet Merge und Deployment. |
+| `review-pull-requests` | Prüft Team-PRs auf Korrektheit, Sicherheit, Design, Tests und Lesbarkeit und trennt Blocker von optionalen Vorschlägen. |
+| `connect-your-tools` | Listet die Tool-Kategorien des Templates auf, damit der Bot passende Tools kennt und Verbindungen über Klex Cloud Connectors oder eigene MCP-Server vorschlagen kann. |
+
+### Tool-Kategorien
+
+Verbinde die bereits im Team genutzten Tools über Klex Cloud Connectors oder eigene MCP-Server.
+
+- **Versionsverwaltung.** GitHub, GitLab, Bitbucket.
+- **Ticketverwaltung.** Linear, Jira, GitHub Issues.
+- **CI.** GitHub Actions, Vercel, CircleCI, Buildkite.
+- **Docs und Wissen.** Notion, Confluence, Google Docs.
+- **Chat.** Slack, Teams, Discord.
+- **Weitere Tools.** Sentry, PostHog, Figma, Cloud-Konsolen oder Datenbanken über MCP.
+
+### Standardwerte und Onboarding-Checkliste
+
+Standardmäßig nutzt das Template eine starke Modellstufe, empfiehlt einen mittelgroßen Cloud-Computer, falls du keinen eigenen verbindest, und aktiviert die Eigenschaften `test-first` und `small-prs`. Optional sind `nitpicker` und `boy-scout`.
+
+Cloud versucht beim Verbinden des Bots, diese Start-Todos hinzuzufügen. Dafür muss der Bot die Todos-API unterstützen:
+
+1. Repos, Ticketverwaltung und CI identifizieren und den Zugriff auf alle prüfen.
+2. Die im Team genutzten Coding Agents wie Claude Code, Codex oder Cursor bestätigen und einen Computer mit Zugriff darauf verbinden.
+3. Den Hauptkanal für Kommunikation festlegen, etwa Cloud-Chat, Slack oder Teams.
+4. Die PR-Konventionen des Teams lernen: Branch-Namen, erforderliche Reviews und Prüfungen sowie wer mergt.
+5. Das erste Ticket oder die erste Aufgabe auswählen.
+
+## Empfehlungen
+
+- **Eigene Konten für den Bot nutzen.** Separate Identitäten für GitHub, Linear und Slack halten Berechtigungen begrenzt und machen Commits, Kommentare und Statusänderungen nachvollziehbar. Siehe [Getrennte Identitäten erstellen](/de/guides/bot-identities).
+- **Entwicklungskontext teilen.** Gib dem Bot Zugriff auf Firmenhandbuch, Architektur-Dokumentation und Beitragsrichtlinien des Repos. Siehe [Firmenhandbuch erstellen](/de/guides/company-handbook).
+- **Für Übergaben zwischen Bots einen gemeinsamen Kanal nutzen.** Wenn ein Product Manager Bot Tickets erstellt und ein Software Engineer Bot sie umsetzt, nutze einen auch für Menschen lesbaren Kanal wie `#bot-communication`. Siehe [Gemeinsame Messaging-Boards nutzen](/de/guides/shared-messaging-boards).
+- **Für Coding-CLIs Abonnements statt API-Keys bevorzugen.** Melde die CLI über den Browser bei einem Team-Abonnement an, statt jedes Token über einen API-Key abzurechnen. Halte Geheimnisse aus Chats, Tickets und Repos fern. Unterstützt ein Anbieter nur API-Keys, hinterlege den Schlüssel direkt auf dem Computer.
+- **Merge-Regeln früh festlegen.** Entscheide, ob der Bot eigene PRs nach erfolgreichen Prüfungen und Freigaben mergen darf oder immer ein Mensch mergt. Beginne mit kleinen, klar abgegrenzten Tickets, bis Testbefehle und PR-Review-Ablauf zu den Erwartungen des Teams passen.

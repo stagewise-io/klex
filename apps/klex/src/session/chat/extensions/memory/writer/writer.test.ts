@@ -249,11 +249,11 @@ describe('oldest-first memory writer', () => {
       join(f.root, 'extensions/io.stagewise/memory/entities'),
     );
     await store.start();
-    const missing = 'project/Missing';
+    const missing = 'Missing';
     const entity = await store.create(
       {
-        name: 'Project',
-        entityType: 'project',
+        title: 'Project',
+        tags: ['projects'],
         loadOn: [],
         relatedTo: [
           {
@@ -341,7 +341,11 @@ describe('oldest-first memory writer', () => {
     ]);
     const input =
       (f.messages[0]?.parts[0] as { text: string } | undefined)?.text ?? '';
-    expect(input).toMatch(/^<previous-activities>\n/);
+    // Known tags open every writer session: defaults appear even when unused.
+    expect(input.startsWith('<known-tags>\n')).toBe(true);
+    expect(input).toContain('\npeople (0)\n');
+    expect(input).toContain('\n  people/coworkers (0)\n');
+    expect(input).toContain('</known-tags>\n\n<previous-activities>\n');
     expect(input).toContain('message-0');
     expect(input).not.toContain('history:');
     f.compact(['5']);

@@ -83,7 +83,7 @@ const skillInput = (name: string, extra: object = {}) => ({
   ...extra,
 });
 const create = (id = source, text = 'Project owner') => ({
-  fields: { name: 'Alex Smith', entityType: 'person' },
+  fields: { title: 'Alex Smith', tags: ['people'] },
   sections: [{ name: 'General', facts: [{ text, sourceIds: [id] }] }],
 });
 
@@ -121,8 +121,7 @@ describe('memory writer tools', () => {
     const schema = asSchema(readEntity.inputSchema);
     for (const section of ['General', 'Known pitfalls', 'Preferences (work)']) {
       expect(
-        (await schema.validate?.({ id: 'person/Ada', sections: [section] }))
-          ?.success,
+        (await schema.validate?.({ id: 'Ada', sections: [section] }))?.success,
       ).toBe(true);
     }
     for (const section of [
@@ -135,8 +134,7 @@ describe('memory writer tools', () => {
       'Bad\rsection',
     ]) {
       expect(
-        (await schema.validate?.({ id: 'person/Ada', sections: [section] }))
-          ?.success,
+        (await schema.validate?.({ id: 'Ada', sections: [section] }))?.success,
       ).toBe(false);
     }
   });
@@ -164,7 +162,8 @@ describe('memory writer tools', () => {
       value: { sections: [{ name: 'General' }] },
     });
     const invalidInputs = [
-      { ...create(), fields: { name: 'Ada', entityType: 'Invalid Type' } },
+      { ...create(), fields: { title: 'Ada', tags: ['Invalid Tag'] } },
+      { ...create(), fields: { title: 'Ada', tags: [] } },
       {
         ...create(),
         sections: [
@@ -177,11 +176,11 @@ describe('memory writer tools', () => {
       {
         ...create(),
         fields: {
-          name: 'Ada',
-          entityType: 'person',
+          title: 'Ada',
+          tags: ['people'],
           relatedTo: [
             {
-              target: { kind: 'entity', id: 'person/Other' },
+              target: { kind: 'entity', id: 'Other' },
               relationship: 'inventedPredicate',
             },
           ],
@@ -201,29 +200,31 @@ describe('memory writer tools', () => {
     expect(provider).toContain('relatedTo');
   });
 
-  it('creates, searches, reads, relates, renames and merges namespace-qualified memories through tool schemas', async () => {
+  it('creates, searches, reads, relates, renames and merges flat titled memories through tool schemas', async () => {
     const { tools, entities } = await fixture();
     const input = {
       ...create(),
-      fields: {
-        name: 'stagewise-io/products/backend/klex',
-        entityType: 'project',
-      },
+      fields: { title: 'Klex', tags: ['projects/stagewise-io'] },
     };
     const created = (await call(tools, 'createEntity', input)) as {
       id: string;
     };
     expect(created).toMatchObject({
       status: 'created',
-      id: 'project/stagewise-io/products/backend/klex',
+      id: 'Klex',
     });
     expect(
-      JSON.stringify(
-        await call(tools, 'listEntities', {
-          query: 'stagewise-io/products/backend/klex',
-        }),
-      ),
+      JSON.stringify(await call(tools, 'listEntities', { query: 'klex' })),
     ).toContain(created.id);
+    expect(
+      await call(tools, 'createEntity', {
+        ...create(),
+        fields: { title: 'KLEX', tags: ['projects'] },
+      }),
+    ).toMatchObject({
+      status: 'rejected',
+      reason: expect.stringContaining('Klex'),
+    });
     const read = (await call(tools, 'readEntity', { id: created.id })) as {
       revision: string;
     };
@@ -231,8 +232,8 @@ describe('memory writer tools', () => {
     const peer = (await call(tools, 'createEntity', {
       ...create(),
       fields: {
-        name: 'other-org/web',
-        entityType: 'project',
+        title: 'Web',
+        tags: ['projects/other-org'],
         relatedTo: [
           {
             target: { kind: 'entity', id: created.id },
@@ -247,10 +248,10 @@ describe('memory writer tools', () => {
     const moved = (await call(tools, 'updateEntity', {
       id: created.id,
       revision: latest.revision,
-      fields: { name: 'stagewise-io/platform/klex' },
+      fields: { title: 'Klex Platform' },
       operations: [],
     })) as { id: string };
-    expect(moved.id).toBe('project/stagewise-io/platform/klex');
+    expect(moved.id).toBe('Klex Platform');
     expect(entities.get(peer.id)?.frontmatter.RelatedTo[0]?.target.id).toBe(
       moved.id,
     );
@@ -273,7 +274,7 @@ describe('memory writer tools', () => {
   it('maintains exact automatic inverses for multiple predicates, replacements and removals', async () => {
     const { tools, entities } = await fixture();
     const target = await entities.create(
-      { name: 'Target Project', entityType: 'project' },
+      { title: 'Target Project', tags: ['projects'] },
       { General: [fact('Product')] },
     );
     const input = (relationship: string) => ({
@@ -399,7 +400,7 @@ describe('memory writer tools', () => {
     ).toMatchObject({ status: 'rejected' });
   });
   it.each([
-    { kind: 'entity', id: 'person/Missing' },
+    { kind: 'entity', id: 'Missing' },
     { kind: 'skill', id: 'templates/missing' },
   ])(
     'rejects invalid $kind references on create and update without writing',
@@ -461,7 +462,7 @@ describe('memory writer tools', () => {
     const update = {
       id: entity.id,
       revision: entityRevision(entity),
-      fields: { name: 'New title' },
+      fields: { title: 'New title' },
     };
     expect(await call(tools, 'updateEntity', update)).toEqual({
       status: 'rejected',
@@ -525,7 +526,7 @@ describe('memory writer tools', () => {
       await call(second, 'updateEntity', {
         id: entity.id,
         revision: read.revision,
-        fields: { entityType: 'project' },
+        fields: { tags: ['projects'] },
         operations: [
           {
             op: 'supersede',
@@ -536,8 +537,8 @@ describe('memory writer tools', () => {
         ],
       }),
     ).toMatchObject({ status: 'updated' });
-    const updated = entities.get('project/Alex Smith');
-    expect(updated?.entityType).toBe('project');
+    const updated = entities.get('Alex Smith');
+    expect(updated?.frontmatter.Tags).toEqual(['projects']);
     expect(updated?.sections.General?.[0]).toEqual({
       text: 'Former project owner',
       sources: [{ label: '2026-11-12 · slack', id: 'message-2' }],
@@ -550,7 +551,7 @@ describe('memory writer tools', () => {
     });
     expect(
       (
-        (await call(second, 'readEntity', { id: 'project/Alex Smith' })) as {
+        (await call(second, 'readEntity', { id: 'Alex Smith' })) as {
           sections: Record<string, string>;
         }
       ).sections.General,
@@ -601,11 +602,11 @@ describe('memory writer tools', () => {
   it('merges entities without keeping the dropped name as an alias', async () => {
     const { tools, entities } = await fixture();
     const keep = await entities.create(
-      { name: 'Alex Smith', entityType: 'person' },
+      { title: 'Alex Smith', tags: ['people'] },
       { General: [fact('Engineer')] },
     );
     const drop = await entities.create(
-      { name: 'Alex S', entityType: 'person' },
+      { title: 'Alex S', tags: ['people'] },
       { General: [fact('Owns billing')] },
     );
     const input = {
@@ -628,8 +629,8 @@ describe('memory writer tools', () => {
     expect(entities.get(drop.id)).toBeNull();
     const created = (await call(tools, 'createEntity', {
       fields: {
-        name: 'Billing',
-        entityType: 'team',
+        title: 'Billing',
+        tags: ['teams'],
         relatedTo: [
           {
             target: { kind: 'entity', id: keep.id },
@@ -662,11 +663,11 @@ describe('memory writer tools', () => {
         ...[1, 2, 3].map((n) => [`${prefix} ${n}`, [fact('Detail')]]),
       ]);
     const keep = await entities.create(
-      { name: 'Alex Smith', entityType: 'person' },
+      { title: 'Alex Smith', tags: ['people'] },
       many('Keep'),
     );
     const drop = await entities.create(
-      { name: 'Alex S', entityType: 'person' },
+      { title: 'Alex S', tags: ['people'] },
       many('Drop'),
     );
     await expect(
@@ -851,7 +852,7 @@ describe('memory writer tools', () => {
       id: `old${i}`,
     }));
     const entity = await entities.create(
-      { name: 'Alex Smith', entityType: 'person' },
+      { title: 'Alex Smith', tags: ['people'] },
       { General: [{ text: 'Owns Atlas', sources: old, history: [] }] },
     );
     await call(tools, 'updateEntity', {
@@ -874,7 +875,7 @@ describe('memory writer tools', () => {
       ...create(),
       fields: {
         ...create().fields,
-        name: 'Other Person',
+        title: 'Other Person',
         linkedIdentities: [{ server: 'slack', match: { user: 'U1' } }],
       },
     });
@@ -990,8 +991,8 @@ describe('memory writer tools', () => {
     const { tools, entities } = await fixture();
     const detail = await entities.create(
       {
-        name: 'Other project',
-        entityType: 'project',
+        title: 'Other project',
+        tags: ['projects'],
         loadOn: [],
         relatedTo: [],
       },
@@ -1006,8 +1007,8 @@ describe('memory writer tools', () => {
     );
     const title = await entities.create(
       {
-        name: 'Launch plan',
-        entityType: 'project',
+        title: 'Launch plan',
+        tags: ['projects'],
         loadOn: [],
         relatedTo: [],
       },
@@ -1046,8 +1047,8 @@ describe('memory writer tools', () => {
     for (let index = 0; index < 19; index++)
       await entities.create(
         {
-          name: `Extra ${index}`,
-          entityType: 'topic',
+          title: `Extra ${index}`,
+          tags: ['topics'],
           loadOn: [],
           relatedTo: [],
         },
@@ -1170,7 +1171,7 @@ describe('memory writer tools', () => {
     );
     await reject(create(source, 'x'.repeat(161)), 'max 160');
     await reject(
-      { ...create(), fields: fields({ name: 'Jonathan' }) },
+      { ...create(), fields: fields({ title: 'Jonathan' }) },
       'is self',
     );
     await reject(
@@ -1188,8 +1189,8 @@ describe('memory writer tools', () => {
       {
         ...create(),
         fields: fields({
-          name: 'CLOUD-254',
-          entityType: 'issue',
+          title: 'CLOUD-254',
+          tags: ['work-items/issues'],
           linkedIdentities: [
             {
               server: 'github',
@@ -1198,12 +1199,12 @@ describe('memory writer tools', () => {
           ],
         }),
       },
-      'pull-request',
+      'work-items/tasks',
     );
     await reject(
       {
         ...create(),
-        fields: fields({ name: 'PR 12', entityType: 'pull-request' }),
+        fields: fields({ title: 'PR 12', tags: ['pull-request'] }),
       },
       'Link who requested',
     );
@@ -1211,12 +1212,12 @@ describe('memory writer tools', () => {
     // Copied exactly: accepted, and a truncated Linear ID is not.
     const issue = (id: string) => ({
       fields: {
-        name: 'CLOUD-254',
-        entityType: 'issue',
+        title: 'CLOUD-254',
+        tags: ['work-items/issues'],
         linkedIdentities: [{ server: 'linear', match: { issueId: id } }],
         relatedTo: [
           {
-            target: { kind: 'entity', id: 'person/Placeholder' },
+            target: { kind: 'entity', id: 'Placeholder' },
             relationship: 'requestedBy',
           },
         ],
@@ -1228,7 +1229,7 @@ describe('memory writer tools', () => {
       'not found in the activities',
     );
     const person = await entities.create(
-      { name: 'Alex Smith', entityType: 'person' },
+      { title: 'Alex Smith', tags: ['people'] },
       { General: [fact('Owner')] },
     );
     const linked = issue('0eff93ac-11f0-4da1-ac13-78d5697ca0e7');
@@ -1318,8 +1319,8 @@ describe('memory writer tools', () => {
     expect(
       await call(tools, 'createEntity', {
         fields: {
-          name: 'acme/web',
-          entityType: 'repository',
+          title: 'acme web',
+          tags: ['repositories'],
           linkedIdentities: [
             {
               server: 'github',
@@ -1393,7 +1394,7 @@ describe('memory writer tools', () => {
             {
               target: {
                 kind: 'entity',
-                id: 'person/Missing',
+                id: 'Missing',
               },
               relationship: 'collaboratesWith',
             },

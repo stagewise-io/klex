@@ -27,3 +27,9 @@ export {
   MAX_FACT_HISTORY,
   parseFacts,
 } from './facts';
+export {
+  DEFAULT_TAGS,
+  type KnownTag,
+  knownTags,
+  renderKnownTags,
+} from './tags';

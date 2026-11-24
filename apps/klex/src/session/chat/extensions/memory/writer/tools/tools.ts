@@ -130,9 +130,16 @@ const canonical = (
         }
       : relation,
   );
-// `bot` stays for entities written before bots were filed as people.
-const PEOPLE = new Set(['person', 'bot', 'team']);
-const WORK_ITEMS = new Set(['issue', 'pull-request']);
+// Literal folder tags from flattened notes (`person`, `bot`, …) count alongside
+// default ontology tags (`people`, `work-items/issues`, …).
+const PEOPLE = new Set(['people', 'teams', 'person', 'bot', 'team']);
+const WORK_ITEMS = new Set(['work-items', 'issue', 'pull-request']);
+const ISSUES = new Set(['work-items/issues', 'issue']);
+const EVENTS = new Set(['events', 'event']);
+const PERSONS = new Set(['people', 'person', 'bot']);
+/** A tag matches when it, or its root segment, is one of `kinds`. */
+const tagged = (tags: readonly string[], kinds: ReadonlySet<string>) =>
+  tags.some((tag) => kinds.has(tag) || kinds.has(tag.split('/')[0] ?? ''));
 
 const sourceIdsSchema = z
   .array(z.string().min(1).max(4096))
@@ -314,11 +321,12 @@ const searchableText = (value: string) =>
   value.replace(/\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b/gi, '');
 function searchEntity(entity: MemoryEntity, query: string) {
   const terms = [...new Set(query.toLowerCase().split(/\s+/).filter(Boolean))];
-  const { id, entityType } = entity;
-  const title = entity.name;
+  const { id } = entity;
+  const title = id;
+  const tags = entity.frontmatter.Tags;
   const lines = [
     { section: 'Title', line: 1, text: title, boost: searchWeights.title },
-    { section: 'Folder', line: 1, text: entityType, boost: 0 },
+    { section: 'Tags', line: 1, text: tags.join(' '), boost: 0 },
     ...entity.frontmatter.RelatedTo.map((relation, index) => ({
       section: 'RelatedTo',
       line: index + 1,
@@ -365,17 +373,16 @@ function searchEntity(entity: MemoryEntity, query: string) {
     (query && body.includes(query.toLowerCase()) ? searchWeights.phrase : 0);
   return {
     id,
-    name: title,
-    entityType,
+    tags,
     score,
     general,
     sections: Object.keys(entity.sections),
-    // Title, type and visible General text are already in the result.
+    // Title, tags and visible General text are already in the result.
     matches: matches
       .filter(
         ({ section, text }) =>
           section !== 'Title' &&
-          section !== 'Folder' &&
+          section !== 'Tags' &&
           !(section === 'General' && general.includes(text)),
       )
       .slice(0, 5)
@@ -636,11 +643,11 @@ class WriterToolsModule implements WriterTools {
           );
       }
     };
-    const entityType = (id: string) => options.entities.get(id)?.entityType;
+    const tagsOf = (id: string) => options.entities.get(id)?.frontmatter.Tags;
     /** Shape rules code can check; messages name the fix. */
     const checkEntity = (
       title: string,
-      type: string,
+      tags: readonly string[],
       identities: readonly { server: string; match: Record<string, string> }[],
       relations: readonly { target: { kind: string; id: string } }[],
       facts: readonly string[],
@@ -651,31 +658,31 @@ class WriterToolsModule implements WriterTools {
         throw new Error(
           `"${title}" is self. Never create or edit an entity for self; put facts on the people and things self works with`,
         );
-      for (const fact of facts) checkFact(fact, title, type);
+      for (const fact of facts) checkFact(fact, title, tagged(tags, PERSONS));
       const evidence = options.evidenceText;
       if (evidence !== undefined) {
         checkCopied(copied.identities, evidence, 'Identity value');
         checkCopied(copied.matchers, evidence, 'LoadOn value');
       }
       if (
-        type === 'issue' &&
+        tagged(tags, ISSUES) &&
         !identities.some(
           (identity) =>
             identity.server === 'linear' && 'issueId' in identity.match,
         )
       )
         throw new Error(
-          'No tracker ID. Use entityType "pull-request" until the Linear issueId appears; then retype to "issue"',
+          'No tracker ID. Tag it "work-items" (or "work-items/tasks") until the Linear issueId appears; then retag to "work-items/issues"',
         );
       const people = relations.filter(
         ({ target }) =>
-          target.kind === 'entity' && PEOPLE.has(entityType(target.id) ?? ''),
+          target.kind === 'entity' && tagged(tagsOf(target.id) ?? [], PEOPLE),
       ).length;
-      if (WORK_ITEMS.has(type) && people < 1)
+      if (tagged(tags, WORK_ITEMS) && people < 1)
         throw new Error(
           'Link who requested, owns or is assigned it: add a relatedTo person, e.g. relationship "requestedBy", "ownedBy" or "assignedTo". Inverse is automatic. Create the person first if missing',
         );
-      if (type === 'event' && people < 2)
+      if (tagged(tags, EVENTS) && people < 2)
         throw new Error(
           'An event links everyone involved: add at least two relatedTo people using a curated predicate, or "relatedTo" when none fits',
         );
@@ -767,7 +774,7 @@ class WriterToolsModule implements WriterTools {
             .sort(
               (a, b) =>
                 b.score - a.score ||
-                a.name.localeCompare(b.name) ||
+                a.id.localeCompare(b.id, undefined, { sensitivity: 'base' }) ||
                 a.id.localeCompare(b.id),
             );
           return {
@@ -796,11 +803,11 @@ class WriterToolsModule implements WriterTools {
         execute: guarded(({ id, sections: names }) => {
           const entity = options.entities.get(id);
           if (!entity) return { status: 'not-found' };
-          const { LinkedIdentities, LoadOn, RelatedTo } = entity.frontmatter;
+          const { LinkedIdentities, LoadOn, RelatedTo, Tags } =
+            entity.frontmatter;
           return {
             id: entity.id,
-            name: entity.name,
-            entityType: entity.entityType,
+            tags: Tags,
             linkedIdentities: LinkedIdentities,
             loadOn: LoadOn,
             relatedTo: RelatedTo,
@@ -831,8 +838,8 @@ class WriterToolsModule implements WriterTools {
           );
           rejectSecrets([fields, input], texts);
           checkEntity(
-            fields.name,
-            fields.entityType,
+            fields.title,
+            fields.tags,
             fields.linkedIdentities,
             fields.relatedTo,
             texts,
@@ -906,8 +913,8 @@ class WriterToolsModule implements WriterTools {
           const nextRelations: WriterRelation[] =
             fields.relatedTo ?? entity.frontmatter.RelatedTo;
           checkEntity(
-            fields.name ?? entity.name,
-            fields.entityType ?? entity.entityType,
+            fields.title ?? entity.id,
+            fields.tags ?? entity.frontmatter.Tags,
             fields.linkedIdentities ?? entity.frontmatter.LinkedIdentities,
             nextRelations,
             (operations as Operation[])
@@ -1113,7 +1120,7 @@ class WriterToolsModule implements WriterTools {
             if (
               self &&
               [keep, drop].some(
-                (entity) => entity.name.trim().toLowerCase() === self,
+                (entity) => entity.id.trim().toLowerCase() === self,
               )
             )
               throw new Error('Never merge into or from self');

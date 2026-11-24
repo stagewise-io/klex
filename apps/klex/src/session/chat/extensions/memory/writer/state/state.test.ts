@@ -76,12 +76,12 @@ describe('registered memory writer state', () => {
     expect(restored.get().future).toEqual({ keep: true });
     expect(JSON.parse(await readFile(file, 'utf8'))._klex).toMatchObject({
       schemaVersion: 1,
-      compatibilityVersion: 3,
+      compatibilityVersion: 4,
       minimumKlexVersion: '0.38.1',
     });
   });
   it.each([1, 2])(
-    'raises compatibility %s of existing state before converting notes',
+    'raises compatibility %s of existing state; the startup migration then flattens notes',
     async (compatibilityVersion) => {
       const { root, file } = await fixture();
       await writeFile(
@@ -108,47 +108,59 @@ describe('registered memory writer state', () => {
         '---\nFormatVersion: 5\nCreatedAt: 2026-11-17T10:00:00.000Z\nLastUpdatedAt: 2026-11-17T11:00:00.000Z\nLastReadAt: null\nLinkedIdentities: []\nLoadOn: []\nRelatedTo:\n  - "[[project/Klex|works on (80)]]"\nTrustScore: 2\nAuthorityScore: 5\n---\n\n## General\n\n- Engineer [old](history:abc)\n',
       );
       await startup(root);
-      const entities = createEntityStore(entitiesRoot);
-      await entities.start();
-      expect(entities.get('person/Alex Smith')?.frontmatter.RelatedTo).toEqual([
-        {
-          target: { kind: 'entity', id: 'project/Klex' },
-          relationship: 'relatedTo',
-        },
-      ]);
-      const note = await readFile(entityFile, 'utf8');
-      expect(note).toContain('FormatVersion: 6');
+      // The writer store refuses notes until the startup migration converts them.
+      await expect(createEntityStore(entitiesRoot).start()).rejects.toThrow(
+        'not migrated yet',
+      );
+      const migration = createEntityStore(entitiesRoot, { migrate: true });
+      await migration.start();
+      const migrated = join(entitiesRoot, 'Alex Smith.md');
+      // `project/Klex` does not exist: the link is dropped and reported.
+      expect(migration.get('Alex Smith')?.frontmatter).toMatchObject({
+        Tags: ['person'],
+        RelatedTo: [],
+      });
+      const note = await readFile(migrated, 'utf8');
+      expect(note).toContain('FormatVersion: 7');
+      await expect(readFile(entityFile, 'utf8')).rejects.toThrow('ENOENT');
       const upgraded = JSON.parse(await readFile(file, 'utf8'));
       expect(upgraded.cursor).toBe('history:cursor');
       expect(upgraded._klex).toMatchObject({
-        compatibilityVersion: 3,
+        compatibilityVersion: 4,
         minimumKlexVersion: '0.38.1',
       });
       const before = await readFile(file, 'utf8');
       await startup(root);
       expect(await readFile(file, 'utf8')).toBe(before);
-      const oldReader = createLocalData({
-        logging,
-        dataDirectory: root,
-        klexVersion: '0.38.0',
-        stores: [
-          {
-            ...MEMORY_WRITER_STORE_DEFINITION,
-            compatibilityVersion: 2,
-            minimumKlexVersion: '0.37.1',
-          },
-        ],
-      });
-      try {
-        await expect(oldReader.start()).rejects.toThrow();
-      } finally {
-        await oldReader.close();
+      // v0.38.0 (compatibility 2) and format-6 main builds (compatibility 3)
+      // refuse compatibility 4 in preflight, before touching any file.
+      for (const [old, klexVersion, minimumKlexVersion] of [
+        [2, '0.38.0', '0.37.1'],
+        [3, '0.38.1', '0.38.1'],
+      ] as const) {
+        const oldReader = createLocalData({
+          logging,
+          dataDirectory: root,
+          klexVersion,
+          stores: [
+            {
+              ...MEMORY_WRITER_STORE_DEFINITION,
+              compatibilityVersion: old,
+              minimumKlexVersion,
+            },
+          ],
+        });
+        try {
+          await expect(oldReader.start()).rejects.toThrow();
+        } finally {
+          await oldReader.close();
+        }
       }
       expect(await readFile(file, 'utf8')).toBe(before);
-      expect(await readFile(entityFile, 'utf8')).toBe(note);
+      expect(await readFile(migrated, 'utf8')).toBe(note);
       const restarted = createEntityStore(entitiesRoot);
       await restarted.start();
-      expect(await readFile(entityFile, 'utf8')).toBe(note);
+      expect(await readFile(migrated, 'utf8')).toBe(note);
     },
   );
   it.each(['newer', 'invalid'])(

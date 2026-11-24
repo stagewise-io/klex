@@ -375,7 +375,13 @@ class ApplicationModule implements Application {
             });
             interactiveLocalData = localData;
             await localData.start();
-            await migrateMemoryDocuments(directory);
+            await migrateMemoryDocuments(
+              directory,
+              logging.child({
+                name: 'memory-migration',
+                bindings: { module: 'memory' },
+              }),
+            );
             if (!cli.cloudEnabled) return false;
 
             cloud = createCloudConnectivity({
@@ -479,7 +485,14 @@ class ApplicationModule implements Application {
     this.own(localData);
     if (!interactiveLocalData) {
       await localData.start();
-      await migrateMemoryDocuments(dataDirectory);
+      // Finishes before config, sessions and the memory writer start.
+      await migrateMemoryDocuments(
+        dataDirectory,
+        logging.child({
+          name: 'memory-migration',
+          bindings: { module: 'memory' },
+        }),
+      );
     }
     interactiveLocalData = undefined;
 

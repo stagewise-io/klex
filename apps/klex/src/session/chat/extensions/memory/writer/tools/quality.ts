@@ -11,28 +11,24 @@ const RUN_SPECIFIC =
 
 const lower = (value: string) => value.trim().toLowerCase();
 
-/** Subject words a fact must not start with: the title, and a person's first name. */
-function subjects(title: string, entityType: string): string[] {
-  const words = title.trim().split(/\s+/);
+/**
+ * Subject words a fact must not start with: the title (also without its
+ * disambiguating qualifier) and a person's first name.
+ */
+function subjects(title: string, person: boolean): string[] {
+  const plain = title.replace(/\s*\([^()]*\)\s*$/, '').trim() || title.trim();
+  const words = plain.split(/\s+/);
   const first = words[0] ?? '';
   return [
-    lower(title),
-    ...((entityType === 'person' || entityType === 'bot') &&
-    words.length > 1 &&
-    first.length >= 3
-      ? [lower(first)]
-      : []),
+    ...new Set([lower(title), lower(plain)]),
+    ...(person && words.length > 1 && first.length >= 3 ? [lower(first)] : []),
   ];
 }
 
-export function checkFact(
-  text: string,
-  title: string,
-  entityType: string,
-): void {
+export function checkFact(text: string, title: string, person: boolean): void {
   const value = text.trim();
   const start = lower(value);
-  const subject = subjects(title, entityType).find(
+  const subject = subjects(title, person).find(
     (candidate) =>
       start === candidate ||
       (start.startsWith(candidate) &&

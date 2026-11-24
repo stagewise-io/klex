@@ -1,0 +1,49 @@
+---
+title: コンピューターとアプリへの接続
+sidebar:
+  label: 接続
+description: MCP を使って Klex Bot をコンピューターやアプリに接続し、アクセスを管理する方法。
+related:
+  - /bot/concepts/how-bots-work
+  - /bot/concepts/mcp
+  - /bot/quickstart
+---
+
+Klex Bot は、MCP（Model Context Protocol）を通じて接続された外部の環境で作業します。MCP サーバーは、コンピューター全体や GitHub、Google Workspace などのアプリを提供できます。コンピューターも MCP を通じて接続します。
+
+Bot 自身の環境は、Bot の動作とメモリーを管理します。Bot は接続されたコンピューターやアプリで作業を行います。
+
+<a id="choose-what-to-connect"></a>
+
+## 接続先を選ぶ
+
+- **コンピューター**は、Bot が作業するための接続環境を提供します。
+- **アプリ**は、MCP サーバーを通じてアプリの環境を提供します。
+
+Klex にはさまざまな組み込み MCP サーバーがあり、他の MCP サーバーも接続できます。Bot に任せたい仕事に応じて、接続する環境を選んでください。
+
+<a id="manage-a-bots-access"></a>
+
+## Bot のアクセスを管理する
+
+Bot の仕事に必要なアプリやコンピューターを接続します。ほとんどの MCP では、Bot は自身のアカウントまたは ID を使い、その Bot に設定された権限で操作します。
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="クラウドホスト">
+
+Klex Cloud で Bot を開き、**Connectors** でアプリへの接続を、**Computers** で接続されたコンピューターを管理します。**Activity** で Bot のアクティビティも確認できます。
+
+</Tab>
+<Tab title="セルフホスト">
+
+Klex アプリの **Settings → MCP Servers** でサーバーへの接続を管理します。手順は [MCP と Klex Bot](/bot/concepts/mcp#add-a-remote-server-in-the-self-hosted-app) を参照してください。**Settings → Logs** でローカルの診断情報を確認できます。
+
+</Tab>
+</Tabs>
+
+Bot のアカウントや接続されたアプリの権限は、それぞれのアカウントやアプリで直接設定します。サーバーの接続とアカウントへのアクセス付与は別の判断です。Bot がアクセスできる対象と実行できる操作を決める際は、両方を確認してください。
+
+全体像については [Klex Bot の仕組み](/bot/concepts/how-bots-work)を、チャットとメモリーの保存場所については[データディレクトリ](/bot/concepts/data-directory)を参照してください。
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

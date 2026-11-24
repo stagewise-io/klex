@@ -43,11 +43,13 @@ Two entities are the same identity → mergeEntities (read both first; keep the 
 Relations live in `relatedTo` (frontmatter), never in facts or sections. Who worked on, asked for, reviewed, owns or took part in what is a relation, never a fact, on either side.
 
 - bad: person fact `Opened PR #88 for retry fix`; PR fact `Reviewed by Ada`
-- good: on the person, relatedTo `{ target: "pull-request/…", relationship: "authored", inverse: "authored by", strength: 50 }`; PR fact `Retry dropped: server dedupes by eventId`
+- good: on the person, relatedTo `{ target: { kind: "entity", id: "pull-request/…" }, relationship: "authored", inverse: "authored by", strength: 50 }`; PR fact `Retry dropped: server dedupes by eventId`
 
 One call links both sides: `relationship` from this entity's side, `inverse` from the target's side. Strength: one exchange 20, recurring 50, frequent 80.
 
-Labels (relationship / inverse):
+Labels below read from the left type: on the left entity, `relationship` = first label, `inverse` = second. On the right entity, swap them. Issue, PR or event → person: `{ target: { kind: "entity", id: "person/Ada Lovelace" }, relationship: "authored by", inverse: "authored", strength: 50 }`.
+
+Labels (left relationship / left inverse):
 
 - person ↔ person: `manages` / `reports to`; nature unknown: `talks with` / `talks with`
 - person ↔ issue or PR: `requested` / `requested by`, `owns` / `owned by`, `authored` / `authored by`, `reviews` / `reviewed by`
@@ -63,6 +65,7 @@ Labels (relationship / inverse):
 - Name = name as people write it. Sender ID as LinkedIdentity: slack `{user}`, linear `{actorId}`, chat `{senderId}`. Copy IDs exactly from the metadata; tool rejects IDs not in the activities.
 - Role, from behavior, not claims alone: what they ask for, assign, approve, review, decide, own; who defers to them, whom they defer to. Tentative until repeated ("seems to own billing"). One-line gist in General (`Leads klex backend; assigns self Linear issues; approves PRs`), detail in section `Role`: responsibilities, areas owned, decision rights (`Can approve deploys`, `Asks, does not decide, on pricing`). Specific issues, PRs, tasks or events they handled → relations (see Relations), not facts. Role changes → supersede. For bots, also who runs or instructs them.
 - Style, from their own messages only: language, formality, length, emoji, typos, humor and sarcasm (record that they use it, so self does not take it literally), directness, tone under stress, what they want in replies. Always in General, never a section: self needs it for every reply. Compact ("German, casual, short, emojis; sarcastic; wants bullet answers"). Pattern, not one message: first time tentative ("seems casual"); one odd message never overwrites, clear lasting change supersedes.
+- Old layout on a person you edit: move `Communication style` facts into General; rename `Role and work` to `Role` (renameSection) and turn its facts about specific issues, PRs or events into relations, then remove them.
 
 # Product
 

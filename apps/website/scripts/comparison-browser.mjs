@@ -35,12 +35,28 @@ try {
       await page.locator('main a[href="https://rerun.build/pricing"]').count(),
       1,
     );
-    assert.equal(
-      await page
+    assert(
+      (await page
         .locator('main a[href="https://docs.klex.bot/quickstart"]')
-        .count(),
-      1,
+        .count()) >= 1,
     );
+    assert.equal(await page.locator('.comparison-answers li').count(), 4);
+    assert.deepEqual(
+      await page.locator('.comparison-answers strong').allTextContents(),
+      ['Yes', 'Yes', 'Yes', 'No'],
+    );
+    assert.equal(await page.locator('.comparison-at-a-glance h2').count(), 2);
+    if (width === 1440) {
+      const hero = await page.locator('.comparison-heading').boundingBox();
+      const card = await page.locator('.comparison-at-a-glance').boundingBox();
+      assert(
+        hero &&
+          card &&
+          hero.width > width * 0.8 &&
+          card.x > hero.x + hero.width / 2,
+        'desktop hero uses the available width',
+      );
+    }
     assert.equal(
       await page
         .locator('main a[href="https://www.klex.bot/"]')

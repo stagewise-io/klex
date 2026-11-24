@@ -1,8 +1,24 @@
-.comparison-heading {
-  max-width: 64rem;
+.resource-heading.comparison-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(16rem, 0.8fr);
+  align-items: center;
+  gap: clamp(3rem, 7vw, 7rem);
+  max-width: none;
 }
-
-.comparison-heading > .comparison-eyebrow {
+.comparison-heading-copy {
+  max-width: 52rem;
+}
+.comparison-heading-copy > p:not(.comparison-eyebrow) {
+  max-width: 39rem;
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 1.25rem;
+  line-height: 1.6;
+}
+.comparison-heading-copy > p:not(.comparison-eyebrow) + p {
+  margin-top: 1.5rem;
+}
+.comparison-heading-copy > .comparison-eyebrow {
   margin: 0 0 1.5rem;
   color: var(--foreground);
   font-size: 0.875rem;
@@ -10,11 +26,61 @@
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
-
-.comparison-heading > p + p {
-  margin-top: 1.5rem;
-}
-
-.comparison-heading h1 {
+.resource-heading.comparison-heading h1 {
   font-size: clamp(2.75rem, 5vw, 4.5rem);
+}
+.comparison-at-a-glance {
+  padding: clamp(1.5rem, 3vw, 2.5rem);
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  background: var(--background);
+}
+.comparison-at-a-glance .comparison-card-label {
+  margin: 0 0 1rem;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.comparison-at-a-glance > div {
+  padding-block: 1.25rem;
+  border-top: 1px solid var(--border);
+}
+.comparison-at-a-glance > div:last-child {
+  padding-bottom: 0;
+}
+.comparison-at-a-glance h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1.125rem;
+}
+.comparison-at-a-glance div p {
+  margin: 0;
+  color: var(--muted-foreground);
+  line-height: 1.6;
+}
+.comparison-answers {
+  display: grid;
+  gap: 0.75rem;
+  margin: 0 0 1.5rem;
+  padding: 0;
+  list-style: none;
+}
+.comparison-answers li {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  line-height: 1.6;
+  justify-content: space-between;
+}
+.comparison-answers li strong {
+  min-width: 3rem;
+  text-align: end;
+  font-weight: 700;
+}
+@media (max-width: 800px) {
+  .resource-heading.comparison-heading {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2.5rem;
+  }
 }

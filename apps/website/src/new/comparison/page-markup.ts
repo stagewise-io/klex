@@ -5,10 +5,17 @@ import { createFooterMarkup } from '../sections/footer';
 export const comparisonMarkup =
   () => `${headerMarkup}<main id="main" class="resource-main comparison-main" lang="en" dir="ltr">
   <header class="resource-heading comparison-heading">
+    <div class="comparison-heading-copy">
     <p class="comparison-eyebrow">Klex vs Rerun</p>
     <h1>Klex vs Rerun: choosing an AI coworker for your team</h1>
     <p>Say your team needs a weekly update: gather what shipped, draft the announcement and bring it to a person for review. Both Klex and Rerun offer AI coworkers that can help. The choice starts with where you want to work with them, how you want to provide their AI model, and how you will review actions.</p>
     <p>Klex puts digital coworkers alongside your team in connected tools. Rerun offers ready-made and custom coworkers with a shared board for their work. Both describe cloud and self-hosted options.</p>
+    </div>
+    <aside class="comparison-at-a-glance" aria-labelledby="comparison-at-a-glance-title">
+      <p class="comparison-card-label" id="comparison-at-a-glance-title">At a glance</p>
+      <div><h2>Klex</h2><p>A digital coworker in your team’s connected tools, using the model access you provide.</p></div>
+      <div><h2>Rerun</h2><p>AI coworkers with a shared board and a choice of Rerun-hosted or your own models.</p></div>
+    </aside>
   </header>
   <section class="resource-section" id="getting-started">
     <h2>One job, two ways to get started</h2>
@@ -22,6 +29,12 @@ export const comparisonMarkup =
     <h2>Where will the AI model come from?</h2>
     <div class="resource-section-body">
       <p>Klex uses model access you supply. <a href="https://docs.klex.bot/quickstart">Its quickstart</a> describes provider APIs, supported subscriptions, local providers and custom endpoints. Your provider’s costs or plan limits apply separately from Klex hosting.</p>
+      <ul class="comparison-answers" aria-label="Model access at a glance">
+        <li><span><a href="https://docs.klex.bot/quickstart">Use your own model access with Klex?</a></span><strong>Yes</strong></li>
+        <li><span><a href="https://docs.rerun.build/agents/configure">Use your own model access with Rerun?</a></span><strong>Yes</strong></li>
+        <li><span><a href="https://docs.rerun.build/billing">Monthly model and paid-data credits in Rerun Pro?</a></span><strong>Yes</strong></li>
+        <li><span><a href="https://rerun.build/lifetime">Credits included with Rerun’s lifetime offer?</a></span><strong>No</strong></li>
+      </ul>
       <p><a href="https://docs.rerun.build/billing">Rerun Pro includes 500 credits each month for Rerun-hosted models and paid data</a>. <a href="https://docs.rerun.build/agents/configure">Rerun also describes using your own provider API, custom endpoint or supported ChatGPT or Claude subscription</a>. Extra credit purchases and outside provider costs are separate. The lifetime offer does not include Rerun credits.</p>
     </div>
   </section>
@@ -43,7 +56,7 @@ export const comparisonMarkup =
   <section class="resource-section" id="fit">
     <h2>Which is a better fit?</h2>
     <div class="resource-section-body">
-      <p>Choose Klex when working alongside your team in existing tools is the priority and you want to supply your own model access. Klex describes both Cloud-hosted and self-hosted bots.</p>
+      <p>Choose Klex when working alongside your team in existing tools is the priority and you want to supply your own model access. <a href="https://www.klex.bot/">Klex describes Cloud-hosted bots</a>, and its <a href="https://docs.klex.bot/quickstart">quickstart describes self-hosting</a>.</p>
       <p>Consider Rerun when a shared board, ready-made roles and included model credits fit how your team wants to start. <a href="https://docs.rerun.build/self-host/open-source-vs-cloud">Its self-hosted edition differs from its managed service</a>: Rerun says the self-hosted edition lacks the hosted template library and included model credit.</p>
     </div>
   </section>

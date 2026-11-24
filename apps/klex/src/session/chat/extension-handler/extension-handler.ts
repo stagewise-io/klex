@@ -526,7 +526,7 @@ class ExtensionHandlerModule implements ExtensionHandler {
   runIdleHooks(history: ExtendedUIMessage[] = []): void {
     for (const ext of this.extensions) {
       try {
-        const parts = ext.onIdle?.();
+        const parts = ext.onIdle?.(structuredClone(history));
         const latest = history.at(-1);
         if (parts?.length && latest) {
           const owned = this.getOwnedDataPartKeys(

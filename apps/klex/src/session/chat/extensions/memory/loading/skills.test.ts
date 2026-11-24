@@ -51,6 +51,68 @@ function fixture() {
   return { loader, skills, load, recordRead, prepare };
 }
 describe('skill context lifecycle', () => {
+  it('carries loaded skills when the registry temporarily fails', async () => {
+    let failing = false;
+    const skill = {
+      id: 'test',
+      name: 'test',
+      description: 'Test skill',
+      body: 'Retained procedure',
+      metadata: {},
+    } as Skill;
+    const loader = createMemoryLoader({
+      entities: { snapshot: async () => [] },
+      skills: {
+        snapshot: async () => {
+          if (failing) throw new Error('Registry unavailable');
+          return [skill];
+        },
+      },
+      logger: { debug: vi.fn(), warn: vi.fn() } as never,
+    });
+    await (
+      loader.tools.loadSkill as unknown as {
+        execute(input: { skill: string }): Promise<unknown>;
+      }
+    ).execute({ skill: 'test' });
+    const parts = await loader.prepare([], model);
+    loader.commit(parts);
+    failing = true;
+    expect(text([message('checkpoint', await loader.carry())])).toContain(
+      'Retained procedure',
+    );
+  });
+  it.each([null, [], 42])('ignores malformed loaded memory maps %j', (data) => {
+    expect(() =>
+      materializeSkills([
+        message('bad', [{ type: 'data-loadedMemories', data }]),
+      ]),
+    ).not.toThrow();
+  });
+  it('consumes messages added after preparation and persists idle in the checkpoint window', async () => {
+    const first = fixture();
+    await first.load();
+    await first.loader.prepare([], model);
+    const header = message('header', [
+      { type: 'data-context-summary', data: { summary: 'summary' } },
+      ...(await first.loader.carry()),
+    ]);
+    const late = message('late', [{ type: 'text', text: 'trigger' }]);
+    late.role = 'assistant';
+    late.parts.push(...first.loader.idle([header, late]));
+    const restarted = fixture();
+    const parts = await restarted.loader.prepare([header, late], model);
+    expect(text([message('next', parts)])).not.toContain('<skill name=');
+    const fresh = message('fresh', [{ type: 'text', text: 'trigger' }]);
+    expect(
+      text([
+        message(
+          'fresh-result',
+          await restarted.loader.prepare([header, late, fresh], model),
+        ),
+      ]),
+    ).toContain('<skill name=');
+  });
   it('discards skill activation when prepared annotations are not committed', async () => {
     const { loader, prepare } = fixture();
     await prepare(

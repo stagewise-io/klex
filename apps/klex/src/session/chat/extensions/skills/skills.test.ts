@@ -6,7 +6,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ModuleLogger } from '@stagewise/logger';
 
-import { createMemoryLoader } from '@/session/chat/extensions/memory/loading';
+import type { ResolvedModel } from '@/session/chat/extensions/extension-api';
+import {
+  createMemoryLoader,
+  materializeSkills,
+} from '@/session/chat/extensions/memory/loading';
 import { DEFAULT_SESSION_ID } from '@/session/types';
 import { makeDeps } from '@/shared-utilities/test-utils';
 import { createSkillRegistry, MAX_PROMPT_LIST_CHARACTERS } from '@/skills';
@@ -151,6 +155,16 @@ describe('skills extension', () => {
       skills: registry,
       logger,
     });
+    const parts = await loader.prepare([], {
+      contextSize: 100000,
+    } as ResolvedModel);
+    const catalogue = JSON.stringify(
+      materializeSkills([{ id: 'catalogue', role: 'user', parts }]),
+    );
+    expect(catalogue).toContain('alpha/fix-build');
+    expect(catalogue).toContain('beta/fix-build');
+    expect(catalogue).toContain('Fix the build.');
+    expect(catalogue).toContain('Other fix.');
     const tool = loader.tools.loadSkill as unknown as LoadSkillTool;
     expect(await tool.execute({ skill: 'beta/fix-build' })).toEqual({
       loaded: 'beta/fix-build',

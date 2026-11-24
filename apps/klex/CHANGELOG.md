@@ -2,6 +2,13 @@
 
 All notable Klex changes are documented here.
 
+## 0.38.2 (2026-11-24)
+
+### Features
+
+- add snapshot memory loading, skill subscriptions and on-demand read-only recall (27a501e6)
+- deduplicate persisted memory snapshots and migrate event data matchers (27a501e6)
+
 ## 0.38.1 (2026-11-24)
 
 ### Bug Fixes

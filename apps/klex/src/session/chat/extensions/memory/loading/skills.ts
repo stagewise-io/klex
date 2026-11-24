@@ -132,6 +132,7 @@ class SkillContextModule implements SkillContext {
       this.consumed.set(item.id, item.projection);
   }
   parts(skills: readonly Skill[], window?: string): ExtendedUIMessage['parts'] {
+    if (window !== undefined) this.window = window;
     const known = new Set(skills.map((skill) => skill.id));
     for (const id of this.active.keys())
       if (!known.has(id)) this.active.delete(id);

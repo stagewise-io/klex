@@ -108,14 +108,20 @@ function inheritedContext(
 
 class RecallReader implements Extension {
   private answered = false;
+  private steps = 0;
   constructor(
     private readonly options: MemoryRecallOptions,
     private readonly source: MemoryRecallSource,
     private readonly inbox: ExtensionDeps['inbox'],
     private readonly answer: (answer: string) => void,
+    private readonly exhausted: () => void,
   ) {}
 
   onStepComplete(event: StepCompleteEvent): void {
+    if (!this.answered && ++this.steps >= 20) {
+      this.exhausted();
+      return;
+    }
     // Plain assistant text is not an answer. Keep working until answerRecall.
     if (
       !this.answered &&
@@ -297,12 +303,14 @@ class RecallReader implements Extension {
           ) {
             const source = sources[index++];
             if (!source) break;
-            const page = await activities.readPage(source.id, {
-              offset: 0,
-              limit: 60000,
-              maxBytes: 2000000 - scannedBytes,
-              view: (messages) => recallHistory.fit(messages),
-            });
+            const page = await activities
+              .readPage(source.id, {
+                offset: 0,
+                limit: 60000,
+                maxBytes: 2000000 - scannedBytes,
+                view: (messages) => recallHistory.fit(messages),
+              })
+              .catch(() => null);
             scannedBytes += Math.max(source.bytes, page?.scannedBytes ?? 0);
             if (!page || page.truncated) unavailable++;
             if (page?.nextOffset != null)
@@ -414,6 +422,12 @@ class RecallExtension implements Extension {
     if (this.closed) return { error: 'Recall is closed' };
     if (!source) return { error: 'Memory source unavailable' };
     const abort = new AbortController();
+    let budgetExceeded = false;
+    const exhaust = () => {
+      budgetExceeded = true;
+      abort.abort();
+    };
+    const deadline = setTimeout(exhaust, 300_000);
     const cancel = () => abort.abort();
     signal?.addEventListener('abort', cancel, { once: true });
     if (signal?.aborted) abort.abort();
@@ -437,9 +451,15 @@ class RecallExtension implements Extension {
           {
             identifier: 'io.stagewise/memory-recall-reader',
             create: (deps) =>
-              new RecallReader(this.options, source, deps.inbox, (value) => {
-                answer ??= value;
-              }),
+              new RecallReader(
+                this.options,
+                source,
+                deps.inbox,
+                (value) => {
+                  answer ??= value;
+                },
+                exhaust,
+              ),
           },
         ],
         hooks: {
@@ -475,11 +495,14 @@ class RecallExtension implements Extension {
     } catch (error) {
       this.deps.logger.warn({ error }, 'Memory recall failed');
       return {
-        error: abort.signal.aborted
-          ? 'Recall cancelled'
-          : 'Recall failed; no answer available',
+        error: budgetExceeded
+          ? 'Recall exceeded its time or step budget; no answer available. Do not retry the same question.'
+          : abort.signal.aborted
+            ? 'Recall cancelled'
+            : 'Recall failed; no answer available',
       };
     } finally {
+      clearTimeout(deadline);
       signal?.removeEventListener('abort', cancel);
       this.pending.delete(abort);
       try {

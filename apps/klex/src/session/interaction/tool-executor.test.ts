@@ -36,6 +36,66 @@ function createExecutor(
 }
 
 describe('ToolExecutor', () => {
+  it('allows recall beyond the ordinary tool deadline and makes its deadline non-retryable', async () => {
+    vi.useFakeTimers();
+    try {
+      const executor = new ToolExecutor({
+        logger,
+        tools: {
+          recallFromMemory: {
+            inputSchema: jsonSchema({ type: 'object' }),
+            execute: async () => new Promise(() => {}),
+          },
+        },
+        modelMessages: [],
+        sessionId: 'session-1',
+        validateInput: true,
+      });
+      let settled = false;
+      const pending = executor
+        .execute({ executionId: 'recall', name: 'recallFromMemory', input: {} })
+        .then((result) => {
+          settled = true;
+          return result;
+        });
+      await vi.advanceTimersByTimeAsync(30_001);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(280_000);
+      expect(await pending).toMatchObject({
+        status: 'error',
+        code: 'timeout',
+        retryable: false,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('bounds aggregate invocation evidence before returning it', async () => {
+    const executor = createExecutor(async (_input, options) => {
+      const context = options.context as ToolRequestContext;
+      for (let index = 0; index < 60; index++)
+        context.onMcpInvocation?.({
+          id: String(index),
+          executionId: context.executionId,
+          namespace: 'test',
+          name: 'large',
+          input: { text: 'x'.repeat(20000) },
+        });
+      return {};
+    });
+    const result = await executor.execute({
+      executionId: 'bounded',
+      name: 'example',
+      input: {},
+    });
+    expect(
+      Buffer.byteLength(JSON.stringify(result.mcpInvocations)),
+    ).toBeLessThanOrEqual(256 * 1024);
+    expect(result.mcpInvocations?.at(-1)?.input).toMatchObject({
+      omittedInvocations: expect.any(Number),
+    });
+  });
   it('retains deduplicated correlated invocations on failure and ignores another execution', async () => {
     const executor = createExecutor(async (_input, options) => {
       const context = options.context as ToolRequestContext;

@@ -6,7 +6,10 @@ import { z } from 'zod';
 import type { ModuleLogger } from '@stagewise/logger';
 
 import { isAlwaysForbiddenTelemetryAttribute } from '@/telemetry-policy';
-import type { McpInvocation, ToolRequestContext } from '@/tool-provider';
+import {
+  createInvocationEvidence,
+  type ToolRequestContext,
+} from '@/tool-provider';
 
 import {
   DEFAULT_TOOL_RESULT_MAX_BYTES,
@@ -163,7 +166,7 @@ export class ToolExecutor implements SessionToolRuntime {
   private async executeOnce(
     request: InteractionToolRequest,
   ): Promise<InteractionToolResult> {
-    const invocations = new Map<string, McpInvocation>();
+    const invocations = createInvocationEvidence();
     let finished = false;
     const startedAt = performance.now();
     const conversationEpoch = this.deps.getConversationEpoch?.();
@@ -228,8 +231,8 @@ export class ToolExecutor implements SessionToolRuntime {
         ...(request.name === 'readMemorySection'
           ? { toolName: request.name }
           : {}),
-        ...(invocations.size
-          ? { mcpInvocations: [...invocations.values()] }
+        ...(invocations.values().length
+          ? { mcpInvocations: invocations.values() }
           : {}),
       };
     };
@@ -293,7 +296,11 @@ export class ToolExecutor implements SessionToolRuntime {
         );
       }
 
-      const timeoutMs = this.deps.timeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS;
+      const timeoutMs =
+        this.deps.timeoutMs ??
+        (request.name === 'recallFromMemory'
+          ? 310_000
+          : DEFAULT_TOOL_TIMEOUT_MS);
       const timeoutController = new AbortController();
       const timeoutTimer = setTimeout(
         () => timeoutController.abort(),
@@ -329,7 +336,7 @@ export class ToolExecutor implements SessionToolRuntime {
           sessionId: this.deps.sessionId,
           onMcpInvocation: (invocation) => {
             if (!finished && invocation.executionId === request.executionId)
-              invocations.set(invocation.id, structuredClone(invocation));
+              invocations.add(invocation);
           },
         };
         const execution = Promise.resolve(
@@ -351,8 +358,8 @@ export class ToolExecutor implements SessionToolRuntime {
               ? errorResult(
                   request.executionId,
                   'timeout',
-                  `Tool execution timed out after ${timeoutMs}ms.`,
-                  true,
+                  `Tool execution timed out after ${timeoutMs}ms.${request.name === 'recallFromMemory' ? ' Recall exceeded its bounded budget; do not retry the same question.' : ''}`,
+                  request.name !== 'recallFromMemory',
                 )
               : errorResult(
                   request.executionId,

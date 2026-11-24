@@ -1,5 +1,6 @@
 import { isToolUIPart } from 'ai';
 import { getEncoding } from 'js-tiktoken';
+import { z } from 'zod';
 
 import { isDataPartOf } from '@/session/chat/extensions/extension-api';
 import type { ExtendedUIMessage } from '@/session/chat/message-types';
@@ -20,6 +21,19 @@ const escapeMemory = (value: string) =>
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;');
 const encoder = getEncoding('cl100k_base');
+const loadingStatusSchema = z.object({
+  version: z.literal(1),
+  budget: z.number().int().positive().max(8000),
+  ranked: z.array(
+    z.object({
+      filename: z.string(),
+      tier: z.number().int().min(0).max(2),
+      recency: z.number().int().min(-1),
+    }),
+  ),
+  removed: z.array(z.string()),
+  unavailable: z.array(z.string()),
+});
 interface Entry {
   index: number;
   filename: string;
@@ -168,8 +182,10 @@ export function materializeMemories(
         }
       }
       if (isDataPartOf('memoryLoadingStatus', part)) {
-        const value = (part as unknown as { data: LoadingStatus }).data;
-        if (value?.version === 1) status = value;
+        const parsed = loadingStatusSchema.safeParse(
+          (part as unknown as { data: unknown }).data,
+        );
+        if (parsed.success) status = parsed.data;
         return [];
       }
       if (

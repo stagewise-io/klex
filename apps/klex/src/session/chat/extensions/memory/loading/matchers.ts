@@ -66,7 +66,8 @@ export function project(message: ExtendedUIMessage): Projection {
   const result: Projection = { text: [], events: [], tools: [] };
   for (const part of message.parts) {
     if (part.type === 'text') {
-      if (!/^<memory(?:\s|>)/iu.test(part.text)) result.text.push(part.text);
+      if (!/^\s*<memory(?:-update|-detail)?(?:\s|>)/iu.test(part.text))
+        result.text.push(part.text);
     } else if (part.type === 'data-context') {
       if (
         part.type === 'data-context' &&
@@ -164,6 +165,9 @@ class MatcherEngineModule implements MatcherEngine {
     { tier: number; projection: string }
   >();
   private readonly disabled = new Set<string>();
+  private worker?: Worker;
+  private workerReady = false;
+  private workerIdleTimer?: ReturnType<typeof setTimeout>;
   constructor(private readonly onTimeout: () => void) {}
   retain(projections: readonly Projection[]): void {
     const retained = new Set(
@@ -205,23 +209,48 @@ class MatcherEngineModule implements MatcherEngine {
     if (this.disabled.has(pattern)) return false;
     signal?.throwIfAborted();
     return new Promise<boolean>((resolve, reject) => {
-      const worker = new Worker(
-        `const {parentPort}=require('node:worker_threads'); parentPort.once('message', ({pattern,value}) => { try { parentPort.postMessage(new RegExp(pattern).test(value)); } catch { parentPort.postMessage(false); } }); parentPort.postMessage('ready');`,
-        {
-          eval: true,
-          resourceLimits: { maxOldGenerationSizeMb: 16 },
-        },
-      );
+      clearTimeout(this.workerIdleTimer);
+      const worker =
+        this.worker ??
+        new Worker(
+          `const {parentPort}=require('node:worker_threads'); parentPort.on('message', ({pattern,value}) => { try { parentPort.postMessage(new RegExp(pattern).test(value)); } catch { parentPort.postMessage(false); } }); parentPort.postMessage('ready');`,
+          {
+            eval: true,
+            resourceLimits: { maxOldGenerationSizeMb: 16 },
+          },
+        );
+      this.worker = worker;
+      worker.ref();
       let settled = false;
-      const cleanup = () => {
+      const cleanup = (reuse = false) => {
         clearTimeout(timer);
         signal?.removeEventListener('abort', abort);
-        void worker.terminate();
+        worker.removeAllListeners();
+        if (reuse) {
+          worker.unref();
+          this.workerIdleTimer = setTimeout(() => {
+            if (this.worker !== worker) return;
+            this.worker = undefined;
+            this.workerReady = false;
+            void worker.terminate();
+          }, 1000);
+          this.workerIdleTimer.unref();
+          worker.once('error', () => {
+            if (this.worker === worker) {
+              this.worker = undefined;
+              this.workerReady = false;
+            }
+          });
+        } else {
+          this.worker = undefined;
+          this.workerReady = false;
+          void worker.terminate();
+        }
       };
       const finish = (answer: boolean) => {
         if (settled) return;
         settled = true;
-        cleanup();
+        cleanup(true);
         resolve(answer);
       };
       const abort = () => {
@@ -237,16 +266,24 @@ class MatcherEngineModule implements MatcherEngine {
         cleanup();
         reject(new Error('Memory matcher worker failed to become ready'));
       }, 10000);
+      worker.removeAllListeners();
+      const run = () => {
+        clearTimeout(timer);
+        timer = setTimeout(() => {
+          this.disabled.add(pattern);
+          this.onTimeout();
+          if (settled) return;
+          settled = true;
+          cleanup();
+          resolve(false);
+        }, 150);
+        worker.postMessage({ value, pattern });
+      };
       worker.on('message', (answer) => {
         if (settled) return;
         if (answer === 'ready') {
-          clearTimeout(timer);
-          timer = setTimeout(() => {
-            this.disabled.add(pattern);
-            this.onTimeout();
-            finish(false);
-          }, 150);
-          worker.postMessage({ value, pattern });
+          this.workerReady = true;
+          run();
         } else finish(answer === true);
       });
       const fail = (error: Error) => {
@@ -263,6 +300,7 @@ class MatcherEngineModule implements MatcherEngine {
       );
       signal?.addEventListener('abort', abort, { once: true });
       if (signal?.aborted) abort();
+      else if (this.workerReady) run();
     });
   }
   async match(

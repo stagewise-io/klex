@@ -44,7 +44,7 @@ export interface MemoryLoader {
     signal?: AbortSignal,
   ): Promise<ExtendedUIMessage['parts']>;
   readonly tools: ToolSet;
-  idle(): ExtendedUIMessage['parts'];
+  idle(history?: readonly ExtendedUIMessage[]): ExtendedUIMessage['parts'];
   commit(parts: ExtendedUIMessage['parts']): void;
   carry(
     history?: readonly ExtendedUIMessage[],
@@ -58,6 +58,7 @@ export interface MemoryLoaderDependencies {
 class MemoryLoaderModule implements MemoryLoader {
   private readonly matcher: MatcherEngine;
   private skillContext: SkillContext;
+  private lastSkills: Awaited<ReturnType<LoadingSkills['snapshot']>> = [];
   private readonly prepared = new WeakMap<
     ExtendedUIMessage['parts'],
     { context: SkillContext; history: readonly ExtendedUIMessage[] }
@@ -151,7 +152,16 @@ class MemoryLoaderModule implements MemoryLoader {
     };
   }
   private lastHistory: readonly ExtendedUIMessage[] = [];
-  idle(): ExtendedUIMessage['parts'] {
+  idle(history = this.lastHistory): ExtendedUIMessage['parts'] {
+    this.skillContext.initialize(history);
+    this.skillContext.observe(
+      history.map((message) => ({
+        id: message.id,
+        projection: createHash('sha256')
+          .update(JSON.stringify(project(message)))
+          .digest('hex'),
+      })),
+    );
     this.skillContext.idle();
     return this.skillContext
       .parts([])
@@ -160,7 +170,14 @@ class MemoryLoaderModule implements MemoryLoader {
   async carry(history = this.lastHistory): Promise<ExtendedUIMessage['parts']> {
     this.skillContext.initialize(history);
     const window = randomUUID();
-    const skills = await this.deps.skills.snapshot();
+    // A temporarily unavailable registry must not block compaction or discard subscriptions.
+    const skills = await this.deps.skills
+      .snapshot()
+      .then((skills) => {
+        this.lastSkills = skills;
+        return skills;
+      })
+      .catch(() => this.lastSkills);
     return [
       ...this.skillContext.parts(skills, window),
       createDataPart(
@@ -195,6 +212,7 @@ class MemoryLoaderModule implements MemoryLoader {
         return null;
       }),
     ]);
+    if (skills) this.lastSkills = skills;
     const projections = history.map((message) => {
       const source = createHash('sha256')
         .update(

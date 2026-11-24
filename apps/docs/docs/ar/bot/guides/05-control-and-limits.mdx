@@ -1,0 +1,60 @@
+---
+title: التحكم في Klex Bot
+sidebar:
+  label: التحكم
+description: أوقف Klex Bot وأدر وصوله إلى أجهزة الكمبيوتر والتطبيقات المتصلة.
+related:
+  - /ar/bot/guides/observability
+  - /ar/bot/concepts/brain-and-computers
+  - /ar/guides/secure-bot-usage
+---
+
+يمكنك إيقاف Klex Bot وإدارة ما يمكنه الوصول إليه من خلال اتصالاته وحساباته.
+
+<a id="run-a-self-hosted-bot-without-the-picker"></a>
+<a id="stop-a-bot"></a>
+
+## إيقاف Bot
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="مستضاف على السحابة">
+
+افتح Bot في Klex Cloud واختر **Stop** من عناصر التحكم في الاستضافة.
+
+</Tab>
+<Tab title="مستضاف ذاتيًا">
+
+لإيقاف Bot يعمل في التطبيق، أغلق التطبيق.
+
+<a id="stop-a-headless-bot"></a>
+
+لإيقاف Bot يعمل دون واجهة، استخدم أمر الإيقاف في مدير الخدمات. إذا كانت العملية خاضعة للإشراف، اضبطها بحيث لا يُعاد تشغيل Bot فورًا.
+
+</Tab>
+</Tabs>
+
+<a id="manage-access"></a>
+
+## إدارة الوصول
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="مستضاف على السحابة">
+
+افتح **Connectors** الخاص بـ Bot في Klex Cloud لإدارة اتصالاته.
+
+</Tab>
+<Tab title="مستضاف ذاتيًا">
+
+في تطبيق Klex، استخدم **Settings → MCP Servers** لفحص خادم أو تعديله أو إزالته. راجع [MCP وKlex Bots](/ar/bot/concepts/mcp#add-a-remote-server-in-the-self-hosted-app) للخطوات والتنبيه بشأن إلغاء تفويض OAuth.
+
+</Tab>
+</Tabs>
+
+اضبط أذونات الحسابات والتطبيقات التي يستخدمها Bot مباشرةً في تلك الحسابات والتطبيقات. راجع [الاتصالات بأجهزة الكمبيوتر والتطبيقات](/ar/bot/concepts/brain-and-computers) لمعرفة العلاقة بين الاتصالات وأذونات الحسابات.
+
+لا يدعم Klex حاليًا الموافقة على الإجراءات الفردية أو تقييدها. اضبط أذونات حسابات Bot وتطبيقاته وفقًا لذلك.
+
+يمكنك أيضًا [مراجعة نشاط Bot](/ar/bot/guides/observability) في لوحة التحكم.
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

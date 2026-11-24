@@ -1,0 +1,60 @@
+---
+title: 控制你的 Klex Bot
+sidebar:
+  label: 控制
+description: 停止 Klex Bot 并管理它对所连接的计算机和应用的访问。
+related:
+  - /zh/bot/guides/observability
+  - /zh/bot/concepts/brain-and-computers
+  - /zh/guides/secure-bot-usage
+---
+
+你可以停止 Klex Bot，也可以通过其连接和账户管理它能访问的内容。
+
+<a id="run-a-self-hosted-bot-without-the-picker"></a>
+<a id="stop-a-bot"></a>
+
+## 停止 Bot
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="云托管">
+
+在 Klex Cloud 中打开你的 Bot，在托管控制项中选择 **Stop**。
+
+</Tab>
+<Tab title="自托管">
+
+要停止在应用中运行的 Bot，请关闭应用。
+
+<a id="stop-a-headless-bot"></a>
+
+对于无界面 Bot，请使用服务管理器的停止命令。如果进程受到监管，请配置服务管理器，避免 Bot 立即重启。
+
+</Tab>
+</Tabs>
+
+<a id="manage-access"></a>
+
+## 管理访问权限
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="云托管">
+
+在 Klex Cloud 中打开 Bot 的 **Connectors** 来管理连接。
+
+</Tab>
+<Tab title="自托管">
+
+在 Klex 应用中，使用 **Settings → MCP Servers** 查看、编辑或移除服务器。具体步骤和撤销 OAuth 授权的注意事项，请参阅 [MCP 与 Klex Bot](/zh/bot/concepts/mcp#add-a-remote-server-in-the-self-hosted-app)。
+
+</Tab>
+</Tabs>
+
+直接在 Bot 使用的账户和应用中配置其权限。有关连接与账户权限之间的关系，请参阅[连接计算机和应用](/zh/bot/concepts/brain-and-computers)。
+
+Klex 目前不支持对单个操作进行审批或限制。请相应配置 Bot 的账户和应用权限。
+
+你也可以在仪表板中[查看 Bot 的活动](/zh/bot/guides/observability)。
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

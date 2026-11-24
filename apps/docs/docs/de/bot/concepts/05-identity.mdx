@@ -11,10 +11,26 @@ related:
 
 Ein Klex Bot hat einen Namen und eine [Soul](/bot/concepts/soul), die seinen Charakter und seine Prioritäten beschreibt. Seine verbundenen Konten bestimmen, wie er in externen Apps auftritt und worauf er dort zugreifen kann.
 
-In der selbst gehosteten Klex-App zeigt **Settings → Bot Identity** den offiziellen Namen des Bots an. Dort können Sie ihn auch ändern. Der konfigurierte Name ist Teil des Sitzungskontexts des Bots.
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Cloud-gehostet">
+
+Öffnen Sie Ihren Bot in Klex Cloud und wählen Sie neben seinem Namen **Edit bot**. Der Bot muss verbunden sein und Sie benötigen Eigentümer- oder Administratorrechte für die Organisation. Ändern Sie das Feld **Name**.
+
+</Tab>
+<Tab title="Selbst gehostet">
+
+In der Klex-App zeigt **Settings → Bot Identity** den offiziellen Namen des Bots an. Dort können Sie ihn auch ändern.
+
+</Tab>
+</Tabs>
+
+Der konfigurierte Name ist Teil des Sitzungskontexts des Bots.
 
 <a id="identity-in-connected-apps"></a>
 
 ## Identität in verbundenen Apps
 
 In den meisten verbundenen Apps handelt ein Bot über ein eigenes Konto. Richten Sie dessen Berechtigungen in der jeweiligen App ein. Wie Sie Umgebungen verbinden, erfahren Sie unter [Verbindungen](/bot/concepts/brain-and-computers).
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

@@ -56,6 +56,12 @@ import type { SessionHistory, SessionHistoryRecorder } from '@/session-history';
 import { summarizeGenerationFailure } from '@/session-history/generation-health';
 import type { SkillRegistry } from '@/skills';
 import type { TelemetryMetrics } from '@/telemetry-metrics';
+import {
+  type ConversationEpochOptions,
+  type ConversationEpochTracker,
+  createConversationEpochTracker,
+  isBackgroundHousekeepingExtension,
+} from '@/tracing';
 
 import { type CheckpointManager, createCheckpointManager } from './checkpoint';
 import {
@@ -154,6 +160,16 @@ export interface ChatSessionDependencies {
    * the session; `messages` stays the runtime source of truth.
    */
   sessionHistory?: SessionHistory;
+  /** Optional overrides for bounded conversation epoch rollover (primarily for tests). */
+  conversationEpochOptions?: ConversationEpochOptions;
+}
+
+function shouldBoundConversation(sessionContext: SessionContext): boolean {
+  return (
+    sessionContext.kind === 'default' ||
+    sessionContext.boundedConversation === true ||
+    sessionContext.name === 'memory-retrieval'
+  );
 }
 
 function runtimeStateValue(state: SessionRuntimeState): number {
@@ -242,6 +258,8 @@ class ChatSessionModule implements AgentSession {
   readonly instanceId: string = randomUUID();
 
   private readonly transcriptRecorder: SessionHistoryRecorder | undefined;
+
+  private readonly conversationEpoch: ConversationEpochTracker | undefined;
 
   private readonly checkpointManager: CheckpointManager;
 
@@ -354,9 +372,16 @@ class ChatSessionModule implements AgentSession {
       productAnalytics?: ProductAnalyticsRecorder;
       parentSpanContext?: SpanContext;
       sessionHistory?: SessionHistory;
+      conversationEpochOptions?: ConversationEpochOptions;
     },
   ) {
     this.sessionId = deps.sessionContext.sessionId;
+    this.conversationEpoch = shouldBoundConversation(deps.sessionContext)
+      ? createConversationEpochTracker({
+          initialEpochId: this.instanceId.replace(/-/g, '').slice(0, 12),
+          ...deps.conversationEpochOptions,
+        })
+      : undefined;
     this.transcriptRecorder = deps.sessionHistory?.openRecorder({
       instanceId: this.instanceId,
       sessionId: this.sessionId,
@@ -517,7 +542,10 @@ class ChatSessionModule implements AgentSession {
       messages: this.messages,
       extensionHandler: () => this.extensionHandler,
       recorder: this.transcriptRecorder,
-      onApplied: () => this.scheduleTranscriptSync(),
+      onApplied: (checkpointId) => {
+        this.conversationEpoch?.onCheckpointApplied(checkpointId);
+        this.scheduleTranscriptSync();
+      },
       isClosed: () => this._status === 'terminated',
       isAbandoned: () => this.checkpointApplyAbandoned,
     });
@@ -738,6 +766,25 @@ class ChatSessionModule implements AgentSession {
     // restored messages without knowing their rows.
     this.transcriptRecorder?.seed(window);
     this.messages.unshift(...window.entries.map((entry) => entry.message));
+    if (this.conversationEpoch) {
+      const checkpointId = window.hasCheckpoint
+        ? window.entries[0]?.message.id
+        : undefined;
+      const restoredGenerations = window.entries.filter(
+        (entry) => !entry.isCheckpoint && entry.message.role === 'assistant',
+      ).length;
+      const lastPersisted = window.entries.at(-1)?.persistedAt;
+      const parsedLastActivity = lastPersisted
+        ? Date.parse(lastPersisted)
+        : Number.NaN;
+      this.conversationEpoch.restoreFromWindow({
+        checkpointId,
+        restoredGenerations,
+        lastActivityAt: Number.isFinite(parsedLastActivity)
+          ? parsedLastActivity
+          : null,
+      });
+    }
     this.scheduleTranscriptSync();
     this.sessionSpan.addEvent('session.window_restored', {
       'klex.session.restored_count': window.entries.length,
@@ -837,6 +884,11 @@ class ChatSessionModule implements AgentSession {
               const providerOptions = resolved.providerOptions as
                 | Record<string, JSONObject>
                 | undefined;
+              const conversationEpoch = isBackgroundHousekeepingExtension(
+                extensionIdentifier,
+              )
+                ? undefined
+                : this.conversationEpoch?.beginGeneration();
               const result = await generateText({
                 model,
                 system: args.system,
@@ -866,6 +918,9 @@ class ChatSessionModule implements AgentSession {
                   recordOutputs: true,
                   includeRuntimeContext: {
                     'conversation.id': true,
+                    ...(conversationEpoch !== undefined && {
+                      'conversation.epoch': true,
+                    }),
                     'conversation.providerType': true,
                     'conversation.providerId': true,
                     'conversation.modelId': true,
@@ -873,6 +928,9 @@ class ChatSessionModule implements AgentSession {
                 },
                 runtimeContext: {
                   'conversation.id': this.sessionId,
+                  ...(conversationEpoch !== undefined && {
+                    'conversation.epoch': conversationEpoch,
+                  }),
                   'conversation.providerType': resolved.providerType,
                   'conversation.providerId': resolved.providerId,
                   'conversation.modelId': resolved.modelId,
@@ -1265,6 +1323,7 @@ class ChatSessionModule implements AgentSession {
         tools: this.leaseTools ?? {},
         modelMessages: [],
         sessionId: this.sessionId,
+        getConversationEpoch: () => this.conversationEpoch?.currentEpochId(),
         validateInput: true,
         recordToolCall: (toolName, success, durationMs, errorType) =>
           this.deps.telemetryMetrics?.recordToolCall(
@@ -1483,9 +1542,16 @@ class ChatSessionModule implements AgentSession {
         // If needsCheckRetry is true, the turn injects a data-check message
         // prompting the model to review input that no clean step of the
         // previous turn consumed.
+        const conversationEpoch = this.conversationEpoch;
         const turn = createTurn({
           logger: this.deps.logger,
           sessionId: this.sessionId,
+          ...(conversationEpoch
+            ? {
+                beginConversationGeneration: () =>
+                  conversationEpoch.beginGeneration(),
+              }
+            : {}),
           telemetryMetrics: this.deps.telemetryMetrics,
           sessionContext: this.sessionContext,
           sessionSpan: this.sessionSpan,
@@ -2150,6 +2216,9 @@ class ChatSessionModule implements AgentSession {
       parentId: this.sessionId,
       parentInstanceId: this.instanceId,
       extensionIdentifier: options.extensionIdentifier,
+      ...(options.boundedConversation !== undefined && {
+        boundedConversation: options.boundedConversation,
+      }),
     };
 
     // Create a child-sessions introspection scope lazily.
@@ -2259,5 +2328,8 @@ export function createChatSession(
     basePrompt: deps.basePrompt,
     parentSpanContext: deps.parentSpanContext,
     sessionHistory: deps.sessionHistory,
+    ...(deps.conversationEpochOptions !== undefined && {
+      conversationEpochOptions: deps.conversationEpochOptions,
+    }),
   });
 }

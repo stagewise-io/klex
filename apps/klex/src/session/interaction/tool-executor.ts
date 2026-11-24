@@ -124,6 +124,8 @@ export class ToolExecutor implements SessionToolRuntime {
       tools: ToolSet;
       modelMessages: readonly ModelMessage[];
       sessionId: string;
+      /** Active bounded conversation epoch for `execute_tool` spans. */
+      getConversationEpoch?: () => string | undefined;
       timeoutMs?: number;
       validateInput?: boolean;
       /** Maximum serialized JSON size of one tool result. */
@@ -162,6 +164,7 @@ export class ToolExecutor implements SessionToolRuntime {
     request: InteractionToolRequest,
   ): Promise<InteractionToolResult> {
     const startedAt = performance.now();
+    const conversationEpoch = this.deps.getConversationEpoch?.();
     const toolSpan = trace
       .getTracer('klex')
       .startSpan(`execute_tool ${request.name}`, {
@@ -171,6 +174,9 @@ export class ToolExecutor implements SessionToolRuntime {
           'gen_ai.tool.call.id': request.executionId,
           'gen_ai.tool.type': 'function',
           'klex.session.id': this.deps.sessionId,
+          ...(conversationEpoch !== undefined
+            ? { 'klex.conversation.epoch': conversationEpoch }
+            : {}),
         },
       });
     const toolContext = trace.setSpan(context.active(), toolSpan);

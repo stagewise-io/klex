@@ -93,6 +93,7 @@ class TracingModule implements Tracing {
         // Runs first so Klex-owned GenAI spans carry their identity before
         // the policy processor sees them.
         new GenAiIdentitySpanProcessor({
+          agentName: deps.agentName,
           getAgentId: deps.getAgentId,
           fallbackAgentId: deps.fallbackAgentId,
         }),

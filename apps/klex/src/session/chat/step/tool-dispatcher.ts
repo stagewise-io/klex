@@ -40,6 +40,8 @@ export class ToolDispatcher {
       toolTimeoutMs?: number;
       /** UUID of the session that owns this dispatcher. */
       sessionId: string;
+      /** Active bounded conversation epoch for `execute_tool` spans. */
+      getConversationEpoch?: () => string | undefined;
       recordToolCall?: (
         toolName: string,
         success: boolean,
@@ -53,6 +55,9 @@ export class ToolDispatcher {
       tools: deps.tools,
       modelMessages: deps.modelMessages,
       sessionId: deps.sessionId,
+      ...(deps.getConversationEpoch !== undefined && {
+        getConversationEpoch: deps.getConversationEpoch,
+      }),
       ...(deps.toolTimeoutMs !== undefined && {
         timeoutMs: deps.toolTimeoutMs,
       }),

@@ -265,6 +265,12 @@ export interface SessionContext {
   parentInstanceId?: string;
   /** Extension identifier that owns a child session. */
   extensionIdentifier?: string;
+  /**
+   * Rotate `gen_ai.conversation.id` across bounded epochs (compaction
+   * checkpoints, generation cap, and idle gap). Enabled automatically for
+   * `default` and `memory-retrieval` sessions.
+   */
+  boundedConversation?: boolean;
 }
 
 /**
@@ -292,6 +298,11 @@ export interface ChildSessionOptions {
   basePrompt: string;
   /** Lifecycle callbacks owned by the extension that spawned the child. */
   hooks?: SessionHooks;
+  /**
+   * Rotate exported `gen_ai.conversation.id` epochs for long-lived child
+   * sessions so telemetry stays well below backend conversation limits.
+   */
+  boundedConversation?: boolean;
 }
 
 /**

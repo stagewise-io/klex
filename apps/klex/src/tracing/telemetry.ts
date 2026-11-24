@@ -21,6 +21,11 @@ import type { ModelCallRecord, ModelCallSource } from '@/model-call-logger';
 import { DEFAULT_SESSION_ID } from '@/session/types';
 import { normalizeAgentName } from '@/telemetry-resource';
 
+import {
+  boundConversationIdLength,
+  isBackgroundHousekeepingExtension,
+} from './conversation-epoch';
+
 type TelemetryStartEvent = Parameters<NonNullable<Telemetry['onStart']>>[0];
 type TelemetryEndEvent = Parameters<NonNullable<Telemetry['onEnd']>>[0];
 type OtelStartEvent = Parameters<OpenTelemetry['onStart']>[0];
@@ -93,6 +98,7 @@ interface CallIdentity {
   source: ModelCallSource;
   extensionId: string | null;
   conversationId: string | undefined;
+  conversationEpoch: string | undefined;
   compacted: boolean | undefined;
   providerType: string | undefined;
   providerId: string | undefined;
@@ -132,6 +138,7 @@ function resolveCallIdentity(event: {
       ? (event.functionId?.slice(EXTENSION_FUNCTION_PREFIX.length) ?? null)
       : null,
     conversationId: stringField(runtimeContext, 'conversation.id'),
+    conversationEpoch: stringField(runtimeContext, 'conversation.epoch'),
     compacted: typeof compacted === 'boolean' ? compacted : undefined,
     providerType:
       stringField(runtimeContext, 'conversation.providerType') ??
@@ -168,18 +175,34 @@ export interface KlexOpenTelemetryOptions {
   fallbackAgentId?: string;
 }
 
+interface CallSpanContext {
+  base: Attributes;
+  recordIdentity: Attributes;
+  recordInAgentO11y: boolean;
+}
+
 /**
  * `@ai-sdk/otel` spans (`invoke_agent` → `step` → `chat` → `execute_tool`)
  * in the GenAI semantic-convention format, plus Klex identity on every span
- * of a call. Grafana Agent Observability keeps `gen_ai.*` content only on
- * spans marked `agento11y.record=true`.
+ * of a call.
+ *
+ * Grafana Agent Observability records a Sigil generation for every span with
+ * `agento11y.record=true` and `gen_ai.operation.name` in `{chat, invoke_agent,
+ * ...}`. To avoid 2x double-ingestion and split agent labels (`chat` spans do
+ * not receive `gen_ai.agent.name` from `@ai-sdk/otel`), only `languageModel`
+ * (`chat`) and `tool` (`execute_tool`) spans receive `agento11y.record=true`,
+ * `gen_ai.conversation.id`, `gen_ai.agent.id`, and explicit
+ * `gen_ai.agent.name`. Wrapper spans (`operation` / `invoke_agent`, `step` /
+ * `agent_step`) and background housekeeping extension calls receive
+ * `agento11y.record=false` so they remain visible in Tempo without duplicating
+ * or cluttering Sigil conversations.
  *
  * Content is captured only while `contentAllowed` returns true, so content
  * is not even serialized below `debug`. `gen_ai.agent.name` is the configured
  * agent name instead of the AI SDK `functionId`.
  */
 export class KlexOpenTelemetry extends OpenTelemetry {
-  private readonly callAttributes: Map<string, Attributes>;
+  private readonly callContexts: Map<string, CallSpanContext>;
   private readonly evaluationTracer: Tracer;
   private readonly evaluationSpans = new Map<
     string,
@@ -191,12 +214,29 @@ export class KlexOpenTelemetry extends OpenTelemetry {
   private readonly fallbackAgentId: string | undefined;
 
   constructor(tracer: Tracer, options: KlexOpenTelemetryOptions = {}) {
-    const callAttributes = new Map<string, Attributes>();
+    const callContexts = new Map<string, CallSpanContext>();
     super({
       tracer,
-      enrichSpan: ({ callId }) => callAttributes.get(callId),
+      enrichSpan: ({ spanType, callId }) => {
+        const call = callContexts.get(callId);
+        if (!call) return undefined;
+        if (
+          (spanType === 'languageModel' || spanType === 'tool') &&
+          call.recordInAgentO11y
+        ) {
+          return {
+            ...call.base,
+            ...call.recordIdentity,
+            'agento11y.record': true,
+          };
+        }
+        return {
+          ...call.base,
+          'agento11y.record': false,
+        };
+      },
     });
-    this.callAttributes = callAttributes;
+    this.callContexts = callContexts;
     this.evaluationTracer = tracer;
     this.agentName = normalizeAgentName(options.agentName ?? '');
     this.contentAllowed = options.contentAllowed ?? (() => false);
@@ -204,51 +244,58 @@ export class KlexOpenTelemetry extends OpenTelemetry {
     this.fallbackAgentId = options.fallbackAgentId;
   }
 
-  private spanAttributes(
+  private buildCallContext(
     event: OtelStartEvent | EvaluateStartEvent,
-  ): Attributes {
+  ): CallSpanContext {
     const identity = resolveCallIdentity({
       functionId: event.functionId,
       runtimeContext: eventField(event, 'runtimeContext'),
       provider: stringOrUndefined(eventField(event, 'provider')),
       modelId: stringOrUndefined(eventField(event, 'modelId')),
     });
-    const attributes: Attributes = {
-      'agento11y.record': true,
+    const base: Attributes = {
       'klex.call.source': identity.source,
       'klex.model.api':
         event.operationId === 'ai.evaluate' ? 'evaluation' : 'generation',
     };
     if (TEXT_OPERATIONS.has(event.operationId)) {
-      attributes['gen_ai.request.stream'] =
-        event.operationId === 'ai.streamText';
+      base['gen_ai.request.stream'] = event.operationId === 'ai.streamText';
     }
     if (identity.extensionId) {
-      attributes['klex.extension.id'] = identity.extensionId;
-    }
-    const agentId = resolveAgentId(this.getAgentId);
-    if (agentId) attributes['gen_ai.agent.id'] = agentId;
-    if (identity.conversationId) {
-      attributes['gen_ai.conversation.id'] = exportedConversationId(
-        identity.conversationId,
-        agentId || this.fallbackAgentId,
-      );
+      base['klex.extension.id'] = identity.extensionId;
     }
     if (identity.compacted != null) {
-      attributes['klex.conversation.compacted'] = identity.compacted;
+      base['klex.conversation.compacted'] = identity.compacted;
     }
     if (identity.providerType) {
-      attributes['klex.model.provider_type'] = identity.providerType;
+      base['klex.model.provider_type'] = identity.providerType;
     }
     if (identity.providerId) {
-      attributes['klex.model.provider_id'] = identity.providerId;
+      base['klex.model.provider_id'] = identity.providerId;
     }
-    if (identity.modelId) attributes['klex.model.model_id'] = identity.modelId;
-    return attributes;
+    if (identity.modelId) base['klex.model.model_id'] = identity.modelId;
+
+    const recordInAgentO11y = !isBackgroundHousekeepingExtension(
+      identity.extensionId,
+    );
+    const recordIdentity: Attributes = {};
+    if (recordInAgentO11y) {
+      const agentId = resolveAgentId(this.getAgentId);
+      if (agentId) recordIdentity['gen_ai.agent.id'] = agentId;
+      if (this.agentName) recordIdentity['gen_ai.agent.name'] = this.agentName;
+      if (identity.conversationId) {
+        recordIdentity['gen_ai.conversation.id'] = exportedConversationId(
+          identity.conversationId,
+          agentId || this.fallbackAgentId,
+          identity.conversationEpoch,
+        );
+      }
+    }
+    return { base, recordIdentity, recordInAgentO11y };
   }
 
   override onStart(event: OtelStartEvent): void {
-    this.callAttributes.set(event.callId, this.spanAttributes(event));
+    this.callContexts.set(event.callId, this.buildCallContext(event));
     const contentAllowed = this.contentAllowed();
     super.onStart(
       withFields(event, {
@@ -261,25 +308,30 @@ export class KlexOpenTelemetry extends OpenTelemetry {
 
   override onEnd(event: OtelEndEvent): void {
     super.onEnd(event);
-    this.callAttributes.delete(event.callId);
+    this.callContexts.delete(event.callId);
   }
 
   override onAbort(event: OtelAbortEvent): void {
     super.onAbort(event);
-    this.callAttributes.delete(event.callId);
+    this.callContexts.delete(event.callId);
   }
 
   // Evaluation uses one bounded span with sanitized diagnostics and explicit
   // content gating; the SDK's generic error recorder includes raw exceptions.
   override experimental_onEvaluateStart(event: EvaluateStartEvent): void {
+    const call = this.buildCallContext(event);
     const attributes: Attributes = {
-      ...this.spanAttributes(event),
+      ...call.base,
+      ...(call.recordInAgentO11y ? call.recordIdentity : {}),
+      'agento11y.record': call.recordInAgentO11y,
       'gen_ai.operation.name': 'evaluate',
       'gen_ai.provider.name': mapProviderName(event.provider),
       'gen_ai.request.model': event.modelId,
       'klex.model.api': 'evaluation',
     };
-    if (this.agentName) attributes['gen_ai.agent.name'] = this.agentName;
+    if (this.agentName && attributes['gen_ai.agent.name'] === undefined) {
+      attributes['gen_ai.agent.name'] = this.agentName;
+    }
     if (this.contentAllowed() && event.recordInputs !== false) {
       attributes['klex.evaluation.input.content'] = JSON.stringify(event.state);
       attributes['klex.evaluation.questions.content'] = JSON.stringify(
@@ -352,7 +404,7 @@ export class KlexOpenTelemetry extends OpenTelemetry {
       typeof error === 'object' && error !== null
         ? eventField(error, 'callId')
         : undefined;
-    if (typeof callId === 'string') this.callAttributes.delete(callId);
+    if (typeof callId === 'string') this.callContexts.delete(callId);
   }
 }
 
@@ -378,37 +430,47 @@ function resolveAgentId(
 }
 
 /**
- * `gen_ai.conversation.id` for a Klex session id. Grafana Agent Observability
- * groups conversations by this id alone, and every agent's default session is
- * `default`, so the exported default id is scoped by agent:
- * `default:{agentId}`. Other session ids are UUIDs and are exported unchanged.
+ * `gen_ai.conversation.id` for a Klex session id and optional bounded epoch.
+ * Grafana Agent Observability groups conversations by this id alone, and every
+ * agent's default session is `default`, so the exported default id is scoped
+ * by agent (`default:{agentId}` or `default:{agentId}:{epochId}`). Long-lived
+ * child sessions append `:{epochId}` as well; short-lived child sessions keep
+ * their UUID unchanged. Output is bounded to 255 characters for Sigil.
  */
 export function exportedConversationId(
   sessionId: string,
   agentId: string | null | undefined,
+  epochId?: string | null,
 ): string {
-  return sessionId === DEFAULT_SESSION_ID && agentId
-    ? `${DEFAULT_SESSION_ID}:${agentId}`
-    : sessionId;
+  const base =
+    sessionId === DEFAULT_SESSION_ID && agentId
+      ? `${DEFAULT_SESSION_ID}:${agentId}`
+      : sessionId;
+  const scoped = epochId ? `${base}:${epochId}` : base;
+  return boundConversationIdLength(scoped);
 }
 
 /**
  * Gives GenAI spans that Klex creates itself (session `execute_tool` spans)
  * the Agent Observability marker and identity that {@link KlexOpenTelemetry}
- * puts on AI SDK spans. AI SDK spans carry the marker from the start and are
- * left unchanged. `gen_ai.conversation.id` is derived from the Klex session id
- * as on AI SDK spans (see {@link exportedConversationId}).
+ * puts on AI SDK `chat` spans. AI SDK spans carry an explicit
+ * `agento11y.record` flag from the start (`true` on `chat`, `false` on
+ * wrappers and excluded background calls) and are left unchanged.
+ * `gen_ai.conversation.id` is derived from `klex.session.id` and optional
+ * `klex.conversation.epoch` (see {@link exportedConversationId}).
  */
 export class GenAiIdentitySpanProcessor implements SpanProcessor {
+  private readonly agentName: string;
   private readonly getAgentId: () => string | null | undefined;
   private readonly fallbackAgentId: string | undefined;
 
   constructor(
     options: Pick<
       KlexOpenTelemetryOptions,
-      'getAgentId' | 'fallbackAgentId'
+      'agentName' | 'getAgentId' | 'fallbackAgentId'
     > = {},
   ) {
+    this.agentName = normalizeAgentName(options.agentName ?? '');
     this.getAgentId = options.getAgentId ?? (() => null);
     this.fallbackAgentId = options.fallbackAgentId;
   }
@@ -422,14 +484,25 @@ export class GenAiIdentitySpanProcessor implements SpanProcessor {
     if (agentId && attributes['gen_ai.agent.id'] === undefined) {
       span.setAttribute('gen_ai.agent.id', agentId);
     }
+    if (this.agentName && attributes['gen_ai.agent.name'] === undefined) {
+      span.setAttribute('gen_ai.agent.name', this.agentName);
+    }
     const sessionId = attributes['klex.session.id'];
     if (
       typeof sessionId === 'string' &&
       attributes['gen_ai.conversation.id'] === undefined
     ) {
+      const epochId =
+        typeof attributes['klex.conversation.epoch'] === 'string'
+          ? attributes['klex.conversation.epoch']
+          : undefined;
       span.setAttribute(
         'gen_ai.conversation.id',
-        exportedConversationId(sessionId, agentId || this.fallbackAgentId),
+        exportedConversationId(
+          sessionId,
+          agentId || this.fallbackAgentId,
+          epochId,
+        ),
       );
     }
   }

@@ -48,6 +48,8 @@ export interface GenerationRunnerDependencies {
   allowEmptyStop?: boolean;
   logger: ModuleLogger;
   sessionId: string;
+  /** Advances and returns the bounded conversation epoch for each generation attempt. */
+  beginConversationGeneration?: () => string;
   telemetryMetrics?: TelemetryMetrics;
   stepSpan: Span;
   modelMessages: ModelMessage[];
@@ -145,11 +147,13 @@ export class GenerationRunner {
       this.deps.allowEmptyStop ?? this.isPostToolContinuation();
     let emptyStop = false;
 
+    let activeConversationEpoch: string | undefined;
     const toolDispatcher = new ToolDispatcher({
       logger: this.deps.logger,
       tools: this.deps.tools,
       modelMessages: this.deps.modelMessages,
       sessionId: this.deps.sessionId,
+      getConversationEpoch: () => activeConversationEpoch,
       recordToolCall: (toolName, success, durationMs, errorType) =>
         this.deps.telemetryMetrics?.recordToolCall(
           this.deps.sessionId,
@@ -213,6 +217,7 @@ export class GenerationRunner {
         'generation.deadline.idleMs': deadlines.idleMs,
       });
       const watchdog = new StreamWatchdog(deadlines);
+      activeConversationEpoch = this.deps.beginConversationGeneration?.();
 
       try {
         const response = await runStreamedGeneration({
@@ -238,6 +243,9 @@ export class GenerationRunner {
             modelId: currentModelId,
           },
           sessionId: this.deps.sessionId,
+          ...(activeConversationEpoch !== undefined && {
+            conversationEpoch: activeConversationEpoch,
+          }),
           compacted: this.deps.compacted,
           extensionSystemPromptParts: this.deps.extensionSystemPromptParts,
           basePrompt: this.deps.basePrompt,

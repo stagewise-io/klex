@@ -469,6 +469,7 @@ class MemoryRetrievalCoordinatorImpl implements MemoryRetrievalCoordinator {
       ],
       basePrompt: `${retrievalPrompt.trimEnd()}\n\n${LINES_FORMAT_PROMPT}`,
       modelPurpose,
+      boundedConversation: true,
     });
   }
 }

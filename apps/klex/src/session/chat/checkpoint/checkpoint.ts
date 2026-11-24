@@ -98,8 +98,8 @@ export interface CheckpointManagerDependencies {
   > &
     Partial<Pick<ExtensionHandler, 'runCheckpointAppliedHooks'>>;
   recorder?: SessionHistoryRecorder;
-  /** Called after the window was trimmed. */
-  onApplied?: () => void;
+  /** Called after the window was trimmed with the new checkpoint header ID. */
+  onApplied?: (checkpointId: string) => void;
   /** No new apply starts once this returns true. */
   isClosed?: () => boolean;
   /**
@@ -323,7 +323,7 @@ class CheckpointManagerModule implements CheckpointManager {
       },
       'Checkpoint applied — window trimmed',
     );
-    this.deps.onApplied?.();
+    this.deps.onApplied?.(header.id);
     void this.deps
       .extensionHandler()
       .runCheckpointAppliedHooks?.({

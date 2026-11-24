@@ -59,6 +59,8 @@ export interface RunStreamedGenerationParams {
   };
   /** UUID of the session instance — passed to telemetry via runtimeContext. */
   sessionId: string;
+  /** Active bounded conversation epoch forwarded to telemetry for `gen_ai.conversation.id`. */
+  conversationEpoch?: string;
   /** Whether the history was compacted by an extension before this generation. */
   compacted: boolean;
   /** Provider-specific options resolved from the model selection entry. */
@@ -130,6 +132,9 @@ export async function runStreamedGeneration(
       // context keys unless they are explicitly allow-listed here.
       includeRuntimeContext: {
         'conversation.id': true,
+        ...(params.conversationEpoch !== undefined && {
+          'conversation.epoch': true,
+        }),
         'conversation.compacted': true,
         'conversation.providerType': true,
         'conversation.providerId': true,
@@ -138,6 +143,9 @@ export async function runStreamedGeneration(
     },
     runtimeContext: {
       'conversation.id': params.sessionId,
+      ...(params.conversationEpoch !== undefined && {
+        'conversation.epoch': params.conversationEpoch,
+      }),
       'conversation.compacted': params.compacted,
       'conversation.providerType': params.modelContext.providerType,
       'conversation.providerId': params.modelContext.providerId,

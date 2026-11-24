@@ -11,7 +11,9 @@ related:
 
 Un bot de Klex trabaja en entornos externos conectados mediante MCP (Model Context Protocol). Un servidor MCP puede ofrecer acceso a un ordenador completo o a una aplicación como GitHub o Google Workspace. Los ordenadores también se conectan mediante MCP.
 
-Una conexión está activa o inactiva. El entorno propio del bot lo mantiene en funcionamiento y gestiona su memoria; los entornos conectados son aquellos en los que realiza su trabajo.
+El entorno propio del bot lo mantiene en funcionamiento y gestiona su memoria; los entornos conectados son aquellos en los que realiza su trabajo.
+
+<a id="choose-what-to-connect"></a>
 
 ## Elegir qué conectar
 
@@ -20,14 +22,28 @@ Una conexión está activa o inactiva. El entorno propio del bot lo mantiene en 
 
 Klex ofrece varios servidores MCP integrados. También puedes conectar otros servidores MCP. La elección depende de las tareas que quieras asignar al bot.
 
+<a id="manage-a-bots-access"></a>
+
 ## Gestionar el acceso de un bot
 
-Una conexión determina si el bot puede acceder a un servidor MCP. Para la mayoría de los MCP, el bot actúa mediante su propia cuenta o identidad, configurada para ese bot con permisos y autorizaciones de acceso.
+Conecta las aplicaciones y los ordenadores que el bot necesita para trabajar. En la mayoría de los MCP, actúa mediante su propia cuenta o identidad, con permisos configurados para ese bot.
 
-- Conecta o desconecta los servidores MCP de un bot en el panel de Cloud.
-- Configura los permisos de las cuentas y aplicaciones conectadas del bot directamente en esas cuentas y aplicaciones.
-- Revisa la actividad del bot en el panel.
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Alojado en Cloud">
 
-Conectar un servidor y conceder acceso a una cuenta son decisiones distintas. Revisa ambas al decidir a qué puede acceder el bot y qué puede hacer.
+Abre tu bot en Klex Cloud. Gestiona sus conexiones a aplicaciones en **Connectors** y sus ordenadores conectados en **Computers**. También puedes revisar su actividad en **Activity**.
+
+</Tab>
+<Tab title="Autoalojado">
+
+En la aplicación de Klex, gestiona las conexiones a servidores en **Settings → MCP Servers**. Consulta los pasos en [MCP y los bots de Klex](/bot/concepts/mcp#add-a-remote-server-in-the-self-hosted-app). Revisa los diagnósticos locales en **Settings → Logs**.
+
+</Tab>
+</Tabs>
+
+Configura los permisos de las cuentas y aplicaciones conectadas del bot directamente en esas cuentas y aplicaciones. Conectar un servidor y conceder acceso a una cuenta son decisiones distintas. Revisa ambas al decidir a qué puede acceder el bot y qué puede hacer.
 
 Para una visión general, consulta [Cómo funcionan los bots de Klex](/bot/concepts/how-bots-work). Para saber dónde se guardan los chats y la memoria, consulta [el directorio de datos](/bot/concepts/data-directory).
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

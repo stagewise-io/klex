@@ -770,20 +770,7 @@ class ChatSessionModule implements AgentSession {
       const checkpointId = window.hasCheckpoint
         ? window.entries[0]?.message.id
         : undefined;
-      const restoredGenerations = window.entries.filter(
-        (entry) => !entry.isCheckpoint && entry.message.role === 'assistant',
-      ).length;
-      const lastPersisted = window.entries.at(-1)?.persistedAt;
-      const parsedLastActivity = lastPersisted
-        ? Date.parse(lastPersisted)
-        : Number.NaN;
-      this.conversationEpoch.restoreFromWindow({
-        checkpointId,
-        restoredGenerations,
-        lastActivityAt: Number.isFinite(parsedLastActivity)
-          ? parsedLastActivity
-          : null,
-      });
+      this.conversationEpoch.restoreFromWindow(checkpointId);
     }
     this.scheduleTranscriptSync();
     this.sessionSpan.addEvent('session.window_restored', {

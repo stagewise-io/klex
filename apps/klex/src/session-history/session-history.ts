@@ -1133,12 +1133,11 @@ class SessionHistoryModule implements SessionHistory {
         coversThroughOrd: number;
         instanceId: string;
         content: string;
-        persistedAt: string;
       }
     | undefined
   > {
     const result = await client.execute({
-      sql: `SELECT ord, covers_through_ord, instance_id, content, persisted_at FROM messages
+      sql: `SELECT ord, covers_through_ord, instance_id, content FROM messages
             WHERE session_id = ? AND is_checkpoint = 1
             ORDER BY ord DESC
             LIMIT 1`,
@@ -1151,7 +1150,6 @@ class SessionHistoryModule implements SessionHistory {
       coversThroughOrd: toNumber(row.covers_through_ord),
       instanceId: toText(row.instance_id),
       content: toText(row.content),
-      persistedAt: toText(row.persisted_at),
     };
   }
 
@@ -1164,7 +1162,7 @@ class SessionHistoryModule implements SessionHistory {
       const checkpoint = await this.latestCheckpoint(client, sessionId);
       if (checkpoint) {
         const tail = await client.execute({
-          sql: `SELECT ord, instance_id, content, persisted_at FROM messages
+          sql: `SELECT ord, instance_id, content FROM messages
                 WHERE session_id = ? AND is_checkpoint = 0 AND ord > ?
                 ORDER BY ord ASC`,
           args: [sessionId, checkpoint.coversThroughOrd],
@@ -1177,7 +1175,6 @@ class SessionHistoryModule implements SessionHistory {
               checkpoint.instanceId,
               checkpoint.content,
               true,
-              checkpoint.persistedAt,
             ),
             ...tail.rows.map((row) =>
               toWindowEntry(
@@ -1185,7 +1182,6 @@ class SessionHistoryModule implements SessionHistory {
                 toText(row.instance_id),
                 toText(row.content),
                 false,
-                toText(row.persisted_at),
               ),
             ),
           ],
@@ -1200,7 +1196,7 @@ class SessionHistoryModule implements SessionHistory {
       while (!exhausted) {
         const page: Awaited<ReturnType<Client['execute']>> =
           await client.execute({
-            sql: `SELECT ord, instance_id, content, byte_size, persisted_at FROM messages
+            sql: `SELECT ord, instance_id, content, byte_size FROM messages
                   WHERE session_id = ? AND is_checkpoint = 0
                     AND (? IS NULL OR ord < ?)
                   ORDER BY ord DESC
@@ -1222,7 +1218,6 @@ class SessionHistoryModule implements SessionHistory {
               toText(row.instance_id),
               toText(row.content),
               false,
-              toText(row.persisted_at),
             ),
           );
         }
@@ -1356,7 +1351,6 @@ function toWindowEntry(
   instanceId: string,
   content: string,
   isCheckpoint: boolean,
-  persistedAt: string,
 ): SessionHistoryWindowEntry {
   return {
     message: parseMessage(content),
@@ -1364,7 +1358,6 @@ function toWindowEntry(
     instanceId,
     isCheckpoint,
     hash: hashContent(content),
-    persistedAt,
   };
 }
 

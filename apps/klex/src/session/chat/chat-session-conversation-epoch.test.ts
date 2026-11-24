@@ -385,7 +385,7 @@ describe('ChatSession bounded gen_ai.conversation.id', () => {
     }
   });
 
-  it('restores checkpoint epoch cleanly across a quick restart and rolls over across an idle restart', async () => {
+  it('opens a fresh checkpoint-scoped epoch on restart so unpersisted helper calls cannot reopen a full conversation', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'klex-epoch-restart-'));
     tempDirs.push(dir);
     let now = Date.parse('2026-11-24T10:00:00.000Z');
@@ -417,13 +417,20 @@ describe('ChatSession bounded gen_ai.conversation.id', () => {
       ]);
 
     let commitCheckpoint!: (anchorId: string) => void;
-    const checkpointExt: ExtensionFactory = {
-      identifier: 'test/checkpoint',
+    let runHelper!: () => Promise<void>;
+    const checkpointAndHelperExt: ExtensionFactory = {
+      identifier: 'test/vision',
       create: (deps) => {
         commitCheckpoint = (anchorId) => {
           deps.checkpoints.commit({
             coversThroughMessageId: anchorId,
             summary: 'persisted summary',
+          });
+        };
+        runHelper = async () => {
+          await deps.generateText({
+            modelIds: [{ providerId: 'test', modelId: 'chat-model' }],
+            prompt: 'describe image',
           });
         };
         return {};
@@ -454,15 +461,16 @@ describe('ChatSession bounded gen_ai.conversation.id', () => {
 
     let checkpointId: string;
     try {
-      // Boot 1: send two turns, commit checkpoint, send one more turn so tail has 1 assistant message.
+      // Boot 1: commit checkpoint, then fill maxGenerations=2 via 1 chat reply
+      // + 1 recorded helper call (only 1 assistant message is persisted in SQLite).
       const boot1 = openSession(
         {
           initialEpochId: 'boot-1',
-          maxGenerations: 5,
+          maxGenerations: 2,
           idleGapMs: 60_000,
           now: () => now,
         },
-        [checkpointExt],
+        [checkpointAndHelperExt],
       );
       await boot1.start();
       boot1.inbox.sendMessage(
@@ -478,26 +486,37 @@ describe('ChatSession bounded gen_ai.conversation.id', () => {
       const anchor = boot1.getMessages()[1];
       if (!anchor) throw new Error('expected anchor message');
       commitCheckpoint(anchor.id);
+
+      exporter.reset();
       boot1.inbox.sendMessage(
         userMessage('msg 3'),
         SessionInboxUrgency.Default,
       );
       expect(await boot1.waitForIdle(5_000)).toBe(true);
+      await runHelper();
       const header = boot1.getMessages()[0];
       if (!header) throw new Error('expected checkpoint header');
       checkpointId = header.id;
       await boot1.close();
       await sessionHistory.flush();
+      await tracing.forceFlush();
 
-      // Boot 2: quick restart 5 seconds later -> continues checkpointId seamlessly.
+      let chats = recordedChatSpans(exporter.getFinishedSpans());
+      expect(chats.map((s) => s.attributes['gen_ai.conversation.id'])).toEqual([
+        `default:agent-123:${checkpointId}`,
+        `default:agent-123:${checkpointId}`,
+      ]);
+
+      // Boot 2: quick restart 5 seconds later must NOT reopen the full
+      // `default:agent-123:{checkpointId}` bucket; it opens a fresh suffix.
       exporter.reset();
       now += 5_000;
       const boot2 = openSession({
         initialEpochId: 'boot-2',
-        maxGenerations: 5,
+        maxGenerations: 2,
         idleGapMs: 60_000,
         now: () => now,
-        createSuffix: () => 'quick-roll',
+        createSuffix: () => 'boot2',
       });
       await boot2.start();
       boot2.inbox.sendMessage(
@@ -509,21 +528,21 @@ describe('ChatSession bounded gen_ai.conversation.id', () => {
       await sessionHistory.flush();
       await tracing.forceFlush();
 
-      let chats = recordedChatSpans(exporter.getFinishedSpans());
+      chats = recordedChatSpans(exporter.getFinishedSpans());
       expect(chats).toHaveLength(1);
       expect(chats[0]?.attributes['gen_ai.conversation.id']).toBe(
-        `default:agent-123:${checkpointId}`,
+        `default:agent-123:${checkpointId}:boot2`,
       );
 
-      // Boot 3: restart 2 minutes later (> idleGapMs=60_000) -> rolls over immediately.
+      // Boot 3: subsequent restart opens another distinct suffix.
       exporter.reset();
       now += 120_000;
       const boot3 = openSession({
         initialEpochId: 'boot-3',
-        maxGenerations: 5,
+        maxGenerations: 2,
         idleGapMs: 60_000,
         now: () => now,
-        createSuffix: () => 'after-idle',
+        createSuffix: () => 'boot3',
       });
       await boot3.start();
       boot3.inbox.sendMessage(
@@ -537,7 +556,7 @@ describe('ChatSession bounded gen_ai.conversation.id', () => {
       chats = recordedChatSpans(exporter.getFinishedSpans());
       expect(chats).toHaveLength(1);
       expect(chats[0]?.attributes['gen_ai.conversation.id']).toBe(
-        `default:agent-123:${checkpointId}:after-idle`,
+        `default:agent-123:${checkpointId}:boot3`,
       );
     } finally {
       await sessionHistory.close();

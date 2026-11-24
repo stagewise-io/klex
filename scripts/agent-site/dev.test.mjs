@@ -77,3 +77,26 @@ it('serves negotiated and explicit translated Markdown from live Vite', async ()
   const html = await fetch(origin, { headers: { Accept: 'text/html' } });
   expect(html.headers.get('content-type')).toContain('text/html');
 }, 60000);
+
+it.each([
+  ['/compare/rerun', ''],
+  ['/compare/rerun', 'klex-language=fr'],
+  ['/compare/rerun.md', ''],
+  ['/compare/rerun.md', 'klex-language=fr'],
+])(
+  'labels the English-only comparison Markdown correctly at %s with cookie %s',
+  async (path, cookie) => {
+    const response = await fetch(`${origin}${path}`, {
+      headers: {
+        Accept: 'text/markdown',
+        'Accept-Language': 'de',
+        Cookie: cookie,
+      },
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toContain('text/markdown');
+    expect(response.headers.get('content-language')).toBe('en');
+    expect(await response.text()).toContain('Klex vs Rerun');
+  },
+  60000,
+);

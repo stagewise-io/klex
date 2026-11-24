@@ -134,7 +134,11 @@ function devMarkdown(): Plugin {
           const languages = Object.fromEntries(
             locales.map((locale) => [locale, true]),
           );
-          const locale = negotiation.language(request, languages);
+          // This comparison is English-only until translated copy is available.
+          const locale =
+            markdownRoute === '/compare/rerun'
+              ? 'en'
+              : negotiation.language(request, languages);
           const markup = (await render(locale)).pages[
             markdownRoute === '/'
               ? '/index.html'
@@ -181,7 +185,10 @@ function prerenderPages(): Plugin {
       const localized: Record<string, Record<string, string>> = {};
       for (const locale of locales) {
         if (locale === 'en') continue;
-        localized[locale] = (await renderMarketingLocale(locale)).pages;
+        const pages = (await renderMarketingLocale(locale)).pages;
+        // Do not advertise untranslated comparison copy as a localized variant.
+        delete pages['/compare/rerun/index.html'];
+        localized[locale] = pages;
       }
       this.emitFile({
         type: 'asset',

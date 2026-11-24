@@ -91,67 +91,25 @@ describe('ConversationEpochTracker', () => {
     expect(tracker.beginGeneration()).toBe('cp-uuid-2:r2');
   });
 
-  it('continues a restored checkpoint epoch across a quick restart and honors the remaining budget', () => {
+  it('opens a fresh rollover suffix whenever restoring a persisted checkpoint so restarts never reopen prior conversations', () => {
     const now = 100_000;
     let seq = 0;
     const tracker = createConversationEpochTracker({
       initialEpochId: 'boot-restart',
-      maxGenerations: 5,
+      maxGenerations: 2,
       idleGapMs: 60_000,
       now: () => now,
       createSuffix: () => `r${++seq}`,
     });
 
-    const restored = tracker.restoreFromWindow({
-      checkpointId: 'cp-restored',
-      restoredGenerations: 3,
-      lastActivityAt: now - 10_000,
-    });
-    expect(restored).toBe('cp-restored');
+    const restored = tracker.restoreFromWindow('cp-restored');
+    expect(restored).toBe('cp-restored:r1');
 
-    // 2 remaining generations fit in the restored epoch (3 + 2 = 5).
-    expect(tracker.beginGeneration()).toBe('cp-restored');
-    expect(tracker.beginGeneration()).toBe('cp-restored');
-    // Next generation rolls over.
+    // Full generation budget applies cleanly to the new post-restart epoch.
     expect(tracker.beginGeneration()).toBe('cp-restored:r1');
-  });
-
-  it('rolls over immediately when a restored checkpoint already hit the generation cap', () => {
-    const now = 100_000;
-    const tracker = createConversationEpochTracker({
-      initialEpochId: 'boot-restart',
-      maxGenerations: 5,
-      idleGapMs: 60_000,
-      now: () => now,
-      createSuffix: () => 'rolled',
-    });
-
-    const restored = tracker.restoreFromWindow({
-      checkpointId: 'cp-full',
-      restoredGenerations: 5,
-      lastActivityAt: now - 1_000,
-    });
-    expect(restored).toBe('cp-full:rolled');
-    expect(tracker.beginGeneration()).toBe('cp-full:rolled');
-  });
-
-  it('rolls over immediately when a restored checkpoint was idle longer than idleGapMs', () => {
-    const now = 1_000_000;
-    const tracker = createConversationEpochTracker({
-      initialEpochId: 'boot-restart',
-      maxGenerations: 100,
-      idleGapMs: 60_000,
-      now: () => now,
-      createSuffix: () => 'after-idle',
-    });
-
-    const restored = tracker.restoreFromWindow({
-      checkpointId: 'cp-stale',
-      restoredGenerations: 2,
-      lastActivityAt: now - 60_000,
-    });
-    expect(restored).toBe('cp-stale:after-idle');
-    expect(tracker.beginGeneration()).toBe('cp-stale:after-idle');
+    expect(tracker.beginGeneration()).toBe('cp-restored:r1');
+    // Next generation rolls over again to a distinct suffix.
+    expect(tracker.beginGeneration()).toBe('cp-restored:r2');
   });
 
   it('keeps the fresh per-boot epoch when restoring a window without a checkpoint', () => {
@@ -162,10 +120,7 @@ describe('ConversationEpochTracker', () => {
       now: () => 50_000,
     });
 
-    const restored = tracker.restoreFromWindow({
-      restoredGenerations: 4,
-      lastActivityAt: 49_000,
-    });
+    const restored = tracker.restoreFromWindow(undefined);
     expect(restored).toBe('boot-fresh');
   });
 

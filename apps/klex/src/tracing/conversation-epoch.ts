@@ -61,34 +61,30 @@ export interface ConversationEpochOptions {
   createSuffix?: () => string;
 }
 
-export interface RestoreConversationWindowOptions {
-  /** Durable checkpoint header ID from the restored window, if present. */
-  checkpointId?: string;
-  /** Number of assistant generations already persisted in the restored tail. */
-  restoredGenerations: number;
-  /** Epoch ms timestamp of the latest persisted message in the window, if known. */
-  lastActivityAt?: number | null;
-}
-
 /**
  * Tracks a bounded conversation epoch suffix for long-lived Klex sessions
  * (the default session and `memory-retrieval` child sessions).
  *
  * Rotates whenever:
  * 1. A compaction checkpoint header is applied (`onCheckpointApplied`),
- * 2. Recorded generations in the current epoch reach `maxGenerations`, or
- * 3. Idle time since the last generation reaches `idleGapMs`.
+ * 2. Recorded generations in the current epoch reach `maxGenerations`,
+ * 3. Idle time since the last generation reaches `idleGapMs`, or
+ * 4. A restored session boots with a prior checkpoint (`restoreFromWindow`),
+ *    opening a fresh `{checkpointId}:{suffix}` epoch so restarts never reopen
+ *    a full or idle-closed conversation whose unpersisted helper/retry calls
+ *    are absent from message history.
  */
 export interface ConversationEpochTracker {
   /** Pure read of the active epoch identifier (does not increment counts). */
   currentEpochId(): string;
   /**
-   * Seed state from a restored durable session window. Continues the restored
-   * checkpoint's primary epoch across a quick restart when still within the
-   * count and idle bounds; otherwise rolls over immediately so restarts never
-   * pile into an old or full conversation.
+   * Seed state from a restored durable session window. When a persisted
+   * checkpoint header ID is present, anchors to that checkpoint with a fresh
+   * rollover suffix (`{checkpointId}:{suffix}`) so restarts never reopen an
+   * earlier process's conversation bucket. Without a checkpoint, keeps the
+   * fresh per-boot epoch ID.
    */
-  restoreFromWindow(options: RestoreConversationWindowOptions): string;
+  restoreFromWindow(checkpointId?: string): string;
   /** Rotate to a new compaction checkpoint header ID and reset counters. */
   onCheckpointApplied(checkpointId: string): string;
   /**
@@ -137,8 +133,8 @@ class ConversationEpochTrackerImpl implements ConversationEpochTracker {
       : this.baseEpochId;
   }
 
-  restoreFromWindow(options: RestoreConversationWindowOptions): string {
-    if (!options.checkpointId) {
+  restoreFromWindow(checkpointId?: string): string {
+    if (!checkpointId) {
       // Without a persisted checkpoint, keep the fresh per-boot epoch id so
       // pre-checkpoint restarts never pile up into an unbounded bucket.
       this.rolloverSuffix = null;
@@ -147,29 +143,15 @@ class ConversationEpochTrackerImpl implements ConversationEpochTracker {
       return this.currentEpochId();
     }
 
-    this.baseEpochId = options.checkpointId;
-    const restoredGenerations = Math.max(
-      0,
-      Math.floor(options.restoredGenerations),
-    );
-    const lastActivityAt =
-      options.lastActivityAt != null && Number.isFinite(options.lastActivityAt)
-        ? options.lastActivityAt
-        : null;
-    const now = this.now();
-    const overCap = restoredGenerations >= this.maxGenerations;
-    const idleExpired =
-      lastActivityAt !== null && now - lastActivityAt >= this.idleGapMs;
-
-    if (overCap || idleExpired) {
-      this.rolloverSuffix = this.nextDistinctSuffix();
-      this.generationCount = 0;
-      this.lastActivityAt = null;
-    } else {
-      this.rolloverSuffix = null;
-      this.generationCount = restoredGenerations;
-      this.lastActivityAt = lastActivityAt;
-    }
+    // Always start a fresh rollover suffix when restoring a persisted
+    // checkpoint. Unpersisted helper calls, failed generation retries, and
+    // prior idle rollovers are not recoverable from saved message counts, so
+    // reopening the bare checkpoint epoch across a restart could exceed
+    // `maxGenerations` or reopen a closed conversation.
+    this.baseEpochId = checkpointId;
+    this.rolloverSuffix = this.nextDistinctSuffix();
+    this.generationCount = 0;
+    this.lastActivityAt = null;
     return this.currentEpochId();
   }
 

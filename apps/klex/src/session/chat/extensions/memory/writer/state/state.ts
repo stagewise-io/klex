@@ -24,10 +24,10 @@ export const MEMORY_WRITER_STORE_DEFINITION: JsonStoreDefinition = {
   relativePath: 'extensions/io.stagewise/memory/writer-state.json',
   required: false,
   schemaVersion: 1,
-  // 2: memory names are type-qualified filenames (document format 4).
-  // Older binaries use random IDs and must not write converted memory.
-  compatibilityVersion: 2,
-  minimumKlexVersion: '0.37.1',
+  // 3: document format 6 removes strength and groups links by curated predicates.
+  // Older binaries cannot preserve these lists or their inverse semantics.
+  compatibilityVersion: 3,
+  minimumKlexVersion: '0.38.1',
   versions: [{ version: 1, schema: stateSchema }],
   migrations: [],
 };

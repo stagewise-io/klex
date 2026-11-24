@@ -36,29 +36,26 @@ General = always loaded: what it is, role, communication style, standing wishes 
 
 A memory's name is its filename, qualified by type: `person/Ada Lovelace`. Keep natural spelling and casing. Keep existing namespaces such as `project/stagewise-io/klex`; never invent folder hierarchies. Different people with the same name need a specific qualifier. Wrong name or type → updateEntity `name` or `entityType`; references follow. Use the returned path afterward; old paths are not aliases.
 
-Two entities are the same identity → mergeEntities (read both first; keep the older or richer one). Only on clear evidence: same full name in the same workspace, someone says so, or one is an empty accidental copy. Never on first name alone. Unsure → relation `possibly same as`, keep both. Not undoable.
+Two entities are the same identity → mergeEntities (read both first; keep the older or richer one). Only on clear evidence: same full name in the same workspace, someone says so, or one is an empty accidental copy. Never on first name alone. Unsure → keep both; use `relatedTo` only when an association is evidenced. Not undoable.
 
 # Relations
 
-Relations live in `relatedTo` (frontmatter), never in facts or sections. Who worked on, asked for, reviewed, owns or took part in what is a relation, never a fact, on either side.
+Relations are typed links, never facts or sections. Tools use `relatedTo: [{ target: { kind: "entity", id: "person/Ada Lovelace" }, relationship: "createdBy" }]`. Frontmatter stores separate lists such as `createdBy: ["[[person/Ada Lovelace]]"]`; links have no aliases or scores. Empty lists are omitted.
 
-- bad: person fact `Opened PR #88 for retry fix`; PR fact `Reviewed by Ada`
-- good: on the person, relatedTo `{ target: { kind: "entity", id: "pull-request/…" }, relationship: "authored", inverse: "authored by", strength: 50 }`; PR fact `Retry dropped: server dedupes by eventId`
+`relationship` is an exact curated predicate from this entity to the target. One call automatically creates/removes the fixed inverse on entity targets; never supply `inverse`. Skill targets remain one-way. Multiple predicates may point to the same target. To remove a relationship, omit that exact predicate/target pair from the replacement `relatedTo` list; preserve other desired pairs.
 
-One call links both sides: `relationship` from this entity's side, `inverse` from the target's side. Strength: one exchange 20, recurring 50, frequent 80.
+Allowed pairs (left predicate ↔ fixed inverse):
 
-Labels below read from the left type: on the left entity, `relationship` = first label, `inverse` = second. On the right entity, swap them. Issue, PR or event → person: `{ target: { kind: "entity", id: "person/Ada Lovelace" }, relationship: "authored by", inverse: "authored", strength: 50 }`.
+- People and organizations: `worksFor` ↔ `employs`, `memberOf` ↔ `hasMember`, `reportsTo` ↔ `supervises`, `collaboratesWith` ↔ `collaboratesWith`, `represents` ↔ `representedBy`, `providesTo` ↔ `receivesFrom`.
+- Ownership and responsibility: `ownedBy` ↔ `owns`, `managedBy` ↔ `manages`, `assignedTo` ↔ `assignedFrom`, `createdBy` ↔ `created`, `approvedBy` ↔ `approved`, `requestedBy` ↔ `requested`.
+- Structure and systems: `partOf` ↔ `hasPart`, `dependsOn` ↔ `requiredBy`, `uses` ↔ `usedBy`, `integratesWith` ↔ `integratesWith`, `hostedOn` ↔ `hosts`, `locatedIn` ↔ `hasLocatedEntity`.
+- Work and execution: `contributesTo` ↔ `receivesContributionFrom`, `blocks` ↔ `blockedBy`, `implements` ↔ `implementedBy`, `addresses` ↔ `addressedBy`, `affects` ↔ `affectedBy`, `follows` ↔ `precedes`.
+- Knowledge and information: `derivedFrom` ↔ `sourceOf`, `references` ↔ `referencedBy`, `describes` ↔ `describedBy`, `supersedes` ↔ `supersededBy`, `conflictsWith` ↔ `conflictsWith`, `relatedTo` ↔ `relatedTo`.
 
-Labels (left relationship / left inverse):
+Prefer a specific predicate whenever supported; `relatedTo` is only the fallback association. Never invent synonyms or infer a more specific predicate from a migrated fallback alone. Use present tense for ongoing relationships and past tense for completed actions, as the whitelist specifies. No unnecessary prefixes, plural/cardinality variants or entity-type suffixes.
 
-- person ↔ person: `manages` / `reports to`; nature unknown: `talks with` / `talks with`
-- person ↔ issue or PR: `requested` / `requested by`, `owns` / `owned by`, `authored` / `authored by`, `reviews` / `reviewed by`
-- person ↔ event: `took part in` / `involved`
-- event ↔ issue, PR or system: `about` / `subject of`
-- component ↔ project: `part of` / `has part`
-- component ↔ component: `depends on` / `used by`
-- issue ↔ issue: `related to` / `related to`
-- maybe same identity: `possibly same as` / `possibly same as`
+- bad: person fact `Opened PR #88 for retry fix`; arbitrary predicate `authored`.
+- good: person → PR `created`; PR → person `createdBy`; PR fact `Retry dropped: server dedupes by eventId`.
 
 # People
 

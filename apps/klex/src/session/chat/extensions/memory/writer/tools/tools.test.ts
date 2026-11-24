@@ -124,8 +124,6 @@ describe('memory writer tools', () => {
           {
             target: { kind: 'entity', id: created.id },
             relationship: 'uses',
-            inverse: 'used by',
-            strength: 50,
           },
         ],
       },
@@ -159,6 +157,73 @@ describe('memory writer tools', () => {
     ).toMatchObject({ status: 'merged' });
     expect(entities.get(peer.id)).toBeNull();
   });
+  it('maintains exact automatic inverses for multiple predicates, replacements and removals', async () => {
+    const { tools, entities } = await fixture();
+    const target = await entities.create(
+      { name: 'Target Project', entityType: 'project' },
+      { General: [fact('Product')] },
+    );
+    const input = (relationship: string) => ({
+      target: { kind: 'entity', id: target.id },
+      relationship,
+    });
+    for (const relation of [
+      input('works on'),
+      { ...input('uses'), inverse: 'usedBy' },
+    ]) {
+      await expect(
+        call(tools, 'createEntity', {
+          ...create(),
+          fields: { ...create().fields, relatedTo: [relation] },
+        }),
+      ).rejects.toThrow('Invalid tool input');
+    }
+    const created = (await call(tools, 'createEntity', {
+      ...create(),
+      fields: {
+        ...create().fields,
+        relatedTo: [input('uses'), input('dependsOn'), input('uses')],
+      },
+    })) as { id: string };
+    expect(
+      entities
+        .get(target.id)
+        ?.frontmatter.RelatedTo.map(({ relationship }) => relationship)
+        .sort(),
+    ).toEqual(['requiredBy', 'usedBy']);
+    const update = async (relatedTo: unknown[]) => {
+      const entity = entities.get(created.id);
+      if (!entity) throw new Error('Missing created fixture');
+      return call(tools, 'updateEntity', {
+        id: entity.id,
+        revision: entityRevision(entity),
+        fields: { relatedTo },
+        operations: [],
+      });
+    };
+    expect(
+      await update([input('uses'), input('collaboratesWith')]),
+    ).toMatchObject({ status: 'updated' });
+    expect(
+      entities
+        .get(target.id)
+        ?.frontmatter.RelatedTo.map(({ relationship }) => relationship)
+        .sort(),
+    ).toEqual(['collaboratesWith', 'usedBy']);
+    const entity = entities.get(created.id);
+    if (!entity) throw new Error('Missing fixture');
+    await expect(
+      call(tools, 'updateEntity', {
+        id: entity.id,
+        revision: entityRevision(entity),
+        fields: { relatedTo: [input('Uses')] },
+        operations: [],
+      }),
+    ).rejects.toThrow('Invalid tool input');
+    expect(entities.get(created.id)).toEqual(entity);
+    expect(await update([])).toMatchObject({ status: 'updated' });
+    expect(entities.get(target.id)?.frontmatter.RelatedTo).toEqual([]);
+  });
   it('reads and relates all skill namespaces but only writes learning', async () => {
     const { tools, registry, entities } = await fixture();
     await registry.replaceTemplateSkills([
@@ -186,7 +251,6 @@ describe('memory writer tools', () => {
           relatedTo: [
             {
               target: { kind: 'skill', id: external.id },
-              strength: 80,
               relationship: 'uses',
             },
           ],
@@ -214,7 +278,6 @@ describe('memory writer tools', () => {
           relatedTo: [
             {
               target: { kind: 'skill', id: 'templates/missing' },
-              strength: 80,
               relationship: 'uses',
             },
           ],
@@ -229,7 +292,7 @@ describe('memory writer tools', () => {
     'rejects invalid $kind references on create and update without writing',
     async (target) => {
       const { tools, entities } = await fixture();
-      const relatedTo = [{ target, strength: 80, relationship: 'uses' }];
+      const relatedTo = [{ target, relationship: 'uses' }];
       const rejected = {
         status: 'rejected',
         reason: `Invalid reference: ${target.kind} "${target.id}" does not exist`,
@@ -274,7 +337,6 @@ describe('memory writer tools', () => {
         relatedTo: [
           {
             target: { kind: 'skill', id: 'templates/deploy' },
-            strength: 80,
             relationship: 'uses',
           },
         ],
@@ -458,9 +520,7 @@ describe('memory writer tools', () => {
         relatedTo: [
           {
             target: { kind: 'entity', id: keep.id },
-            strength: 50,
-            relationship: 'member',
-            inverse: 'member of',
+            relationship: 'hasMember',
           },
         ],
       },
@@ -1044,9 +1104,7 @@ describe('memory writer tools', () => {
         relatedTo: [
           {
             target: { kind: 'entity', id: 'person/Placeholder' },
-            strength: 50,
-            relationship: 'requested by',
-            inverse: 'requested',
+            relationship: 'requestedBy',
           },
         ],
       },
@@ -1073,14 +1131,12 @@ describe('memory writer tools', () => {
     expect(entities.get(person.id)?.frontmatter.RelatedTo).toEqual([
       {
         target: { kind: 'entity', id: created.id },
-        strength: 50,
         relationship: 'requested',
       },
     ]);
     expect(entities.get(created.id)?.frontmatter.RelatedTo[0]).toEqual({
       target: { kind: 'entity', id: person.id },
-      strength: 50,
-      relationship: 'requested by',
+      relationship: 'requestedBy',
     });
   });
   it('rejects a new skill that duplicates an existing one', async () => {
@@ -1226,8 +1282,7 @@ describe('memory writer tools', () => {
                 kind: 'entity',
                 id: 'person/Missing',
               },
-              strength: 80,
-              relationship: 'colleague',
+              relationship: 'collaboratesWith',
             },
           ],
         },

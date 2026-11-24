@@ -235,6 +235,39 @@ describe('temporary memory recall', () => {
     });
   });
 
+  it.each(['caller', 'deadline'] as const)(
+    'closes the child immediately on %s cancellation',
+    async (kind) => {
+      vi.useFakeTimers();
+      try {
+        const h = setup();
+        const abort = new AbortController();
+        let release!: (idle: boolean) => void;
+        h.child.waitForIdle.mockImplementation(
+          () =>
+            new Promise<boolean>((resolve) => {
+              release = resolve;
+            }),
+        );
+        const pending = call(
+          tools(h.extension),
+          'recallFromMemory',
+          { question: 'Recall' },
+          abort.signal,
+        );
+        await vi.advanceTimersByTimeAsync(0);
+        if (kind === 'caller') abort.abort();
+        else await vi.advanceTimersByTimeAsync(300_000);
+        expect(h.child.close).toHaveBeenCalledOnce();
+        release(false);
+        await pending;
+        expect(h.child.close).toHaveBeenCalledOnce();
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
   it('stops an unanswered helper at its step budget', async () => {
     const h = setup();
     h.child.waitForIdle.mockImplementation(async () => {
@@ -242,6 +275,8 @@ describe('temporary memory recall', () => {
         generation: {},
         shouldContinue: true,
       } as StepCompleteEvent);
+      if (h.child.waitForIdle.mock.calls.length === 20)
+        expect(h.child.close).toHaveBeenCalledOnce();
       return false;
     });
     expect(

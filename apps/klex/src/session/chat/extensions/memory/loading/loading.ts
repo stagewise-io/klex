@@ -33,6 +33,7 @@ import {
   entitySnapshot,
   type LoadingStatus,
   lexical,
+  parseSnapshot,
   type SnapshotMap,
   sectionSnapshot,
 } from './types';
@@ -177,7 +178,50 @@ class MemoryLoaderModule implements MemoryLoader {
         this.lastSkills = skills;
         return skills;
       })
-      .catch(() => this.lastSkills);
+      .catch(() => undefined);
+    if (skills === undefined) {
+      const parts = this.skillContext.parts(undefined, window);
+      const active = (
+        parts.find((part) => isDataPartOf('activeSkills', part)) as unknown as {
+          data: { skills: Record<string, string[]> };
+        }
+      ).data.skills;
+      const allowed = new Set(
+        Object.entries(active).flatMap(([id, refs]) => [
+          `skills/${id}/SKILL.md`,
+          ...refs.map((ref) => `skills/${id}/references/${ref}.md`),
+        ]),
+      );
+      const snapshots: SnapshotMap = Object.create(null);
+      let catalogue: ExtendedUIMessage['parts'][number] | undefined;
+      for (const message of history)
+        for (const part of message.parts) {
+          if (isDataPartOf('availableSkills', part)) catalogue = part;
+          if (!isDataPartOf('loadedMemories', part)) continue;
+          const data = (part as unknown as { data: unknown }).data;
+          if (!data || typeof data !== 'object' || Array.isArray(data))
+            continue;
+          for (const [filename, value] of Object.entries(data)) {
+            if (!allowed.has(filename) || typeof value !== 'string') continue;
+            const snapshot = parseSnapshot(value);
+            if (
+              snapshot &&
+              ['skill', 'skill-reference'].includes(snapshot.kind)
+            )
+              snapshots[filename] = JSON.stringify({ ...snapshot, window });
+          }
+        }
+      // A successful prepare may not yet be attached to the supplied history.
+      for (const [filename, value] of Object.entries(
+        this.skillContext.fork().snapshots(this.lastSkills, window),
+      ))
+        if (!(filename in snapshots)) snapshots[filename] = value;
+      return [
+        ...(catalogue ? [catalogue] : []),
+        ...parts,
+        createDataPart('loadedMemories', snapshots),
+      ] as ExtendedUIMessage['parts'];
+    }
     return [
       ...this.skillContext.parts(skills, window),
       createDataPart(

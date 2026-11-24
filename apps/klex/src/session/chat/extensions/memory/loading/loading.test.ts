@@ -842,7 +842,9 @@ describe('memory materialization', () => {
   });
 
   it('uses a complete replacement when diff work exceeds its independent limit', () => {
-    const before = 'unchanged line\n'.repeat(10001);
+    const before = 'x\n'.repeat(10001);
+    expect(before.length + 'new fact'.length).toBeLessThan(100_000);
+    expect(before.split('\n').length).toBeGreaterThan(10_000);
     const history = [base('old', before), base('latest', 'new fact')];
     history[1]!.parts.push(
       createDataPart('memoryLoadingStatus', {

@@ -1,4 +1,8 @@
-export { createMemoryExt, type MemoryExtOptions } from './memory';
+export {
+  createMemoryExt,
+  type MemoryExtOptions,
+  migrateMemoryDocuments,
+} from './memory';
 export { EPISODIC_SEARCH_INDEX_STORE_DEFINITION } from './retrieval';
 export {
   createMemoryWriterExt,

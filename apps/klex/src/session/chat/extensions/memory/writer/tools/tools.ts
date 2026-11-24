@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 
-import type { ToolSet } from 'ai';
+import type { JSONSchema7 } from '@ai-sdk/provider';
+import { asSchema, jsonSchema, type ToolSet } from 'ai';
 import { z } from 'zod';
 
 import type { ActivityHistory, ActivityView } from '@/activity-history';
@@ -46,6 +47,63 @@ import {
   similarSkills,
 } from './quality';
 import { rejectSecrets } from './secrets';
+
+// Providers receive structure and exact choices only. The original validator
+// remains authoritative, including defaults, transforms and detailed constraints.
+function providerSchema(schema: JSONSchema7): JSONSchema7 {
+  if (schema.$ref !== undefined)
+    throw new Error(
+      'Memory writer schemas must be inlined before provider export',
+    );
+  const result: JSONSchema7 = {};
+  for (const key of [
+    'type',
+    'enum',
+    'const',
+    'description',
+    'required',
+  ] as const) {
+    if (schema[key] !== undefined)
+      Object.assign(result, { [key]: schema[key] });
+  }
+  for (const key of ['properties', 'definitions', '$defs'] as const) {
+    const children = schema[key];
+    if (children && typeof children === 'object') {
+      Object.assign(result, {
+        [key]: Object.fromEntries(
+          Object.entries(children).map(([name, child]) => [
+            name,
+            typeof child === 'boolean'
+              ? child
+              : providerSchema(child as JSONSchema7),
+          ]),
+        ),
+      });
+    }
+  }
+  for (const key of ['additionalProperties', 'items'] as const) {
+    const child = schema[key];
+    if (child !== undefined)
+      Object.assign(result, {
+        [key]:
+          typeof child === 'boolean'
+            ? child
+            : Array.isArray(child)
+              ? child.map((item) =>
+                  typeof item === 'boolean' ? item : providerSchema(item),
+                )
+              : providerSchema(child),
+      });
+  }
+  for (const key of ['anyOf', 'oneOf', 'allOf'] as const) {
+    const children = schema[key];
+    if (children)
+      result[key] = children.map((child) =>
+        typeof child === 'boolean' ? child : providerSchema(child),
+      );
+  }
+  return result;
+}
 
 // Fixed inverses are maintained automatically; callers cannot invent labels.
 const writerRelationSchema = relationSchema;
@@ -1331,6 +1389,13 @@ class WriterToolsModule implements WriterTools {
         ),
       },
     };
+    for (const tool of Object.values(this.tools)) {
+      const local = asSchema(tool.inputSchema);
+      tool.inputSchema = jsonSchema(
+        async () => providerSchema(await local.jsonSchema),
+        { validate: local.validate },
+      );
+    }
   }
 }
 export function createWriterTools(options: WriterToolsOptions): WriterTools {

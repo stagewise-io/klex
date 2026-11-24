@@ -420,6 +420,31 @@ describe('runStreamedGeneration — empty response', () => {
     ).rejects.toBeInstanceOf(EmptyResponseBodyError);
   });
 
+  it('preserves provider errors consumed by the UI stream instead of reporting an empty response', async () => {
+    setupSuccessResult({ finishReason: 'error' });
+    const providerError = new Error('Provider rejected tool schema');
+    const implementation = vi.mocked(streamText).getMockImplementation();
+    if (implementation === undefined) throw new Error('Missing stream mock');
+    vi.mocked(streamText).mockImplementationOnce((options) => {
+      void options.onError?.({ error: providerError });
+      return implementation(options);
+    });
+    await expect(
+      runStreamedGeneration({
+        model,
+        modelMessages: [],
+        tools,
+        abortSignal,
+        logger,
+        modelContext,
+        onUpdate: vi.fn(),
+        sessionId: 'provider-error',
+        compacted: false,
+        basePrompt: 'mock system prompt',
+      }),
+    ).rejects.toBe(providerError);
+  });
+
   it('returns an empty stop and usage when allowed', async () => {
     const usage = { inputTokens: 15, outputTokens: 0 };
     setupSuccessResult({ usage });

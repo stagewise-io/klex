@@ -88,6 +88,119 @@ const create = (id = source, text = 'Project owner') => ({
 });
 
 describe('memory writer tools', () => {
+  it('exports only structural provider schemas while retaining full local validation', async () => {
+    const { tools } = await fixture();
+    const check = (value: unknown): void => {
+      if (value === null || typeof value !== 'object') return;
+      for (const [key, child] of Object.entries(value)) {
+        expect([
+          'pattern',
+          'patternProperties',
+          'propertyNames',
+          'format',
+          'minLength',
+          'maxLength',
+          'minimum',
+          'maximum',
+          'minItems',
+          'maxItems',
+          'default',
+          '$ref',
+        ]).not.toContain(key);
+        if (key === 'properties' && child && typeof child === 'object') {
+          // Property names (including a literal field named pattern) are data.
+          for (const property of Object.values(child)) check(property);
+        } else check(child);
+      }
+    };
+    for (const tool of Object.values(tools)) {
+      check(await asSchema(tool.inputSchema).jsonSchema);
+    }
+    const readEntity = tools.readEntity;
+    if (readEntity === undefined) throw new Error('Missing readEntity tool');
+    const schema = asSchema(readEntity.inputSchema);
+    for (const section of ['General', 'Known pitfalls', 'Preferences (work)']) {
+      expect(
+        (await schema.validate?.({ id: 'person/Ada', sections: [section] }))
+          ?.success,
+      ).toBe(true);
+    }
+    for (const section of [
+      'Bad[section',
+      'Bad]section',
+      'Bad#section',
+      'Bad<section',
+      'Bad>section',
+      'Bad\nsection',
+      'Bad\rsection',
+    ]) {
+      expect(
+        (await schema.validate?.({ id: 'person/Ada', sections: [section] }))
+          ?.success,
+      ).toBe(false);
+    }
+  });
+  it('preserves defaults, normalization, limits and strict predicates before execution', async () => {
+    const { tools, entities } = await fixture();
+    const list = tools.listEntities;
+    const createTool = tools.createEntity;
+    if (!list || !createTool) throw new Error('Missing writer tools');
+    expect(await asSchema(list.inputSchema).validate?.({})).toMatchObject({
+      success: true,
+      value: { query: '', offset: 0 },
+    });
+    const schema = asSchema(createTool.inputSchema);
+    const normalized = await schema.validate?.({
+      ...create(),
+      sections: [
+        {
+          name: ' General ',
+          facts: [{ text: 'Project owner', sourceIds: [source] }],
+        },
+      ],
+    });
+    expect(normalized).toMatchObject({
+      success: true,
+      value: { sections: [{ name: 'General' }] },
+    });
+    const invalidInputs = [
+      { ...create(), fields: { name: 'Ada', entityType: 'Invalid Type' } },
+      {
+        ...create(),
+        sections: [
+          {
+            name: 'x'.repeat(101),
+            facts: [{ text: 'Owner', sourceIds: [source] }],
+          },
+        ],
+      },
+      {
+        ...create(),
+        fields: {
+          name: 'Ada',
+          entityType: 'person',
+          relatedTo: [
+            {
+              target: { kind: 'entity', id: 'person/Other' },
+              relationship: 'inventedPredicate',
+            },
+          ],
+        },
+      },
+      { ...create(), extra: 'unexpected' },
+    ];
+    for (const input of invalidInputs) {
+      expect((await schema.validate?.(input))?.success).toBe(false);
+      await expect(call(tools, 'createEntity', input)).rejects.toThrow(
+        'Invalid tool input',
+      );
+    }
+    expect(entities.list()).toEqual([]);
+    const provider = JSON.stringify(await schema.jsonSchema);
+    expect(provider).toContain('worksFor');
+    expect(provider).toContain('relatedTo');
+  });
+
   it('creates, searches, reads, relates, renames and merges namespace-qualified memories through tool schemas', async () => {
     const { tools, entities } = await fixture();
     const input = {

@@ -526,7 +526,8 @@ export const sectionNameSchema = z
   .trim()
   .min(1)
   .max(100)
-  .regex(/^[^\r\n#[\]<>]+$/);
+  // Hex escapes avoid ambiguous nested/escaped brackets in provider validators.
+  .regex(/^[^\r\n#\x5b\x5d<>]+$/);
 
 export interface EntityStore {
   start(): Promise<void>;

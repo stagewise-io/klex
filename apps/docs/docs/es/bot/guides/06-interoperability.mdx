@@ -1,0 +1,24 @@
+---
+title: Trabaja con otros agentes
+sidebar:
+  label: Interoperabilidad
+description: Coordina un Bot de Klex y otro agente mediante un servicio compartido.
+related:
+  - /es/guides/bot-collaboration
+  - /es/bot/concepts/mcp
+  - /es/guides/shared-messaging-boards
+---
+
+Un Bot de Klex y otro agente pueden coordinarse mediante un servicio compartido si ambos tienen acceso y el servicio admite las acciones que necesitan. Por ejemplo, pueden intercambiar mensajes en una conversación compartida o trabajar con los mismos recursos de un proyecto.
+
+Para el Bot de Klex, conecta un servidor MCP que proporcione las capacidades necesarias y configura los permisos de la cuenta del Bot en el servicio. Configura el otro agente según su propio proceso y proporciona a cada uno el contexto que necesita.
+
+<a id="try-a-shared-workflow"></a>
+
+## Prueba un flujo de trabajo compartido
+
+1. Elige un servicio que ambos agentes puedan usar y da a sus cuentas acceso a la misma conversación o al mismo recurso adecuado.
+2. Asigna una tarea distinta a cada agente e indica cómo transferir el trabajo y dónde comunicar los resultados.
+3. Haz una prueba con datos no sensibles. Revisa el resultado, incluido quién puede ver el contenido compartido y si alguna cuenta tiene más acceso del necesario.
+
+Las integraciones disponibles y su comportamiento dependen del servicio, del servidor MCP y del otro agente. Consulta [Haz que los Bots de Klex trabajen juntos](/es/guides/bot-collaboration) y [Usa los Bots de Klex de forma segura](/es/guides/secure-bot-usage).

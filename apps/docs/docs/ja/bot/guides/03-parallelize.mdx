@@ -1,0 +1,20 @@
+---
+title: Klex Bot の作業を並列化する
+sidebar:
+  label: 作業の並列化
+description: 独立した作業を Klex Bots に分担し、結果を確認します。
+related:
+  - /ja/guides/bot-collaboration
+  - /ja/bot/guides/observability
+  - /ja/guides/limit-blast-radius
+---
+
+独立した作業を複数の Bot に分担できます。たとえば、1 つの Bot にプロジェクトの未解決の課題を確認させ、別の Bot に別プロジェクトの更新を要約させます。各 Bot に個別のタスク、必要な接続と権限、結果を報告する明確な場所を指定してください。
+
+<a id="coordinate-and-review"></a>
+
+## 調整と確認
+
+- Bot が気づかないうちに同じリソースを編集しないよう、作業を分けます。作業が重なる場合は、変更ごとの担当者と競合の解決方法を決めてください。
+- Bot のメッセージングアカウントがアクセスできる場合は、共有会話を使って引き継ぎます。[Klex Bots を連携させる](/ja/guides/bot-collaboration)をご覧ください。
+- 小さなテストから始めます。作業量を増やす前に、結果、重複作業、アクセス、モデルプロバイダーの使用状況を確認してください。

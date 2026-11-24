@@ -1,0 +1,22 @@
+---
+title: 在多个频道中聊天
+sidebar:
+  label: 多频道聊天
+description: 将 Klex Bot 连接到消息应用，并检查每个频道的访问权限。
+related:
+  - /zh/bot/concepts/communication
+  - /zh/bot/concepts/mcp
+  - /zh/cloud
+---
+
+Bot 可以使用多个消息连接。每个连接都需要一个提供必要消息功能的 MCP 服务器，以及一个有权访问目标会话的账号。
+
+<a id="connect-and-check-each-channel"></a>
+
+## 连接并检查每个频道
+
+1. 添加或连接消息应用对应的 MCP 服务器。请参阅 [MCP 与 Klex Bots](/zh/bot/concepts/mcp)。
+2. 配置或授权 Bot 的账号，并在消息应用中授予访问权限。对每个应用重复此操作。
+3. 在每个目标会话中发送测试消息，检查 Bot 能否回复。如果不能，请检查连接状态、授权以及账号对该会话的访问权限。
+
+对于群组会话，请检查谁可以查看会话，以及 Bot 账号是否获准参与。在消息应用中设置受众和权限；不要假定连接会授予对所有会话的访问权限。

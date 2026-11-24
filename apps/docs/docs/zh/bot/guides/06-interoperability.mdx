@@ -1,0 +1,24 @@
+---
+title: 与其他智能体协作
+sidebar:
+  label: 互操作性
+description: 通过共享服务协调 Klex Bot 与其他智能体的工作。
+related:
+  - /zh/guides/bot-collaboration
+  - /zh/bot/concepts/mcp
+  - /zh/guides/shared-messaging-boards
+---
+
+如果 Klex Bot 和其他智能体都能访问某个共享服务，且该服务支持所需操作，它们就可以通过这个服务协调工作。例如，它们可以在同一会话中交换消息，或使用相同的项目资源开展工作。
+
+对于 Klex Bot，请连接提供所需功能的 MCP 服务器，并在服务中配置 Bot 账号的权限。按照其他智能体自己的设置流程进行配置，并为每个智能体提供所需的上下文。
+
+<a id="try-a-shared-workflow"></a>
+
+## 尝试共享工作流程
+
+1. 选择两个智能体都能使用的服务，并让它们的账号访问同一个适当的会话或资源。
+2. 为每个智能体分配不同的任务，并说明如何交接工作以及在哪里报告结果。
+3. 使用非敏感数据进行测试。检查结果，包括谁能查看共享内容，以及任一账号是否拥有超出需要的权限。
+
+可用的集成和行为取决于服务、MCP 服务器和其他智能体。请参阅[让 Klex Bot 协同工作](/zh/guides/bot-collaboration)和[安全使用 Klex Bot](/zh/guides/secure-bot-usage)。

@@ -1,0 +1,73 @@
+---
+title: MCP 与 Klex Bot
+sidebar:
+  label: MCP
+description: Klex Bot 如何使用 MCP 服务器与计算机和应用协作。
+related:
+  - /bot/concepts/brain-and-computers
+  - /bot/guides/control-and-limits
+  - /guides/secure-bot-usage
+---
+
+[Model Context Protocol (MCP)](https://modelcontextprotocol.io/) 将 Klex Bot 连接到外部环境。MCP 服务器可以提供计算机或应用的访问，Bot 使用服务器提供的功能在那里工作。
+
+Klex 提供内置 MCP 服务器，也支持其他 MCP 服务器。可用功能取决于服务器：
+
+- **工具**让 Bot 向服务器请求操作或信息。
+- **资源**提供 Bot 可以发现和打开的内容。
+- 如果服务器支持 [Klex MCP Push Notifications 扩展](https://github.com/stagewise-io/klex/tree/main/packages/mcp-extension-push-notifications)，**推送通知**可以传递消息和其他事件。
+- MCP 扩展草案 **MCP Events & Triggers** 允许 Bot 发现和监视服务器支持的事件。监视会在聊天结束和重启后保留，但停机期间的事件可能丢失。设置监视不会自动配置外部服务。
+
+这些 MCP 功能可以在消息到达或应用发生变化时促使 Bot 工作。它们取决于已连接服务器的支持和设置，无需单独的 Klex 专用网关。
+
+<a id="adding-a-server"></a>
+
+## 添加服务器
+
+你可以在 Cloud 控制台管理 Bot 的 MCP 连接。Bot 也可以自行添加新的远程 HTTP 或 HTTPS MCP 服务器。添加服务器功能不能修改或删除现有服务器配置。如果新服务器需要 OAuth，用户可以在 Cloud 界面中授权。
+
+只连接你信任的服务器。连接后，Bot 可以使用服务器提供的功能；应用内的访问权限还取决于在那里配置的账户和权限。检查 Bot 的连接，并只向其账户授予所需的访问权限。有关访问管理的更多信息，请参阅[连接计算机和应用](/bot/concepts/brain-and-computers)。
+
+<div class="bot-concept-diagram">
+  <img class="bot-concept-wide" src="/images/mcp-wide.svg" width="960" height="360" alt="Bot 通过 MCP 连接到应用。Bot 的账户显示在应用内部，与连接分开。" />
+  <img class="bot-concept-compact" src="/images/mcp-compact.svg" width="640" height="584" alt="Bot 通过 MCP 连接到应用。Bot 的账户显示在应用内部，与连接分开。" />
+</div>
+
+<a id="add-a-remote-server"></a>
+
+### 添加远程服务器
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="云托管">
+
+1. 在 Klex Cloud 中打开你的 Bot，然后选择 **Connectors**。管理连接器需要组织所有者或管理员权限。
+2. 在连接器目录中选择 **Connect an MCP**，输入服务器的 URL 和名称，并在 **Advanced options** 中添加所需的请求头。
+3. 选择 **Connect**，并在出现提示时完成授权。使用服务器前，先检查连接状态。
+
+</Tab>
+<Tab title="自托管">
+
+<a id="add-a-remote-server-in-the-self-hosted-app"></a>
+
+在交互式 Klex 应用中，你可以添加 streamable HTTP 服务器：
+
+1. 打开 **Settings → MCP Servers**，按下 `a`。
+2. 输入唯一的服务器名称和完整的 HTTP 或 HTTPS URL。对传输凭据的远程服务使用 HTTPS。
+3. 如果服务器需要自定义请求头，按 `a` 添加每个名称和值。将凭据值视为机密。
+4. 按 `s` 添加服务器，然后在服务器列表中检查其状态。保存配置本身并不表示服务器已连接。
+
+要查看服务器，请选择它并按 Enter。详情界面显示其状态、传输方式、工具数量和推送通知支持情况。在此界面，`e` 可编辑配置，`d` 可在确认后删除服务器。删除时，Klex 会删除本地 OAuth 凭据，并在提供商支持时尝试撤销令牌。撤销可能失败，因此还需在连接的应用中单独检查账户权限。
+
+</Tab>
+</Tabs>
+
+要通过 Cloud 界面进行 OAuth 授权，Bot 必须已注册到 Cloud 并连接 Cloud 隧道。未注册 Cloud 的独立 Bot 不能使用该 Cloud 中继授权流程。
+
+<a id="if-a-connection-needs-attention"></a>
+
+## 连接需要处理时
+
+服务器可能需要授权或无法连接。检查连接状态并完成所需授权。如果仍无法连接，请检查服务器地址、凭据和服务器是否可用。Bot 只能使用已连接服务器提供的功能。
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

@@ -1,0 +1,44 @@
+---
+title: كيف تعمل Klex Bots
+sidebar:
+  label: نظرة عامة
+  order: 1
+description: تعرّف على كيفية تشغيل Klex Bot وتذكره وعمله عبر أجهزة الكمبيوتر والتطبيقات المتصلة.
+related:
+  - /ar/bot/quickstart
+  - /ar/bot/concepts/brain-and-computers
+  - /ar/bot/concepts/memory
+  - /ar/cloud/hosted-vs-local
+---
+
+Klex Bot هو وكيل مستقل له هويته وذاكرته الخاصة. يعمل في بيئة Bot ويؤدي عمله في بيئات أخرى متصلة عبر MCP (Model Context Protocol).
+
+تحافظ بيئة Bot على تشغيله وتدير ذاكرته. أما عمله فيجري في أجهزة الكمبيوتر والتطبيقات المتصلة. تحتوي ذاكرته على المهارات وما تعلمه، ويتصل بكل جهاز أو تطبيق عبر اتصال MCP منفصل.
+
+<a id="where-the-bot-runs"></a>
+
+## أين يعمل Bot
+
+يمكنك استخدام Bot مستضاف على السحابة أو تشغيله في بيئتك الخاصة. توصي Klex بالاستضافة السحابية، ويمكن أيضًا تسجيل Bot المستضاف ذاتيًا في Klex Cloud. لا يتطلب Bot المستضاف ذاتيًا التسجيل في Cloud تقنيًا، لكن التجربة المستقلة أقل اكتمالًا. راجع [الاستضافة السحابية والاستضافة الذاتية](/ar/cloud/hosted-vs-local).
+
+<a id="how-the-bot-works-with-computers-and-apps"></a>
+
+## كيف يعمل Bot مع أجهزة الكمبيوتر والتطبيقات
+
+يتصل Bot بخادم MCP للوصول إلى بيئة خارجية. قد تكون هذه البيئة جهاز كمبيوتر كاملًا أو تطبيقًا مثل GitHub أو Google Workspace.
+
+في معظم اتصالات MCP، يعمل Bot من خلال حساب أو هوية خاصة به. تُضبط هذه الهوية لكل Bot ويمكن منحها أذونات وحقوق وصول. راجع [الاتصالات](/ar/bot/concepts/brain-and-computers) لفهم نموذج الاتصال والوصول.
+
+<a id="what-the-bot-remembers"></a>
+
+## ما يتذكره Bot
+
+تساعد الذاكرة Bot على البناء على خبرته. يستخدم المهارات وما تعلمه في العمل المتكرر، ويمكنه استرجاع السياق ذي الصلة من نشاطه السابق. راجع [الذاكرة](/ar/bot/concepts/memory) لمعرفة المزيد و[دليل البيانات](/ar/bot/concepts/data-directory) للتخزين ووصول المسؤولين.
+
+<a id="next-steps"></a>
+
+## الخطوات التالية
+
+- [أنشئ Bot](/ar/bot/quickstart)
+- [اربط أجهزة الكمبيوتر والتطبيقات](/ar/bot/concepts/brain-and-computers)
+- [استكشف الذاكرة](/ar/bot/concepts/memory)

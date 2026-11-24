@@ -1,0 +1,44 @@
+---
+title: Klex Botの仕組み
+sidebar:
+  label: 概要
+  order: 1
+description: Klex Botの動作、記憶、接続されたコンピューターやアプリでの作業について説明します。
+related:
+  - /ja/bot/quickstart
+  - /ja/bot/concepts/brain-and-computers
+  - /ja/bot/concepts/memory
+  - /ja/cloud/hosted-vs-local
+---
+
+Klex Botは、独自のアイデンティティとメモリーを持つ自律型エージェントです。Bot環境で動作し、MCP（Model Context Protocol）を通じて接続された別の環境で作業します。
+
+Bot自身の環境は、その動作を維持し、メモリーを管理します。作業は、接続されたコンピューターやアプリで行います。メモリーにはスキルと学習内容が保存され、Botは各コンピューターやアプリにそれぞれMCP接続を通じて接続します。
+
+<a id="where-the-bot-runs"></a>
+
+## Botの実行環境
+
+CloudでホストされたBotを利用するか、独自の環境でBotを実行できます。KlexはCloudでのホスティングを推奨しています。セルフホストしたBotもKlex Cloudに登録できます。セルフホストしたBotのCloudへの登録は技術的には必須ではありませんが、単独での利用では機能がより限定されます。詳しくは[ホストとセルフホストの比較](/ja/cloud/hosted-vs-local)をご覧ください。
+
+<a id="how-the-bot-works-with-computers-and-apps"></a>
+
+## コンピューターやアプリでの作業
+
+BotはMCPサーバーに接続して、外部環境にアクセスします。外部環境はコンピューター全体の場合も、GitHubやGoogle Workspaceのようなアプリの場合もあります。
+
+ほとんどのMCPでは、Botは自身のアカウントまたはアイデンティティを通じて操作します。アイデンティティはBotごとに設定され、権限やアクセス権を付与できます。接続とアクセスの仕組みは[接続](/ja/bot/concepts/brain-and-computers)をご覧ください。
+
+<a id="what-the-bot-remembers"></a>
+
+## Botが記憶すること
+
+メモリーによって、Botは経験を生かせます。繰り返しの作業にスキルと学習内容を使い、過去の活動から関連するコンテキストを思い出せます。詳しくは[メモリー](/ja/bot/concepts/memory)、保存と管理者アクセスについては[データディレクトリ](/ja/bot/concepts/data-directory)をご覧ください。
+
+<a id="next-steps"></a>
+
+## 次のステップ
+
+- [Botを作成する](/ja/bot/quickstart)
+- [コンピューターとアプリを接続する](/ja/bot/concepts/brain-and-computers)
+- [メモリーについて学ぶ](/ja/bot/concepts/memory)

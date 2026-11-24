@@ -1,0 +1,60 @@
+---
+title: Управление Klex Bot
+sidebar:
+  label: Управление
+description: Останавливайте Klex Bot и управляйте его доступом к подключённым компьютерам и приложениям.
+related:
+  - /ru/bot/guides/observability
+  - /ru/bot/concepts/brain-and-computers
+  - /ru/guides/secure-bot-usage
+---
+
+Вы можете остановить Klex Bot и управлять тем, к чему он имеет доступ через подключения и учётные записи.
+
+<a id="run-a-self-hosted-bot-without-the-picker"></a>
+<a id="stop-a-bot"></a>
+
+## Остановить бота
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Размещённый в Cloud">
+
+Откройте бота в Klex Cloud и выберите **Stop** в настройках хостинга.
+
+</Tab>
+<Tab title="Самостоятельно размещённый">
+
+Чтобы остановить бота, работающего в приложении, закройте приложение.
+
+<a id="stop-a-headless-bot"></a>
+
+Для бота без графического интерфейса используйте команду остановки вашего менеджера служб. Если процесс контролируется, настройте его так, чтобы бот не перезапускался сразу.
+
+</Tab>
+</Tabs>
+
+<a id="manage-access"></a>
+
+## Управление доступом
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Размещённый в Cloud">
+
+Откройте **Connectors** бота в Klex Cloud, чтобы управлять его подключениями.
+
+</Tab>
+<Tab title="Самостоятельно размещённый">
+
+В приложении Klex откройте **Settings → MCP Servers**, чтобы просмотреть, изменить или удалить сервер. Инструкции и оговорку об отзыве OAuth см. в разделе [MCP и Klex Bots](/ru/bot/concepts/mcp#add-a-remote-server-in-the-self-hosted-app).
+
+</Tab>
+</Tabs>
+
+Настраивайте разрешения для учётных записей и приложений, которые использует бот, непосредственно в этих учётных записях и приложениях. О связи подключений и разрешений см. [Подключения к компьютерам и приложениям](/ru/bot/concepts/brain-and-computers).
+
+Сейчас Klex не поддерживает утверждение или ограничение отдельных действий. Настройте разрешения учётных записей и приложений бота соответствующим образом.
+
+Вы также можете [просмотреть активность бота](/ru/bot/guides/observability) в панели управления.
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

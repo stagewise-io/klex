@@ -1,0 +1,60 @@
+---
+title: Керування Klex Bot
+sidebar:
+  label: Керування
+description: Зупиняйте Klex Bot і керуйте його доступом до підключених комп’ютерів і застосунків.
+related:
+  - /uk/bot/guides/observability
+  - /uk/bot/concepts/brain-and-computers
+  - /uk/guides/secure-bot-usage
+---
+
+Ви можете зупинити Klex Bot і керувати тим, до чого він має доступ через свої підключення та облікові записи.
+
+<a id="run-a-self-hosted-bot-without-the-picker"></a>
+<a id="stop-a-bot"></a>
+
+## Зупинити бота
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Розміщений у Cloud">
+
+Відкрийте бота в Klex Cloud і виберіть **Stop** у налаштуваннях хостингу.
+
+</Tab>
+<Tab title="Самостійно розміщений">
+
+Щоб зупинити бота, який працює в застосунку, закрийте застосунок.
+
+<a id="stop-a-headless-bot"></a>
+
+Для бота без графічного інтерфейсу скористайтеся командою зупинки вашого менеджера служб. Якщо процес контролюється, налаштуйте його так, щоб бот не перезапускався одразу.
+
+</Tab>
+</Tabs>
+
+<a id="manage-access"></a>
+
+## Керування доступом
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Розміщений у Cloud">
+
+Відкрийте **Connectors** бота в Klex Cloud, щоб керувати його підключеннями.
+
+</Tab>
+<Tab title="Самостійно розміщений">
+
+У застосунку Klex відкрийте **Settings → MCP Servers**, щоб переглянути, змінити або видалити сервер. Інструкції та застереження щодо відкликання OAuth див. у розділі [MCP і Klex Bots](/uk/bot/concepts/mcp#add-a-remote-server-in-the-self-hosted-app).
+
+</Tab>
+</Tabs>
+
+Налаштовуйте дозволи для облікових записів і застосунків, якими користується бот, безпосередньо в цих облікових записах і застосунках. Докладніше про зв’язок між підключеннями та дозволами див. у розділі [Підключення до комп’ютерів і застосунків](/uk/bot/concepts/brain-and-computers).
+
+Наразі Klex не підтримує схвалення чи обмеження окремих дій. Відповідно налаштуйте дозволи облікових записів і застосунків бота.
+
+Ви також можете [переглянути активність бота](/uk/bot/guides/observability) на панелі керування.
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

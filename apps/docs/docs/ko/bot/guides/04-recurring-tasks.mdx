@@ -1,0 +1,34 @@
+---
+title: 반복 작업 자동화하기
+sidebar:
+  label: 반복 작업
+description: 연결된 일정 서비스와 명확한 지침으로 반복 작업을 설정합니다.
+related:
+  - /ko/bot/concepts/memory
+  - /ko/bot/concepts/agent-skills
+  - /ko/bot/guides/control-and-limits
+---
+
+반복 작업에는 Bot에 이벤트를 전달할 수 있는 연결된 캘린더 또는 일정 서비스를 사용하세요. 서비스는 필요한 일정을 지원하고 MCP 연결을 통해 필요한 기능을 제공해야 합니다.
+
+<a id="set-up-a-routine"></a>
+
+## 정기 작업 설정하기
+
+1. 일정 서비스를 연결하고 Bot의 계정을 승인합니다. Bot이 일정을 만들고 이벤트를 받을 수 있는지 확인합니다.
+2. Bot에 작업 내용, 빈도, 시간대, 결과를 보낼 위치를 알려주세요. 필요한 앱과 데이터에 대한 접근 권한을 부여합니다.
+3. Bot에 일정 생성을 요청한 다음 일정 서비스에서 확인합니다. 작업을 신뢰하기 전에 흐름을 테스트하고 결과를 확인합니다.
+
+예: “매주 월요일 09:00 Europe/Berlin에 프로젝트의 열린 이슈를 요약하여 프로젝트 채널에 게시해.” Bot에는 작동하는 일정과 이슈 원본 및 대상 채널에 대한 접근 권한이 필요합니다.
+
+<a id="reminders-and-learned-procedures"></a>
+
+## 알림과 학습한 절차
+
+Bot은 단기 작업과 일회성 알림에 내부 할 일을 사용할 수 있습니다. 반복 일정용 캘린더는 아니므로 반복 일정에는 적절한 연결 서비스를 사용하세요.
+
+관리자는 `GET`과 `POST /v1/todos`로 할 일을 조회 및 생성하고, `PATCH` 또는 `DELETE /v1/todos/{id}`로 수정 또는 삭제할 수 있습니다. 목록은 Bot의 세션 간에 공유되며 변경 사항은 다음 단계에 나타납니다. 알림 시간은 미래여야 하고 UTC 오프셋 또는 `Z`를 포함해야 합니다. 경로 사용 가능 여부는 Bot의 OpenAPI 문서에서 확인하세요. 자체 호스팅 Bot은 [로컬 Admin API 접근](/ko/bot/guides/observability#access-the-local-admin-api)과 보안 제한을 참고하세요.
+
+Bot은 경험을 통해 재사용 가능한 절차를 [Agent Skill](/ko/bot/concepts/agent-skills)로 학습하여 익숙한 작업을 수행하는 데 활용할 수도 있습니다.
+
+예정된 시간에 Bot과 연결을 사용 가능한 상태로 유지하고, 중요한 결과에는 평소의 모니터링 또는 에스컬레이션 절차를 사용하세요.

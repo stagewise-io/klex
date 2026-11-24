@@ -1,0 +1,20 @@
+---
+title: Klex Bot 작업 병렬화하기
+sidebar:
+  label: 작업 병렬화
+description: 독립적인 작업을 Klex Bot들에게 나누고 결과를 확인합니다.
+related:
+  - /ko/guides/bot-collaboration
+  - /ko/bot/guides/observability
+  - /ko/guides/limit-blast-radius
+---
+
+독립적인 작업을 여러 Bot에게 나눌 수 있습니다. 예를 들어 한 Bot에게는 한 프로젝트의 열린 이슈를 검토하도록 하고 다른 Bot에게는 별도 프로젝트의 업데이트를 요약하도록 합니다. 각 Bot에게 개별 작업과 필요한 연결 및 권한을 주고 결과를 보고할 장소를 명확히 정하세요.
+
+<a id="coordinate-and-review"></a>
+
+## 조율하고 검토하기
+
+- Bot들이 서로 모른 채 같은 리소스를 편집하지 않도록 작업을 나누세요. 작업이 겹치면 각 변경의 담당자와 충돌 해결 방법을 정하세요.
+- Bot의 메시징 계정이 접근할 수 있다면 공유 대화를 사용해 작업을 인계하세요. [Klex Bot 함께 일하게 하기](/ko/guides/bot-collaboration)를 참고하세요.
+- 작은 테스트부터 시작하세요. 작업량을 늘리기 전에 결과, 중복 작업, 접근 권한, 모델 제공업체 사용량을 검토하세요.

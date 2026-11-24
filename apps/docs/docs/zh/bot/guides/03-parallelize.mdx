@@ -1,0 +1,20 @@
+---
+title: 并行处理 Klex Bot 的工作
+sidebar:
+  label: 并行处理工作
+description: 将独立工作分配给多个 Klex Bot 并检查结果。
+related:
+  - /zh/guides/bot-collaboration
+  - /zh/bot/guides/observability
+  - /zh/guides/limit-blast-radius
+---
+
+你可以将独立的工作分配给多个 Bot。例如，让一个 Bot 检查某个项目中未关闭的问题，让另一个 Bot 汇总另一个项目的更新。为每个 Bot 分配独立的任务，提供所需的连接和权限，并明确结果报告的位置。
+
+<a id="coordinate-and-review"></a>
+
+## 协调与检查
+
+- 合理拆分工作，避免 Bot 在不知情的情况下编辑同一资源。如果工作有重叠，明确每项更改的负责人和冲突解决方式。
+- 如果 Bot 的消息账户有访问权限，请使用共享会话交接工作。参见[让 Klex Bot 协作](/zh/guides/bot-collaboration)。
+- 先进行小规模测试。增加工作量之前，检查结果、重复工作、访问权限和模型提供商的用量。

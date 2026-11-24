@@ -102,3 +102,18 @@ html[dir="rtl"] pre {
   direction: ltr;
   text-align: left;
 }
+
+/* Restore list markers inside hosting tabs, where Blume's prose styles do not apply. */
+blume-tabs[data-sync-key="hosting"] [data-blume-tab-panel] ol,
+blume-tabs[data-sync-key="hosting"] [data-blume-tab-panel] ul {
+  padding-inline-start: 1.5em;
+}
+blume-tabs[data-sync-key="hosting"] [data-blume-tab-panel] ol {
+  list-style-type: decimal;
+}
+blume-tabs[data-sync-key="hosting"] [data-blume-tab-panel] ul {
+  list-style-type: disc;
+}
+blume-tabs[data-sync-key="hosting"] [data-blume-tab-panel] li + li {
+  margin-block-start: 0.5em;
+}

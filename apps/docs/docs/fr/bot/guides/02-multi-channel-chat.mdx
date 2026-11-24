@@ -1,0 +1,22 @@
+---
+title: Discuter sur plusieurs canaux
+sidebar:
+  label: Chat multicanal
+description: Connectez un Klex Bot aux applications de messagerie et vérifiez son accès à chaque canal.
+related:
+  - /fr/bot/concepts/communication
+  - /fr/bot/concepts/mcp
+  - /fr/cloud
+---
+
+Un Bot peut utiliser plusieurs connexions de messagerie. Chaque connexion nécessite un serveur MCP qui fournit les fonctions de messagerie requises et un compte ayant accès aux conversations souhaitées.
+
+<a id="connect-and-check-each-channel"></a>
+
+## Connecter et vérifier chaque canal
+
+1. Ajoutez ou connectez le serveur MCP correspondant à l’application de messagerie. Voir [MCP et Klex Bots](/fr/bot/concepts/mcp).
+2. Configurez ou autorisez le compte du Bot et accordez-lui l’accès dans l’application de messagerie. Répétez ces étapes pour chaque application.
+3. Envoyez un message de test dans chaque conversation prévue et vérifiez que le Bot peut y répondre. Sinon, vérifiez l’état de la connexion, l’autorisation et l’accès du compte à cette conversation.
+
+Pour une conversation de groupe, vérifiez qui peut la voir et si le compte du Bot est autorisé à y participer. Définissez les destinataires et les autorisations dans l’application de messagerie. Ne supposez pas qu’une connexion donne accès à toutes les conversations.

@@ -211,7 +211,22 @@ class MatcherEngineModule implements MatcherEngine {
       this.regex(value, pattern, signal),
     );
     this.regexQueue = result.catch(() => undefined);
-    return result;
+    if (!signal) return result;
+    return new Promise<boolean>((resolve, reject) => {
+      const abort = () => reject(signal.reason);
+      signal.addEventListener('abort', abort, { once: true });
+      if (signal.aborted) abort();
+      void result.then(
+        (value) => {
+          signal.removeEventListener('abort', abort);
+          resolve(value);
+        },
+        (error: unknown) => {
+          signal.removeEventListener('abort', abort);
+          reject(error);
+        },
+      );
+    });
   }
   private async regex(
     value: string,

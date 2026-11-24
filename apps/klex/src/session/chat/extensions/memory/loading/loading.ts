@@ -171,7 +171,7 @@ class MemoryLoaderModule implements MemoryLoader {
   async carry(history = this.lastHistory): Promise<ExtendedUIMessage['parts']> {
     this.skillContext.initialize(history);
     const window = randomUUID();
-    // A temporarily unavailable registry must not block compaction or discard subscriptions.
+    // During registry outages, compact only if every active skill body can be retained.
     const skills = await this.deps.skills
       .snapshot()
       .then((skills) => {
@@ -193,6 +193,8 @@ class MemoryLoaderModule implements MemoryLoader {
         ]),
       );
       const snapshots: SnapshotMap = Object.create(null);
+      const historical = new Map<string, unknown>();
+      let hasHistoricalSnapshots = false;
       let catalogue: ExtendedUIMessage['parts'][number] | undefined;
       for (const message of history)
         for (const part of message.parts) {
@@ -201,14 +203,10 @@ class MemoryLoaderModule implements MemoryLoader {
           const data = (part as unknown as { data: unknown }).data;
           if (!data || typeof data !== 'object' || Array.isArray(data))
             continue;
+          hasHistoricalSnapshots = true;
+          historical.clear();
           for (const [filename, value] of Object.entries(data)) {
-            if (!allowed.has(filename) || typeof value !== 'string') continue;
-            const snapshot = parseSnapshot(value);
-            if (
-              snapshot &&
-              ['skill', 'skill-reference'].includes(snapshot.kind)
-            )
-              snapshots[filename] = JSON.stringify({ ...snapshot, window });
+            if (allowed.has(filename)) historical.set(filename, value);
           }
         }
       // A successful prepare may not yet be attached to the supplied history.
@@ -216,6 +214,21 @@ class MemoryLoaderModule implements MemoryLoader {
         this.skillContext.fork().snapshots(this.lastSkills, window),
       ))
         if (!(filename in snapshots)) snapshots[filename] = value;
+      for (const filename of allowed) {
+        const value = hasHistoricalSnapshots
+          ? historical.get(filename)
+          : snapshots[filename];
+        const snapshot =
+          typeof value === 'string' ? parseSnapshot(value) : null;
+        const kind = filename.endsWith('/SKILL.md')
+          ? 'skill'
+          : 'skill-reference';
+        if (!snapshot || snapshot.kind !== kind || snapshot.removed)
+          throw new Error(
+            `Cannot carry missing or corrupt skill snapshot: ${filename}`,
+          );
+        snapshots[filename] = JSON.stringify({ ...snapshot, window });
+      }
       return [
         ...(catalogue ? [catalogue] : []),
         ...parts,

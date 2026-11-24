@@ -1,0 +1,70 @@
+---
+title: MCP et les Klex Bots
+sidebar:
+  label: MCP
+description: Comment les Klex Bots utilisent les serveurs MCP pour travailler avec des ordinateurs et des applications.
+related:
+  - /bot/concepts/brain-and-computers
+  - /bot/guides/control-and-limits
+  - /guides/secure-bot-usage
+---
+
+Le [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) connecte un Klex Bot à des environnements externes. Un serveur MCP peut exposer un ordinateur ou une application ; le Bot utilise les capacités fournies par le serveur pour y travailler.
+
+Klex propose des serveurs MCP intégrés et prend en charge d’autres serveurs MCP. Les capacités disponibles dépendent du serveur :
+
+- Les **outils** permettent au Bot de demander des actions ou des informations au serveur.
+- Les **ressources** fournissent du contenu que le Bot peut découvrir et ouvrir.
+- Les **notifications push** peuvent transmettre des messages et d’autres événements si le serveur prend en charge l’[extension Klex MCP Push Notifications](https://github.com/stagewise-io/klex/tree/main/packages/mcp-extension-push-notifications).
+- **MCP Events & Triggers**, une extension MCP à l’état de projet, permet au Bot de découvrir et de surveiller les événements pris en charge par le serveur. Les surveillances persistent entre les conversations et les redémarrages, mais les événements survenus pendant une interruption peuvent être perdus. La création d’une surveillance ne configure pas le service externe.
+
+Ces capacités MCP peuvent amener le Bot à travailler à l’arrivée d’un message ou lors d’un changement dans une application. Elles dépendent de la prise en charge et de la configuration du serveur connecté ; aucune passerelle propre à Klex n’est nécessaire.
+
+<a id="adding-a-server"></a>
+
+## Ajouter un serveur
+
+Vous pouvez gérer les connexions MCP d’un Bot dans le tableau de bord Cloud. Un Bot peut aussi ajouter lui-même un nouveau serveur MCP HTTP ou HTTPS distant. Cette fonction ne permet pas de modifier ni de supprimer la configuration des serveurs existants. Si le nouveau serveur nécessite OAuth, un utilisateur peut l’autoriser dans l’interface Cloud.
+
+Connectez uniquement des serveurs fiables. Une connexion rend les capacités du serveur accessibles au Bot ; l’accès dans une application dépend aussi du compte et des autorisations qui y sont configurés. Vérifiez les connexions du Bot et n’accordez à ses comptes que les accès nécessaires. Consultez [Connexions aux ordinateurs et aux applications](/bot/concepts/brain-and-computers) pour en savoir plus sur la gestion des accès.
+
+La connexion passe par MCP ; le compte du Bot se trouve dans l’application et reste distinct de cette connexion.
+
+<a id="add-a-remote-server"></a>
+
+### Ajouter un serveur distant
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Hébergé dans le Cloud">
+
+1. Dans Klex Cloud, ouvrez votre Bot et sélectionnez **Connectors**. Vous devez être propriétaire ou administrateur de l’organisation pour gérer les connecteurs.
+2. Dans le catalogue des connecteurs, choisissez **Connect an MCP**, saisissez l’URL et le nom du serveur, puis ajoutez les en-têtes nécessaires sous **Advanced options**.
+3. Sélectionnez **Connect** et effectuez l’autorisation si elle est demandée. Vérifiez l’état de la connexion avant d’utiliser le serveur.
+
+</Tab>
+<Tab title="Auto-hébergé">
+
+<a id="add-a-remote-server-in-the-self-hosted-app"></a>
+
+Dans l’application Klex interactive, vous pouvez ajouter un serveur HTTP de type streamable :
+
+1. Ouvrez **Settings → MCP Servers** et appuyez sur `a`.
+2. Saisissez un nom de serveur unique et une URL HTTP ou HTTPS absolue. Utilisez HTTPS pour les services distants qui transmettent des identifiants.
+3. Si le serveur nécessite des en-têtes personnalisés, appuyez sur `a` pour ajouter chaque nom et valeur. Traitez les valeurs d’identifiants comme des secrets.
+4. Appuyez sur `s` pour ajouter le serveur, puis vérifiez son état dans la liste. Une configuration enregistrée ne signifie pas à elle seule que le serveur est connecté.
+
+Pour inspecter un serveur, sélectionnez-le et appuyez sur Entrée. Son écran de détail affiche son état, son transport, son nombre d’outils et la prise en charge des notifications push. Depuis cet écran, `e` modifie sa configuration et `d` le supprime après confirmation. Lors de la suppression, Klex efface les identifiants OAuth locaux et tente de révoquer le jeton si le fournisseur le permet. La révocation peut échouer ; vérifiez séparément les autorisations du compte dans l’application connectée.
+
+</Tab>
+</Tabs>
+
+Pour utiliser l’autorisation OAuth dans l’interface Cloud, le Bot doit être inscrit dans Cloud et disposer d’un tunnel Cloud connecté. Un Bot autonome non inscrit dans Cloud ne peut pas utiliser ce flux d’autorisation relayé par Cloud.
+
+<a id="if-a-connection-needs-attention"></a>
+
+## Si une connexion nécessite votre attention
+
+Un serveur peut nécessiter une autorisation ou ne pas parvenir à se connecter. Vérifiez l’état de la connexion et effectuez toute autorisation requise. Si la connexion échoue toujours, vérifiez l’adresse du serveur, les identifiants et la disponibilité du serveur. Le Bot ne peut utiliser que les capacités exposées par un serveur connecté.
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

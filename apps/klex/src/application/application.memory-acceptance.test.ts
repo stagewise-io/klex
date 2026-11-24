@@ -212,6 +212,11 @@ it('migrates entity documents during application startup without a configured mo
     file,
     '---\nFormatVersion: 5\nCreatedAt: 2026-11-17T10:00:00.000Z\nLastUpdatedAt: 2026-11-17T11:00:00.000Z\nLastReadAt: null\nLinkedIdentities: []\nLoadOn: []\nRelatedTo:\n  - "[[project/Klex|works on (80)]]"\nTrustScore: 2\nAuthorityScore: 5\n---\n\n## General\n\n- Engineer [old](history:abc)\n',
   );
+  const metadata = join(dirname(dirname(file)), '.obsidian', 'workspace.json');
+  await mkdir(dirname(metadata), { recursive: true });
+  await writeFile(metadata, '{"editor":"obsidian"}\n');
+  const hiddenNote = join(dirname(metadata), 'not-an-entity.md');
+  await writeFile(hiddenNote, 'Editor metadata, not an entity');
   const { app } = await boot(root);
   const converted = await readFile(file, 'utf8');
   expect(converted).toContain('FormatVersion: 6');
@@ -222,6 +227,10 @@ it('migrates entity documents during application startup without a configured mo
   await app.close();
   await boot(root);
   expect(await readFile(file, 'utf8')).toBe(converted);
+  expect(await readFile(metadata, 'utf8')).toBe('{"editor":"obsidian"}\n');
+  expect(await readFile(hiddenNote, 'utf8')).toBe(
+    'Editor metadata, not an entity',
+  );
 });
 
 it('aborts application startup on invalid memory before exposing the API', async () => {

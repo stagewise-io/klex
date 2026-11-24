@@ -1,0 +1,28 @@
+---
+title: Auswirkungen begrenzen
+description: Verringern Sie, worauf ein offengelegtes oder kompromittiertes Bot-Konto zugreifen und was es ändern kann.
+related:
+  - /de/guides/secure-bot-usage
+  - /de/guides/trust-critical-operations
+  - /de/bot/concepts/brain-and-computers
+---
+
+Begrenzen Sie die möglichen Auswirkungen eines kompromittierten Bots, indem Sie den Zugriff seiner Konten und verbundenen Umgebungen beschränken. Die passenden Grenzen hängen von den beteiligten Apps, Computern und Daten ab; Anweisungen an den Bot allein sind keine Zugriffskontrolle.
+
+<a id="reduce-exposure"></a>
+
+## Angriffsfläche verringern
+
+- Verwenden Sie ein eigenes Konto für den Bot, wenn die verbundene App dies unterstützt. Geben Sie ihm nur die Ressourcen und Berechtigungen, die es für seine Arbeit benötigt.
+- Trennen Sie sensible Ressourcen von allgemeinen Aufgaben. Verbinden Sie Produktionssysteme oder sensible Daten nur, wenn der Bot sie benötigt.
+- Beschränken Sie über die Zugriffskontrollen der jeweiligen Dienste, wer den Bot sowie die von ihm genutzten Unterhaltungen oder Tools erreichen kann.
+- Prüfen Sie Berechtigungen zum Teilen von Informationen, Ändern von Einstellungen und Ausführen zerstörerischer Aktionen. Nutzen Sie einen separaten Freigabeprozess für Änderungen mit großer Auswirkung.
+- Überprüfen Sie den Zugriff regelmäßig und entfernen Sie nicht mehr benötigte Verbindungen und Berechtigungen.
+
+Eine Checkliste für Kontoberechtigungen finden Sie unter [Klex Bots sicher nutzen](/de/guides/secure-bot-usage).
+
+<a id="prepare-to-respond"></a>
+
+## Auf eine Reaktion vorbereiten
+
+Ermitteln Sie vor einem Vorfall, welche Konten, Verbindungen und Umgebungen der Bot verwendet. Folgen Sie bei Verdacht auf eine Kompromittierung Ihrem Prozess zur Reaktion auf Sicherheitsvorfälle: Erwägen Sie, den Bot zu stoppen, Zugriff in verbundenen Diensten zu entziehen, betroffene Zugangsdaten zu erneuern und relevante Aktivitäten zu prüfen. Den Bot allein zu stoppen ersetzt weder den Entzug des Zugriffs noch die Untersuchung bereits ausgeführter Aktionen.

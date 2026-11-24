@@ -1,0 +1,52 @@
+---
+title: Confidentialité des données
+description: Où sont stockées les données du Bot et comment fonctionnent les analyses et la télémétrie en auto-hébergement.
+related:
+  - /fr/cloud/hosted-vs-local
+  - /fr/bot/concepts/data-directory
+  - /fr/guides/prevent-information-theft
+---
+
+Les conversations et la mémoire d’un Bot sont stockées dans son [répertoire de données](/fr/bot/concepts/data-directory). Pour un Bot hébergé par Cloud, ce répertoire se trouve dans l’environnement hébergé. Pour un Bot auto-hébergé, il se trouve dans l’environnement où vous exécutez le Bot. Les administrateurs peuvent consulter les conversations et les compétences via l’API Admin du Bot.
+
+Toutes les données des Bots hébergés par Cloud, y compris la mémoire, sont chiffrées en transit et au repos. Cette affirmation ne décrit pas le chiffrement des Bots auto-hébergés ; protégez votre environnement d’hébergement et votre stockage de manière appropriée.
+
+<a id="access-and-connected-services"></a>
+
+## Accès et services connectés
+
+Un Bot peut utiliser les applications connectées avec les autorisations de ses comptes. Avant d’utiliser des informations sensibles, vérifiez les données et actions accessibles à chaque compte ainsi que les politiques des services connectés et des fournisseurs de modèles. Consultez [Utiliser les Bots Klex en sécurité](/fr/guides/secure-bot-usage).
+
+Pour déboguer un Bot hébergé par Cloud, un nombre limité de membres du personnel Klex peut accéder à ses conversations ou à sa mémoire en mode débogage après avoir discuté de l’enquête avec vous et obtenu votre confirmation. Cet accès est enregistré de façon persistante, visible pour vous et généralement limité dans le temps. Il n’est pas destiné à l’entraînement général des modèles.
+
+La [Politique de confidentialité](https://klex.bot/legal/privacy) et l’[Accord de traitement des données](https://klex.bot/legal/data-processing-agreement) décrivent le débogage de support, les autres traitements, les fournisseurs de services et la conservation. Ils abordent aussi séparément les traitements légaux liés à la sécurité ou aux obligations juridiques. Vérifiez les conditions applicables et les politiques des fournisseurs connectés pour votre cas d’usage.
+
+<a id="analytics-and-telemetry"></a>
+
+## Analyses et télémétrie
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Hébergé par Cloud">
+
+Pour le traitement côté Cloud, les fournisseurs de services et la conservation, consultez la [Politique de confidentialité](https://klex.bot/legal/privacy) et l’[Accord de traitement des données](https://klex.bot/legal/data-processing-agreement). Les options du processus auto-hébergé ne décrivent pas les rapports côté Cloud.
+
+</Tab>
+<Tab title="Auto-hébergé">
+
+<a id="analytics-and-telemetry-for-a-self-hosted-bot"></a>
+
+Klex dispose de deux systèmes de rapport distincts. Les commandes ci-dessous s’appliquent au processus Klex auto-hébergé ; elles ne décrivent ni les rapports côté Cloud ni les services connectés.
+
+Les **analyses produit** sont activées par défaut dans les versions de production qui incluent une clé d’analyse. Les événements peuvent inclure les résultats du démarrage et de l’inscription, des totaux d’utilisation, des informations d’exécution et l’utilisation des ressources du processus. Les schémas d’événements n’incluent pas le contenu des conversations ni les jetons d’inscription. Chaque processus utilise un identifiant aléatoire temporaire et la requête réseau expose l’adresse IP de l’expéditeur au destinataire. Consultez les [détails d’implémentation des analyses produit](https://github.com/stagewise-io/klex/blob/baff8a40ce9b896fdd17146dfe9906cefe7c2697/apps/klex/product-analytics.md).
+
+Pour désactiver les analyses produit, démarrez Klex avec `--no-analytics`, ou définissez `KLEX_NO_ANALYTICS=1` ou `DO_NOT_TRACK=1` dans son environnement. L’option explicite `--analytics` prime sur la désactivation par variable d’environnement.
+
+La **télémétrie opérationnelle** est distincte. Elle est désactivée lorsqu’aucun point de terminaison de télémétrie n’est configuré. Sauf si elle est explicitement désactivée, la configuration d’un point de terminaison l’active. Le niveau activé par défaut comprend des métadonnées opérationnelles sensibles. Le niveau débogage peut aussi exporter le contenu des conversations, les prompts et les données des outils. Utilisez uniquement un collecteur de confiance et limitez l’accès à ses données. Pour forcer la désactivation de la télémétrie, utilisez `--disable-telemetry` ou `KLEX_DISABLE_TELEMETRY=1`. Consultez les [détails d’implémentation de la télémétrie](https://github.com/stagewise-io/klex/blob/baff8a40ce9b896fdd17146dfe9906cefe7c2697/apps/klex/telemetry.md).
+
+Désactiver un système ne désactive pas l’autre. Aucune de ces commandes ne désactive les communications avec les fournisseurs de modèles, les serveurs MCP ou la connexion Cloud configurés.
+
+</Tab>
+</Tabs>
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

@@ -1,0 +1,52 @@
+---
+title: Privacidad de los datos
+description: Dónde se almacenan los datos del Bot y cómo funcionan las analíticas y la telemetría en el alojamiento propio.
+related:
+  - /es/cloud/hosted-vs-local
+  - /es/bot/concepts/data-directory
+  - /es/guides/prevent-information-theft
+---
+
+Los chats y la memoria de un Bot se almacenan en su [directorio de datos](/es/bot/concepts/data-directory). En un Bot alojado en Cloud, ese directorio está en el entorno alojado. En un Bot autoalojado, está en el entorno donde lo ejecutas. Los administradores pueden revisar los chats y las habilidades mediante la API Admin del Bot.
+
+Todos los datos de los Bots alojados en Cloud, incluida la memoria, se cifran en tránsito y en reposo. Esta afirmación no describe el cifrado de los Bots autoalojados; protege adecuadamente tu entorno de alojamiento y almacenamiento.
+
+<a id="access-and-connected-services"></a>
+
+## Acceso y servicios conectados
+
+Un Bot puede trabajar con aplicaciones conectadas usando los permisos de sus cuentas. Antes de usar información sensible, revisa los datos y las acciones a los que puede acceder cada cuenta, así como las políticas de los servicios conectados y los proveedores de modelos. Consulta [Usar los Bots de Klex de forma segura](/es/guides/secure-bot-usage).
+
+Para depurar un Bot alojado en Cloud, un número limitado de miembros del personal de Klex puede acceder a sus chats o memoria en modo de depuración después de hablar contigo sobre la investigación y recibir tu confirmación. Este acceso queda registrado de forma persistente y es visible para ti, y generalmente tiene una duración limitada. No se usa para el entrenamiento general de modelos.
+
+La [Política de privacidad](https://klex.bot/legal/privacy) y el [Acuerdo de tratamiento de datos](https://klex.bot/legal/data-processing-agreement) describen la depuración de soporte, otros tratamientos, los proveedores de servicios y la conservación. También abordan por separado el tratamiento legítimo por motivos de seguridad o legales. Revisa los términos aplicables y las políticas de los proveedores conectados para tu caso de uso.
+
+<a id="analytics-and-telemetry"></a>
+
+## Analíticas y telemetría
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Alojado en Cloud">
+
+Para conocer el tratamiento en Cloud, los proveedores de servicios y la conservación, consulta la [Política de privacidad](https://klex.bot/legal/privacy) y el [Acuerdo de tratamiento de datos](https://klex.bot/legal/data-processing-agreement). Las opciones del proceso autoalojado no describen los informes del lado de Cloud.
+
+</Tab>
+<Tab title="Autoalojado">
+
+<a id="analytics-and-telemetry-for-a-self-hosted-bot"></a>
+
+Klex tiene dos sistemas de informes separados. Los controles siguientes se aplican al proceso Klex autoalojado; no describen los informes del lado de Cloud ni los servicios conectados.
+
+Las **analíticas de producto** están activadas por defecto en las versiones de lanzamiento que incluyen una clave de analíticas. Los eventos pueden incluir resultados de inicio y vinculación, recuentos agregados de uso, información de ejecución y uso de recursos del proceso. Los esquemas de eventos no incluyen contenido de chats ni tokens de vinculación. Cada proceso usa un identificador aleatorio temporal y la solicitud de red expone la dirección IP del emisor al destinatario. Consulta los [detalles de implementación de las analíticas de producto](https://github.com/stagewise-io/klex/blob/baff8a40ce9b896fdd17146dfe9906cefe7c2697/apps/klex/product-analytics.md).
+
+Para desactivar las analíticas de producto, inicia Klex con `--no-analytics`, o establece `KLEX_NO_ANALYTICS=1` o `DO_NOT_TRACK=1` en su entorno. La opción explícita `--analytics` prevalece sobre la exclusión por variables de entorno.
+
+La **telemetría operativa** es independiente. Está desactivada cuando no hay un endpoint de telemetría configurado. Salvo que se desactive explícitamente, configurar un endpoint la activa. El nivel activado por defecto incluye metadatos operativos sensibles. El nivel de depuración también puede exportar contenido de chats, prompts y cargas de herramientas. Usa únicamente un recolector de confianza y restringe el acceso a sus datos. Para forzar la desactivación de la telemetría, usa `--disable-telemetry` o `KLEX_DISABLE_TELEMETRY=1`. Consulta los [detalles de implementación de la telemetría](https://github.com/stagewise-io/klex/blob/baff8a40ce9b896fdd17146dfe9906cefe7c2697/apps/klex/telemetry.md).
+
+Desactivar un sistema no desactiva el otro. Ninguno de los dos controles desactiva la comunicación con los proveedores de modelos, servidores MCP o la conexión a Cloud configurados.
+
+</Tab>
+</Tabs>
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

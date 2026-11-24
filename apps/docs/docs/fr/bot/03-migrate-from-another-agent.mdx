@@ -1,0 +1,50 @@
+---
+title: Migrer depuis un autre agent
+description: Rassemblez les connaissances et routines de votre agent actuel, puis transférez son travail à un Bot Klex.
+related:
+  - /fr/bot/quickstart
+  - /fr/bot/concepts/soul
+  - /fr/bot/concepts/brain-and-computers
+  - /fr/guides/secure-bot-usage
+---
+
+Transférez le travail et les connaissances utiles de votre agent actuel à un Bot Klex. Commencez par rassembler ce qu’il fait, ce qu’il sait et les ressources qu’il utilise.
+
+<a id="prepare-the-workflow"></a>
+
+## Rassembler l’essentiel
+
+Demandez à votre agent actuel un document de transfert. Le prompt ci-dessous est un point de départ ; adaptez-le au travail que vous souhaitez transférer.
+
+~~~text
+Je transfère votre travail à un nouvel agent IA. Créez un document de transfert unique qu’un nouvel agent et son administrateur pourront utiliser pour poursuivre votre travail.
+
+Incluez les éléments suivants, avec des titres clairs et des détails pratiques :
+
+1. Rôle et priorités : votre objectif, vos responsabilités, votre style de travail préféré et les personnes ou équipes avec lesquelles vous travaillez.
+2. Connaissances et contexte : faits importants, terminologie, décisions, préférences et contexte pertinent appris. Indiquez où trouver les informations justificatives.
+3. Routines et horaires : tâches récurrentes, horaires et fuseaux horaires, déclencheurs, résultats attendus et destinations des résultats.
+4. Processus habituels : étapes des processus, points de décision, transferts, exemples et vérification des résultats.
+5. Compétences et apprentissages : procédures réutilisables, leçons tirées du travail passé, problèmes courants et leur traitement.
+6. Connexions et accès : applications, comptes, ressources et capacités nécessaires à chaque processus. Décrivez les accès requis sans inclure d’identifiants secrets.
+7. Travail en cours : tâches actuelles, décisions en attente, échéances et prochaine action pour chacune.
+
+Utilisez les informations auxquelles vous avez accès. Signalez ce qui est inaccessible ou incertain plutôt que de deviner. N’incluez ni mots de passe, ni jetons, ni clés API, ni autres secrets. Identifiez les informations sensibles pour que je décide quoi partager. Renvoyez le transfert sous forme d’un document structuré unique.
+~~~
+
+Vérifiez l’exactitude et les informations sensibles du document. Ajoutez ce à quoi l’ancien agent n’avait pas accès, comme les horaires ou instructions stockés ailleurs.
+
+<a id="set-up-your-klex-bot"></a>
+
+## Configurer votre Bot Klex
+
+1. [Créez un Bot Klex](/fr/bot/quickstart). Utilisez le document de transfert pour décrire son travail et son caractère.
+2. Donnez au Bot le contenu pertinent du transfert et indiquez-lui le travail à prendre en charge. Utilisez les [Agent Skills](/fr/bot/concepts/agent-skills) pour les procédures réutilisables.
+3. [Connectez les applications et ordinateurs](/fr/bot/concepts/brain-and-computers) nécessaires à son travail et configurez les accès du compte du Bot dans chaque service.
+4. Configurez le travail récurrent avec un service de planification connecté. Consultez [Automatiser les tâches récurrentes](/fr/bot/guides/recurring-tasks).
+
+<a id="test-before-switching-over"></a>
+
+## Vérifier le transfert
+
+Essayez une tâche représentative et examinez le résultat. Vérifiez que le Bot peut accéder à ses ressources, communiquer au bon endroit et recevoir le travail planifié. Une fois le nouveau processus opérationnel, retirez les accès et horaires de l’ancien agent devenus inutiles.

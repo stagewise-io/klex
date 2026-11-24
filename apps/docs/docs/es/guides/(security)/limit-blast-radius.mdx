@@ -1,0 +1,28 @@
+---
+title: Limitar el alcance de los daños
+description: Reduce aquello a lo que una cuenta de Bot expuesta o comprometida puede acceder y lo que puede cambiar.
+related:
+  - /es/guides/secure-bot-usage
+  - /es/guides/trust-critical-operations
+  - /es/bot/concepts/brain-and-computers
+---
+
+Limita el posible impacto de un Bot comprometido restringiendo el acceso de sus cuentas y entornos conectados. Los límites adecuados dependen de las aplicaciones, los ordenadores y los datos implicados; las instrucciones al Bot por sí solas no son un control de acceso.
+
+<a id="reduce-exposure"></a>
+
+## Reducir la exposición
+
+- Usa una cuenta distinta para el Bot cuando la aplicación conectada lo permita. Dale solo los recursos y permisos que necesite para su trabajo.
+- Separa los recursos sensibles del trabajo general. Evita conectar sistemas de producción o datos sensibles salvo que el Bot los necesite.
+- Restringe quién puede acceder al Bot y a las conversaciones o herramientas que usa mediante los controles de acceso disponibles en esos servicios.
+- Revisa los permisos para compartir información, cambiar ajustes y realizar acciones destructivas. Usa un proceso de aprobación independiente para cambios de gran impacto.
+- Revisa el acceso periódicamente y elimina las conexiones y permisos que ya no sean necesarios.
+
+Consulta [Usar los Bots de Klex de forma segura](/es/guides/secure-bot-usage) para obtener una lista de comprobación de permisos de cuenta.
+
+<a id="prepare-to-respond"></a>
+
+## Prepararse para responder
+
+Identifica las cuentas, conexiones y entornos que usa el Bot antes de que ocurra un incidente. Si sospechas que ha sido comprometido, sigue tu proceso de respuesta a incidentes: considera detener el Bot, revocar el acceso en los servicios conectados, rotar las credenciales afectadas y revisar la actividad pertinente. Detener el Bot por sí solo no sustituye la revocación del acceso ni la investigación de las acciones ya realizadas.

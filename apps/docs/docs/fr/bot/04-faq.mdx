@@ -1,0 +1,71 @@
+---
+title: FAQ
+description: Réponses aux questions fréquentes sur les Bots Klex, l’hébergement et la sécurité.
+related:
+  - /fr/bot
+  - /fr/cloud
+  - /fr/guides
+---
+
+Trouvez des réponses sur les premiers pas, l’hébergement, les connexions et l’utilisation des Bots Klex.
+
+<a id="getting-started"></a>
+
+## Premiers pas
+
+- **Comment fonctionnent les Bots Klex ?** Un Bot s’exécute dans son propre environnement et travaille dans des ordinateurs et applications connectés via MCP. Voir [Fonctionnement](/fr/bot/concepts/how-bots-work).
+- **À quoi peut servir un Bot ?** Il peut travailler avec des personnes et d’autres agents dans des applications et ordinateurs connectés. Ses possibilités dépendent de ses connexions et des autorisations de son compte. Voir [Fonctionnement](/fr/bot/concepts/how-bots-work).
+- **Comment transférer un processus depuis un autre agent ?** Rassemblez ses connaissances, routines et instructions dans un document de transfert, puis utilisez-le pour configurer votre Bot Klex. Voir [Migrer depuis un autre agent](/fr/bot/migrate-from-another-agent).
+- **Puis-je utiliser un Bot pour le travail en entreprise ?** Oui. Donnez-lui un travail et connectez les applications et ordinateurs nécessaires. Voir [Opérations critiques](/fr/guides/trust-critical-operations).
+- **Puis-je parler à un client existant ?** Contactez le [support Klex](mailto:support@klex.bot) pour demander des références clients.
+
+<a id="how-klex-bots-work"></a>
+
+## Fonctionnement des Bots Klex
+
+- **Comment un Bot se souvient-il et apprend-il ?** Il utilise des skills apprises et préconfigurées ainsi que des connaissances factuelles issues de travaux antérieurs. Cela l’aide à accomplir son travail et à se souvenir d’informations utiles sur son environnement. Voir [Mémoire](/fr/bot/concepts/memory).
+- **Quelle différence entre l’environnement du Bot et un ordinateur connecté ?** Son environnement assure son fonctionnement et gère sa mémoire ; il travaille dans les ordinateurs et applications connectés. Voir [Connexions](/fr/bot/concepts/brain-and-computers).
+- **Quels fournisseurs de modèles puis-je utiliser ?** Klex en prend en charge plusieurs, dont OpenAI, Anthropic, Google Gemini, Ollama local et des endpoints personnalisés compatibles. Les modèles disponibles dépendent du fournisseur et de votre compte. Voir [Modèles](/fr/bot/concepts/models).
+- **Un Bot peut-il utiliser et ajouter lui-même des serveurs MCP ?** Oui. Il peut ajouter un nouveau serveur distant HTTP ou HTTPS, mais cette capacité ne permet pas de modifier ou supprimer les configurations existantes. Voir [MCP et Bots](/fr/bot/concepts/mcp).
+- **Un Bot peut-il utiliser les Agent Skills ?** Oui. Les skills lui fournissent des instructions réutilisables pour appliquer des procédures utiles pendant son travail. Voir [Agent Skills](/fr/bot/concepts/agent-skills).
+- **Comment les Bots communiquent-ils avec les personnes et les autres Bots ?** Les personnes peuvent discuter avec un Bot dans le tableau de bord Cloud. Les Bots peuvent aussi communiquer avec des personnes et d’autres Bots via des applications connectées disposant des capacités de messagerie et des accès de compte nécessaires. Voir [Communication](/fr/bot/concepts/communication).
+
+<a id="operating-klex-bots"></a>
+
+## Utilisation des Bots Klex
+
+- **Comment consulter l’activité d’un Bot ?** Pour un Bot hébergé ou inscrit dans Cloud, utilisez le tableau de bord Cloud pour voir l’activité et discuter. Un Bot auto-hébergé dispose aussi de diagnostics locaux. Voir [Consulter l’activité](/fr/bot/guides/observability).
+- **Puis-je discuter avec un Bot sur plusieurs canaux ?** Oui, avec des connexions de messagerie adaptées et un compte ayant accès à chaque conversation. Voir [Discuter sur plusieurs canaux](/fr/bot/guides/multi-channel-chat).
+- **Un Bot peut-il traiter plusieurs demandes ?** Il peut recevoir plusieurs demandes. Vous pouvez aussi répartir le travail indépendant entre plusieurs Bots. Voir [Paralléliser le travail](/fr/bot/guides/parallelize).
+- **Comment configurer des tâches récurrentes ?** Connectez un service de planification et indiquez au Bot quoi faire, quand et où envoyer le résultat. Voir [Automatiser les tâches récurrentes](/fr/bot/guides/recurring-tasks).
+- **Comment arrêter un Bot et gérer son accès ?** Arrêtez un Bot hébergé dans Cloud depuis le tableau de bord ou fermez l’application auto-hébergée. Gérez les autorisations des comptes connectés dans leurs services. Le guide décrit aussi l’arrêt headless et les autres contrôles. Voir [Contrôle et limites](/fr/bot/guides/control-and-limits).
+- **Quelles sont les limites de Bots et de connexions ?** Contactez le [support Klex](mailto:support@klex.bot) pour connaître les limites actuelles.
+- **Les Bots Klex peuvent-ils travailler avec d’autres agents ?** Ils peuvent se coordonner via un service partagé lorsque chacun dispose des accès et capacités nécessaires. Voir [Travailler avec d’autres agents](/fr/bot/guides/interoperability).
+
+<a id="reliability"></a>
+
+## Fiabilité
+
+- **Puis-je surveiller la santé d’un Bot auto-hébergé ?** Oui. Activez le listener de santé facultatif pour surveiller le processus Klex et sa disponibilité.
+- **Un Bot peut-il travailler en continu ?** Oui. Gardez son environnement d’hébergement actif et son modèle et ses connexions disponibles pour le travail demandé.
+- **Dois-je recréer un Bot après une mise à jour ?** En général, non. Le Bot conserve sa configuration, ses chats et sa mémoire dans son répertoire de données. Consultez les notes de version lors de la mise à jour. Voir [Mises à jour](/fr/bot/reliability/updates).
+
+<a id="cloud-and-hosting"></a>
+
+## Cloud et hébergement
+
+- **Puis-je exécuter un Bot sans Klex Cloud ?** Oui. L’inscription à Cloud n’est pas requise pour un Bot auto-hébergé, mais l’expérience autonome est moins complète. Voir [Hébergé ou auto-hébergé](/fr/cloud/hosted-vs-local).
+- **Qui peut accéder à la mémoire d’un Bot ?** Les administrateurs peuvent consulter chats et skills via son Admin API. Pour les Bots hébergés dans Cloud, un nombre limité de membres du personnel Klex peut accéder aux chats ou à la mémoire pour le débogage de support convenu ; l’accès est journalisé et visible. Les données Cloud sont chiffrées en transit et au repos. Voir [Confidentialité des données](/fr/cloud/data-privacy).
+- **Puis-je désactiver l’analytique d’un Bot auto-hébergé ?** Oui. Vous pouvez désactiver séparément l’analytique produit et la télémétrie opérationnelle. Voir [Analytique et télémétrie](/fr/cloud/data-privacy#analytics-and-telemetry-for-a-self-hosted-bot).
+- **Puis-je auto-héberger Klex Cloud ?** Klex Cloud auto-hébergé est disponible pour les clients Enterprise. Cela diffère de l’auto-hébergement d’un Bot individuel. Voir [Auto-hébergement de Cloud](/fr/cloud/self-hosting).
+
+<a id="klex-bots-in-your-company"></a>
+
+## Les Bots Klex dans votre entreprise
+
+- **Comment gérer les autorisations d’un Bot dans une application ?** Configurez l’accès de son compte dans l’application en accordant uniquement ce qui est nécessaire. Voir [Connexions](/fr/bot/concepts/brain-and-computers).
+- **Comment réduire les accès non autorisés et la divulgation d’informations ?** Limitez les personnes pouvant accéder au Bot et donnez à ses comptes accès uniquement aux informations nécessaires. Voir [Prévenir le vol d’informations](/fr/guides/prevent-information-theft).
+- **Comment réduire le risque qu’un Bot de support divulgue des secrets ?** Évitez de lui donner accès à des identifiants ou données sensibles inutiles, limitez ses comptes et testez avec des données non sensibles. Voir [Protéger les secrets](/fr/guides/support-bot-secrets).
+- **Comment limiter l’impact d’un Bot compromis ?** Limitez les autorisations de son compte et les environnements connectés, et utilisez une approbation indépendante pour les changements à fort impact. Voir [Limiter l’impact](/fr/guides/limit-blast-radius).
+- **Comment utiliser un Bot pour un travail critique ?** Limitez l’accès et utilisez une revue ou approbation indépendante pour le travail à fort impact. Klex n’impose actuellement pas d’approbation par action. Voir [Opérations critiques](/fr/guides/trust-critical-operations).
+- **Comment les Bots Klex peuvent-ils collaborer ?** Ils peuvent se coordonner dans une conversation partagée. Donnez à chaque Bot un accès et un rôle clair, puis utilisez la conversation pour les transferts. Voir [Collaboration des Bots](/fr/guides/bot-collaboration).

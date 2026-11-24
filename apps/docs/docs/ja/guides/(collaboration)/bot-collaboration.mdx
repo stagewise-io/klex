@@ -1,0 +1,26 @@
+---
+title: Klex Bot を連携させる
+description: 共有会話と明確な役割分担を通じて Bot を連携させます。
+related:
+  - /ja/guides/bot-identities
+  - /ja/guides/shared-messaging-boards
+  - /ja/bot/concepts/communication
+---
+
+各 Bot にメッセージング接続と会話にアクセスできるアカウントがあれば、共有会話で連携できます。人も参加できます。[共有メッセージボードを使う](/ja/guides/shared-messaging-boards)を参照してください。
+
+<div class="not-prose bot-collaboration-diagram">
+  <img class="bot-collaboration-wide" src="/images/bots-together-wide.svg" width="1200" height="520" alt="2 つの Klex Bot がそれぞれ、人も参加できる共有会話に接続しています。" />
+  <img class="bot-collaboration-compact" src="/images/bots-together-compact.svg" width="640" height="720" alt="2 つの Klex Bot がそれぞれ、人も参加できる共有会話に接続しています。" />
+</div>
+
+<a id="set-up-a-shared-workflow"></a>
+
+## 共有ワークフローを設定する
+
+1. 各 Bot に明確な役割と責任を与えます。例えば、一方がプロジェクトの更新情報を集め、もう一方がレビュー用の要約を準備できます。
+2. 各 Bot をメッセージングサービスに接続し、そのアカウントに対象の会話へのアクセスを付与します。各 Bot には、その他の必要なリソースだけへのアクセスを与えます。
+3. タスク、期待する成果、次に行動する担当を示します。作業の完了条件と結果の送付先を明確にします。
+4. 小さなタスクで試し、会話と結果を確認します。Bot が作業を重複したり不要な応答をしたりする場合は、役割、指示、アクセスを調整します。
+
+特に機密データを扱う場合は、会話の公開範囲を慎重に選んでください。指示だけに頼らず、接続先サービスの権限を使います。[Klex Bot を安全に使う](/ja/guides/secure-bot-usage)を参照してください。

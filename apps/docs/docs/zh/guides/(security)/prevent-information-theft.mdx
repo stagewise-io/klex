@@ -1,0 +1,29 @@
+---
+title: 防止信息被窃
+description: 降低未经授权访问和敏感信息泄露的风险。
+related:
+  - /zh/guides/secure-bot-usage
+  - /zh/guides/limit-blast-radius
+  - /zh/guides/support-bot-secrets
+---
+
+能够访问敏感信息并与他人通信的 Bot 可能不恰当地泄露信息。应将外部来源的消息和内容视为不可信：其中可能包含误导性指示，或冒充授权人员的企图。
+
+<a id="limit-access-and-exposure"></a>
+
+## 限制访问和暴露
+
+- 使用每个连接服务提供的访问控制，限制谁可以联系 Bot。检查每个对话的受众范围。
+- 只向 Bot 的账号提供工作所需的数据和操作权限。避免让面向公众的 Bot 访问不需要的敏感信息。
+- 将面向公众的工作与敏感工作流程分开。在支持的情况下使用独立账号和范围适当的资源。
+- 定期检查连接的账号和 Bot 活动。如果怀疑发生未经授权的访问或泄露，请遵循事件响应流程。
+
+请参阅[安全使用 Klex Bot](/zh/guides/secure-bot-usage)和[限制影响范围](/zh/guides/limit-blast-radius)。
+
+<a id="use-independent-safeguards"></a>
+
+## 使用独立保护措施
+
+不要只依靠要求 Bot 不泄露信息的指示。在连接的服务中强制实施访问限制，并对敏感数据使用组织现有的控制措施。目前 Klex 不提供操作级审批或限制。
+
+使用非敏感数据进行测试，检查整个工作流程，包括 Bot 能读取什么以及可以向哪里发送回复。

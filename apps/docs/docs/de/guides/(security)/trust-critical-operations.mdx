@@ -1,0 +1,26 @@
+---
+title: Klex Bots bei kritischen Vorgängen einsetzen
+description: Verringern Sie Risiken, wenn ein Bot bei sensibler oder folgenreicher Arbeit hilft.
+related:
+  - /de/guides/secure-bot-usage
+  - /de/guides/limit-blast-radius
+  - /de/bot/guides/control-and-limits
+---
+
+Gehen Sie nicht davon aus, dass ein Bot immer richtig entscheidet oder Anweisungen perfekt befolgt. Bewerten Sie bei sensibler oder folgenreicher Arbeit die Folgen einer falschen Handlung und richten Sie unabhängige Schutzmaßnahmen ein.
+
+<a id="start-with-lower-risk-work"></a>
+
+## Mit risikoärmeren Aufgaben beginnen
+
+- Lassen Sie den Bot Informationen sammeln oder eine Änderung vorbereiten, bevor Sie ihm die Berechtigung zur Umsetzung geben.
+- Testen Sie mit Ressourcen außerhalb der Produktion und prüfen Sie die Ergebnisse. Erweitern Sie den Zugriff erst, wenn der Ablauf und die Behandlung von Fehlern verstanden sind.
+- Begrenzen Sie die Berechtigungen des Bot-Kontos in jeder verbundenen App. Geben Sie dem Bot keine zerstörerischen oder sensiblen Rechte, die er nicht benötigt.
+
+<a id="keep-an-independent-check"></a>
+
+## Unabhängige Kontrolle beibehalten
+
+Organisieren Sie für Vorgänge, die eine menschliche Freigabe benötigen, diese Freigabe außerhalb des Bots, bevor die Änderung umgesetzt wird. Der Bot kann zum Beispiel eine Änderung vorbereiten, die eine Person prüft und mit einem separaten Konto umsetzt. Klex unterstützt derzeit keine Freigaben oder Einschränkungen für einzelne Aktionen; eine Anweisung, zuerst zu fragen, ist keine durchgesetzte Freigabekontrolle.
+
+Nutzen Sie die Kontrollen des verbundenen Dienstes und die Prozesse Ihrer Organisation, um Aktivitäten zu prüfen, Probleme zu erkennen und Fehler zu beheben. Legen Sie im Voraus fest, wie Sie den Bot bei Bedarf stoppen und den Zugriff entziehen. Siehe [Ihren Klex Bot steuern](/de/bot/guides/control-and-limits) und [Auswirkungen begrenzen](/de/guides/limit-blast-radius).

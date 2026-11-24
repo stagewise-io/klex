@@ -1,0 +1,28 @@
+---
+title: Limiter les conséquences
+description: Réduisez les ressources auxquelles un compte de Bot exposé ou compromis peut accéder et les modifications qu’il peut effectuer.
+related:
+  - /fr/guides/secure-bot-usage
+  - /fr/guides/trust-critical-operations
+  - /fr/bot/concepts/brain-and-computers
+---
+
+Limitez les conséquences possibles d’un Bot compromis en restreignant l’accès de ses comptes et des environnements connectés. Les limites appropriées dépendent des applications, ordinateurs et données concernés ; les instructions données au Bot ne constituent pas à elles seules un contrôle d’accès.
+
+<a id="reduce-exposure"></a>
+
+## Réduire l’exposition
+
+- Utilisez un compte distinct pour le Bot lorsque l’application connectée le permet. Accordez-lui uniquement les ressources et autorisations nécessaires à son travail.
+- Séparez les ressources sensibles du travail général. Évitez de connecter des systèmes de production ou des données sensibles sauf si le Bot en a besoin.
+- Limitez qui peut joindre le Bot et accéder aux conversations ou outils qu’il utilise au moyen des contrôles d’accès de ces services.
+- Vérifiez les autorisations de partage d’informations, de modification des paramètres et d’actions destructrices. Utilisez un processus d’approbation distinct pour les changements à fort impact.
+- Réexaminez régulièrement les accès et supprimez les connexions et autorisations devenues inutiles.
+
+Consultez [Utiliser les Bots Klex en sécurité](/fr/guides/secure-bot-usage) pour une liste de vérification des autorisations de compte.
+
+<a id="prepare-to-respond"></a>
+
+## Préparer la réponse
+
+Identifiez les comptes, connexions et environnements utilisés par le Bot avant tout incident. En cas de suspicion de compromission, suivez votre processus de réponse aux incidents : envisagez d’arrêter le Bot, de révoquer les accès aux services connectés, de renouveler les identifiants concernés et d’examiner l’activité pertinente. Arrêter le Bot ne remplace ni la révocation des accès ni l’enquête sur les actions déjà effectuées.

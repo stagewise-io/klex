@@ -1,0 +1,23 @@
+---
+title: Créer des identités distinctes
+description: Utilisez des comptes d’application distincts pour gérer l’accès de chaque Bot.
+related:
+  - /fr/guides/secure-bot-usage
+  - /fr/guides/bot-collaboration
+  - /fr/bot/concepts/identity
+---
+
+Dans la plupart des applications connectées, un Bot agit au moyen d’un compte configuré pour lui. Si l’application prend en charge des comptes distincts, donnez à chaque Bot son propre compte plutôt que de partager celui d’une personne ou d’un autre Bot. Vous pouvez ainsi configurer les accès séparément.
+
+<a id="set-up-and-review-access"></a>
+
+## Configurer et vérifier les accès
+
+1. Créez ou attribuez un compte selon la procédure de l’application connectée.
+2. Donnez-lui accès uniquement aux projets, conversations, données et actions nécessaires au Bot. Vérifiez ce qu’il peut lire, partager, modifier ou supprimer.
+3. Connectez l’application au Bot et testez une petite tâche. Vérifiez le résultat et, si l’application en fournit, ses journaux d’activité.
+4. Réexaminez les accès lorsque le rôle du Bot change. Révoquez les autorisations inutiles dans l’application et déconnectez le serveur si nécessaire.
+
+Un compte distinct peut aider à identifier le compte ayant effectué une action. Les détails d’audit disponibles dépendent de l’application.
+
+Configurez les autorisations dans le service connecté ; le nom et la Soul du Bot ne les définissent pas. Consultez [Identité d’un Bot Klex](/fr/bot/concepts/identity) et [Utiliser les Bots Klex en sécurité](/fr/guides/secure-bot-usage).

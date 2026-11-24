@@ -1,0 +1,47 @@
+---
+title: 托管与自行托管的 Klex Bot
+description: 比较 Klex Cloud 托管的 Bot 和自行托管的 Bot，包括 Cloud 注册以及聊天和记忆的存储位置。
+related:
+  - /zh/cloud
+  - /zh/cloud/self-hosting
+  - /zh/bot/quickstart
+  - /zh/cloud/data-privacy
+---
+
+> **可以在没有 Klex Cloud 的情况下运行 Klex Bot 吗？**
+
+可以。自行托管的 Klex Bot 无需注册 Cloud 即可运行。Klex 建议大多数用户使用 Cloud 托管的 Bot，并建议将自行托管的 Bot 注册到 Klex Cloud，以获得更完整的管理体验。
+
+<a id="choose-how-to-host-the-bot"></a>
+
+## 选择 Bot 的托管方式
+
+<a id="klex-cloud-hosted-bot"></a>
+
+### Klex Cloud 托管的 Bot
+
+Klex 在其托管环境中运行 Bot。Bot 的聊天和记忆存储在该环境中的数据目录内。你可以使用 Cloud 仪表板查看活动并管理连接的 MCP。
+
+<a id="self-hosted-bot-enrolled-in-klex-cloud"></a>
+
+### 注册到 Klex Cloud 的自行托管 Bot
+
+你在自己管理的环境中运行 Bot，并可以将其注册到 Klex Cloud。这样既能更好地控制 Bot 的运行位置，又能保留 Cloud 管理功能。Bot 的聊天和记忆仍保存在其本地数据目录中。Cloud 仪表板为 Bot 的 Admin API 提供前端和反向代理。
+
+<a id="self-hosted-bot-without-cloud-enrollment"></a>
+
+### 未注册 Cloud 的自行托管 Bot
+
+自行托管的 Bot 在技术上不要求注册 Cloud。Klex 建议注册，因为独立运行的体验不够完整。
+
+<a id="self-hosted-cloud"></a>
+
+### 自行托管 Cloud
+
+自行托管 Klex Cloud 服务仅向 Enterprise 客户提供。
+
+<a id="manage-access-and-stop-a-bot"></a>
+
+## 管理访问权限并停止 Bot
+
+在 Cloud 仪表板中，你可以查看 Bot 活动并连接或断开 MCP。对于 Bot 使用的其他应用和账号，请在相应应用或账号中配置权限。要停止自行托管的 Bot，请关闭其应用。要停止 Cloud 托管的 Bot，请使用 Cloud 仪表板中的 **Stop**。

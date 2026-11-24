@@ -1,0 +1,71 @@
+---
+title: FAQ
+description: 有关 Klex Bot、托管和安全的常见问题解答。
+related:
+  - /zh/bot
+  - /zh/cloud
+  - /zh/guides
+---
+
+了解如何开始使用、托管、连接和运行 Klex Bot。
+
+<a id="getting-started"></a>
+
+## 开始使用
+
+- **Klex Bot 如何工作？** Bot 在自己的环境中运行，并在通过 MCP 连接的计算机和应用中工作。 参阅 [工作原理](/zh/bot/concepts/how-bots-work).
+- **我可以用 Bot 做什么？** Bot 可以在连接的应用和计算机中与人和其他智能体协作。它能做什么取决于连接和账号权限。 参阅 [工作原理](/zh/bot/concepts/how-bots-work).
+- **如何从其他智能体迁移工作流程？** 在交接文档中整理其知识、日常工作和指示，然后用它们设置 Klex Bot。 参阅 [从其他智能体迁移](/zh/bot/migrate-from-another-agent).
+- **我可以用 Bot 处理业务工作吗？** 可以。为它分配工作并连接所需的应用和计算机。 参阅 [关键操作](/zh/guides/trust-critical-operations).
+- **我可以与现有客户交谈吗？** 请联系 [Klex 支持](mailto:support@klex.bot)，询问客户推荐。
+
+<a id="how-klex-bots-work"></a>
+
+## Klex Bot 的工作原理
+
+- **Bot 如何记忆和学习？** Bot 使用学习到的和预先配置的技能，以及过往工作中的事实知识。这些帮助 Bot 完成工作并回忆有关环境的有用信息。 参阅 [Bot 记忆](/zh/bot/concepts/memory).
+- **Bot 自身环境与连接的计算机有什么区别？** 自身环境维持 Bot 运行并管理记忆；连接的计算机和应用是它工作的地方。 参阅 [连接](/zh/bot/concepts/brain-and-computers).
+- **可以使用哪些模型提供商？** Klex 支持 OpenAI、Anthropic、Google Gemini、本地 Ollama 和兼容的自定义端点等。可用模型取决于提供商和账号。 参阅 [模型](/zh/bot/concepts/models).
+- **Bot 可以使用 MCP 服务器并自行添加吗？** 可以。Bot 可以添加新的远程 HTTP 或 HTTPS 服务器，但此功能不能编辑或删除现有服务器配置。 参阅 [MCP 和 Bot](/zh/bot/concepts/mcp).
+- **Bot 可以使用 Agent Skills 吗？** 可以。技能为 Bot 提供可复用的任务指示，让它在工作中应用有用的程序。 参阅 [Agent Skills](/zh/bot/concepts/agent-skills).
+- **Bot 如何与人和其他 Bot 通信？** 人们可以在 Cloud 控制台与 Bot 聊天。Bot 也可以通过具备必要消息功能和账号访问权限的连接应用，与人及其他 Bot 通信。 参阅 [通信](/zh/bot/concepts/communication).
+
+<a id="operating-klex-bots"></a>
+
+## 运行 Klex Bot
+
+- **如何查看 Bot 活动？** 对于 Cloud 托管或已注册 Cloud 的 Bot，使用 Cloud 控制台查看活动和聊天。自托管 Bot 也有本地诊断功能。 参阅 [查看活动](/zh/bot/guides/observability).
+- **可以在多个渠道与 Bot 聊天吗？** 可以，需要合适的消息连接和账号对每个会话的访问权限。 参阅 [在多个渠道聊天](/zh/bot/guides/multi-channel-chat).
+- **Bot 能处理多个请求吗？** Bot 可以接收多个请求。也可以将独立的工作分给多个 Bot。 参阅 [并行工作](/zh/bot/guides/parallelize).
+- **如何设置重复任务？** 连接日程服务，告诉 Bot 做什么、何时做以及将结果发送到哪里。 参阅 [自动执行重复任务](/zh/bot/guides/recurring-tasks).
+- **如何停止 Bot 并管理其访问权限？** 在控制台停止 Cloud 托管的 Bot，或关闭自托管应用。在各服务中管理连接账号的权限。指南还介绍无界面模式的关闭和其他控制。 参阅 [控制和限制](/zh/bot/guides/control-and-limits).
+- **Bot 和连接的数量限制是什么？** 请联系 [Klex 支持](mailto:support@klex.bot)了解当前限制。
+- **Klex Bot 能与其他智能体合作吗？** 当双方都有必要的访问权限和能力时，可以通过共享服务协调。 参阅 [与其他智能体合作](/zh/bot/guides/interoperability).
+
+<a id="reliability"></a>
+
+## 可靠性
+
+- **可以监控自托管 Bot 的健康状况吗？** 可以。启用可选的健康监听器来监控 Klex 进程及其就绪状态。
+- **Bot 可以全天候工作吗？** 可以。保持托管环境运行，并确保所需模型和连接可用于要执行的工作。
+- **更新后必须重新创建 Bot 吗？** 通常不需要。Bot 在数据目录中保留配置、聊天和记忆。更新时请查看发行说明。 参阅 [更新](/zh/bot/reliability/updates).
+
+<a id="cloud-and-hosting"></a>
+
+## Cloud 和托管
+
+- **可以不使用 Klex Cloud 运行 Bot 吗？** 可以。自托管 Bot 不需要注册 Cloud，但独立使用体验不够完整。 参阅 [托管与自托管](/zh/cloud/hosted-vs-local).
+- **谁可以访问 Bot 的记忆？** 管理员可以通过 Bot 的 Admin API 查看聊天和技能。对于 Cloud 托管的 Bot，少数 Klex 员工可以为约定的支持调试访问聊天或记忆；访问会被记录并对你可见。Cloud 托管数据在传输和静态存储时均加密。 参阅 [数据隐私](/zh/cloud/data-privacy).
+- **可以关闭自托管 Bot 的分析吗？** 可以。产品分析和运行遥测可以分别禁用。 参阅 [分析与遥测](/zh/cloud/data-privacy#analytics-and-telemetry-for-a-self-hosted-bot).
+- **可以自托管 Klex Cloud 吗？** Enterprise 客户可以自托管 Klex Cloud。这与自托管单个 Bot 不同。 参阅 [自托管 Cloud](/zh/cloud/self-hosting).
+
+<a id="klex-bots-in-your-company"></a>
+
+## 企业中的 Klex Bot
+
+- **如何管理 Bot 在应用中的权限？** 在该应用中配置其账号的访问权限，只授予必要的权限。 参阅 [连接](/zh/bot/concepts/brain-and-computers).
+- **如何减少未经授权的访问和信息披露？** 限制谁可以访问 Bot，并只让其账号访问所需信息。 参阅 [防止信息窃取](/zh/guides/prevent-information-theft).
+- **如何减少支持 Bot 泄露秘密的风险？** 避免授予不必要的凭据或敏感数据访问权限，限制账号范围，并使用非敏感数据测试。 参阅 [保护秘密](/zh/guides/support-bot-secrets).
+- **如何限制 Bot 被攻陷的影响？** 限制其账号权限和连接环境，并对高影响变更使用独立审批。 参阅 [限制影响范围](/zh/guides/limit-blast-radius).
+- **如何将 Bot 用于关键工作？** 限制访问，并对高影响工作使用独立审查或审批。目前 Klex 不强制执行操作级审批。 参阅 [关键操作](/zh/guides/trust-critical-operations).
+- **Klex Bot 如何协作？** Bot 可以在共享会话中协调。为每个 Bot 提供访问权限和明确角色，然后在会话中交接工作。 参阅 [Bot 协作](/zh/guides/bot-collaboration).

@@ -1,0 +1,29 @@
+---
+title: Usar los Bots de Klex de forma segura
+description: Limita el acceso de un Bot en las aplicaciones conectadas y revísalo cuando cambie su trabajo.
+related:
+  - /es/guides/limit-blast-radius
+  - /es/guides/trust-critical-operations
+  - /es/bot/concepts/brain-and-computers
+---
+
+En la mayoría de las aplicaciones conectadas, un Bot actúa mediante su propia cuenta. Configura los permisos de esa cuenta en la aplicación. Da al Bot solo el acceso necesario para su trabajo y revísalo cuando este cambie.
+
+<a id="before-connecting-an-app"></a>
+
+## Antes de conectar una aplicación
+
+1. Identifica los recursos y acciones que necesita el Bot. Empieza con acceso de solo lectura cuando sea suficiente.
+2. Da a la cuenta del Bot acceso a los proyectos, carpetas o conversaciones pertinentes en lugar de a toda la organización, cuando la aplicación permita ese alcance.
+3. Comprueba si la cuenta puede compartir datos, cambiar ajustes, eliminar recursos o realizar otras acciones sensibles. Elimina los permisos innecesarios.
+4. Prueba el flujo previsto con datos no sensibles y revisa los resultados.
+
+Repite esta revisión para cada conexión, incluidos los ordenadores conectados. Una conexión MCP pone capacidades a disposición del Bot; la cuenta y el entorno conectados determinan el acceso de esas capacidades. Consulta [Conexiones](/es/bot/concepts/brain-and-computers).
+
+<a id="review-and-remove-access"></a>
+
+## Revisar y retirar el acceso
+
+Revisa los permisos periódicamente y cuando cambie el papel del Bot. Si el acceso ya no es necesario, revócalo en la aplicación conectada y desconecta el servidor MCP correspondiente cuando proceda. Desconectar un servidor no revoca por sí solo los permisos de la cuenta en la aplicación. Si sospechas un incidente, sigue el proceso de tu organización y considera detener el Bot mientras revisas el acceso.
+
+Actualmente Klex no admite aprobaciones ni restricciones para acciones individuales. No dependas solo de un prompt para imponer un límite de permisos; usa los controles de acceso de la aplicación conectada. Consulta [Controlar tu Bot de Klex](/es/bot/guides/control-and-limits).

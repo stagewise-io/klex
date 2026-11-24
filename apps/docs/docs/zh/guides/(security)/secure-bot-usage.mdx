@@ -1,0 +1,29 @@
+---
+title: 安全使用 Klex Bot
+description: 限定 Bot 在连接应用中的访问权限，并在其工作发生变化时进行检查。
+related:
+  - /zh/guides/limit-blast-radius
+  - /zh/guides/trust-critical-operations
+  - /zh/bot/concepts/brain-and-computers
+---
+
+在大多数连接的应用中，Bot 通过自己的账号执行操作。请在应用中配置该账号的权限。只授予 Bot 完成指定工作所需的访问权限，并在工作变化时重新检查。
+
+<a id="before-connecting-an-app"></a>
+
+## 连接应用之前
+
+1. 确定 Bot 需要的资源和操作。如果只读访问已足够，应从只读权限开始。
+2. 如果应用支持这种范围限制，请让 Bot 账号访问相关项目、文件夹或对话，而不是整个组织。
+3. 检查账号是否能分享数据、更改设置、删除资源或执行其他敏感操作。移除不需要的权限。
+4. 使用非敏感数据测试预期的工作流程并检查结果。
+
+对每个连接重复此检查，包括连接的计算机。MCP 连接向 Bot 提供功能；连接的账号和环境决定这些功能具有的访问权限。请参阅[连接](/zh/bot/concepts/brain-and-computers)。
+
+<a id="review-and-remove-access"></a>
+
+## 检查并移除访问权限
+
+定期以及在 Bot 角色变化时检查权限。如果不再需要访问权限，请在连接的应用中撤销，并在适当时断开相关 MCP 服务器。断开服务器本身不会撤销账号在应用中的权限。如果怀疑发生事件，请遵循组织的事件处理流程，并考虑在检查访问权限期间停止 Bot。
+
+目前 Klex 不支持对单个操作进行审批或限制。不要只依靠提示词来强制执行权限边界；应使用连接应用的访问控制。请参阅[控制 Klex Bot](/zh/bot/guides/control-and-limits)。

@@ -1,0 +1,29 @@
+---
+title: Usar Bots Klex com segurança
+description: Limite o acesso de um Bot nos aplicativos conectados e revise-o quando seu trabalho mudar.
+related:
+  - /pt/guides/limit-blast-radius
+  - /pt/guides/trust-critical-operations
+  - /pt/bot/concepts/brain-and-computers
+---
+
+Na maioria dos aplicativos conectados, um Bot age por meio de sua própria conta. Configure as permissões dessa conta no aplicativo. Dê ao Bot apenas o acesso necessário para o trabalho atribuído e revise-o quando o trabalho mudar.
+
+<a id="before-connecting-an-app"></a>
+
+## Antes de conectar um aplicativo
+
+1. Identifique os recursos e ações necessários ao Bot. Comece com acesso somente leitura quando isso for suficiente.
+2. Dê à conta do Bot acesso aos projetos, pastas ou conversas relevantes em vez de toda a organização, quando o aplicativo permitir esse escopo.
+3. Verifique se a conta pode compartilhar dados, alterar configurações, excluir recursos ou realizar outras ações sensíveis. Remova permissões desnecessárias.
+4. Teste o fluxo pretendido com dados não sensíveis e revise os resultados.
+
+Repita essa revisão para cada conexão, incluindo computadores conectados. Uma conexão MCP disponibiliza capacidades ao Bot; a conta e o ambiente conectados determinam o acesso dessas capacidades. Consulte [Conexões](/pt/bot/concepts/brain-and-computers).
+
+<a id="review-and-remove-access"></a>
+
+## Revisar e remover acesso
+
+Revise as permissões periodicamente e quando a função do Bot mudar. Se o acesso não for mais necessário, revogue-o no aplicativo conectado e desconecte o servidor MCP relevante quando apropriado. Desconectar um servidor não revoga por si só as permissões da conta no aplicativo. Em caso de suspeita de incidente, siga o processo da organização e considere parar o Bot enquanto o acesso é revisado.
+
+O Klex atualmente não oferece aprovações ou restrições para ações individuais. Não dependa apenas de um prompt para impor um limite de permissão; use os controles de acesso do aplicativo conectado. Consulte [Controlar seu Bot Klex](/pt/bot/guides/control-and-limits).

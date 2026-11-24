@@ -1,0 +1,29 @@
+---
+title: Prévenir le vol d’informations
+description: Réduisez le risque d’accès non autorisé et de divulgation d’informations sensibles.
+related:
+  - /fr/guides/secure-bot-usage
+  - /fr/guides/limit-blast-radius
+  - /fr/guides/support-bot-secrets
+---
+
+Un Bot qui peut accéder à des informations sensibles et communiquer avec d’autres personnes pourrait divulguer ces informations de manière inappropriée. Considérez les messages et contenus externes comme non fiables : ils peuvent contenir des instructions trompeuses ou des tentatives d’usurpation d’une personne autorisée.
+
+<a id="limit-access-and-exposure"></a>
+
+## Limiter les accès et l’exposition
+
+- Limitez qui peut joindre le Bot à l’aide des contrôles d’accès de chaque service connecté. Vérifiez les participants de chaque conversation.
+- Donnez aux comptes du Bot uniquement les données et actions nécessaires à leur travail. Évitez de donner à un Bot accessible au public accès à des informations sensibles inutiles.
+- Séparez le travail accessible au public des processus sensibles. Utilisez des comptes distincts et des ressources adaptées au périmètre nécessaire lorsque cela est possible.
+- Examinez régulièrement les comptes connectés et l’activité du Bot. Suivez votre processus de réponse aux incidents si vous soupçonnez un accès ou une divulgation non autorisés.
+
+Consultez [Utiliser les Bots Klex en sécurité](/fr/guides/secure-bot-usage) et [Limiter les conséquences](/fr/guides/limit-blast-radius).
+
+<a id="use-independent-safeguards"></a>
+
+## Utiliser des protections indépendantes
+
+Ne vous fiez pas uniquement aux instructions demandant au Bot de ne pas divulguer d’informations. Faites respecter les restrictions d’accès dans les services connectés et utilisez les contrôles existants de votre organisation pour les données sensibles. Klex ne propose actuellement pas d’approbations ou de restrictions par action.
+
+Testez avec des données non sensibles et examinez l’ensemble du processus, y compris ce que le Bot peut lire et où il peut envoyer ses réponses.

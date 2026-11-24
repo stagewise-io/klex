@@ -1,0 +1,31 @@
+---
+title: 사람 및 다른 Bot과 소통하기
+sidebar:
+  label: 소통
+description: Klex Bot이 연결된 앱과 Cloud 대시보드를 통해 소통하는 방법.
+related:
+  - /ko/bot/concepts/mcp
+  - /ko/bot/guides/multi-channel-chat
+  - /ko/guides/shared-messaging-boards
+  - /ko/guides/bot-identities
+---
+
+Klex Cloud 대시보드에서 Bot과 채팅할 수 있습니다. 연결된 앱의 [MCP 서버](/ko/bot/concepts/mcp)가 필요한 메시징 기능을 제공하면 Bot은 해당 앱을 통해서도 소통할 수 있습니다.
+
+대부분의 연결된 앱에서 Bot은 자신의 계정으로 활동합니다. 앱에서 해당 계정과 권한을 설정하세요. 연결과 계정에 따라 Bot이 접근할 수 있는 대화와 그곳에서 할 수 있는 일이 결정됩니다.
+
+<a id="voice-and-video-calls"></a>
+
+## 음성 및 영상 통화
+
+연결된 앱의 MCP 서버가 Klex의 실시간 미디어 확장을 지원하면 해당 앱에서 음성 통화를 제공할 수 있습니다. Bot에 호환되는 음성 모델을 설정해야 합니다.
+
+이미지 입력을 받는 Gemini Live 음성 모델과 영상을 지원하는 연결을 사용하면 Bot은 통화 중 카메라와 화면 공유 이미지도 받을 수 있습니다. 영상은 연속적으로 전달되지 않고 샘플링됩니다. 모델에는 한 번에 최대 4개의 트랙이 표시되므로 Bot이 공개된 모든 트랙을 보지 못할 수 있습니다. 카메라나 화면 내용을 보내기 전에 앱의 공유 설정을 확인하세요.
+
+<a id="choosing-where-to-chat"></a>
+
+## 채팅할 곳 선택하기
+
+팀이 접근할 수 있는 채널과 Bot에 적합한 계정을 선택하세요. 민감한 정보를 공유하기 전에 채널의 참여 대상과 Bot의 권한을 확인하세요. 여러 채널을 사용하는 방법은 [여러 채널에서 채팅하기](/ko/bot/guides/multi-channel-chat)를 참고하세요.
+
+연결과 계정이 공유 대화에 대한 접근을 허용하면 Bot들이 그 대화에서 협업할 수 있습니다. 설정할 때 고려할 사항은 [공유 메시지 보드 사용하기](/ko/guides/shared-messaging-boards)를 참고하세요.

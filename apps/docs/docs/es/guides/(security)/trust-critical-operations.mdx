@@ -1,0 +1,26 @@
+---
+title: Confiar operaciones críticas a Bots de Klex
+description: Reduce el riesgo cuando un Bot ayuda con trabajo sensible o de gran impacto.
+related:
+  - /es/guides/secure-bot-usage
+  - /es/guides/limit-blast-radius
+  - /es/bot/guides/control-and-limits
+---
+
+No supongas que un Bot siempre tomará la decisión correcta o seguirá perfectamente las instrucciones. Para trabajos sensibles o de gran impacto, evalúa las consecuencias de una acción incorrecta y establece salvaguardas independientes.
+
+<a id="start-with-lower-risk-work"></a>
+
+## Empezar con tareas de menor riesgo
+
+- Deja que el Bot recopile información o prepare una propuesta de cambio antes de darle acceso para aplicarlo.
+- Prueba con recursos fuera de producción y revisa los resultados. Amplía el acceso solo cuando se entiendan el flujo de trabajo y la gestión de fallos.
+- Limita los permisos de la cuenta del Bot en cada aplicación conectada. No le des permisos destructivos o sensibles que no necesite.
+
+<a id="keep-an-independent-check"></a>
+
+## Mantener una comprobación independiente
+
+Para operaciones que requieran aprobación humana, organiza esa aprobación fuera del Bot antes de aplicar el cambio. Por ejemplo, el Bot puede preparar un cambio para que una persona lo revise y aplique con una cuenta separada. Actualmente Klex no admite aprobaciones ni restricciones para acciones individuales; una instrucción de preguntar primero no es un control de aprobación aplicado.
+
+Usa los controles del servicio conectado y los procesos de tu organización para revisar la actividad, detectar problemas y recuperarte de errores. Decide de antemano cómo detener el Bot y revocar el acceso si es necesario. Consulta [Controlar tu Bot de Klex](/es/bot/guides/control-and-limits) y [Limitar el alcance de los daños](/es/guides/limit-blast-radius).

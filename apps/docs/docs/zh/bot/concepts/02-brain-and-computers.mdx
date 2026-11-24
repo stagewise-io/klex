@@ -1,0 +1,49 @@
+---
+title: 连接电脑和应用
+sidebar:
+  label: 连接
+description: 了解 MCP 如何将 Klex Bot 连接到电脑和应用，以及如何管理访问权限。
+related:
+  - /bot/concepts/how-bots-work
+  - /bot/concepts/mcp
+  - /bot/quickstart
+---
+
+Klex Bot 在通过 MCP（Model Context Protocol）连接的外部环境中工作。MCP 服务器可以提供整台电脑，或 GitHub、Google Workspace 等应用。电脑也通过 MCP 连接。
+
+Bot 自身的环境负责运行 Bot 和管理其记忆。Bot 在连接的电脑和应用中执行工作。
+
+<a id="choose-what-to-connect"></a>
+
+## 选择连接的对象
+
+- **电脑**提供 Bot 可以工作的连接环境。
+- **应用**通过 MCP 服务器提供应用环境。
+
+Klex 提供多种内置 MCP 服务器，你也可以连接其他 MCP 服务器。根据你希望 Bot 完成的工作选择要连接的环境。
+
+<a id="manage-a-bots-access"></a>
+
+## 管理 Bot 的访问权限
+
+连接 Bot 工作所需的应用和电脑。对于大多数 MCP，Bot 使用自己的账户或身份，并以为该 Bot 配置的权限执行操作。
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="云托管">
+
+在 Klex Cloud 中打开 Bot，通过 **Connectors** 管理应用连接，通过 **Computers** 管理已连接的电脑。你还可以查看其 **Activity**。
+
+</Tab>
+<Tab title="自托管">
+
+在 Klex 应用的 **Settings → MCP Servers** 中管理服务器连接。具体步骤请参阅 [MCP 与 Klex Bot](/bot/concepts/mcp#add-a-remote-server-in-the-self-hosted-app)。通过 **Settings → Logs** 查看本地诊断信息。
+
+</Tab>
+</Tabs>
+
+直接在相应账户和应用中配置 Bot 账户及已连接应用的权限。连接服务器和授予账户访问权限是两个独立的决定。确定 Bot 可以访问什么、执行什么操作时，请同时检查两者。
+
+要了解整体工作方式，请参阅 [Klex Bot 的工作原理](/bot/concepts/how-bots-work)。有关聊天和记忆的存储位置，请参阅[数据目录](/bot/concepts/data-directory)。
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

@@ -27,7 +27,10 @@ export interface SkillContext {
   eligible(messageId: string, projection: string): boolean;
   observe(evidence: readonly { id: string; projection: string }[]): void;
   idle(): void;
-  parts(skills: readonly Skill[], window?: string): ExtendedUIMessage['parts'];
+  parts(
+    skills: readonly Skill[] | undefined,
+    window?: string,
+  ): ExtendedUIMessage['parts'];
   snapshots(skills: readonly Skill[], window?: string): SnapshotMap;
 }
 class SkillContextModule implements SkillContext {
@@ -131,18 +134,30 @@ class SkillContextModule implements SkillContext {
     for (const item of this.evidence)
       this.consumed.set(item.id, item.projection);
   }
-  parts(skills: readonly Skill[], window?: string): ExtendedUIMessage['parts'] {
+  parts(
+    skills: readonly Skill[] | undefined,
+    window?: string,
+  ): ExtendedUIMessage['parts'] {
     if (window !== undefined) this.window = window;
-    const known = new Set(skills.map((skill) => skill.id));
-    for (const id of this.active.keys())
-      if (!known.has(id)) this.active.delete(id);
+    if (skills !== undefined) {
+      const known = new Set(skills.map((skill) => skill.id));
+      for (const id of this.active.keys())
+        if (!known.has(id)) this.active.delete(id);
+    }
     return [
-      createDataPart(
-        'availableSkills',
-        skills
-          .map((skill) => ({ name: skill.id, description: skill.description }))
-          .sort((a, b) => lexical(a.name, b.name)),
-      ),
+      ...(skills === undefined
+        ? []
+        : [
+            createDataPart(
+              'availableSkills',
+              skills
+                .map((skill) => ({
+                  name: skill.id,
+                  description: skill.description,
+                }))
+                .sort((a, b) => lexical(a.name, b.name)),
+            ),
+          ]),
       createDataPart('activeSkills', {
         version: 1,
         window: window ?? this.window,

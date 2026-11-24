@@ -24,6 +24,75 @@ afterEach(() => {
   vi.useRealTimers();
 });
 describe('matcher isolation', () => {
+  it('serializes concurrent regexes and isolates cancellation from queued work', async () => {
+    vi.useFakeTimers();
+    const engine = createMatcherEngine(vi.fn());
+    const controller = new AbortController();
+    const rules = [
+      {
+        type: 'eventDataPattern' as const,
+        server: 'test',
+        conditions: [{ path: 'name', match: 'regex' as const, value: '^Ada$' }],
+      },
+    ];
+    const evidence = (name: string) => ({
+      text: [],
+      tools: [],
+      events: [{ server: 'test', value: { name } }],
+    });
+    const first = engine.match(
+      evidence('Ada'),
+      rules,
+      undefined,
+      controller.signal,
+    );
+    const rejected = expect(first).rejects.toThrow();
+    const second = engine.match(evidence('Bob'), rules);
+    await vi.advanceTimersByTimeAsync(0);
+    const worker = workers.instances[0] as EventEmitter & {
+      postMessage: ReturnType<typeof vi.fn>;
+    };
+    worker.emit('message', 'ready');
+    expect(worker.postMessage).toHaveBeenCalledTimes(1);
+    controller.abort();
+    await rejected;
+    await vi.advanceTimersByTimeAsync(0);
+    const next = workers.instances[1] as EventEmitter;
+    next.emit('message', 'ready');
+    next.emit('message', false);
+    expect(await second).toBe(0);
+  });
+  it('routes different concurrent results through the reused worker', async () => {
+    vi.useFakeTimers();
+    const engine = createMatcherEngine(vi.fn());
+    const rules = [
+      {
+        type: 'eventDataPattern' as const,
+        server: 'test',
+        conditions: [{ path: 'name', match: 'regex' as const, value: '^Ada$' }],
+      },
+    ];
+    const evidence = (name: string) => ({
+      text: [],
+      tools: [],
+      events: [{ server: 'test', value: { name } }],
+    });
+    const first = engine.match(evidence('Ada'), rules);
+    const second = engine.match(evidence('Bob'), rules);
+    await vi.advanceTimersByTimeAsync(0);
+    const worker = workers.instances[0] as EventEmitter & {
+      postMessage: ReturnType<typeof vi.fn>;
+    };
+    worker.emit('message', 'ready');
+    expect(worker.postMessage).toHaveBeenCalledTimes(1);
+    worker.emit('message', true);
+    expect(await first).toBe(2);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(worker.postMessage).toHaveBeenCalledTimes(2);
+    worker.emit('message', false);
+    expect(await second).toBe(0);
+    expect(workers.instances).toHaveLength(1);
+  });
   it.each(['memory', 'memory-update', 'memory-detail'])(
     'excludes generated %s text',
     (tag) => {
@@ -92,6 +161,7 @@ describe('matcher isolation', () => {
     await rejected;
     expect(timeout).not.toHaveBeenCalled();
     const retry = engine.match(evidence, rules);
+    await vi.advanceTimersByTimeAsync(0);
     const worker = workers.instances[1] as EventEmitter;
     worker.emit('message', 'ready');
     worker.emit('message', true);

@@ -422,6 +422,22 @@ class RecallExtension implements Extension {
     if (this.closed) return { error: 'Recall is closed' };
     if (!source) return { error: 'Memory source unavailable' };
     const abort = new AbortController();
+    let child: ChildSessionHandle | undefined;
+    let closing: Promise<void> | undefined;
+    const closeChild = () => {
+      if (child && !closing)
+        closing = child.close().catch((error: unknown) => {
+          this.deps.logger.warn({ error }, 'Memory recall cleanup failed');
+        });
+      return closing;
+    };
+    abort.signal.addEventListener(
+      'abort',
+      () => {
+        void closeChild();
+      },
+      { once: true },
+    );
     let budgetExceeded = false;
     const exhaust = () => {
       budgetExceeded = true;
@@ -432,7 +448,6 @@ class RecallExtension implements Extension {
     signal?.addEventListener('abort', cancel, { once: true });
     if (signal?.aborted) abort.abort();
     this.pending.add(abort);
-    let child: ChildSessionHandle | undefined;
     let answer: string | undefined;
     let terminated = false;
     try {
@@ -468,6 +483,7 @@ class RecallExtension implements Extension {
           },
         },
       });
+      if (abort.signal.aborted) void closeChild();
       abort.signal.throwIfAborted();
       if (
         child.inbox.sendMessage(
@@ -505,11 +521,7 @@ class RecallExtension implements Extension {
       clearTimeout(deadline);
       signal?.removeEventListener('abort', cancel);
       this.pending.delete(abort);
-      try {
-        await child?.close();
-      } catch (error) {
-        this.deps.logger.warn({ error }, 'Memory recall cleanup failed');
-      }
+      await closeChild();
     }
   }
 

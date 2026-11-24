@@ -127,6 +127,7 @@ async function fixture(completion: 'normal' | 'failed' | 'skip' = 'normal') {
         (factory) => factory.identifier === 'io.stagewise/memory-writer-tools',
       );
       const tools = toolsFactory?.create({} as ExtensionDeps);
+      expect(tools?.getSystemPromptPart).toBeUndefined();
       complete = async () => {
         if (completion !== 'skip') {
           await tools?.onStepComplete?.({
@@ -183,6 +184,9 @@ async function fixture(completion: 'normal' | 'failed' | 'skip' = 'normal') {
     createChildSession,
   } as unknown as ExtensionDeps;
   const extension = factory.create(deps);
+  expect(await extension.getSystemPromptPart?.()).toContain(
+    'readMemorySection',
+  );
   closers.push(async () => {
     await extension.onClose?.();
     await registry.close();

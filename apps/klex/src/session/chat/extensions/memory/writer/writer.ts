@@ -87,10 +87,6 @@ class WriterToolsExtension implements Extension {
     private readonly get: () => ToolSet,
     readonly onStepComplete: (event: StepCompleteEvent) => void,
   ) {}
-  getSystemPromptPart(): string {
-    return memoryPrompt;
-  }
-
   getTools(): ToolSet {
     return this.get();
   }
@@ -103,6 +99,10 @@ function toolsExtension(
 }
 
 class MemoryWriterExtension implements Extension {
+  getSystemPromptPart(): string {
+    return memoryPrompt;
+  }
+
   private closed = false;
   private ready = false;
   private child: ChildSessionHandle | undefined;

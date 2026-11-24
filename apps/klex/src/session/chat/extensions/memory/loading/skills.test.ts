@@ -51,6 +51,36 @@ function fixture() {
   return { loader, skills, load, recordRead, prepare };
 }
 describe('skill context lifecycle', () => {
+  it('preserves restored subscriptions and reference snapshots through repeated outage checkpoints', async () => {
+    const first = fixture();
+    await first.load('learning/testing', 'unit');
+    let history = [message('original', await first.loader.prepare([], model))];
+    const restarted = createMemoryLoader({
+      entities: { snapshot: async () => [] },
+      skills: {
+        snapshot: async () => {
+          throw new Error('Registry unavailable');
+        },
+      },
+      logger: { debug: vi.fn(), warn: vi.fn() } as never,
+    });
+    for (let index = 0; index < 2; index++) {
+      const carry = await restarted.carry(history);
+      history = [
+        message(`checkpoint-${index}`, [
+          { type: 'data-context-summary', data: { summary: 'summary' } },
+          ...carry,
+        ]),
+      ];
+      const active = carry.find(
+        (part) => String(part.type) === 'data-activeSkills',
+      ) as unknown as { data: { skills: Record<string, string[]> } };
+      expect(active.data.skills).toEqual({ 'learning/testing': ['unit'] });
+      expect(text(history)).toContain('Run tests.');
+      expect(text(history)).toContain('Unit test guidance.');
+      expect(text(history)).toContain('| learning/testing |');
+    }
+  });
   it('carries loaded skills when the registry temporarily fails', async () => {
     let failing = false;
     const skill = {

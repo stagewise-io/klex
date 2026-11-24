@@ -165,6 +165,7 @@ class MatcherEngineModule implements MatcherEngine {
     { tier: number; projection: string }
   >();
   private readonly disabled = new Set<string>();
+  private regexQueue: Promise<unknown> = Promise.resolve();
   private worker?: Worker;
   private workerReady = false;
   private workerIdleTimer?: ReturnType<typeof setTimeout>;
@@ -206,6 +207,17 @@ class MatcherEngineModule implements MatcherEngine {
       while (pattern[p] === '*') p++;
       return p === pattern.length;
     }
+    const result = this.regexQueue.then(() =>
+      this.regex(value, pattern, signal),
+    );
+    this.regexQueue = result.catch(() => undefined);
+    return result;
+  }
+  private async regex(
+    value: string,
+    pattern: string,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
     if (this.disabled.has(pattern)) return false;
     signal?.throwIfAborted();
     return new Promise<boolean>((resolve, reject) => {

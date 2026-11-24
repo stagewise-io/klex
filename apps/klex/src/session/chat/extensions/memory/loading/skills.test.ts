@@ -81,6 +81,52 @@ describe('skill context lifecycle', () => {
       expect(text(history)).toContain('| learning/testing |');
     }
   });
+  it.each([
+    ['SKILL.md', 'missing'],
+    ['SKILL.md', 'corrupt'],
+    ['references/unit.md', 'missing'],
+    ['references/unit.md', 'corrupt'],
+    ['references/unit.md', 'wrong-kind'],
+    ['references/unit.md', 'removed'],
+  ])(
+    'rejects outage checkpoints with a %s snapshot that is %s',
+    async (suffix, failure) => {
+      const first = fixture();
+      await first.load('learning/testing', 'unit');
+      const parts = await first.loader.prepare([], model);
+      const loaded = parts.find(
+        (part) => String(part.type) === 'data-loadedMemories',
+      ) as unknown as { data: Record<string, string> };
+      const filename = `skills/learning/testing/${suffix}`;
+      const previous = message('previous', structuredClone(parts));
+      const original = loaded.data[filename];
+      expect(original).toBeTypeOf('string');
+      if (failure === 'missing') delete loaded.data[filename];
+      else if (failure === 'corrupt') loaded.data[filename] = '{broken';
+      else
+        loaded.data[filename] = JSON.stringify({
+          ...JSON.parse(original ?? ''),
+          ...(failure === 'removed' ? { removed: true } : { kind: 'entity' }),
+        });
+      const restarted = createMemoryLoader({
+        entities: { snapshot: async () => [] },
+        skills: {
+          snapshot: async () => {
+            throw new Error('Registry unavailable');
+          },
+        },
+        logger: { debug: vi.fn(), warn: vi.fn() } as never,
+      });
+      const history = [previous, message('original', parts)];
+      await expect(restarted.carry(history)).rejects.toThrow(
+        `Cannot carry missing or corrupt skill snapshot: ${filename}`,
+      );
+      loaded.data[filename] = original ?? '';
+      const carry = await restarted.carry(history);
+      expect(text([message('retry', carry)])).toContain('Run tests.');
+      expect(text([message('retry', carry)])).toContain('Unit test guidance.');
+    },
+  );
   it('carries loaded skills when the registry temporarily fails', async () => {
     let failing = false;
     const skill = {

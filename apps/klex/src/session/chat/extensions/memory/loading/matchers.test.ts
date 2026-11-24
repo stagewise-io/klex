@@ -62,6 +62,55 @@ describe('matcher isolation', () => {
     next.emit('message', false);
     expect(await second).toBe(0);
   });
+  it('cancels queued regex work immediately without advancing the worker queue', async () => {
+    vi.useFakeTimers();
+    const engine = createMatcherEngine(vi.fn());
+    const rules = [
+      {
+        type: 'eventDataPattern' as const,
+        server: 'test',
+        conditions: [{ path: 'name', match: 'regex' as const, value: '^Ada$' }],
+      },
+    ];
+    const evidence = (name: string) => ({
+      text: [],
+      tools: [],
+      events: [{ server: 'test', value: { name } }],
+    });
+    const first = engine.match(evidence('Ada'), rules);
+    const controller = new AbortController();
+    const queued = engine.match(
+      evidence('Bob'),
+      rules,
+      undefined,
+      controller.signal,
+    );
+    const rejected = expect(queued).rejects.toThrow('Cancelled queued match');
+    const third = engine.match(evidence('Cara'), rules);
+    await vi.advanceTimersByTimeAsync(0);
+    const worker = workers.instances[0] as EventEmitter & {
+      postMessage: ReturnType<typeof vi.fn>;
+      terminate: ReturnType<typeof vi.fn>;
+    };
+    controller.abort(new Error('Cancelled queued match'));
+    await vi.advanceTimersByTimeAsync(0);
+    await rejected;
+    expect(workers.instances).toHaveLength(1);
+    expect(worker.postMessage).not.toHaveBeenCalled();
+    expect(worker.terminate).not.toHaveBeenCalled();
+    worker.emit('message', 'ready');
+    expect(worker.postMessage).toHaveBeenCalledTimes(1);
+    worker.emit('message', true);
+    expect(await first).toBe(2);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(worker.postMessage).toHaveBeenCalledTimes(2);
+    expect(worker.postMessage).toHaveBeenLastCalledWith({
+      value: 'Cara',
+      pattern: '^Ada$',
+    });
+    worker.emit('message', false);
+    expect(await third).toBe(0);
+  });
   it('routes different concurrent results through the reused worker', async () => {
     vi.useFakeTimers();
     const engine = createMatcherEngine(vi.fn());

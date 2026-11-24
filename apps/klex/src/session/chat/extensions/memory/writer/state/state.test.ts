@@ -9,6 +9,7 @@ import { createLogger } from '@stagewise/logger';
 import { createLocalData } from '@/local-data';
 import { KLEX_LOCAL_DATA_STORES } from '@/local-data-registry';
 
+import { createEntityStore } from '../entities';
 import { createWriterState, MEMORY_WRITER_STORE_DEFINITION } from './state';
 
 const directories: string[] = [];
@@ -28,7 +29,7 @@ async function startup(root: string) {
   const local = createLocalData({
     logging,
     dataDirectory: root,
-    klexVersion: '0.33.0',
+    klexVersion: '0.38.1',
     stores: [store],
   });
   try {
@@ -75,56 +76,81 @@ describe('registered memory writer state', () => {
     expect(restored.get().future).toEqual({ keep: true });
     expect(JSON.parse(await readFile(file, 'utf8'))._klex).toMatchObject({
       schemaVersion: 1,
-      compatibilityVersion: 2,
-      minimumKlexVersion: '0.37.1',
+      compatibilityVersion: 3,
+      minimumKlexVersion: '0.38.1',
     });
   });
-  it('raises compatibility of existing state so older binaries refuse it', async () => {
-    const { root, file } = await fixture();
-    await writeFile(
-      file,
-      JSON.stringify({
-        initialized: true,
-        cursor: 'history:cursor',
-        pendingThrough: null,
-        _klex: {
-          store: 'memory-writer-state',
-          schemaVersion: 1,
-          compatibilityVersion: 1,
-          minimumKlexVersion: '0.33.0',
-          writtenByKlexVersion: '0.37.0',
-        },
-      }),
-    );
-    await startup(root);
-    const upgraded = JSON.parse(await readFile(file, 'utf8'));
-    expect(upgraded.cursor).toBe('history:cursor');
-    expect(upgraded._klex).toMatchObject({
-      compatibilityVersion: 2,
-      minimumKlexVersion: '0.37.1',
-    });
-    const before = await readFile(file, 'utf8');
-    await startup(root);
-    expect(await readFile(file, 'utf8')).toBe(before);
-    const oldReader = createLocalData({
-      logging,
-      dataDirectory: root,
-      klexVersion: '0.37.0',
-      stores: [
+  it.each([1, 2])(
+    'raises compatibility %s of existing state before converting notes',
+    async (compatibilityVersion) => {
+      const { root, file } = await fixture();
+      await writeFile(
+        file,
+        JSON.stringify({
+          initialized: true,
+          cursor: 'history:cursor',
+          pendingThrough: null,
+          _klex: {
+            store: 'memory-writer-state',
+            schemaVersion: 1,
+            compatibilityVersion,
+            minimumKlexVersion:
+              compatibilityVersion === 1 ? '0.33.0' : '0.37.1',
+            writtenByKlexVersion: '0.38.0',
+          },
+        }),
+      );
+      const entitiesRoot = join(dirname(file), 'entities');
+      const entityFile = join(entitiesRoot, 'person/Alex Smith.md');
+      await mkdir(dirname(entityFile), { recursive: true });
+      await writeFile(
+        entityFile,
+        '---\nFormatVersion: 5\nCreatedAt: 2026-11-17T10:00:00.000Z\nLastUpdatedAt: 2026-11-17T11:00:00.000Z\nLastReadAt: null\nLinkedIdentities: []\nLoadOn: []\nRelatedTo:\n  - "[[project/Klex|works on (80)]]"\nTrustScore: 2\nAuthorityScore: 5\n---\n\n## General\n\n- Engineer [old](history:abc)\n',
+      );
+      await startup(root);
+      const entities = createEntityStore(entitiesRoot);
+      await entities.start();
+      expect(entities.get('person/Alex Smith')?.frontmatter.RelatedTo).toEqual([
         {
-          ...MEMORY_WRITER_STORE_DEFINITION,
-          compatibilityVersion: 1,
-          minimumKlexVersion: '0.33.0',
+          target: { kind: 'entity', id: 'project/Klex' },
+          relationship: 'relatedTo',
         },
-      ],
-    });
-    try {
-      await expect(oldReader.start()).rejects.toThrow();
-    } finally {
-      await oldReader.close();
-    }
-    expect(await readFile(file, 'utf8')).toBe(before);
-  });
+      ]);
+      const note = await readFile(entityFile, 'utf8');
+      expect(note).toContain('FormatVersion: 6');
+      const upgraded = JSON.parse(await readFile(file, 'utf8'));
+      expect(upgraded.cursor).toBe('history:cursor');
+      expect(upgraded._klex).toMatchObject({
+        compatibilityVersion: 3,
+        minimumKlexVersion: '0.38.1',
+      });
+      const before = await readFile(file, 'utf8');
+      await startup(root);
+      expect(await readFile(file, 'utf8')).toBe(before);
+      const oldReader = createLocalData({
+        logging,
+        dataDirectory: root,
+        klexVersion: '0.38.0',
+        stores: [
+          {
+            ...MEMORY_WRITER_STORE_DEFINITION,
+            compatibilityVersion: 2,
+            minimumKlexVersion: '0.37.1',
+          },
+        ],
+      });
+      try {
+        await expect(oldReader.start()).rejects.toThrow();
+      } finally {
+        await oldReader.close();
+      }
+      expect(await readFile(file, 'utf8')).toBe(before);
+      expect(await readFile(entityFile, 'utf8')).toBe(note);
+      const restarted = createEntityStore(entitiesRoot);
+      await restarted.start();
+      expect(await readFile(entityFile, 'utf8')).toBe(note);
+    },
+  );
   it.each(['newer', 'invalid'])(
     'rejects %s data before mutation',
     async (kind) => {

@@ -10,8 +10,10 @@ export {
   loadMatcherSchema,
   type MemoryEntity,
   mergedEntity,
+  RELATION_INVERSES,
   type Relation,
   relationSchema,
+  relationshipTypeSchema,
   renderEntity,
   sectionNameSchema,
 } from './entities';

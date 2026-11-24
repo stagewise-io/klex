@@ -267,9 +267,7 @@ const v4RelationSchema = legacyRelationSchema.extend({
     legacyRelationSchema.shape.target.options[1],
   ]),
 });
-// Characters that would break an Obsidian link `[[target|label]]`.
-const LINK_UNSAFE = /[[\]|\r\n]+/g;
-export const relationSchema = v4RelationSchema.extend({
+const v5RelationSchema = v4RelationSchema.extend({
   relationship: text
     .regex(/^[^[\]|\r\n]+$/, 'No [, ], | or line breaks')
     .describe(
@@ -277,24 +275,115 @@ export const relationSchema = v4RelationSchema.extend({
     ),
 });
 
+/** Curated predicates, paired with their fixed inverse. Symmetric pairs repeat. */
+export const RELATION_INVERSES = {
+  worksFor: 'employs',
+  employs: 'worksFor',
+  memberOf: 'hasMember',
+  hasMember: 'memberOf',
+  reportsTo: 'supervises',
+  supervises: 'reportsTo',
+  collaboratesWith: 'collaboratesWith',
+  represents: 'representedBy',
+  representedBy: 'represents',
+  providesTo: 'receivesFrom',
+  receivesFrom: 'providesTo',
+  ownedBy: 'owns',
+  owns: 'ownedBy',
+  managedBy: 'manages',
+  manages: 'managedBy',
+  assignedTo: 'assignedFrom',
+  assignedFrom: 'assignedTo',
+  createdBy: 'created',
+  created: 'createdBy',
+  approvedBy: 'approved',
+  approved: 'approvedBy',
+  requestedBy: 'requested',
+  requested: 'requestedBy',
+  partOf: 'hasPart',
+  hasPart: 'partOf',
+  dependsOn: 'requiredBy',
+  requiredBy: 'dependsOn',
+  uses: 'usedBy',
+  usedBy: 'uses',
+  integratesWith: 'integratesWith',
+  hostedOn: 'hosts',
+  hosts: 'hostedOn',
+  locatedIn: 'hasLocatedEntity',
+  hasLocatedEntity: 'locatedIn',
+  contributesTo: 'receivesContributionFrom',
+  receivesContributionFrom: 'contributesTo',
+  blocks: 'blockedBy',
+  blockedBy: 'blocks',
+  implements: 'implementedBy',
+  implementedBy: 'implements',
+  addresses: 'addressedBy',
+  addressedBy: 'addresses',
+  affects: 'affectedBy',
+  affectedBy: 'affects',
+  follows: 'precedes',
+  precedes: 'follows',
+  derivedFrom: 'sourceOf',
+  sourceOf: 'derivedFrom',
+  references: 'referencedBy',
+  referencedBy: 'references',
+  describes: 'describedBy',
+  describedBy: 'describes',
+  supersedes: 'supersededBy',
+  supersededBy: 'supersedes',
+  conflictsWith: 'conflictsWith',
+  relatedTo: 'relatedTo',
+} as const;
+export const relationshipTypeSchema = z
+  .enum(
+    Object.keys(RELATION_INVERSES) as [
+      keyof typeof RELATION_INVERSES,
+      ...(keyof typeof RELATION_INVERSES)[],
+    ],
+  )
+  .describe(
+    'Exact curated verb phrase from this entity to the target. Prefer a specific predicate; relatedTo is the fallback. Entity inverse is automatic.',
+  );
+export const relationSchema = v5RelationSchema.omit({ strength: true }).extend({
+  relationship: relationshipTypeSchema,
+});
+
 // Skill links name the skill file. Entity IDs never end in `.md`, so the
 // suffix distinguishes them from entities such as `project/SKILL`.
 const SKILL_LINK_SUFFIX = '/SKILL.md';
-const RELATION_LINK = /^\[\[([^[\]|\r\n]+)\|([^[\]|\r\n]+) \((\d{1,3})\)\]\]$/;
+const V5_RELATION_LINK =
+  /^\[\[([^[\]|\r\n]+)\|([^[\]|\r\n]+) \((\d{1,3})\)\]\]$/;
+const RELATION_LINK = /^\[\[([^[\]|\r\n]+)\]\]$/;
 
-/** Obsidian link with the relation in its display text: `[[person/Ada|manages (80)]]`. */
+/** Plain Obsidian target; the predicate lives in its frontmatter property. */
 export function formatRelationLink(relation: Relation): string {
-  const { target, relationship, strength } = relation;
+  const { target } = relation;
   const path =
     target.kind === 'skill' ? `${target.id}${SKILL_LINK_SUFFIX}` : target.id;
-  return `[[${path}|${relationship} (${strength})]]`;
+  return `[[${path}]]`;
 }
 
-export function parseRelationLink(link: string): Relation {
+export function parseRelationLink(
+  link: string,
+  relationship: Relation['relationship'],
+): Relation {
   const match = RELATION_LINK.exec(link);
   if (!match) throw new Error(`Malformed relation link: ${link}`);
-  const [, path = '', relationship = '', strength = ''] = match;
+  const [, path = ''] = match;
   return relationSchema.parse({
+    target: path.endsWith(SKILL_LINK_SUFFIX)
+      ? { kind: 'skill', id: path.slice(0, -SKILL_LINK_SUFFIX.length) }
+      : { kind: 'entity', id: path },
+    relationship,
+  });
+}
+
+// Validate the released v5 link before the shared conversion drops its label and strength.
+function parseV5RelationLink(link: string): z.infer<typeof v5RelationSchema> {
+  const match = V5_RELATION_LINK.exec(link);
+  if (!match) throw new Error(`Malformed relation link: ${link}`);
+  const [, path = '', relationship = '', strength = ''] = match;
+  return v5RelationSchema.parse({
     target: path.endsWith(SKILL_LINK_SUFFIX)
       ? { kind: 'skill', id: path.slice(0, -SKILL_LINK_SUFFIX.length) }
       : { kind: 'entity', id: path },
@@ -303,19 +392,13 @@ export function parseRelationLink(link: string): Relation {
   });
 }
 
-/** Forward conversion of v1-v4 labels that would break a link. */
-function linkSafeRelations<T extends { relationship: string }>(
-  relations: readonly T[],
-): T[] {
-  return relations.map((relation) => ({
-    ...relation,
-    relationship:
-      relation.relationship
-        .replace(LINK_UNSAFE, ' ')
-        .replace(/\s+/g, ' ')
-        .trim() || 'talks with',
-  }));
-}
+// Never guess predicates from historical free text. Preserve every target.
+const fallbackRelations = (
+  relations: readonly { target: Relation['target'] }[],
+): Relation[] =>
+  combineRelations(
+    relations.map(({ target }) => ({ target, relationship: 'relatedTo' })),
+  );
 
 export const entityFieldsSchema = z
   .object({
@@ -389,15 +472,31 @@ const v4FrontmatterSchema = v3FrontmatterSchema
     RelatedTo: z.array(v4RelationSchema).max(100),
   });
 // v5 stores RelatedTo on disk as Obsidian links (see formatRelationLink).
-const frontmatterSchema = v4FrontmatterSchema
+const v5FrontmatterSchema = v4FrontmatterSchema
   .omit({ RelatedTo: true, FormatVersion: true })
   .extend({
     FormatVersion: z.literal(5),
-    RelatedTo: z.array(relationSchema).max(100),
+    RelatedTo: z.array(v5RelationSchema).max(100),
   });
-const linkFrontmatterSchema = frontmatterSchema.extend({
+const v5LinkFrontmatterSchema = v5FrontmatterSchema.extend({
   RelatedTo: z.array(z.string()).max(100),
 });
+// Format 6 removes strength and groups plain links by curated predicates in one conversion.
+// Runtime keeps a flat typed edge list; only the disk representation is grouped.
+const frontmatterSchema = v5FrontmatterSchema.extend({
+  FormatVersion: z.literal(6),
+  RelatedTo: z.array(relationSchema).max(100),
+});
+const relationListsShape = Object.fromEntries(
+  relationshipTypeSchema.options.map((type) => [
+    type,
+    z.array(z.string()).max(100).optional(),
+  ]),
+) as Record<Relation['relationship'], z.ZodOptional<z.ZodArray<z.ZodString>>>;
+const linkFrontmatterSchema = frontmatterSchema
+  .omit({ RelatedTo: true })
+  .extend(relationListsShape)
+  .strict();
 
 // Retain the original document contract for forward conversion of flat notes.
 const legacyFrontmatterSchema = uuidFrontmatterSchema.extend({
@@ -532,7 +631,7 @@ function dedupeIdentities(
   });
 }
 
-/** One relation per target, keeping the strongest; never to `exclude`. */
+/** One edge per predicate and target; never to `exclude`. */
 function combineRelations(
   relations: readonly Relation[],
   exclude: readonly string[] = [],
@@ -541,10 +640,8 @@ function combineRelations(
   for (const relation of relations) {
     const { kind, id } = relation.target;
     if (kind === 'entity' && exclude.includes(id)) continue;
-    const key = `${kind}:${id}`;
-    const existing = byTarget.get(key);
-    if (!existing || relation.strength > existing.strength)
-      byTarget.set(key, relation);
+    const key = `${relation.relationship}:${kind}:${entityKey(id)}`;
+    if (!byTarget.has(key)) byTarget.set(key, relation);
   }
   return [...byTarget.values()];
 }
@@ -553,7 +650,7 @@ function combineRelations(
  * `keep` after absorbing `drop`: sections joined by name, equal facts
  * combined (sources and `was:` history kept within caps), identities,
  * matchers and relations unioned. Relations between the two vanish; for a
- * shared target the stronger relation wins. Type, title and dates stay.
+ * shared target distinct predicates survive. Type, title and dates stay.
  */
 export function mergedEntity(
   keep: MemoryEntity,
@@ -618,11 +715,19 @@ function serialize(entity: MemoryEntity): string {
   entityIdSchema.parse(entity.id);
   validateSections(entity.sections);
   // FormatVersion first, so tools can sniff the version from the first line.
-  const { FormatVersion, ...rest } = entity.frontmatter;
+  const { FormatVersion, RelatedTo, ...rest } = entity.frontmatter;
+  const relations = combineRelations(RelatedTo);
   const frontmatter = {
     FormatVersion,
     ...rest,
-    RelatedTo: rest.RelatedTo.map(formatRelationLink),
+    ...Object.fromEntries(
+      relationshipTypeSchema.options.flatMap((type) => {
+        const links = relations
+          .filter(({ relationship }) => relationship === type)
+          .map(formatRelationLink);
+        return links.length ? [[type, links]] : [];
+      }),
+    ),
   };
   // No folding: a link must stay on one line.
   const content = `---\n${stringify(frontmatter, { lineWidth: 0 })}---\n\n${Object.entries(
@@ -669,7 +774,7 @@ function deserialize(
   } else {
     entityType = entityTypeSchema.parse(folder);
     if (raw?.FormatVersion === 4) v4 = v4FrontmatterSchema.parse(raw);
-    else if (raw?.FormatVersion !== 5) {
+    else if (![5, 6].includes(raw?.FormatVersion)) {
       const legacy = oldFrontmatterSchema.parse(raw);
       if ('Id' in legacy && legacy.Id !== id.split('/').at(-1))
         throw new Error('Legacy ID does not match filename');
@@ -682,22 +787,32 @@ function deserialize(
     frontmatter = {
       ...frontmatterSchema
         .omit({ RelatedTo: true })
-        .parse({ ...old, FormatVersion: 5 }),
+        .parse({ ...old, FormatVersion: 6 }),
       // Legacy targets are repointed to names before the note is written.
-      RelatedTo: linkSafeRelations(old.RelatedTo) as Relation[],
+      RelatedTo: fallbackRelations(old.RelatedTo),
     };
   else if (v4)
     frontmatter = {
       ...v4,
-      FormatVersion: 5,
-      RelatedTo: linkSafeRelations(v4.RelatedTo),
+      FormatVersion: 6,
+      RelatedTo: fallbackRelations(v4.RelatedTo),
     };
-  else {
-    const stored = linkFrontmatterSchema.parse(raw);
+  else if (raw?.FormatVersion === 5) {
+    const stored = v5LinkFrontmatterSchema.parse(raw);
     frontmatter = {
       ...stored,
-      RelatedTo: stored.RelatedTo.map(parseRelationLink),
+      FormatVersion: 6,
+      RelatedTo: fallbackRelations(stored.RelatedTo.map(parseV5RelationLink)),
     };
+  } else {
+    const stored = linkFrontmatterSchema.parse(raw);
+    const relations = relationshipTypeSchema.options.flatMap((type) =>
+      (stored[type] ?? []).map((link) => parseRelationLink(link, type)),
+    );
+    frontmatter = frontmatterSchema.parse({
+      ...stored,
+      RelatedTo: combineRelations(relations),
+    });
   }
   const name = id.includes('/') ? id.slice(id.indexOf('/') + 1) : id;
   const sections: Record<string, Fact[]> = Object.create(null);
@@ -712,7 +827,7 @@ function deserialize(
   return {
     entity: { id, entityType, name, frontmatter, sections },
     legacy: !!old,
-    outdated: !!old || !!v4,
+    outdated: raw?.FormatVersion !== 6,
     old,
   };
 }
@@ -752,7 +867,7 @@ class EntityStoreModule implements EntityStore {
         name: normalizeEntityName(input.name),
         entityType: input.entityType,
         frontmatter: {
-          FormatVersion: 5,
+          FormatVersion: 6,
           CreatedAt: at,
           LastUpdatedAt: at,
           LastReadAt: null,
@@ -762,7 +877,7 @@ class EntityStoreModule implements EntityStore {
             normalizeEntityName(input.name),
             identities,
           ),
-          RelatedTo: input.relatedTo,
+          RelatedTo: combineRelations(input.relatedTo),
           TrustScore: 2,
           AuthorityScore: 5,
         },
@@ -817,7 +932,7 @@ class EntityStoreModule implements EntityStore {
           entity.name,
           identities,
         ),
-        RelatedTo: patch.relatedTo ?? previous.RelatedTo,
+        RelatedTo: combineRelations(patch.relatedTo ?? previous.RelatedTo),
         LastUpdatedAt: new Date().toISOString(),
       };
       if (entity.id === previousId) await this.persist(entity);
@@ -844,7 +959,9 @@ class EntityStoreModule implements EntityStore {
       if (!entity) throw new Error('Unknown entity');
       entity.frontmatter = {
         ...entity.frontmatter,
-        RelatedTo: relationsSchema.parse(mutate(entity.frontmatter.RelatedTo)),
+        RelatedTo: combineRelations(
+          relationsSchema.parse(mutate(entity.frontmatter.RelatedTo)),
+        ),
         LastUpdatedAt: new Date().toISOString(),
       };
       await this.persist(entity);
@@ -1296,7 +1413,7 @@ class EntityStoreModule implements EntityStore {
       id: entity.id,
       content: serialize(entity),
     }));
-    // Notes older than v5 are rewritten in place; older binaries refuse v5.
+    // Older notes are rewritten in place; older binaries refuse format 6.
     const rewrites = moves.length
       ? snapshots
       : snapshots.filter((_, index) => active[index]?.outdated);
@@ -1311,7 +1428,7 @@ interface LoadedDocument {
   file: string;
   entity: MemoryEntity;
   legacy: boolean;
-  /** Stored before format v5; rewritten on startup. */
+  /** Stored before format 6; rewritten on startup. */
   outdated: boolean;
   old?: LegacyFields;
   stem: string;

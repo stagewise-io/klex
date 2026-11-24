@@ -258,17 +258,14 @@ describe('oldest-first memory writer', () => {
         relatedTo: [
           {
             target: { kind: 'skill', id: 'templates/deploy' },
-            strength: 80,
             relationship: 'uses',
           },
           {
             target: { kind: 'entity', id: missing },
-            strength: 80,
             relationship: 'uses',
           },
           {
             target: { kind: 'skill', id: 'templates/missing' },
-            strength: 80,
             relationship: 'uses',
           },
         ],

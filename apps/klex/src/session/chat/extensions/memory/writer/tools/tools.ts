@@ -28,6 +28,7 @@ import {
   MAX_FACT_HISTORY,
   type MemoryEntity,
   mergedEntity,
+  RELATION_INVERSES,
   type Relation,
   relationSchema,
   sectionNameSchema,
@@ -46,15 +47,8 @@ import {
 } from './quality';
 import { rejectSecrets } from './secrets';
 
-// Writer input: a relation also names its reverse, so one call links both sides.
-const writerRelationSchema = relationSchema.extend({
-  // Same rules as `relationship`: the inverse is stored as a link label.
-  inverse: relationSchema.shape.relationship
-    .optional()
-    .describe(
-      'Entity targets: label from the target\'s side, e.g. relationship "requested" / inverse "requested by". Tool writes both sides.',
-    ),
-});
+// Fixed inverses are maintained automatically; callers cannot invent labels.
+const writerRelationSchema = relationSchema;
 type WriterRelation = z.infer<typeof writerRelationSchema>;
 const writerFieldsSchema = entityFieldsSchema.extend({
   relatedTo: z.array(writerRelationSchema).max(100).default([]),
@@ -62,8 +56,6 @@ const writerFieldsSchema = entityFieldsSchema.extend({
 const writerPatchSchema = entityPatchSchema.extend({
   relatedTo: z.array(writerRelationSchema).max(100).optional(),
 });
-const stripInverse = (relations: readonly WriterRelation[]) =>
-  relations.map(({ inverse: _inverse, ...relation }) => relation);
 /** Resolve case-insensitive lookups to the exact stored path. */
 const canonical = (
   entities: EntityStore,
@@ -623,18 +615,18 @@ class WriterToolsModule implements WriterTools {
       ).length;
       if (WORK_ITEMS.has(type) && people < 1)
         throw new Error(
-          'Link who requested, owns or reviews it: add a relatedTo person with inverse, e.g. relationship "requested by" / inverse "requested". Create the person first if missing',
+          'Link who requested, owns or is assigned it: add a relatedTo person, e.g. relationship "requestedBy", "ownedBy" or "assignedTo". Inverse is automatic. Create the person first if missing',
         );
       if (type === 'event' && people < 2)
         throw new Error(
-          'An event links everyone involved: add at least two relatedTo people with inverse "took part in"',
+          'An event links everyone involved: add at least two relatedTo people using a curated predicate, or "relatedTo" when none fits',
         );
     };
     /** Writes or removes the reverse side of entity relations of `id`. */
     const syncInverses = async (
       id: string,
       next: readonly WriterRelation[],
-      previous: readonly { target: { kind: string; id: string } }[],
+      previous: readonly Relation[],
     ) => {
       const targets = new Set(
         [...next, ...previous]
@@ -652,8 +644,15 @@ class WriterToolsModule implements WriterTools {
       try {
         for (const targetId of targets) {
           if (targetId === id) continue;
-          const relation = next.find(
+          const outgoing = next.filter(
             ({ target: t }) => t.kind === 'entity' && t.id === targetId,
+          );
+          const removedTypes = new Set(
+            previous
+              .filter(
+                ({ target: t }) => t.kind === 'entity' && t.id === targetId,
+              )
+              .map(({ relationship }) => RELATION_INVERSES[relationship]),
           );
           // Read and write the target inside the store queue, so a concurrent
           // edit of its relations is merged, never overwritten.
@@ -661,22 +660,20 @@ class WriterToolsModule implements WriterTools {
           await options.entities.mutateRelations(targetId, (relations) => {
             before = relations;
             const others = relations.filter(
-              ({ target: t }) => !(t.kind === 'entity' && t.id === id),
+              ({ target: t, relationship }) =>
+                !(
+                  t.kind === 'entity' &&
+                  t.id === id &&
+                  removedTypes.has(relationship)
+                ),
             );
-            const existing = relations.find(
-              ({ target: t }) => t.kind === 'entity' && t.id === id,
-            );
-            const label = relation?.inverse ?? existing?.relationship;
-            return relation && label
-              ? [
-                  ...others,
-                  {
-                    target: { kind: 'entity' as const, id },
-                    strength: relation.strength,
-                    relationship: label,
-                  },
-                ]
-              : others;
+            return [
+              ...others,
+              ...outgoing.map(({ relationship }) => ({
+                target: { kind: 'entity' as const, id },
+                relationship: RELATION_INVERSES[relationship],
+              })),
+            ];
           });
           written.push({ targetId, before });
         }
@@ -699,7 +696,7 @@ class WriterToolsModule implements WriterTools {
               .max(200)
               .default('')
               .describe(
-                'Literal terms, case-insensitive, any term matches. Empty lists all. Searches title, type, facts and relation labels.',
+                'Literal terms, case-insensitive, any term matches. Empty lists all. Searches title, type, facts and relationship types.',
               ),
             offset: z.number().int().min(0).default(0),
           })
@@ -791,10 +788,7 @@ class WriterToolsModule implements WriterTools {
             fields.linkedIdentities,
           );
           checkRelations(fields.relatedTo);
-          const entity = await options.entities.create(
-            { ...fields, relatedTo: stripInverse(fields.relatedTo) },
-            content,
-          );
+          const entity = await options.entities.create(fields, content);
           try {
             await syncInverses(entity.id, fields.relatedTo, []);
           } catch (error) {
@@ -997,9 +991,7 @@ class WriterToolsModule implements WriterTools {
             id,
             {
               ...fields,
-              ...(fields.relatedTo
-                ? { relatedTo: stripInverse(fields.relatedTo) }
-                : {}),
+              ...(fields.relatedTo ? { relatedTo: fields.relatedTo } : {}),
             },
             draft,
             Object.keys(entity.sections).filter(

@@ -2,6 +2,44 @@
 
 All notable Klex changes are documented here.
 
+## 0.38.0 (2026-11-24)
+
+### Features
+
+- store memory relations as Obsidian links (a972209)
+- support nested memory names (c53cc88)
+- replace random memory IDs with title-based filenames (c2a2ddf)
+- teach memory writer roles and product knowledge (1d05707)
+- add memory entity merge and revisable entity types (70001fa)
+- enforce memory writer output quality in tools (fa35d96)
+- rework memory writer facts, view and skills (61e4947)
+- add skill reference files (470d219)
+- replace learning runtime with durable memory writer (645a89f)
+- fall back across instinct models with per-model timers (75824d3)
+
+### Bug Fixes
+
+- separate <mcp-servers> connection status from approval (2fe3447)
+- narrow third-party service rules in base system prompts (0a5b803)
+- match data URLs case-insensitively in tail sizing (66bfdf9)
+- report every detected context overflow and charge nested URL media (efc7918)
+- recover from context-window rejections and bound the compaction tail (95f658b)
+- scope reasoning signatures to tool calls (53b55b5)
+- preserve OpenRouter Gemini reasoning details (3dfd5ab)
+- gate MCP push listen by negotiated protocol era (ff6b686)
+- tighten memory writer view and skill checks (4234a73)
+- harden memory writer merge and relation sync (bc5357a)
+- address memory writer review findings (9f88391)
+
+### Other Changes
+
+- assert exact untrusted-content bullets in prompt parity test (84e9328)
+- remove god messages (95e797d)
+- keep KLEX-91 test coverage in apps/klex (b161e41)
+- align memory writer tool list and search docs (18232ee)
+- raise memory writer chunk size and first-run window (326d188)
+- clarify single-list instinct fallback wording (cb1b1dd)
+
 ## 0.37.0 (2026-11-17)
 
 ### Features

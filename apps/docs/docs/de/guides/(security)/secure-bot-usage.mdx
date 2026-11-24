@@ -1,0 +1,29 @@
+---
+title: Klex Bots sicher nutzen
+description: Begrenzen Sie den Zugriff eines Bots in verbundenen Apps und prüfen Sie ihn bei Änderungen seiner Arbeit.
+related:
+  - /de/guides/limit-blast-radius
+  - /de/guides/trust-critical-operations
+  - /de/bot/concepts/brain-and-computers
+---
+
+In den meisten verbundenen Apps handelt ein Bot über ein eigenes Konto. Konfigurieren Sie dessen Berechtigungen in der App. Geben Sie dem Bot nur den Zugriff, den er für seine Aufgaben benötigt, und überprüfen Sie ihn, wenn sich die Arbeit ändert.
+
+<a id="before-connecting-an-app"></a>
+
+## Vor dem Verbinden einer App
+
+1. Ermitteln Sie die Ressourcen und Aktionen, die der Bot benötigt. Beginnen Sie mit Lesezugriff, wenn dieser ausreicht.
+2. Geben Sie dem Konto des Bots Zugriff auf die relevanten Projekte, Ordner oder Unterhaltungen statt auf die gesamte Organisation, sofern die App diese Eingrenzung unterstützt.
+3. Prüfen Sie, ob das Konto Daten teilen, Einstellungen ändern, Ressourcen löschen oder andere sensible Aktionen ausführen kann. Entfernen Sie nicht benötigte Berechtigungen.
+4. Testen Sie den vorgesehenen Ablauf mit nicht sensiblen Daten und prüfen Sie die Ergebnisse.
+
+Wiederholen Sie diese Prüfung für jede Verbindung, auch für verbundene Computer. Eine MCP-Verbindung stellt dem Bot Funktionen bereit; das verbundene Konto und die Umgebung bestimmen deren Zugriff. Siehe [Verbindungen](/de/bot/concepts/brain-and-computers).
+
+<a id="review-and-remove-access"></a>
+
+## Zugriff überprüfen und entfernen
+
+Prüfen Sie Berechtigungen regelmäßig und bei einer Änderung der Rolle des Bots. Wird Zugriff nicht mehr benötigt, entziehen Sie ihn in der verbundenen App und trennen Sie gegebenenfalls den betreffenden MCP-Server. Das Trennen eines Servers entzieht nicht automatisch die Berechtigungen des Kontos in der App. Folgen Sie bei einem vermuteten Vorfall dem Vorfallprozess Ihrer Organisation und erwägen Sie, den Bot während der Überprüfung des Zugriffs zu stoppen.
+
+Klex unterstützt derzeit keine Freigaben oder Einschränkungen für einzelne Aktionen. Verlassen Sie sich zur Durchsetzung einer Berechtigungsgrenze nicht allein auf einen Prompt; nutzen Sie die Zugriffskontrollen der verbundenen App. Siehe [Ihren Klex Bot steuern](/de/bot/guides/control-and-limits).

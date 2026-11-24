@@ -1,0 +1,71 @@
+---
+title: FAQ
+description: Klex Bot, 호스팅 및 보안에 관한 자주 묻는 질문에 대한 답변입니다.
+related:
+  - /ko/bot
+  - /ko/cloud
+  - /ko/guides
+---
+
+시작, 호스팅, 연결 및 Klex Bot 운영에 관한 답변을 확인하세요.
+
+<a id="getting-started"></a>
+
+## 시작하기
+
+- **Klex Bot은 어떻게 작동하나요?** Bot은 자체 환경에서 실행되며 MCP로 연결된 컴퓨터와 앱에서 작업합니다. 참고: [Bot 작동 방식](/ko/bot/concepts/how-bots-work).
+- **Bot을 어디에 사용할 수 있나요?** 연결된 앱과 컴퓨터에서 사람 및 다른 에이전트와 일할 수 있습니다. 가능한 작업은 연결과 계정 권한에 따라 달라집니다. 참고: [Bot 작동 방식](/ko/bot/concepts/how-bots-work).
+- **다른 에이전트의 워크플로를 어떻게 이전하나요?** 지식, 일과, 지시를 인계 문서에 모아 Klex Bot 설정에 사용하세요. 참고: [다른 에이전트에서 이전](/ko/bot/migrate-from-another-agent).
+- **Bot을 업무에 사용할 수 있나요?** 네. 업무를 맡기고 필요한 앱과 컴퓨터를 연결하세요. 참고: [중요 업무](/ko/guides/trust-critical-operations).
+- **기존 고객과 이야기할 수 있나요?** 고객 추천에 관해 [Klex 지원팀](mailto:support@klex.bot)에 문의하세요.
+
+<a id="how-klex-bots-work"></a>
+
+## Klex Bot의 작동 방식
+
+- **Bot은 어떻게 기억하고 학습하나요?** 학습 및 사전 구성된 스킬과 과거 업무의 사실 지식을 함께 사용합니다. 이를 통해 업무를 수행하고 환경에 관한 유용한 정보를 기억합니다. 참고: [Bot 메모리](/ko/bot/concepts/memory).
+- **Bot 환경과 연결된 컴퓨터는 어떻게 다른가요?** 자체 환경은 Bot을 실행하고 메모리를 관리하며, 연결된 컴퓨터와 앱은 작업하는 곳입니다. 참고: [연결](/ko/bot/concepts/brain-and-computers).
+- **어떤 모델 제공업체를 사용할 수 있나요?** Klex는 OpenAI, Anthropic, Google Gemini, 로컬 Ollama, 호환되는 사용자 지정 엔드포인트 등 여러 제공업체를 지원합니다. 사용 가능한 모델은 제공업체와 계정에 따라 달라집니다. 참고: [모델](/ko/bot/concepts/models).
+- **Bot이 MCP 서버를 사용하고 직접 추가할 수 있나요?** 네. 새 원격 HTTP 또는 HTTPS 서버를 추가할 수 있지만 이 기능으로 기존 서버 구성을 수정하거나 삭제할 수는 없습니다. 참고: [MCP와 Bot](/ko/bot/concepts/mcp).
+- **Bot이 Agent Skills를 사용할 수 있나요?** 네. 스킬은 재사용 가능한 작업 지시를 제공해 Bot이 유용한 절차를 적용하도록 합니다. 참고: [Agent Skills](/ko/bot/concepts/agent-skills).
+- **Bot은 사람 및 다른 Bot과 어떻게 소통하나요?** 사람은 Cloud 대시보드에서 Bot과 대화할 수 있습니다. Bot은 필요한 메시징 기능과 계정 접근 권한이 있는 연결된 앱을 통해서도 사람 및 다른 Bot과 소통할 수 있습니다. 참고: [소통](/ko/bot/concepts/communication).
+
+<a id="operating-klex-bots"></a>
+
+## Klex Bot 운영
+
+- **Bot 활동을 어떻게 검토하나요?** Cloud에 호스팅되거나 등록된 Bot은 Cloud 대시보드에서 활동을 보고 대화할 수 있습니다. 셀프 호스팅 Bot에는 로컬 진단도 있습니다. 참고: [활동 검토](/ko/bot/guides/observability).
+- **여러 채널에서 Bot과 대화할 수 있나요?** 네. 적절한 메시징 연결과 각 대화에 대한 계정 접근 권한이 필요합니다. 참고: [여러 채널에서 대화](/ko/bot/guides/multi-channel-chat).
+- **Bot이 여러 요청을 처리할 수 있나요?** Bot은 여러 요청을 받을 수 있습니다. 독립적인 작업을 여러 Bot에 나눌 수도 있습니다. 참고: [작업 병렬화](/ko/bot/guides/parallelize).
+- **반복 작업은 어떻게 설정하나요?** 일정 관리 서비스를 연결하고 Bot에 무엇을 언제 수행하고 결과를 어디로 보낼지 알려 주세요. 참고: [반복 작업 자동화](/ko/bot/guides/recurring-tasks).
+- **Bot을 중지하고 접근 권한을 어떻게 관리하나요?** Cloud 호스팅 Bot은 대시보드에서 중지하거나 셀프 호스팅 앱을 닫으세요. 연결된 계정의 권한은 해당 서비스에서 관리하세요. 가이드에는 헤드리스 종료와 다른 제어 방법도 나옵니다. 참고: [제어와 제한](/ko/bot/guides/control-and-limits).
+- **Bot과 연결의 제한은 무엇인가요?** 현재 제한은 [Klex 지원팀](mailto:support@klex.bot)에 문의하세요.
+- **Klex Bot이 다른 에이전트와 일할 수 있나요?** 양쪽에 필요한 접근 권한과 기능이 있으면 공유 서비스를 통해 협업할 수 있습니다. 참고: [다른 에이전트와 협업](/ko/bot/guides/interoperability).
+
+<a id="reliability"></a>
+
+## 안정성
+
+- **셀프 호스팅 Bot의 상태를 모니터링할 수 있나요?** 네. 선택적 상태 리스너를 활성화해 Klex 프로세스와 준비 상태를 모니터링하세요.
+- **Bot이 24시간 일할 수 있나요?** 네. 호스팅 환경을 계속 실행하고 원하는 작업에 필요한 모델과 연결을 사용할 수 있도록 유지하세요.
+- **업데이트 후 Bot을 다시 만들어야 하나요?** 일반적으로 필요하지 않습니다. Bot은 구성, 채팅, 메모리를 데이터 디렉터리에 보관합니다. 업데이트할 때 릴리스 노트를 확인하세요. 참고: [업데이트](/ko/bot/reliability/updates).
+
+<a id="cloud-and-hosting"></a>
+
+## Cloud와 호스팅
+
+- **Klex Cloud 없이 Bot을 실행할 수 있나요?** 네. 셀프 호스팅 Bot은 Cloud 등록이 필수가 아니지만 독립 실행 환경은 기능이 덜 완성되어 있습니다. 참고: [호스팅과 셀프 호스팅](/ko/cloud/hosted-vs-local).
+- **누가 Bot의 메모리에 접근할 수 있나요?** 관리자는 Bot의 Admin API로 채팅과 스킬을 검토할 수 있습니다. Cloud 호스팅 Bot의 경우 제한된 Klex 직원이 합의된 지원 디버깅을 위해 채팅이나 메모리에 접근할 수 있으며, 접근은 기록되고 사용자에게 표시됩니다. Cloud 호스팅 데이터는 전송 및 저장 시 암호화됩니다. 참고: [데이터 개인정보 보호](/ko/cloud/data-privacy).
+- **셀프 호스팅 Bot의 분석을 끌 수 있나요?** 네. 제품 분석과 운영 텔레메트리를 각각 비활성화할 수 있습니다. 참고: [분석과 텔레메트리](/ko/cloud/data-privacy#analytics-and-telemetry-for-a-self-hosted-bot).
+- **Klex Cloud를 셀프 호스팅할 수 있나요?** 셀프 호스팅 Klex Cloud는 Enterprise 고객이 사용할 수 있습니다. 개별 Bot의 셀프 호스팅과는 별개입니다. 참고: [Cloud 셀프 호스팅](/ko/cloud/self-hosting).
+
+<a id="klex-bots-in-your-company"></a>
+
+## 회사에서 Klex Bot 사용
+
+- **앱에서 Bot 권한을 어떻게 관리하나요?** 해당 앱에서 Bot 계정의 접근을 설정하고 필요한 권한만 부여하세요. 참고: [연결](/ko/bot/concepts/brain-and-computers).
+- **무단 접근과 정보 공개를 어떻게 줄이나요?** Bot에 접근할 수 있는 사람을 제한하고 계정에는 필요한 정보에만 접근 권한을 주세요. 참고: [정보 도난 방지](/ko/guides/prevent-information-theft).
+- **지원 Bot의 비밀 유출 위험을 어떻게 줄이나요?** 불필요한 자격 증명이나 민감한 데이터에 접근을 주지 말고 계정 범위를 제한하며 민감하지 않은 데이터로 테스트하세요. 참고: [비밀 보호](/ko/guides/support-bot-secrets).
+- **침해된 Bot의 영향을 어떻게 제한하나요?** 계정 권한과 연결된 환경을 제한하고 영향이 큰 변경에는 독립적인 승인을 사용하세요. 참고: [영향 범위 제한](/ko/guides/limit-blast-radius).
+- **중요한 업무에 Bot을 어떻게 사용하나요?** 접근을 제한하고 영향이 큰 업무에는 독립적인 검토나 승인을 사용하세요. 현재 Klex는 개별 작업 승인을 강제하지 않습니다. 참고: [중요 업무](/ko/guides/trust-critical-operations).
+- **Klex Bot끼리 어떻게 협업하나요?** 공유 대화에서 협업할 수 있습니다. 각 Bot에 접근 권한과 명확한 역할을 주고 대화를 통해 업무를 인계하세요. 참고: [Bot 협업](/ko/guides/bot-collaboration).

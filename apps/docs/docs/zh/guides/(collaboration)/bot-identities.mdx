@@ -1,0 +1,23 @@
+---
+title: 创建独立身份
+description: 使用独立的应用账号管理每个 Bot 的访问权限。
+related:
+  - /zh/guides/secure-bot-usage
+  - /zh/guides/bot-collaboration
+  - /zh/bot/concepts/identity
+---
+
+在大多数连接的应用中，Bot 通过为其配置的账号执行操作。如果应用支持独立账号，请为每个 Bot 提供自己的账号，不要与人员或其他 Bot 共用账号。这样可以分别配置访问权限。
+
+<a id="set-up-and-review-access"></a>
+
+## 设置并检查访问权限
+
+1. 按照连接应用的流程创建或分配账号。
+2. 只授予 Bot 所需的项目、对话、数据和操作权限。检查账号可以读取、分享、更改或删除哪些内容。
+3. 将应用连接到 Bot 并测试一项小任务。检查结果，以及应用提供的活动日志（如有）。
+4. Bot 的角色发生变化时检查访问权限。在应用中撤销不再需要的权限，并在适当时断开服务器连接。
+
+独立账号有助于识别执行操作的账号。可用的审计详情取决于应用。
+
+在连接的服务中配置应用权限；Bot 的名称和 Soul 不会设置这些权限。请参阅 [Klex Bot 身份](/zh/bot/concepts/identity)和[安全使用 Klex Bot](/zh/guides/secure-bot-usage)。

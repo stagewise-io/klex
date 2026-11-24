@@ -1,0 +1,100 @@
+---
+title: 查看 Bot 活动
+sidebar:
+  label: 活动
+description: 在哪里查看 Klex Bot 的活动并访问其聊天和记忆。
+related:
+  - /zh/bot/guides/control-and-limits
+  - /zh/bot/concepts/data-directory
+  - /zh/bot/concepts/how-bots-work
+---
+
+在 [Klex Cloud 控制台](https://cloud.klex.bot)中，你可以查看 Bot 正在做什么并与其聊天。
+
+管理员也可以通过 Bot 的 Admin API 查看其聊天和技能。Cloud 控制台为每个 Bot 的 Admin API 提供前端。数据的存储位置请参阅[数据目录](/zh/bot/concepts/data-directory)。
+
+<a id="review-activity-and-diagnostics"></a>
+
+## 查看活动和诊断信息
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Cloud 托管">
+
+在 Klex Cloud 中打开 Bot，选择 **Activity** 查看最近的工作。选择活动可查看详情；如有更多内容，可使用 **Load older activity** 查看较早的活动。活动视图可能不包含所有以前的事件。
+
+</Tab>
+<Tab title="自托管">
+
+<a id="check-self-hosted-diagnostics"></a>
+
+在交互式 Klex 应用中，打开 **Settings → Logs** 查看最近的运行时日志。使用方向键滚动，使用 `l` 更改显示的最低级别，使用 `v` 更改显示样式。更改显示级别不一定会启用额外日志的收集。
+
+查看器在内存中保留当前进程捕获的最多 500 条记录，因此较早的记录可能不再可用。运行时日志不是 Bot 对话或任务结果的完整记录。在无界面模式下，Klex 将日志写入控制台，而不使用交互式查看器。
+
+要查看版本和连接详情，请打开 **Settings → Debug Information**。它显示 Klex 版本、数据目录，以及可用时的 Cloud 注册和隧道状态。分享之前，请检查日志和诊断信息中是否有敏感信息。
+
+</Tab>
+</Tabs>
+
+<a id="if-a-bot-does-not-respond"></a>
+
+## 如果 Bot 没有响应
+
+从 Bot 开始，直到消息来源，检查路径的每个部分：
+
+1. **检查 Bot 是否正在运行。** 对自托管 Bot，检查其进程或服务。如果启用了可选的健康监听器，请检查其就绪端点。探测成功并不能证明模型或连接正常工作。
+2. **检查模型访问。** 确认已配置提供商并选择聊天模型。如果请求失败，检查提供商的账号和服务。请参阅[模型](/zh/bot/concepts/models)。
+3. **检查连接和账号。** 对来自已连接应用的消息，检查 MCP 服务器状态、所需授权以及 Bot 账号对会话的访问权限。事件交付也取决于服务器的能力。请参阅 [MCP 和 Klex Bot](/zh/bot/concepts/mcp#if-a-connection-needs-attention)。
+4. **查看可用的活动和日志。** 查找请求时间附近的错误。可用时使用 Cloud 控制台，否则使用上述自托管诊断。日志和活动可能不完整；仅凭缺少一条记录无法确定交付在哪个环节失败。
+
+分享诊断信息之前，请检查是否包含敏感信息。不要在支持请求中包含凭据。
+
+<a id="review-activity-with-the-admin-api"></a>
+
+## 通过 Admin API 查看活动
+
+使用 Admin API 的管理员可以：
+
+- 使用 `GET /v1/sessions` 列出持久化的会话实例，然后使用 `GET /v1/sessions/{instanceId}/messages` 获取会话消息。按照 `nextCursor` 获取较早的页面。部分旧消息可能已被裁剪；请检查 `trimmedMessageCount`。
+- 使用 `GET /v1/introspect/sessions` 检查实时会话活动。会话信息可能包含 `childSessions`，例如活跃的记忆检索、记忆写入或咨询会话。已结束的子会话会被省略，因此这不是完整历史。
+- 使用 `GET /v1/usage` 查询记录的模型调用用量。结果可以按模型或提供商分组，并按时间汇总。如果提供商不报告用量，令牌总数可能不完整；请检查 `tokenUsageUnreportedCount`。
+
+使用 `GET /v1/openapi.json` 查看 API 的可用路由和查询参数。会话消息和工具输出可能包含敏感信息；请限制可以访问和保留它们的人员。
+
+<a id="access-activity-data"></a>
+
+### 访问活动数据
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Cloud 托管">
+
+使用 Klex Cloud 控制台查看 Bot 活动并与其聊天。下面的本地监听器适用于自托管 Bot。
+
+</Tab>
+<Tab title="自托管">
+
+<a id="access-the-local-admin-api"></a>
+
+自托管应用默认不公开本地 Admin API 端口。其可选监听器绑定到 `127.0.0.1`，并且**没有身份验证**。任何能够访问它的人，包括其他本地用户和进程，都可以访问敏感的 Bot 数据并使用管理路由。仅在信任这些用户和进程的环境中启用；不要将其暴露或转发到不受信任的网络。
+
+例如，要启动现有的无界面 Bot 并启用本地监听器：
+
+~~~sh
+klex --headless --data-dir /path/to/bot --dangerous-local-admin-api-port 2706
+~~~
+
+将路径和端口替换为自己的值。在同一台计算机上，你可以查看可用路由：
+
+~~~sh
+curl http://127.0.0.1:2706/v1/openapi.json
+~~~
+
+也可以使用 `KLEX_DANGEROUS_LOCAL_ADMIN_API_PORT` 设置端口；命令行选项优先。完成后，停止 Bot 并在不使用该选项或环境变量的情况下重启，以禁用监听器。
+
+</Tab>
+</Tabs>
+
+要停止 Bot 或更改其连接的访问权限，请参阅[控制 Klex Bot](/zh/bot/guides/control-and-limits)。
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

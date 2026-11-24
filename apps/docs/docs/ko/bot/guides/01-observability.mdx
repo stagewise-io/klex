@@ -1,0 +1,100 @@
+---
+title: Bot 활동 검토
+sidebar:
+  label: 활동
+description: Klex Bot의 활동을 검토하고 채팅과 메모리에 접근하는 위치입니다.
+related:
+  - /ko/bot/guides/control-and-limits
+  - /ko/bot/concepts/data-directory
+  - /ko/bot/concepts/how-bots-work
+---
+
+[Klex Cloud 대시보드](https://cloud.klex.bot)에서 Bot이 하는 일을 보고 대화할 수 있습니다.
+
+관리자는 Bot의 Admin API를 통해 채팅과 스킬도 검토할 수 있습니다. Cloud 대시보드는 각 Bot의 Admin API에 대한 프런트엔드를 제공합니다. 데이터 저장 위치는 [데이터 디렉터리](/ko/bot/concepts/data-directory)를 참고하세요.
+
+<a id="review-activity-and-diagnostics"></a>
+
+## 활동 및 진단 검토
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Cloud 호스팅">
+
+Klex Cloud에서 Bot을 열고 **Activity**를 선택해 최근 작업을 검토하세요. 활동을 선택하면 세부 정보가 표시되며, 가능한 경우 **Load older activity**로 이전 활동을 더 볼 수 있습니다. 활동 보기에 이전 이벤트가 모두 포함되지 않을 수 있습니다.
+
+</Tab>
+<Tab title="셀프 호스팅">
+
+<a id="check-self-hosted-diagnostics"></a>
+
+대화형 Klex 앱에서 **Settings → Logs**를 열어 최근 런타임 로그를 검토하세요. 화살표 키로 스크롤하고 `l`로 표시할 최소 수준을, `v`로 표시 스타일을 변경하세요. 표시 수준을 바꿔도 추가 로그 수집이 반드시 활성화되는 것은 아닙니다.
+
+뷰어는 현재 프로세스에서 캡처한 항목을 최대 500개까지 메모리에 보관하므로 오래된 항목은 더 이상 사용할 수 없을 수 있습니다. 런타임 로그는 Bot 대화나 작업 결과의 완전한 기록이 아닙니다. 헤드리스 모드에서 Klex는 대화형 뷰어 대신 콘솔에 로그를 씁니다.
+
+버전과 연결 세부 정보는 **Settings → Debug Information**을 여세요. Klex 버전, 데이터 디렉터리 및 가능한 경우 Cloud 등록과 터널 상태가 표시됩니다. 공유하기 전에 로그와 진단에 민감한 정보가 있는지 검토하세요.
+
+</Tab>
+</Tabs>
+
+<a id="if-a-bot-does-not-respond"></a>
+
+## Bot이 응답하지 않는 경우
+
+Bot부터 메시지 소스까지 경로의 각 부분을 확인하세요.
+
+1. **Bot이 실행 중인지 확인합니다.** 셀프 호스팅 Bot은 프로세스나 서비스를 확인하세요. 선택적 상태 리스너를 활성화했다면 준비 상태 엔드포인트를 확인하세요. 프로브가 성공해도 모델이나 연결이 작동한다는 증거는 아닙니다.
+2. **모델 접근을 확인합니다.** 제공업체가 구성되고 채팅 모델이 선택되었는지 확인하세요. 요청이 실패하면 제공업체의 계정과 서비스를 확인하세요. [모델](/ko/bot/concepts/models)을 참고하세요.
+3. **연결과 계정을 확인합니다.** 연결된 앱의 메시지는 MCP 서버 상태, 필요한 권한 부여, Bot 계정의 대화 접근 권한을 확인하세요. 이벤트 전달은 서버 기능에도 따라 달라집니다. [MCP와 Klex Bot](/ko/bot/concepts/mcp#if-a-connection-needs-attention)을 참고하세요.
+4. **사용 가능한 활동과 로그를 검토합니다.** 요청 시간 부근의 오류를 찾으세요. 사용 가능하면 Cloud 대시보드를, 아니면 위의 셀프 호스팅 진단을 사용하세요. 로그와 활동이 불완전할 수 있으며 항목이 없다는 사실만으로 전달 실패 지점을 알 수는 없습니다.
+
+진단을 공유하기 전에 민감한 정보가 있는지 검토하세요. 지원 요청에 자격 증명을 포함하지 마세요.
+
+<a id="review-activity-with-the-admin-api"></a>
+
+## Admin API로 활동 검토
+
+Admin API를 사용하는 관리자는 다음을 할 수 있습니다.
+
+- `GET /v1/sessions`로 저장된 세션 인스턴스를 나열한 뒤 `GET /v1/sessions/{instanceId}/messages`로 세션 메시지를 가져옵니다. 이전 페이지를 가져오려면 `nextCursor`를 따르세요. 일부 오래된 메시지는 잘렸을 수 있으므로 `trimmedMessageCount`를 확인하세요.
+- `GET /v1/introspect/sessions`로 실시간 세션 활동을 살펴봅니다. 세션 정보에는 활성 메모리 검색, 메모리 기록 또는 상담 세션과 같은 `childSessions`가 포함될 수 있습니다. 종료된 자식 세션은 제외되므로 완전한 기록은 아닙니다.
+- `GET /v1/usage`로 기록된 모델 호출 사용량을 조회합니다. 결과를 모델 또는 제공업체별로 그룹화하고 시간에 따라 집계할 수 있습니다. 제공업체가 사용량을 보고하지 않으면 토큰 합계가 불완전할 수 있으므로 `tokenUsageUnreportedCount`를 확인하세요.
+
+사용 가능한 API 경로와 쿼리 매개변수는 `GET /v1/openapi.json`을 사용하세요. 세션 메시지와 도구 출력에는 민감한 정보가 포함될 수 있으므로 접근하고 보관할 수 있는 사람을 제한하세요.
+
+<a id="access-activity-data"></a>
+
+### 활동 데이터 접근
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Cloud 호스팅">
+
+Klex Cloud 대시보드에서 Bot의 활동을 검토하고 대화하세요. 아래 로컬 리스너는 셀프 호스팅 Bot용입니다.
+
+</Tab>
+<Tab title="셀프 호스팅">
+
+<a id="access-the-local-admin-api"></a>
+
+셀프 호스팅 앱은 기본적으로 로컬 Admin API 포트를 노출하지 않습니다. 선택적 리스너는 `127.0.0.1`에 바인딩되며 **인증이 없습니다**. 다른 로컬 사용자와 프로세스를 포함해 리스너에 접근할 수 있는 사람은 민감한 Bot 데이터에 접근하고 관리 경로를 사용할 수 있습니다. 이러한 사용자와 프로세스를 신뢰할 수 있는 곳에서만 활성화하고, 신뢰할 수 없는 네트워크에 노출하거나 전달하지 마세요.
+
+예를 들어 기존 헤드리스 Bot을 로컬 리스너를 활성화해 시작하려면 다음을 사용합니다.
+
+~~~sh
+klex --headless --data-dir /path/to/bot --dangerous-local-admin-api-port 2706
+~~~
+
+경로와 포트를 자신의 값으로 바꾸세요. 같은 컴퓨터에서 사용 가능한 경로를 확인할 수 있습니다.
+
+~~~sh
+curl http://127.0.0.1:2706/v1/openapi.json
+~~~
+
+`KLEX_DANGEROUS_LOCAL_ADMIN_API_PORT`로 포트를 설정할 수도 있으며 명령줄 옵션이 우선합니다. 완료 후 Bot을 중지하고 옵션이나 환경 변수 없이 다시 시작해 리스너를 비활성화하세요.
+
+</Tab>
+</Tabs>
+
+Bot을 중지하거나 연결된 접근 권한을 변경하려면 [Klex Bot 제어](/ko/bot/guides/control-and-limits)를 참고하세요.
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

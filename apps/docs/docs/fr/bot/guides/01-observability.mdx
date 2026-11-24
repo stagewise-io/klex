@@ -1,0 +1,100 @@
+---
+title: Consulter l’activité du Bot
+sidebar:
+  label: Activité
+description: Où consulter l’activité d’un Bot Klex et accéder à ses chats et à sa mémoire.
+related:
+  - /fr/bot/guides/control-and-limits
+  - /fr/bot/concepts/data-directory
+  - /fr/bot/concepts/how-bots-work
+---
+
+Dans le [tableau de bord Klex Cloud](https://cloud.klex.bot), vous pouvez voir ce que fait votre Bot et discuter avec lui.
+
+Les administrateurs peuvent aussi consulter les chats et skills d’un Bot via son Admin API. Le tableau de bord Cloud fournit une interface à l’Admin API de chaque Bot. Pour savoir où ces données sont stockées, consultez [le répertoire de données](/fr/bot/concepts/data-directory).
+
+<a id="review-activity-and-diagnostics"></a>
+
+## Consulter l’activité et les diagnostics
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Hébergé dans le Cloud">
+
+Dans Klex Cloud, ouvrez votre Bot et sélectionnez **Activity** pour consulter son travail récent. Sélectionnez une activité pour voir ses détails et utilisez **Load older activity** pour en afficher davantage lorsqu’elles sont disponibles. La vue d’activité peut ne pas contenir tous les événements antérieurs.
+
+</Tab>
+<Tab title="Auto-hébergé">
+
+<a id="check-self-hosted-diagnostics"></a>
+
+Dans l’application Klex interactive, ouvrez **Settings → Logs** pour consulter les journaux récents d’exécution. Utilisez les flèches pour défiler, `l` pour changer le niveau minimal affiché et `v` pour changer le style d’affichage. Changer le niveau affiché n’active pas nécessairement la collecte de journaux supplémentaires.
+
+Le visualiseur conserve en mémoire jusqu’à 500 entrées capturées pour le processus actuel ; les plus anciennes peuvent donc ne plus être disponibles. Les journaux d’exécution ne sont pas un historique complet des conversations ou des résultats des tâches du Bot. En mode headless, Klex écrit les journaux dans la console plutôt que d’utiliser le visualiseur interactif.
+
+Pour les détails de version et de connexion, ouvrez **Settings → Debug Information**. Cette vue affiche la version de Klex, le répertoire de données et, lorsqu’ils sont disponibles, les états d’inscription Cloud et du tunnel. Vérifiez les journaux et diagnostics avant de les partager pour repérer les informations sensibles.
+
+</Tab>
+</Tabs>
+
+<a id="if-a-bot-does-not-respond"></a>
+
+## Si un Bot ne répond pas
+
+Vérifiez chaque partie du parcours, du Bot jusqu’à la source du message :
+
+1. **Vérifiez que le Bot fonctionne.** Pour un Bot auto-hébergé, vérifiez son processus ou service. Si vous avez activé le listener de santé facultatif, vérifiez son endpoint de disponibilité. Une vérification réussie ne prouve pas que le modèle ou les connexions fonctionnent.
+2. **Vérifiez l’accès au modèle.** Confirmez qu’un fournisseur est configuré et qu’un modèle de chat est sélectionné. Si les requêtes échouent, vérifiez le compte et le service du fournisseur. Consultez [Modèles](/fr/bot/concepts/models).
+3. **Vérifiez la connexion et le compte.** Pour un message provenant d’une application connectée, vérifiez l’état du serveur MCP, l’autorisation requise et l’accès du compte du Bot à la conversation. La livraison des événements dépend aussi des capacités du serveur. Consultez [MCP et Bots Klex](/fr/bot/concepts/mcp#if-a-connection-needs-attention).
+4. **Consultez l’activité et les journaux disponibles.** Recherchez les erreurs proches de l’heure de la requête. Utilisez le tableau de bord Cloud lorsqu’il est disponible ou les diagnostics d’auto-hébergement ci-dessus. Les journaux et l’activité peuvent être incomplets ; une entrée manquante ne suffit pas à déterminer où la livraison a échoué.
+
+Vérifiez les diagnostics avant de les partager pour repérer les informations sensibles. N’incluez pas d’identifiants secrets dans une demande d’assistance.
+
+<a id="review-activity-with-the-admin-api"></a>
+
+## Consulter l’activité avec l’Admin API
+
+Les administrateurs utilisant l’Admin API peuvent :
+
+- Lister les instances de session persistées avec `GET /v1/sessions`, puis récupérer les messages d’une session avec `GET /v1/sessions/{instanceId}/messages`. Suivez `nextCursor` pour récupérer les pages antérieures. Certains messages anciens peuvent avoir été tronqués ; vérifiez `trimmedMessageCount`.
+- Inspecter l’activité des sessions en direct avec `GET /v1/introspect/sessions`. Les informations peuvent inclure `childSessions`, par exemple des sessions actives de recherche ou d’écriture de mémoire, ou de consultation. Les sessions enfants terminées sont omises ; il ne s’agit donc pas d’un historique complet.
+- Interroger l’utilisation enregistrée des appels au modèle avec `GET /v1/usage`. Les résultats peuvent être regroupés par modèle ou fournisseur et agrégés dans le temps. Les totaux de tokens peuvent être incomplets si un fournisseur ne rapporte pas l’utilisation ; vérifiez `tokenUsageUnreportedCount`.
+
+Utilisez `GET /v1/openapi.json` pour connaître les routes et paramètres de requête disponibles de l’API. Les messages de session et sorties d’outils peuvent contenir des informations sensibles ; limitez les personnes autorisées à y accéder et à les conserver.
+
+<a id="access-activity-data"></a>
+
+### Accéder aux données d’activité
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Hébergé dans le Cloud">
+
+Utilisez le tableau de bord Klex Cloud pour consulter l’activité d’un Bot et discuter avec lui. Le listener local ci-dessous concerne les Bots auto-hébergés.
+
+</Tab>
+<Tab title="Auto-hébergé">
+
+<a id="access-the-local-admin-api"></a>
+
+L’application auto-hébergée n’expose pas de port Admin API local par défaut. Son listener facultatif est lié à `127.0.0.1` et **ne possède aucune authentification**. Toute personne pouvant y accéder, y compris d’autres utilisateurs et processus locaux, peut accéder aux données sensibles du Bot et utiliser les routes de gestion. Activez-le uniquement si ces utilisateurs et processus sont fiables ; ne l’exposez pas et ne le transférez pas vers un réseau non fiable.
+
+Par exemple, pour démarrer un Bot headless existant avec le listener local activé :
+
+~~~sh
+klex --headless --data-dir /path/to/bot --dangerous-local-admin-api-port 2706
+~~~
+
+Remplacez le chemin et le port par les vôtres. Depuis le même ordinateur, vous pouvez consulter les routes disponibles :
+
+~~~sh
+curl http://127.0.0.1:2706/v1/openapi.json
+~~~
+
+Vous pouvez aussi définir le port avec `KLEX_DANGEROUS_LOCAL_ADMIN_API_PORT` ; l’option de ligne de commande est prioritaire. Une fois terminé, arrêtez le Bot et redémarrez-le sans l’option ni la variable d’environnement pour désactiver le listener.
+
+</Tab>
+</Tabs>
+
+Pour arrêter un Bot ou modifier ses accès connectés, consultez [Contrôler votre Bot Klex](/fr/bot/guides/control-and-limits).
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

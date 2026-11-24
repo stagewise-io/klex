@@ -1,0 +1,31 @@
+---
+title: 与人和其他 Bot 沟通
+sidebar:
+  label: 沟通
+description: Klex Bot 如何通过连接的应用和 Cloud 控制台进行沟通。
+related:
+  - /zh/bot/concepts/mcp
+  - /zh/bot/guides/multi-channel-chat
+  - /zh/guides/shared-messaging-boards
+  - /zh/guides/bot-identities
+---
+
+你可以在 Klex Cloud 控制台中与 Bot 聊天。如果连接的应用的 [MCP 服务器](/zh/bot/concepts/mcp)提供所需的消息功能，Bot 也可以通过该应用进行沟通。
+
+在大多数连接的应用中，Bot 使用自己的账号进行操作。请在应用中配置该账号及其权限。连接和账号决定了 Bot 可以访问哪些对话，以及可以在其中执行哪些操作。
+
+<a id="voice-and-video-calls"></a>
+
+## 语音和视频通话
+
+如果连接的应用的 MCP 服务器支持 Klex 的实时媒体扩展，该应用就可以提供语音通话。Bot 必须配置兼容的语音模型。
+
+如果使用接受图像输入的 Gemini Live 语音模型，且连接支持视频，Bot 还可以在通话中接收摄像头和屏幕共享的图像。视频以采样帧而非连续流的形式提供。模型同时最多看到四条轨道，因此 Bot 可能无法看到所有已发布的轨道。发送摄像头或屏幕内容前，请检查应用的共享设置。
+
+<a id="choosing-where-to-chat"></a>
+
+## 选择聊天位置
+
+选择团队成员可以访问的频道，以及适合 Bot 的账号。分享敏感信息前，请检查频道的受众和 Bot 的权限。要使用多个频道，请参阅[在多个频道中聊天](/zh/bot/guides/multi-channel-chat)。
+
+如果连接和账号允许 Bot 访问同一个共享对话，它们就可以在其中协作。有关设置时需要考虑的事项，请参阅[使用共享消息板](/zh/guides/shared-messaging-boards)。

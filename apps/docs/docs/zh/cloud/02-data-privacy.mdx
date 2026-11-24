@@ -1,0 +1,52 @@
+---
+title: 数据隐私
+description: Bot 数据的存储位置以及自行托管时分析和遥测的工作方式。
+related:
+  - /zh/cloud/hosted-vs-local
+  - /zh/bot/concepts/data-directory
+  - /zh/guides/prevent-information-theft
+---
+
+Bot 的聊天和记忆存储在其[数据目录](/zh/bot/concepts/data-directory)中。对于 Cloud 托管的 Bot，该目录位于托管环境中。对于自行托管的 Bot，该目录位于你运行 Bot 的环境中。管理员可以通过 Bot 的 Admin API 查看聊天和技能。
+
+Cloud 托管的 Bot 的所有数据，包括记忆，在传输和静态存储时均会加密。这一说明不适用于自行托管 Bot 的加密情况；请妥善保护你自己的托管环境和存储。
+
+<a id="access-and-connected-services"></a>
+
+## 访问和连接的服务
+
+Bot 可以使用其账号的权限在连接的应用中工作。使用敏感信息之前，请检查每个账号可访问的数据和操作，以及连接服务和模型提供商的政策。请参阅[安全使用 Klex Bot](/zh/guides/secure-bot-usage)。
+
+为调试 Cloud 托管的 Bot，在与你讨论调查并获得你的确认后，少数 Klex 员工可以在调试模式下访问其聊天或记忆。此类访问会永久记录，且对你可见，通常有时间限制。这些访问并非用于一般模型训练。
+
+[隐私政策](https://klex.bot/legal/privacy)和[数据处理协议](https://klex.bot/legal/data-processing-agreement)说明了支持调试、其他处理、服务提供商和保留情况。它们也分别涵盖出于安全或法律原因的合法处理。请针对你的使用场景查看适用条款和连接提供商的政策。
+
+<a id="analytics-and-telemetry"></a>
+
+## 分析与遥测
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Cloud 托管">
+
+有关 Cloud 侧处理、服务提供商和保留情况，请参阅[隐私政策](https://klex.bot/legal/privacy)和[数据处理协议](https://klex.bot/legal/data-processing-agreement)。自行托管进程的标志不描述 Cloud 侧的报告。
+
+</Tab>
+<Tab title="自行托管">
+
+<a id="analytics-and-telemetry-for-a-self-hosted-bot"></a>
+
+Klex 有两个独立的报告系统。以下控制项适用于自行托管的 Klex 进程，不描述 Cloud 侧报告或连接的服务。
+
+包含分析密钥的发布版本默认启用**产品分析**。事件可能包括启动和注册结果、汇总使用计数、运行时信息以及进程资源使用情况。事件架构不包括聊天内容或注册令牌。每个进程使用临时随机标识符，网络请求会向接收方暴露发送方的 IP 地址。请参阅[产品分析实现详情](https://github.com/stagewise-io/klex/blob/baff8a40ce9b896fdd17146dfe9906cefe7c2697/apps/klex/product-analytics.md)。
+
+要关闭产品分析，请使用 `--no-analytics` 启动 Klex，或在其环境中设置 `KLEX_NO_ANALYTICS=1` 或 `DO_NOT_TRACK=1`。显式的 `--analytics` 标志优先于通过环境变量退出。
+
+**运维遥测**是独立的。未配置遥测端点时，它处于关闭状态。除非明确禁用，否则配置端点会将其启用。启用后的默认级别包含敏感的运维元数据。调试级别还可能导出聊天内容、提示词和工具载荷。只使用可信的收集器，并限制对其数据的访问。要强制关闭遥测，请使用 `--disable-telemetry` 或 `KLEX_DISABLE_TELEMETRY=1`。请参阅[遥测实现详情](https://github.com/stagewise-io/klex/blob/baff8a40ce9b896fdd17146dfe9906cefe7c2697/apps/klex/telemetry.md)。
+
+关闭一个系统不会关闭另一个。这两个控制项都不会关闭与已配置的模型提供商、MCP 服务器或 Cloud 连接的通信。
+
+</Tab>
+</Tabs>
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

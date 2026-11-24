@@ -1,0 +1,26 @@
+---
+title: 让 Klex Bot 协助关键操作
+description: 当 Bot 协助处理敏感或影响重大的工作时降低风险。
+related:
+  - /zh/guides/secure-bot-usage
+  - /zh/guides/limit-blast-radius
+  - /zh/bot/guides/control-and-limits
+---
+
+不要认为 Bot 总能做出正确决定或完美遵循指示。对于敏感或影响重大的工作，应评估错误操作的后果并设置独立的保护措施。
+
+<a id="start-with-lower-risk-work"></a>
+
+## 从风险较低的工作开始
+
+- 在授予 Bot 应用更改的权限之前，让它先收集信息或准备变更提案。
+- 使用非生产资源进行测试并检查结果。只有了解工作流程及其故障处理方式后才扩大访问权限。
+- 限制 Bot 账号在每个连接应用中的权限。不要授予不需要的破坏性或敏感权限。
+
+<a id="keep-an-independent-check"></a>
+
+## 保留独立检查
+
+对于需要人工批准的操作，应在应用更改前于 Bot 之外安排审批。例如，Bot 可以准备更改，由人员使用独立账号审核并应用。目前 Klex 不支持对单个操作进行审批或限制；指示 Bot 先询问并不是强制执行的审批控制。
+
+使用连接服务的控制措施和组织流程检查活动、发现问题并从错误中恢复。提前确定必要时如何停止 Bot 并撤销访问权限。请参阅[控制 Klex Bot](/zh/bot/guides/control-and-limits)和[限制影响范围](/zh/guides/limit-blast-radius)。

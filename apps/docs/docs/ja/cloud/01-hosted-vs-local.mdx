@@ -1,0 +1,47 @@
+---
+title: ホスト型とセルフホスト型の Klex Bot
+description: Klex Cloud がホストする Bot とセルフホストの Bot を、Cloud 登録やチャットとメモリの保存場所を含めて比較します。
+related:
+  - /ja/cloud
+  - /ja/cloud/self-hosting
+  - /ja/bot/quickstart
+  - /ja/cloud/data-privacy
+---
+
+> **Klex Cloud なしで Klex Bot を実行できますか？**
+
+はい。セルフホストの Klex Bot は Cloud に登録せずに実行できます。Klex は多くのユーザーに Cloud ホスト型 Bot を推奨し、より充実した管理のためにセルフホスト Bot の Klex Cloud への登録を推奨しています。
+
+<a id="choose-how-to-host-the-bot"></a>
+
+## Bot のホスティング方法を選ぶ
+
+<a id="klex-cloud-hosted-bot"></a>
+
+### Klex Cloud ホスト型 Bot
+
+Klex がホスト環境で Bot を実行します。Bot のチャットとメモリは、その環境内にある Bot のデータディレクトリに保存されます。Cloud ダッシュボードでアクティビティの確認と接続済み MCP の管理ができます。
+
+<a id="self-hosted-bot-enrolled-in-klex-cloud"></a>
+
+### Klex Cloud に登録したセルフホスト Bot
+
+自分で管理する環境で Bot を実行し、Klex Cloud に登録できます。Cloud による管理を維持しながら、Bot の動作場所をより細かく管理できます。チャットとメモリは Bot のローカルデータディレクトリに残ります。Cloud ダッシュボードは Bot の Admin API へのフロントエンドとリバースプロキシを提供します。
+
+<a id="self-hosted-bot-without-cloud-enrollment"></a>
+
+### Cloud に登録しないセルフホスト Bot
+
+セルフホスト Bot に Cloud 登録は技術上必須ではありません。単独での利用は機能が限定されるため、Klex は登録を推奨しています。
+
+<a id="self-hosted-cloud"></a>
+
+### セルフホスト型 Cloud
+
+Klex Cloud サービスのセルフホスティングは Enterprise のお客様のみ利用できます。
+
+<a id="manage-access-and-stop-a-bot"></a>
+
+## アクセスを管理して Bot を停止する
+
+Cloud ダッシュボードでは Bot のアクティビティを確認し、MCP を接続または切断できます。Bot が使う他のアプリやアカウントの権限は、それぞれのアプリやアカウントで設定します。セルフホスト Bot を停止するにはアプリを閉じます。Cloud ホスト型 Bot を停止するには、Cloud ダッシュボードの **Stop** を使います。

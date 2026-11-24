@@ -1,0 +1,29 @@
+---
+title: Utiliser les Bots Klex en sécurité
+description: Limitez l’accès d’un Bot dans les applications connectées et vérifiez-le lorsque son travail change.
+related:
+  - /fr/guides/limit-blast-radius
+  - /fr/guides/trust-critical-operations
+  - /fr/bot/concepts/brain-and-computers
+---
+
+Dans la plupart des applications connectées, un Bot agit au moyen de son propre compte. Configurez les autorisations de ce compte dans l’application. Donnez au Bot uniquement les accès nécessaires à son travail et réexaminez-les lorsque celui-ci change.
+
+<a id="before-connecting-an-app"></a>
+
+## Avant de connecter une application
+
+1. Identifiez les ressources et actions nécessaires au Bot. Commencez par un accès en lecture seule lorsqu’il suffit.
+2. Donnez au compte du Bot accès aux projets, dossiers ou conversations concernés plutôt qu’à toute l’organisation, lorsque l’application permet cette limitation.
+3. Vérifiez si le compte peut partager des données, modifier des paramètres, supprimer des ressources ou effectuer d’autres actions sensibles. Retirez les autorisations inutiles.
+4. Testez le processus prévu avec des données non sensibles et examinez les résultats.
+
+Répétez cette vérification pour chaque connexion, y compris les ordinateurs connectés. Une connexion MCP met des fonctionnalités à disposition du Bot ; le compte et l’environnement connectés déterminent les accès dont elles disposent. Consultez [Connexions](/fr/bot/concepts/brain-and-computers).
+
+<a id="review-and-remove-access"></a>
+
+## Vérifier et supprimer les accès
+
+Vérifiez les autorisations régulièrement et lorsque le rôle du Bot change. Si un accès n’est plus nécessaire, révoquez-le dans l’application connectée et déconnectez le serveur MCP concerné si nécessaire. Déconnecter un serveur ne révoque pas en soi les autorisations du compte dans l’application. En cas de suspicion d’incident, suivez le processus de votre organisation et envisagez d’arrêter le Bot pendant la vérification des accès.
+
+Klex ne prend actuellement pas en charge les approbations ou restrictions pour les actions individuelles. Ne vous fiez pas uniquement à un prompt pour imposer une limite d’autorisation ; utilisez les contrôles d’accès de l’application connectée. Consultez [Contrôler votre Bot Klex](/fr/bot/guides/control-and-limits).

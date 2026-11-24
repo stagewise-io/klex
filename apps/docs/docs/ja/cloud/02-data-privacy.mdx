@@ -1,0 +1,52 @@
+---
+title: データのプライバシー
+description: Bot データの保存場所と、セルフホスト時の分析およびテレメトリーの仕組み。
+related:
+  - /ja/cloud/hosted-vs-local
+  - /ja/bot/concepts/data-directory
+  - /ja/guides/prevent-information-theft
+---
+
+Bot のチャットとメモリは[データディレクトリ](/ja/bot/concepts/data-directory)に保存されます。Cloud ホスト型 Bot のディレクトリはホスト環境にあります。セルフホスト Bot の場合は、Bot を実行する環境にあります。管理者は Bot の Admin API を通じてチャットとスキルを確認できます。
+
+Cloud ホスト型 Bot のデータは、メモリを含めすべて転送中と保存時に暗号化されます。この記述はセルフホスト Bot の暗号化について述べたものではありません。ご自身のホスト環境とストレージを適切に保護してください。
+
+<a id="access-and-connected-services"></a>
+
+## アクセスと接続先サービス
+
+Bot はアカウントの権限を使って接続アプリで作業できます。機密情報を使う前に、各アカウントがアクセスできるデータと操作、および接続先サービスとモデルプロバイダーのポリシーを確認してください。[Klex Bot を安全に使う](/ja/guides/secure-bot-usage)を参照してください。
+
+Cloud ホスト型 Bot のサポートデバッグでは、調査についてお客様と話し合い、確認を得た後、限られた Klex スタッフがデバッグモードでチャットやメモリにアクセスできます。このアクセスは永続的に記録され、お客様に表示され、通常は時間が制限されます。一般的なモデルのトレーニングには使われません。
+
+[プライバシーポリシー](https://klex.bot/legal/privacy)と[データ処理契約](https://klex.bot/legal/data-processing-agreement)は、サポートデバッグ、その他の処理、サービスプロバイダー、保存期間について説明しています。また、安全保障上または法的な理由による別途適法な処理も扱っています。用途に適用される条件と接続プロバイダーのポリシーを確認してください。
+
+<a id="analytics-and-telemetry"></a>
+
+## 分析とテレメトリー
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Cloud ホスト型">
+
+Cloud での処理、サービスプロバイダー、保存期間については、[プライバシーポリシー](https://klex.bot/legal/privacy)と[データ処理契約](https://klex.bot/legal/data-processing-agreement)を参照してください。セルフホストプロセスのフラグは Cloud 側のレポートを説明するものではありません。
+
+</Tab>
+<Tab title="セルフホスト型">
+
+<a id="analytics-and-telemetry-for-a-self-hosted-bot"></a>
+
+Klex には別々の 2 つのレポートシステムがあります。以下の設定はセルフホストの Klex プロセスに適用され、Cloud 側のレポートや接続先サービスを説明するものではありません。
+
+**製品分析**は、分析キーを含むリリースビルドでデフォルトで有効です。イベントには起動や登録の結果、集計された利用数、実行時情報、プロセスのリソース使用量が含まれる場合があります。イベントスキーマにチャット内容や登録トークンは含まれません。各プロセスは一時的なランダム識別子を使い、ネットワーク要求によって送信元の IP アドレスが受信者に伝わります。[製品分析の実装詳細](https://github.com/stagewise-io/klex/blob/baff8a40ce9b896fdd17146dfe9906cefe7c2697/apps/klex/product-analytics.md)を参照してください。
+
+製品分析をオフにするには、`--no-analytics` を付けて Klex を起動するか、環境に `KLEX_NO_ANALYTICS=1` または `DO_NOT_TRACK=1` を設定します。明示的な `--analytics` フラグは、環境変数によるオプトアウトより優先されます。
+
+**運用テレメトリー**は別のシステムです。テレメトリーのエンドポイントが設定されていない場合はオフです。明示的に無効化されていない限り、エンドポイントを設定すると有効になります。有効時のデフォルトレベルには機密性の高い運用メタデータが含まれます。デバッグレベルではチャット内容、プロンプト、ツールのペイロードもエクスポートされる場合があります。信頼できるコレクターだけを使い、そのデータへのアクセスを制限してください。テレメトリーを強制的にオフにするには `--disable-telemetry` または `KLEX_DISABLE_TELEMETRY=1` を使います。[テレメトリーの実装詳細](https://github.com/stagewise-io/klex/blob/baff8a40ce9b896fdd17146dfe9906cefe7c2697/apps/klex/telemetry.md)を参照してください。
+
+一方のシステムをオフにしても、もう一方はオフになりません。どちらの設定も、構成されたモデルプロバイダー、MCP サーバー、Cloud 接続との通信を無効にするものではありません。
+
+</Tab>
+</Tabs>
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

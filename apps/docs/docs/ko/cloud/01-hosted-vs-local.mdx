@@ -1,0 +1,47 @@
+---
+title: 호스팅 및 자체 호스팅 Klex Bot
+description: Cloud 등록과 채팅 및 메모리 저장 위치를 포함해 Klex Cloud 호스팅 Bot과 자체 호스팅 Bot을 비교합니다.
+related:
+  - /ko/cloud
+  - /ko/cloud/self-hosting
+  - /ko/bot/quickstart
+  - /ko/cloud/data-privacy
+---
+
+> **Klex Cloud 없이 Klex Bot을 실행할 수 있나요?**
+
+네. 자체 호스팅 Klex Bot은 Cloud에 등록하지 않고 실행할 수 있습니다. Klex는 대부분의 사용자에게 Cloud 호스팅 Bot을 권장하며, 더 완전한 관리를 위해 자체 호스팅 Bot을 Klex Cloud에 등록할 것을 권장합니다.
+
+<a id="choose-how-to-host-the-bot"></a>
+
+## Bot 호스팅 방식 선택
+
+<a id="klex-cloud-hosted-bot"></a>
+
+### Klex Cloud 호스팅 Bot
+
+Klex가 호스팅 환경에서 Bot을 실행합니다. Bot의 채팅과 메모리는 해당 환경의 데이터 디렉터리에 저장됩니다. Cloud 대시보드에서 활동을 확인하고 연결된 MCP를 관리할 수 있습니다.
+
+<a id="self-hosted-bot-enrolled-in-klex-cloud"></a>
+
+### Klex Cloud에 등록된 자체 호스팅 Bot
+
+직접 관리하는 환경에서 Bot을 실행하고 Klex Cloud에 등록할 수 있습니다. Cloud 관리를 유지하면서 Bot의 실행 위치를 더 많이 제어할 수 있습니다. 채팅과 메모리는 Bot의 로컬 데이터 디렉터리에 남습니다. Cloud 대시보드는 Bot Admin API의 프런트엔드와 리버스 프록시를 제공합니다.
+
+<a id="self-hosted-bot-without-cloud-enrollment"></a>
+
+### Cloud에 등록하지 않은 자체 호스팅 Bot
+
+자체 호스팅 Bot에 Cloud 등록은 기술적 필수 조건이 아닙니다. 독립 실행 환경의 기능이 덜 완전하므로 Klex는 등록을 권장합니다.
+
+<a id="self-hosted-cloud"></a>
+
+### 자체 호스팅 Cloud
+
+Klex Cloud 서비스 자체 호스팅은 Enterprise 고객만 이용할 수 있습니다.
+
+<a id="manage-access-and-stop-a-bot"></a>
+
+## 접근 관리 및 Bot 중지
+
+Cloud 대시보드에서 Bot 활동을 검토하고 MCP를 연결하거나 연결 해제할 수 있습니다. Bot이 사용하는 다른 앱과 계정의 권한은 해당 앱이나 계정에서 설정하세요. 자체 호스팅 Bot을 중지하려면 앱을 닫으세요. Cloud 호스팅 Bot을 중지하려면 Cloud 대시보드에서 **Stop**을 사용하세요.

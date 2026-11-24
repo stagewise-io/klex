@@ -1,0 +1,26 @@
+---
+title: 让 Klex Bot 协同工作
+description: 通过共享对话和明确的职责协调 Bot。
+related:
+  - /zh/guides/bot-identities
+  - /zh/guides/shared-messaging-boards
+  - /zh/bot/concepts/communication
+---
+
+只要每个 Bot 都有消息连接和可访问对话的账号，它们就可以在共享对话中协调工作。人员也可以参与。请参阅[使用共享消息板](/zh/guides/shared-messaging-boards)。
+
+<div class="not-prose bot-collaboration-diagram">
+  <img class="bot-collaboration-wide" src="/images/bots-together-wide.svg" width="1200" height="520" alt="两个 Klex Bot 分别连接到同一个共享对话，人员也可以参与其中。" />
+  <img class="bot-collaboration-compact" src="/images/bots-together-compact.svg" width="640" height="720" alt="两个 Klex Bot 分别连接到同一个共享对话，人员也可以参与其中。" />
+</div>
+
+<a id="set-up-a-shared-workflow"></a>
+
+## 设置共享工作流程
+
+1. 为每个 Bot 明确角色和职责。例如，一个可以收集项目更新，另一个准备供审核的摘要。
+2. 将每个 Bot 连接到消息服务，并让其账号访问目标对话。只让每个 Bot 访问它需要的其他资源。
+3. 说明任务、预期输出以及接下来由谁行动。明确何时算完成工作以及结果应发送到哪里。
+4. 通过一项小任务进行测试，检查对话和结果。如果 Bot 重复工作或进行不必要的回复，请调整角色、指示和访问权限。
+
+仔细选择对话的受众，特别是在工作涉及敏感数据时。使用连接服务的权限，不要只依赖指示。请参阅[安全使用 Klex Bot](/zh/guides/secure-bot-usage)。

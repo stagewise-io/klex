@@ -1,0 +1,100 @@
+---
+title: Revisar a atividade do Bot
+sidebar:
+  label: Atividade
+description: Onde revisar a atividade de um Bot Klex e acessar seus chats e sua memória.
+related:
+  - /pt/bot/guides/control-and-limits
+  - /pt/bot/concepts/data-directory
+  - /pt/bot/concepts/how-bots-work
+---
+
+No [painel do Klex Cloud](https://cloud.klex.bot), você pode ver o que seu Bot está fazendo e conversar com ele.
+
+Administradores também podem revisar os chats e skills de um Bot pela Admin API. O painel do Cloud fornece uma interface para a Admin API de cada Bot. Para saber onde esses dados são armazenados, consulte [o diretório de dados](/pt/bot/concepts/data-directory).
+
+<a id="review-activity-and-diagnostics"></a>
+
+## Revisar atividades e diagnósticos
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Hospedado no Cloud">
+
+No Klex Cloud, abra seu Bot e selecione **Activity** para revisar o trabalho recente. Selecione uma atividade para ver os detalhes e use **Load older activity** para ver mais quando disponível. A visualização de atividade pode não conter todos os eventos anteriores.
+
+</Tab>
+<Tab title="Auto-hospedado">
+
+<a id="check-self-hosted-diagnostics"></a>
+
+No aplicativo interativo Klex, abra **Settings → Logs** para revisar os registros recentes de execução. Use as setas para rolar, `l` para alterar o nível mínimo exibido e `v` para alterar o estilo de exibição. Alterar o nível exibido não habilita necessariamente a coleta de registros adicionais.
+
+O visualizador mantém na memória até 500 entradas capturadas para o processo atual, portanto entradas mais antigas podem não estar mais disponíveis. Os registros de execução não são um histórico completo das conversas ou resultados de tarefas do Bot. No modo headless, o Klex grava os registros no console em vez de usar o visualizador interativo.
+
+Para detalhes de versão e conexão, abra **Settings → Debug Information**. A tela mostra a versão do Klex, o diretório de dados e, quando disponíveis, os estados de inscrição no Cloud e do túnel. Revise registros e diagnósticos para identificar informações sensíveis antes de compartilhá-los.
+
+</Tab>
+</Tabs>
+
+<a id="if-a-bot-does-not-respond"></a>
+
+## Se um Bot não responder
+
+Verifique cada parte do caminho, começando pelo Bot e terminando na origem da mensagem:
+
+1. **Verifique se o Bot está em execução.** Para um Bot auto-hospedado, verifique seu processo ou serviço. Se você habilitou o listener de saúde opcional, verifique seu endpoint de prontidão. Uma verificação bem-sucedida não prova que o modelo ou as conexões estão funcionando.
+2. **Verifique o acesso ao modelo.** Confirme que há um provedor configurado e um modelo de chat selecionado. Se as solicitações falharem, verifique a conta e o serviço do provedor. Consulte [Modelos](/pt/bot/concepts/models).
+3. **Verifique a conexão e a conta.** Para uma mensagem de um aplicativo conectado, verifique o estado do servidor MCP, a autorização necessária e o acesso da conta do Bot à conversa. A entrega de eventos também depende das capacidades do servidor. Consulte [MCP e Bots Klex](/pt/bot/concepts/mcp#if-a-connection-needs-attention).
+4. **Revise a atividade e os registros disponíveis.** Procure erros próximos ao horário da solicitação. Use o painel do Cloud quando disponível ou os diagnósticos de auto-hospedagem acima. Registros e atividades podem estar incompletos; uma entrada ausente, por si só, não determina onde a entrega falhou.
+
+Revise os diagnósticos para identificar informações sensíveis antes de compartilhá-los. Não inclua credenciais em uma solicitação de suporte.
+
+<a id="review-activity-with-the-admin-api"></a>
+
+## Revisar atividade com a Admin API
+
+Administradores que usam a Admin API podem:
+
+- Listar instâncias de sessão persistidas com `GET /v1/sessions` e recuperar as mensagens de uma sessão com `GET /v1/sessions/{instanceId}/messages`. Siga `nextCursor` para obter páginas anteriores. Algumas mensagens antigas podem ter sido truncadas; verifique `trimmedMessageCount`.
+- Inspecionar a atividade de sessões ao vivo com `GET /v1/introspect/sessions`. As informações podem incluir `childSessions`, como sessões ativas de recuperação ou escrita de memória ou de consulta. Sessões filhas encerradas são omitidas, portanto não é um histórico completo.
+- Consultar o uso registrado de chamadas ao modelo com `GET /v1/usage`. Os resultados podem ser agrupados por modelo ou provedor e agregados ao longo do tempo. Os totais de tokens podem estar incompletos quando um provedor não informa o uso; verifique `tokenUsageUnreportedCount`.
+
+Use `GET /v1/openapi.json` para consultar as rotas e os parâmetros de consulta disponíveis da API. Mensagens de sessão e saídas de ferramentas podem conter informações sensíveis; limite quem pode acessá-las e retê-las.
+
+<a id="access-activity-data"></a>
+
+### Acessar dados de atividade
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Hospedado no Cloud">
+
+Use o painel do Klex Cloud para revisar a atividade de um Bot e conversar com ele. O listener local abaixo é para Bots auto-hospedados.
+
+</Tab>
+<Tab title="Auto-hospedado">
+
+<a id="access-the-local-admin-api"></a>
+
+O aplicativo auto-hospedado não expõe uma porta local da Admin API por padrão. Seu listener opcional está vinculado a `127.0.0.1` e **não tem autenticação**. Qualquer pessoa que consiga acessá-lo, incluindo outros usuários e processos locais, pode acessar dados sensíveis do Bot e usar rotas de gerenciamento. Habilite-o apenas onde esses usuários e processos sejam confiáveis; não o exponha nem encaminhe para uma rede não confiável.
+
+Por exemplo, para iniciar um Bot headless existente com o listener local habilitado:
+
+~~~sh
+klex --headless --data-dir /path/to/bot --dangerous-local-admin-api-port 2706
+~~~
+
+Substitua o caminho e a porta pelos seus. No mesmo computador, você pode inspecionar as rotas disponíveis:
+
+~~~sh
+curl http://127.0.0.1:2706/v1/openapi.json
+~~~
+
+Você também pode definir a porta com `KLEX_DANGEROUS_LOCAL_ADMIN_API_PORT`; a opção de linha de comando tem prioridade. Ao terminar, pare o Bot e reinicie-o sem a opção ou a variável de ambiente para desabilitar o listener.
+
+</Tab>
+</Tabs>
+
+Para parar um Bot ou alterar seus acessos conectados, consulte [Controlar seu Bot Klex](/pt/bot/guides/control-and-limits).
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

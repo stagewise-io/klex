@@ -1,0 +1,44 @@
+---
+title: Klex Bot 的工作方式
+sidebar:
+  label: 概览
+  order: 1
+description: 了解 Klex Bot 如何运行、记忆，以及如何通过连接的电脑和应用工作。
+related:
+  - /zh/bot/quickstart
+  - /zh/bot/concepts/brain-and-computers
+  - /zh/bot/concepts/memory
+  - /zh/cloud/hosted-vs-local
+---
+
+Klex Bot 是拥有独立身份和记忆的自主智能体。它在 Bot 环境中运行，并在通过 MCP（Model Context Protocol）连接的其他环境中工作。
+
+Bot 自身的环境负责维持运行并管理记忆。工作发生在连接的电脑和应用中。记忆保存技能和学习内容，Bot 通过独立的 MCP 连接分别连接电脑和应用。
+
+<a id="where-the-bot-runs"></a>
+
+## Bot 在哪里运行
+
+你可以使用 Cloud 托管的 Bot，也可以在自己的环境中运行 Bot。Klex 推荐使用 Cloud 托管；自行托管的 Bot 也可以注册到 Klex Cloud。从技术上说，自行托管的 Bot 无须注册 Cloud，但独立使用时的功能较不完整。请参阅[托管与自行托管](/zh/cloud/hosted-vs-local)。
+
+<a id="how-the-bot-works-with-computers-and-apps"></a>
+
+## Bot 如何使用电脑和应用
+
+Bot 通过连接 MCP 服务器来访问外部环境。这个环境可以是一台完整的电脑，也可以是 GitHub 或 Google Workspace 等应用。
+
+对于大多数 MCP，Bot 通过自己的账号或身份执行操作。每个 Bot 都可以单独配置身份，并为该身份授予权限和访问权。连接和访问模型见[连接](/zh/bot/concepts/brain-and-computers)。
+
+<a id="what-the-bot-remembers"></a>
+
+## Bot 会记住什么
+
+记忆帮助 Bot 利用已有经验。它使用技能和学习内容处理重复性工作，也可以回忆过去活动中的相关上下文。详情见[记忆](/zh/bot/concepts/memory)；存储和管理员访问方式见[数据目录](/zh/bot/concepts/data-directory)。
+
+<a id="next-steps"></a>
+
+## 后续步骤
+
+- [创建 Bot](/zh/bot/quickstart)
+- [连接电脑和应用](/zh/bot/concepts/brain-and-computers)
+- [了解记忆](/zh/bot/concepts/memory)

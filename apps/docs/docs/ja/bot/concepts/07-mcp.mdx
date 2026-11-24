@@ -1,0 +1,70 @@
+---
+title: MCP と Klex Bot
+sidebar:
+  label: MCP
+description: Klex Bot が MCP サーバーを使ってコンピューターやアプリで作業する仕組み。
+related:
+  - /bot/concepts/brain-and-computers
+  - /bot/guides/control-and-limits
+  - /guides/secure-bot-usage
+---
+
+[Model Context Protocol（MCP）](https://modelcontextprotocol.io/) は、Klex Bot を外部の環境に接続します。MCP サーバーはコンピューターやアプリを提供でき、Bot はサーバーの機能を使ってそこで作業します。
+
+Klex には組み込みの MCP サーバーがあり、他の MCP サーバーにも対応しています。利用できる機能はサーバーによって異なります。
+
+- **ツール**を使うと、Bot はサーバーに操作や情報を要求できます。
+- **リソース**は、Bot が見つけて開けるコンテンツを提供します。
+- サーバーが [Klex MCP Push Notifications 拡張](https://github.com/stagewise-io/klex/tree/main/packages/mcp-extension-push-notifications)に対応している場合、**プッシュ通知**でメッセージやその他のイベントを届けることができます。
+- MCP 拡張のドラフトである **MCP Events & Triggers** を使うと、Bot は対応するサーバーのイベントを見つけて監視できます。監視はチャットや再起動をまたいで維持されますが、停止中のイベントは失われることがあります。監視を設定しても、外部サービスは自動的には設定されません。
+
+これらの MCP 機能により、メッセージの到着やアプリ内の変化をきっかけに Bot が作業できます。接続先サーバーの対応状況と設定に依存し、Klex 専用のゲートウェイは不要です。
+
+<a id="adding-a-server"></a>
+
+## サーバーを追加する
+
+Bot の MCP 接続は Cloud ダッシュボードで管理できます。Bot 自身も、新しいリモートの HTTP または HTTPS MCP サーバーを追加できます。この追加機能では、既存のサーバー設定を編集または削除することはできません。新しいサーバーに OAuth が必要な場合は、ユーザーが Cloud の画面で認可できます。
+
+信頼できるサーバーだけを接続してください。接続すると Bot はサーバーの機能を利用できるようになりますが、アプリ内のアクセスは、そのアプリで設定されたアカウントと権限にも依存します。Bot の接続を確認し、アカウントには必要なアクセスだけを付与してください。アクセス管理については、[コンピューターとアプリへの接続](/bot/concepts/brain-and-computers)を参照してください。
+
+Bot は MCP を通じてアプリに接続します。Bot のアカウントはアプリ内にあり、接続とは別に管理されます。
+
+<a id="add-a-remote-server"></a>
+
+### リモートサーバーを追加する
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="クラウドホスト">
+
+1. Klex Cloud で Bot を開き、**Connectors** を選択します。コネクターの管理には組織のオーナーまたは管理者権限が必要です。
+2. コネクターのカタログで **Connect an MCP** を選択し、サーバーの URL と名前を入力します。必要なヘッダーは **Advanced options** で追加します。
+3. **Connect** を選択し、求められた場合は認可を完了します。サーバーを利用する前に接続状態を確認してください。
+
+</Tab>
+<Tab title="セルフホスト">
+
+<a id="add-a-remote-server-in-the-self-hosted-app"></a>
+
+対話型の Klex アプリでは、Streamable HTTP サーバーを追加できます。
+
+1. **Settings → MCP Servers** を開き、`a` を押します。
+2. 一意のサーバー名と絶対 HTTP または HTTPS URL を入力します。認証情報を扱うリモートサービスには HTTPS を使用してください。
+3. カスタムヘッダーが必要な場合は、`a` を押して名前と値をそれぞれ追加します。認証情報の値は秘密として扱ってください。
+4. `s` を押してサーバーを追加し、一覧で状態を確認します。設定が保存されただけでは、サーバーに接続されたとは限りません。
+
+サーバーを確認するには、選択して Enter キーを押します。詳細画面には状態、トランスポート、ツール数、プッシュ通知への対応状況が表示されます。ここで `e` を押すと設定を編集でき、`d` を押すと確認後に削除できます。削除時に Klex はローカルの OAuth 認証情報を削除し、プロバイダーが対応していればトークンの失効を試みます。失効に失敗することもあるため、接続先アプリでアカウントの権限を別途確認してください。
+
+</Tab>
+</Tabs>
+
+Cloud の画面で OAuth 認可を行うには、Bot が Cloud に登録され、Cloud トンネルに接続されている必要があります。Cloud に登録されていないスタンドアロン Bot は、この Cloud 経由の認可フローを利用できません。
+
+<a id="if-a-connection-needs-attention"></a>
+
+## 接続に問題がある場合
+
+サーバーに認可が必要な場合や、接続に失敗する場合があります。接続状態を確認し、必要な認可を完了してください。それでも接続できない場合は、サーバーのアドレス、認証情報、サーバーが利用可能かを確認してください。Bot が使えるのは、接続されたサーバーが提供する機能だけです。
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

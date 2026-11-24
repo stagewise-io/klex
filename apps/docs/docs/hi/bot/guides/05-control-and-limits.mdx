@@ -1,0 +1,60 @@
+---
+title: अपने Klex Bot को नियंत्रित करें
+sidebar:
+  label: नियंत्रण
+description: Klex Bot को रोकें और जुड़े कंप्यूटरों और ऐप्स तक उसकी पहुँच प्रबंधित करें।
+related:
+  - /hi/bot/guides/observability
+  - /hi/bot/concepts/brain-and-computers
+  - /hi/guides/secure-bot-usage
+---
+
+आप Klex Bot को रोक सकते हैं और उसके कनेक्शन और खातों के ज़रिए उसकी पहुँच प्रबंधित कर सकते हैं।
+
+<a id="run-a-self-hosted-bot-without-the-picker"></a>
+<a id="stop-a-bot"></a>
+
+## Bot रोकें
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="क्लाउड होस्टेड">
+
+Klex Cloud में अपना Bot खोलें और होस्टिंग नियंत्रणों में **Stop** चुनें।
+
+</Tab>
+<Tab title="सेल्फ-होस्टेड">
+
+ऐप में चल रहे Bot को रोकने के लिए ऐप बंद करें।
+
+<a id="stop-a-headless-bot"></a>
+
+हेडलेस Bot के लिए अपने सर्विस मैनेजर का stop कमांड इस्तेमाल करें। अगर प्रक्रिया की निगरानी होती है, तो उसे इस तरह कॉन्फ़िगर करें कि Bot तुरंत दोबारा शुरू न हो।
+
+</Tab>
+</Tabs>
+
+<a id="manage-access"></a>
+
+## पहुँच प्रबंधित करें
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="क्लाउड होस्टेड">
+
+कनेक्शन प्रबंधित करने के लिए Klex Cloud में अपने Bot के **Connectors** खोलें।
+
+</Tab>
+<Tab title="सेल्फ-होस्टेड">
+
+Klex ऐप में किसी सर्वर को देखने, संपादित करने या हटाने के लिए **Settings → MCP Servers** का इस्तेमाल करें। चरणों और OAuth अनुमति रद्द करने से जुड़ी सावधानी के लिए [MCP और Klex Bots](/hi/bot/concepts/mcp#add-a-remote-server-in-the-self-hosted-app) देखें।
+
+</Tab>
+</Tabs>
+
+Bot जिन खातों और ऐप्स का इस्तेमाल करता है, उनकी अनुमतियाँ सीधे उन्हीं खातों और ऐप्स में कॉन्फ़िगर करें। कनेक्शन और खाते की अनुमतियों के संबंध के लिए [कंप्यूटरों और ऐप्स से कनेक्शन](/hi/bot/concepts/brain-and-computers) देखें।
+
+Klex फ़िलहाल अलग-अलग कार्रवाइयों के लिए अनुमोदन या प्रतिबंध का समर्थन नहीं करता। Bot के खातों और ऐप्स की अनुमतियाँ उसी के अनुसार कॉन्फ़िगर करें।
+
+आप डैशबोर्ड में [Bot की गतिविधि देख](/hi/bot/guides/observability) भी सकते हैं।
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

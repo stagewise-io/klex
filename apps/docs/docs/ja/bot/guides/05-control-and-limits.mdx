@@ -1,0 +1,60 @@
+---
+title: Klex Botを制御する
+sidebar:
+  label: 制御
+description: Klex Botを停止し、接続先のコンピューターやアプリへのアクセスを管理します。
+related:
+  - /ja/bot/guides/observability
+  - /ja/bot/concepts/brain-and-computers
+  - /ja/guides/secure-bot-usage
+---
+
+Klex Botを停止したり、接続やアカウントを通じてアクセスできる範囲を管理したりできます。
+
+<a id="run-a-self-hosted-bot-without-the-picker"></a>
+<a id="stop-a-bot"></a>
+
+## Botを停止する
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="クラウドホスト">
+
+Klex CloudでBotを開き、ホスティングの操作項目から **Stop** を選択します。
+
+</Tab>
+<Tab title="セルフホスト">
+
+アプリで実行中のBotを停止するには、アプリを終了します。
+
+<a id="stop-a-headless-bot"></a>
+
+ヘッドレスBotの場合は、サービスマネージャーの停止コマンドを使います。プロセスが監視されている場合は、Botがすぐに再起動しないように設定してください。
+
+</Tab>
+</Tabs>
+
+<a id="manage-access"></a>
+
+## アクセスを管理する
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="クラウドホスト">
+
+Klex CloudでBotの **Connectors** を開き、接続を管理します。
+
+</Tab>
+<Tab title="セルフホスト">
+
+Klexアプリの **Settings → MCP Servers** でサーバーを確認、編集、削除できます。手順とOAuthの認可取り消しに関する注意点は、[MCPとKlex Bot](/ja/bot/concepts/mcp#add-a-remote-server-in-the-self-hosted-app)を参照してください。
+
+</Tab>
+</Tabs>
+
+Botが使うアカウントとアプリの権限は、それぞれのアカウントやアプリで直接設定してください。接続とアカウントの権限の関係については、[コンピューターとアプリへの接続](/ja/bot/concepts/brain-and-computers)を参照してください。
+
+Klexは現在、個々のアクションに対する承認や制限をサポートしていません。そのため、Botのアカウントとアプリの権限を適切に設定してください。
+
+ダッシュボードでは[Botのアクティビティを確認](/ja/bot/guides/observability)することもできます。
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

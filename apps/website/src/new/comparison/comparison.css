@@ -59,24 +59,30 @@
   color: var(--muted-foreground);
   line-height: 1.6;
 }
-.comparison-answers {
+.comparison-question {
+  font-weight: 600;
+}
+.comparison-pair {
   display: grid;
-  gap: 0.75rem;
-  margin: 0 0 1.5rem;
-  padding: 0;
-  list-style: none;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
+  gap: 1rem;
+  margin-block: 1.5rem;
 }
-.comparison-answers li {
-  display: flex;
-  align-items: baseline;
-  gap: 0.75rem;
-  line-height: 1.6;
-  justify-content: space-between;
+.comparison-pair > div {
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  padding: 1.25rem;
 }
-.comparison-answers li strong {
-  min-width: 3rem;
-  text-align: end;
-  font-weight: 700;
+.comparison-pair h3 {
+  margin: 0 0 0.75rem;
+}
+.comparison-pair p {
+  margin: 0;
+}
+.comparison-main .resource-section-body a {
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+  text-decoration-thickness: 1px;
 }
 @media (max-width: 800px) {
   .resource-heading.comparison-heading {

@@ -28,14 +28,11 @@ export const comparisonMarkup =
   <section class="resource-section" id="models">
     <h2>Where will the AI model come from?</h2>
     <div class="resource-section-body">
-      <p>Klex uses model access you supply. <a href="https://docs.klex.bot/quickstart">Its quickstart</a> describes provider APIs, supported subscriptions, local providers and custom endpoints. Your provider’s costs or plan limits apply separately from Klex hosting.</p>
-      <ul class="comparison-answers" aria-label="Model access at a glance">
-        <li><span><a href="https://docs.klex.bot/quickstart">Use your own model access with Klex?</a></span><strong>Yes</strong></li>
-        <li><span><a href="https://docs.rerun.build/agents/configure">Use your own model access with Rerun?</a></span><strong>Yes</strong></li>
-        <li><span><a href="https://docs.rerun.build/billing">Monthly model and paid-data credits in Rerun Pro?</a></span><strong>Yes</strong></li>
-        <li><span><a href="https://rerun.build/lifetime">Credits included with Rerun’s lifetime offer?</a></span><strong>No</strong></li>
-      </ul>
-      <p><a href="https://docs.rerun.build/billing">Rerun Pro includes 500 credits each month for Rerun-hosted models and paid data</a>. <a href="https://docs.rerun.build/agents/configure">Rerun also describes using your own provider API, custom endpoint or supported ChatGPT or Claude subscription</a>. Extra credit purchases and outside provider costs are separate. The lifetime offer does not include Rerun credits.</p>
+      <p class="comparison-question">Do I need to arrange model access separately?</p>
+      <div class="comparison-pair">
+        <div><h3>Klex</h3><p>Bring your own model access. The <a href="https://docs.klex.bot/quickstart">Klex quickstart</a> describes provider APIs, supported subscriptions, local providers and custom endpoints. Provider costs or plan limits are separate from hosting.</p></div>
+        <div><h3>Rerun Pro</h3><p><a href="https://docs.rerun.build/billing">Pro includes 500 monthly credits</a> shared between Rerun-hosted models and paid data. You can also <a href="https://docs.rerun.build/agents/configure">bring your own model access</a>. Extra credits and outside provider costs are separate.</p></div>
+      </div>
     </div>
   </section>
   <section class="resource-section" id="cost">

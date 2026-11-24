@@ -40,11 +40,26 @@ try {
         .locator('main a[href="https://docs.klex.bot/quickstart"]')
         .count()) >= 1,
     );
-    assert.equal(await page.locator('.comparison-answers li').count(), 4);
-    assert.deepEqual(
-      await page.locator('.comparison-answers strong').allTextContents(),
-      ['Yes', 'Yes', 'Yes', 'No'],
+    const models = page.locator('#models');
+    assert(
+      await models
+        .getByText('Do I need to arrange model access separately?')
+        .isVisible(),
     );
+    assert(await models.getByRole('heading', { name: 'Klex' }).isVisible());
+    assert(
+      await models.getByRole('heading', { name: 'Rerun Pro' }).isVisible(),
+    );
+    for (const link of await models.locator('a').all()) {
+      assert(
+        await link.getAttribute('href'),
+        'comparison source has a destination',
+      );
+      assert.match(
+        await link.evaluate((el) => getComputedStyle(el).textDecorationLine),
+        /underline/,
+      );
+    }
     assert.equal(await page.locator('.comparison-at-a-glance h2').count(), 2);
     if (width === 1440) {
       const hero = await page.locator('.comparison-heading').boundingBox();

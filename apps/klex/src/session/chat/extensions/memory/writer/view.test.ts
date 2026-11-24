@@ -25,6 +25,19 @@ const render = (parts: ExtendedUIMessage['parts']) =>
   );
 
 describe('memory writer view', () => {
+  // The writer prompt and LINES_FORMAT_PROMPT describe this shape.
+  it('renders self records in the line format', () => {
+    const [text] = render([
+      { type: 'text', text: 'Checking the diff' },
+      tool('runCommand', { command: 'git diff' }, 'ok'),
+    ]);
+    const [output, action] = text?.split('\n\n') ?? [];
+    expect(output).toBe('your_output\n¦Checking the diff');
+    expect(action).toMatch(/^your_action runCommand succeeded\n¦/);
+    expect(action).toContain('git diff');
+    expect(action).toMatch(/\nresult\n¦ok$/);
+  });
+
   it('hides todo tools', () => {
     expect(
       render([

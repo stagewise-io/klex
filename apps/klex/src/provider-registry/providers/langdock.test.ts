@@ -51,7 +51,10 @@ const context = (models: readonly ProviderModel[]): ProviderContext => ({
   invalidate: async () => undefined,
   discoveredModel: (id) => models.find((model) => model.modelId === id),
 });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+});
 
 describe('Langdock', () => {
   it('validates settings, defaults region, and marks secrets', () => {
@@ -90,6 +93,11 @@ describe('Langdock', () => {
     ],
     ['models/gemini-2.5-pro', 'google.generative-ai', 'gemini-2.5-pro'],
     ['anthropic/custom', 'anthropic.messages', 'custom'],
+    ['anthropic/anthropic/shared', 'anthropic.messages', 'shared'],
+    ['ANTHROPIC/anthropic/ANTHROPIC/shared', 'anthropic.messages', 'shared'],
+    ['openai/openai/shared', 'openai.chat', 'shared'],
+    ['google/google/shared', 'google.generative-ai', 'shared'],
+    ['openai/anthropic/shared', 'openai.chat', 'anthropic/shared'],
     ['google/custom', 'google.generative-ai', 'custom'],
     ['openai/claude-custom', 'openai.chat', 'claude-custom'],
   ])('routes %s to %s', (id, sdk, upstreamId) => {
@@ -116,6 +124,8 @@ describe('Langdock', () => {
       '/google/us/v1beta/models/gemini-custom:generateContent',
     ],
   ])('sends generation through %s with Bearer auth', async (id, path) => {
+    vi.stubEnv('GOOGLE_GENERATIVE_AI_API_KEY', 'environment-google-key');
+    vi.stubEnv('ANTHROPIC_API_KEY', 'environment-anthropic-key');
     const requests: { url: string; init: RequestInit }[] = [];
     vi.stubGlobal(
       'fetch',
@@ -147,6 +157,8 @@ describe('Langdock', () => {
     const headers = new Headers(request.init.headers);
     expect(headers.get('authorization')).toBe('Bearer synthetic');
     expect(headers.get('x-custom')).toBe('value');
+    expect(headers.get('x-goog-api-key')).toBeNull();
+    expect(headers.get('x-api-key')).toBeNull();
     expect(new URL(request.url).searchParams.has('key')).toBe(false);
     if (!id.startsWith('google'))
       expect(JSON.parse(String(request.init.body)).model).toBe(
@@ -297,6 +309,31 @@ describe('Langdock', () => {
     );
     expect(alias.provider).toBe('anthropic.messages');
     expect(alias.modelId).toBe('shared');
+  });
+
+  it('does not allocate ambiguous aliases for same-protocol-prefixed literal IDs', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input) =>
+        Response.json(
+          String(input).includes('/google/')
+            ? { models: [] }
+            : { data: [{ id: 'anthropic/shared' }] },
+        ),
+      ),
+    );
+    const result = await provider.discoverModels(instance, signal());
+    if (!result.ok) throw new Error('Discovery failed');
+    expect(result.value.map((model) => model.modelId)).toEqual([
+      'anthropic/shared',
+      'openai/anthropic/shared',
+    ]);
+    const alias = provider.createLanguageModel(
+      instance,
+      'openai/anthropic/shared',
+    );
+    expect(alias.provider).toBe('openai.chat');
+    expect(alias.modelId).toBe('anthropic/shared');
   });
 
   it('passes cancellation to every concurrent discovery request', async () => {

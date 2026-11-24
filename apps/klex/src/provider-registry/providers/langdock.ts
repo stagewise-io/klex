@@ -63,7 +63,7 @@ function headers(instance: ProviderInstance): Record<string, string> {
 }
 
 function inferRoute(modelId: string): Route {
-  const prefix = /^(openai|anthropic|google)\/(.+)$/i.exec(modelId);
+  const prefix = /^(openai|anthropic|google)(?:\/\1)*\/(.+)$/i.exec(modelId);
   if (prefix?.[1] && prefix[2])
     return {
       protocol: prefix[1].toLowerCase() as Protocol,
@@ -115,15 +115,22 @@ export const langdockProviderDefinition = {
     };
     if (protocol === 'anthropic')
       return withPromptCaching(
-        createAnthropic(options).languageModel(upstreamId),
+        createAnthropic({
+          ...options,
+          apiKey: undefined,
+          authToken: options.apiKey,
+        }).languageModel(upstreamId),
         'anthropic',
         ['langdock'],
       );
     if (protocol === 'google')
       return withRemoteInputMapping(
-        createGoogle(options).languageModel(
-          upstreamId.replace(/^models\//, ''),
-        ),
+        createGoogle({
+          ...options,
+          // Avoid environment-key fallback and remove the SDK's native header.
+          apiKey: '',
+          headers: { ...options.headers, 'x-goog-api-key': undefined },
+        }).languageModel(upstreamId.replace(/^models\//, '')),
         'google-generative',
       );
     return createOpenAI(options).chat(upstreamId);
@@ -183,6 +190,10 @@ async function discoverModels(
   for (const group of collisions.values()) {
     for (const collision of group) {
       const route = discoveredRoute(collision);
+      // Repeated prefixes are stripped by cold routing, so aliases for literal
+      // IDs starting with their own protocol cannot preserve the upstream ID.
+      if (route.upstreamId.toLowerCase().startsWith(`${route.protocol}/`))
+        continue;
       let modelId = `${route.protocol}/${route.upstreamId}`;
       while (models.has(modelId)) modelId = `${route.protocol}/${modelId}`;
       const alias = { ...collision, modelId };

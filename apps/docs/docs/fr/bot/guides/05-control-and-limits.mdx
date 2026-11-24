@@ -1,0 +1,60 @@
+---
+title: Contrôler votre Klex Bot
+sidebar:
+  label: Contrôle
+description: Arrêtez un Klex Bot et gérez son accès aux ordinateurs et applications connectés.
+related:
+  - /fr/bot/guides/observability
+  - /fr/bot/concepts/brain-and-computers
+  - /fr/guides/secure-bot-usage
+---
+
+Vous pouvez arrêter un Klex Bot et gérer ses accès par ses connexions et ses comptes.
+
+<a id="run-a-self-hosted-bot-without-the-picker"></a>
+<a id="stop-a-bot"></a>
+
+## Arrêter un Bot
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Hébergé dans le Cloud">
+
+Dans Klex Cloud, ouvrez votre Bot et sélectionnez **Stop** dans les commandes d'hébergement.
+
+</Tab>
+<Tab title="Auto-hébergé">
+
+Pour arrêter un Bot exécuté dans l'application, fermez l'application.
+
+<a id="stop-a-headless-bot"></a>
+
+Pour un Bot sans interface, utilisez la commande d'arrêt de votre gestionnaire de services. Si le processus est supervisé, configurez-le pour que le Bot ne redémarre pas immédiatement.
+
+</Tab>
+</Tabs>
+
+<a id="manage-access"></a>
+
+## Gérer les accès
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Hébergé dans le Cloud">
+
+Dans Klex Cloud, ouvrez les **Connectors** de votre Bot pour gérer ses connexions.
+
+</Tab>
+<Tab title="Auto-hébergé">
+
+Dans l'application Klex, utilisez **Settings → MCP Servers** pour examiner, modifier ou supprimer un serveur. Consultez [MCP et les Klex Bots](/fr/bot/concepts/mcp#add-a-remote-server-in-the-self-hosted-app) pour les étapes et les limites de révocation OAuth.
+
+</Tab>
+</Tabs>
+
+Configurez les autorisations des comptes et applications utilisés par le Bot directement dans ces comptes et applications. Consultez [Connexions aux ordinateurs et aux applications](/fr/bot/concepts/brain-and-computers) pour comprendre le lien entre connexions et autorisations des comptes.
+
+Klex ne prend actuellement pas en charge les approbations ni les restrictions pour des actions individuelles. Configurez les autorisations des comptes et applications du Bot en conséquence.
+
+Vous pouvez aussi [consulter l'activité du Bot](/fr/bot/guides/observability) dans le tableau de bord.
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

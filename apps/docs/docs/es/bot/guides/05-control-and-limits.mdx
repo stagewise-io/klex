@@ -1,0 +1,60 @@
+---
+title: Controla tu Klex Bot
+sidebar:
+  label: Control
+description: Detén un Klex Bot y gestiona su acceso a ordenadores y aplicaciones conectados.
+related:
+  - /es/bot/guides/observability
+  - /es/bot/concepts/brain-and-computers
+  - /es/guides/secure-bot-usage
+---
+
+Puedes detener un Klex Bot y gestionar a qué puede acceder a través de sus conexiones y cuentas.
+
+<a id="run-a-self-hosted-bot-without-the-picker"></a>
+<a id="stop-a-bot"></a>
+
+## Detener un Bot
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Alojado en Cloud">
+
+En Klex Cloud, abre tu Bot y selecciona **Stop** en los controles de alojamiento.
+
+</Tab>
+<Tab title="Autoalojado">
+
+Para detener un Bot que se ejecuta en la aplicación, cierra la aplicación.
+
+<a id="stop-a-headless-bot"></a>
+
+Para un Bot sin interfaz, usa el comando de parada de tu gestor de servicios. Si el proceso está supervisado, configúralo para que el Bot no se reinicie inmediatamente.
+
+</Tab>
+</Tabs>
+
+<a id="manage-access"></a>
+
+## Gestionar el acceso
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Alojado en Cloud">
+
+En Klex Cloud, abre **Connectors** de tu Bot para gestionar sus conexiones.
+
+</Tab>
+<Tab title="Autoalojado">
+
+En la aplicación de Klex, usa **Settings → MCP Servers** para inspeccionar, editar o eliminar un servidor. Consulta [MCP y los Klex Bots](/es/bot/concepts/mcp#add-a-remote-server-in-the-self-hosted-app) para ver los pasos y la advertencia sobre la revocación de OAuth.
+
+</Tab>
+</Tabs>
+
+Configura los permisos de las cuentas y aplicaciones que usa el Bot directamente en esas cuentas y aplicaciones. Consulta [Conexiones a ordenadores y aplicaciones](/es/bot/concepts/brain-and-computers) para entender la relación entre las conexiones y los permisos de las cuentas.
+
+Klex no admite actualmente aprobaciones ni restricciones para acciones individuales. Configura los permisos de las cuentas y aplicaciones del Bot en consecuencia.
+
+También puedes [revisar la actividad del Bot](/es/bot/guides/observability) en el panel.
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

@@ -39,6 +39,8 @@ export type TurnStopReason =
 export interface TurnDependencies {
   logger: ModuleLogger;
   sessionId: string;
+  /** Advances and returns the bounded conversation epoch for each generation attempt. */
+  beginConversationGeneration?: () => string;
   telemetryMetrics?: TelemetryMetrics;
   sessionContext: Context;
   sessionSpan: Span;
@@ -297,6 +299,10 @@ class TurnModule implements Turn {
             config: this.deps.config,
             turnInitialFallbackIndex,
             sessionId: this.deps.sessionId,
+            ...(this.deps.beginConversationGeneration !== undefined && {
+              beginConversationGeneration:
+                this.deps.beginConversationGeneration,
+            }),
             telemetryMetrics: this.deps.telemetryMetrics,
             basePrompt: this.deps.basePrompt,
             ...(this.deps.instinctRunner !== undefined && {

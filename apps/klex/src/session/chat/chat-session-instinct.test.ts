@@ -443,6 +443,14 @@ describe('ChatSession instinct tracing', () => {
         ),
         'main generation',
       );
+      const mainChat = requiredSpan(
+        spans.find(
+          (span) =>
+            span.attributes['klex.call.source'] === 'chat' &&
+            span.attributes['gen_ai.operation.name'] === 'chat',
+        ),
+        'main chat span',
+      );
       expect(turn?.parentSpanContext?.spanId).toBe(root.spanContext().spanId);
       expect(step?.parentSpanContext?.spanId).toBe(turn.spanContext().spanId);
       expect(phase?.parentSpanContext?.spanId).toBe(step.spanContext().spanId);
@@ -453,10 +461,19 @@ describe('ChatSession instinct tracing', () => {
       expect(attempts).toHaveLength(options.evaluationFallback ? 2 : 1);
       expect(calls).toHaveLength(attempts.length);
       expect(main.attributes).toMatchObject({
-        'gen_ai.conversation.id': session.sessionId,
+        'agento11y.record': false,
         'klex.model.api': 'generation',
         'gen_ai.request.stream': true,
       });
+      expect(main.attributes['gen_ai.conversation.id']).toBeUndefined();
+      expect(mainChat.attributes).toMatchObject({
+        'agento11y.record': true,
+        'klex.model.api': 'generation',
+        'gen_ai.request.stream': true,
+      });
+      expect(mainChat.attributes['gen_ai.conversation.id']).toMatch(
+        new RegExp(`^${session.sessionId}:`),
+      );
       for (const span of [
         turn,
         step,
@@ -465,6 +482,7 @@ describe('ChatSession instinct tracing', () => {
         ...attempts,
         ...calls,
         main,
+        mainChat,
       ]) {
         expect(span.spanContext().traceId).toBe(root.spanContext().traceId);
       }
@@ -479,9 +497,8 @@ describe('ChatSession instinct tracing', () => {
           ),
           'instinct model call',
         );
-        expect(call.attributes['gen_ai.conversation.id']).toBe(
-          session.sessionId,
-        );
+        expect(call.attributes['agento11y.record']).toBe(false);
+        expect(call.attributes['gen_ai.conversation.id']).toBeUndefined();
         expect(attempt.attributes).toMatchObject({
           'klex.model.api': call.attributes['klex.model.api'],
           'klex.model.provider_id': 'test',

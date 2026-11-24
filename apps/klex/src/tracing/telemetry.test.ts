@@ -7,7 +7,7 @@ import {
   InMemorySpanExporter,
   SimpleSpanProcessor,
 } from '@opentelemetry/sdk-trace-base';
-import { experimental_evaluate as evaluate } from 'ai';
+import { experimental_evaluate as evaluate, generateText, tool } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
 import { describe, expect, it, vi } from 'vitest';
 import z from 'zod';
@@ -37,8 +37,6 @@ type AbortEvent = Parameters<ModelCallUsageTelemetry['onAbort']>[0];
 type CallEndEvent = Parameters<
   ModelCallUsageTelemetry['onLanguageModelCallEnd']
 >[0];
-type OtelStartEvent = Parameters<KlexOpenTelemetry['onStart']>[0];
-type OtelEndEvent = Parameters<KlexOpenTelemetry['onEnd']>[0];
 
 function makeStartEvent(event: Record<string, unknown>): StartEvent {
   return event as unknown as StartEvent;
@@ -46,20 +44,6 @@ function makeStartEvent(event: Record<string, unknown>): StartEvent {
 
 function makeEndEvent(event: Record<string, unknown>): EndEvent {
   return event as unknown as EndEvent;
-}
-
-function makeOtelStartEvent(event: Record<string, unknown>): OtelStartEvent {
-  return event as unknown as OtelStartEvent;
-}
-
-/** Fields `@ai-sdk/otel` reads from a generateText end event. */
-function makeOtelEndEvent(event: Record<string, unknown>): OtelEndEvent {
-  return {
-    finalStep: { reasoning: [] },
-    toolCalls: [],
-    files: [],
-    ...event,
-  } as unknown as OtelEndEvent;
 }
 
 function createSpanHarness(
@@ -87,33 +71,71 @@ function makeCallEndEvent(event: Record<string, unknown>): CallEndEvent {
   return event as unknown as CallEndEvent;
 }
 
-async function exportContentCall(options: { level: 'advanced' | 'debug' }) {
-  const { exporter, provider, telemetry } = createSpanHarness(options.level);
+function createMockLanguageModel(modelId = 'gpt-test') {
+  return new MockLanguageModelV4({
+    provider: 'openai.chat',
+    modelId,
+    doGenerate: async () => ({
+      content: [{ type: 'text', text: 'Model output' }],
+      usage: {
+        inputTokens: { total: 2, noCache: 2, cacheRead: 0, cacheWrite: 0 },
+        outputTokens: { total: 3, text: 3, reasoning: 0 },
+      },
+      finishReason: { unified: 'stop', raw: 'stop' },
+      warnings: [],
+    }),
+  });
+}
 
-  telemetry.onStart(
-    makeOtelStartEvent({
-      callId: 'content-call',
-      operationId: 'ai.generateText',
-      provider: 'openai',
-      modelId: 'gpt-test',
-      functionId: 'chat-session',
-      instructions: 'System instructions',
-      messages: [{ role: 'user', content: 'Model input' }],
-      runtimeContext: { 'conversation.id': 'session-1' },
-    }),
+async function exportContentCall(options: {
+  level: 'advanced' | 'debug';
+  telemetryOptions?: KlexOpenTelemetryOptions;
+  functionId?: string;
+  runtimeContext?: Record<string, unknown>;
+  recordInputs?: boolean;
+  recordOutputs?: boolean;
+}) {
+  const { exporter, provider, telemetry } = createSpanHarness(
+    options.level,
+    options.telemetryOptions,
   );
-  telemetry.onEnd(
-    makeOtelEndEvent({
-      callId: 'content-call',
-      finishReason: 'stop',
-      usage: { inputTokens: 2, outputTokens: 3 },
-      text: 'Model output',
-    }),
-  );
+  const runtimeContext = options.runtimeContext ?? {
+    'conversation.id': 'session-1',
+  };
+  await generateText({
+    model: createMockLanguageModel('gpt-test'),
+    system: 'System instructions',
+    prompt: 'Model input',
+    maxRetries: 0,
+    telemetry: {
+      isEnabled: true,
+      integrations: [telemetry],
+      functionId: options.functionId ?? 'chat-session',
+      ...(options.recordInputs !== undefined && {
+        recordInputs: options.recordInputs,
+      }),
+      ...(options.recordOutputs !== undefined && {
+        recordOutputs: options.recordOutputs,
+      }),
+      includeRuntimeContext: Object.fromEntries(
+        Object.keys(runtimeContext).map((key) => [key, true]),
+      ),
+    },
+    runtimeContext,
+  });
   await provider.forceFlush();
-  const span = exporter.getFinishedSpans()[0];
+  const spans = exporter.getFinishedSpans();
   await provider.shutdown();
-  return span?.attributes ?? {};
+  return spans;
+}
+
+function findSpanByOp(
+  spans: ReturnType<InMemorySpanExporter['getFinishedSpans']>,
+  operationName: string,
+) {
+  return spans.find(
+    (span) => span.attributes['gen_ai.operation.name'] === operationName,
+  );
 }
 
 function parseAttribute(value: unknown): unknown {
@@ -122,8 +144,10 @@ function parseAttribute(value: unknown): unknown {
 }
 
 describe('KlexOpenTelemetry — model content', () => {
-  it('exports model content in the GenAI parts format at debug', async () => {
-    const attributes = await exportContentCall({ level: 'debug' });
+  it('exports model content in the GenAI parts format on chat spans at debug', async () => {
+    const spans = await exportContentCall({ level: 'debug' });
+    const chat = findSpanByOp(spans, 'chat');
+    const attributes = chat?.attributes ?? {};
 
     expect(parseAttribute(attributes['gen_ai.system_instructions'])).toEqual([
       { type: 'text', content: 'System instructions' },
@@ -141,96 +165,250 @@ describe('KlexOpenTelemetry — model content', () => {
   });
 
   it('exports no content at advanced', async () => {
-    const attributes = await exportContentCall({ level: 'advanced' });
+    const spans = await exportContentCall({ level: 'advanced' });
+    const chat = findSpanByOp(spans, 'chat');
+    const invokeAgent = findSpanByOp(spans, 'invoke_agent');
+    const attributes = chat?.attributes ?? {};
 
     expect(attributes['gen_ai.system_instructions']).toBeUndefined();
     expect(attributes['gen_ai.input.messages']).toBeUndefined();
     expect(attributes['gen_ai.output.messages']).toBeUndefined();
     expect(attributes['gen_ai.request.model']).toBe('gpt-test');
-    expect(attributes['gen_ai.operation.name']).toBe('invoke_agent');
+    expect(attributes['gen_ai.operation.name']).toBe('chat');
     expect(attributes['gen_ai.conversation.id']).toBe('session-1');
+    expect(invokeAgent?.attributes['gen_ai.conversation.id']).toBeUndefined();
   });
 
   it('does not record content the caller opted out of', async () => {
-    const { exporter, provider, telemetry } = createSpanHarness('debug');
-    telemetry.onStart(
-      makeOtelStartEvent({
-        callId: 'opt-out',
-        operationId: 'ai.generateText',
-        provider: 'openai',
-        modelId: 'gpt-test',
-        messages: [{ role: 'user', content: 'secret' }],
-        recordInputs: false,
-      }),
-    );
-    telemetry.onEnd(
-      makeOtelEndEvent({
-        callId: 'opt-out',
-        finishReason: 'stop',
-        usage: { inputTokens: 1, outputTokens: 1 },
-        text: 'visible',
-      }),
-    );
-    await provider.forceFlush();
-    const attributes = exporter.getFinishedSpans()[0]?.attributes ?? {};
-    await provider.shutdown();
+    const spans = await exportContentCall({
+      level: 'debug',
+      recordInputs: false,
+    });
+    const attributes = findSpanByOp(spans, 'chat')?.attributes ?? {};
 
     expect(attributes['gen_ai.input.messages']).toBeUndefined();
     expect(attributes['gen_ai.output.messages']).toBeDefined();
   });
 });
 
-describe('KlexOpenTelemetry — Agent Observability marker', () => {
-  it('marks every model span without exporting content at advanced', async () => {
-    const attributes = await exportContentCall({ level: 'advanced' });
+describe('KlexOpenTelemetry — Agent Observability spanType filtering', () => {
+  it('marks only chat (languageModel) spans as recordable and suppresses invoke_agent/step duplicates at advanced', async () => {
+    const spans = await exportContentCall({
+      level: 'advanced',
+      telemetryOptions: {
+        agentName: '  Knuth  ',
+        getAgentId: () => 'client-1',
+      },
+      runtimeContext: {
+        'conversation.id': 'default',
+        'conversation.epoch': 'cp-1',
+      },
+    });
+    const invokeAgent = findSpanByOp(spans, 'invoke_agent');
+    const step = findSpanByOp(spans, 'agent_step');
+    const chat = findSpanByOp(spans, 'chat');
 
-    expect(attributes['agento11y.record']).toBe(true);
-    expect(attributes['gen_ai.input.messages']).toBeUndefined();
+    expect(invokeAgent).toBeDefined();
+    expect(step).toBeDefined();
+    expect(chat).toBeDefined();
+
+    expect(invokeAgent?.attributes['agento11y.record']).toBe(false);
+    expect(invokeAgent?.attributes['gen_ai.conversation.id']).toBeUndefined();
+    expect(invokeAgent?.attributes['gen_ai.agent.id']).toBeUndefined();
+
+    expect(step?.attributes['agento11y.record']).toBe(false);
+    expect(step?.attributes['gen_ai.conversation.id']).toBeUndefined();
+    expect(step?.attributes['gen_ai.agent.id']).toBeUndefined();
+
+    expect(chat?.attributes['agento11y.record']).toBe(true);
+    expect(chat?.attributes['gen_ai.conversation.id']).toBe(
+      'default:client-1:cp-1',
+    );
+    expect(chat?.attributes['gen_ai.agent.id']).toBe('client-1');
+    expect(chat?.attributes['gen_ai.agent.name']).toBe('Knuth');
+    expect(chat?.attributes['gen_ai.input.messages']).toBeUndefined();
   });
 
-  it('keeps the marker next to content at debug', async () => {
-    const attributes = await exportContentCall({ level: 'debug' });
+  it('keeps the marker next to content on chat spans at debug while keeping wrappers non-recorded', async () => {
+    const spans = await exportContentCall({
+      level: 'debug',
+      telemetryOptions: {
+        agentName: 'Knuth',
+        getAgentId: () => 'client-1',
+      },
+    });
+    const invokeAgent = findSpanByOp(spans, 'invoke_agent');
+    const step = findSpanByOp(spans, 'agent_step');
+    const chat = findSpanByOp(spans, 'chat');
 
-    expect(attributes['agento11y.record']).toBe(true);
-    expect(attributes['gen_ai.input.messages']).toBeDefined();
+    expect(invokeAgent?.attributes['agento11y.record']).toBe(false);
+    expect(step?.attributes['agento11y.record']).toBe(false);
+    expect(chat?.attributes['agento11y.record']).toBe(true);
+    expect(chat?.attributes['gen_ai.agent.name']).toBe('Knuth');
+    expect(chat?.attributes['gen_ai.input.messages']).toBeDefined();
+  });
+
+  it.each([
+    'extension:io.stagewise/context-compaction',
+    'extension:io.stagewise/episode-summary',
+    'extension:core:instinct-classifier',
+  ])(
+    'excludes background housekeeping extension %s from Agent Observability',
+    async (functionId) => {
+      const spans = await exportContentCall({
+        level: 'debug',
+        functionId,
+        telemetryOptions: {
+          agentName: 'Knuth',
+          getAgentId: () => 'client-1',
+        },
+        runtimeContext: {
+          'conversation.id': 'default',
+          'conversation.epoch': 'cp-1',
+        },
+      });
+      const invokeAgent = findSpanByOp(spans, 'invoke_agent');
+      const step = findSpanByOp(spans, 'agent_step');
+      const chat = findSpanByOp(spans, 'chat');
+
+      for (const span of [invokeAgent, step, chat]) {
+        expect(span).toBeDefined();
+        expect(span?.attributes['agento11y.record']).toBe(false);
+        expect(span?.attributes['gen_ai.conversation.id']).toBeUndefined();
+        expect(span?.attributes['gen_ai.agent.id']).toBeUndefined();
+      }
+      expect(chat?.attributes['klex.call.source']).toBe('extension');
+      expect(chat?.attributes['klex.extension.id']).toBe(
+        functionId.slice('extension:'.length),
+      );
+    },
+  );
+
+  it('records AI SDK execute_tool spans on normal calls and excludes them on housekeeping calls', async () => {
+    const { exporter, provider, telemetry } = createSpanHarness('advanced', {
+      agentName: 'Knuth',
+      getAgentId: () => 'client-1',
+    });
+    const runToolCall = async (functionId: string) => {
+      const model = new MockLanguageModelV4({
+        provider: 'openai.chat',
+        modelId: 'gpt-test',
+        doGenerate: async () => ({
+          content: [
+            {
+              type: 'tool-call',
+              toolCallId: 'call-1',
+              toolName: 'lookup',
+              input: '{}',
+            },
+          ],
+          finishReason: { unified: 'tool-calls', raw: 'tool-calls' },
+          usage: {
+            inputTokens: {
+              total: 10,
+              noCache: 10,
+              cacheRead: 0,
+              cacheWrite: 0,
+            },
+            outputTokens: { total: 5, text: 5, reasoning: 0 },
+          },
+          warnings: [],
+        }),
+      });
+      await generateText({
+        model,
+        prompt: 'run tool',
+        maxRetries: 0,
+        tools: {
+          lookup: tool({
+            description: 'lookup',
+            inputSchema: z.object({}),
+            execute: async () => ({ ok: true }),
+          }),
+        },
+        telemetry: {
+          isEnabled: true,
+          integrations: [telemetry],
+          functionId,
+          includeRuntimeContext: {
+            'conversation.id': true,
+            'conversation.epoch': true,
+          },
+        },
+        runtimeContext: {
+          'conversation.id': 'default',
+          'conversation.epoch': 'cp-tool',
+        },
+      });
+    };
+
+    try {
+      await runToolCall('extension:memory');
+      await provider.forceFlush();
+      const recordedTool = findSpanByOp(
+        exporter.getFinishedSpans(),
+        'execute_tool',
+      );
+      expect(recordedTool).toBeDefined();
+      expect(recordedTool?.attributes['agento11y.record']).toBe(true);
+      expect(recordedTool?.attributes['gen_ai.conversation.id']).toBe(
+        'default:client-1:cp-tool',
+      );
+      expect(recordedTool?.attributes['gen_ai.agent.id']).toBe('client-1');
+      expect(recordedTool?.attributes['gen_ai.agent.name']).toBe('Knuth');
+
+      exporter.reset();
+      await runToolCall('extension:io.stagewise/episode-summary');
+      await provider.forceFlush();
+      const housekeepingTool = findSpanByOp(
+        exporter.getFinishedSpans(),
+        'execute_tool',
+      );
+      expect(housekeepingTool).toBeDefined();
+      expect(housekeepingTool?.attributes['agento11y.record']).toBe(false);
+      expect(
+        housekeepingTool?.attributes['gen_ai.conversation.id'],
+      ).toBeUndefined();
+    } finally {
+      await provider.shutdown();
+    }
   });
 });
 
 describe('KlexOpenTelemetry — agent identity', () => {
-  it('records the configured agent name and enrolled agent id', async () => {
+  it('records the configured agent name and enrolled agent id on chat spans', async () => {
     let agentId: string | null = null;
     const { exporter, provider, telemetry } = createSpanHarness('advanced', {
       agentName: '  Klex  ',
       getAgentId: () => agentId,
     });
-    const run = (callId: string, functionId: string) => {
-      telemetry.onStart(
-        makeOtelStartEvent({
-          callId,
-          operationId: 'ai.generateText',
-          provider: 'openai',
-          modelId: 'gpt-test',
+    const run = async (functionId: string) => {
+      await generateText({
+        model: createMockLanguageModel('gpt-test'),
+        prompt: 'hello',
+        maxRetries: 0,
+        telemetry: {
+          isEnabled: true,
+          integrations: [telemetry],
           functionId,
-        }),
-      );
-      telemetry.onEnd(
-        makeOtelEndEvent({
-          callId,
-          finishReason: 'stop',
-          usage: { inputTokens: 1, outputTokens: 1 },
-        }),
-      );
+        },
+      });
     };
 
-    run('before-enrollment', 'chat-session');
+    await run('chat-session');
     agentId = 'client-1';
-    run('after-enrollment', 'extension:vision');
+    await run('extension:vision');
     await provider.forceFlush();
 
-    const [first, second] = exporter.getFinishedSpans();
+    const chats = exporter
+      .getFinishedSpans()
+      .filter((span) => span.attributes['gen_ai.operation.name'] === 'chat');
+    const [first, second] = chats;
+    expect(first?.attributes['agento11y.record']).toBe(true);
     expect(first?.attributes['gen_ai.agent.name']).toBe('Klex');
     expect(first?.attributes['gen_ai.agent.id']).toBeUndefined();
     expect(first?.attributes['klex.call.source']).toBe('chat');
+    expect(second?.attributes['agento11y.record']).toBe(true);
     expect(second?.attributes['gen_ai.agent.id']).toBe('client-1');
     expect(second?.attributes['gen_ai.agent.name']).toBe('Klex');
     expect(second?.attributes['klex.call.source']).toBe('extension');
@@ -238,45 +416,60 @@ describe('KlexOpenTelemetry — agent identity', () => {
     await provider.shutdown();
   });
 
-  it('scopes the default conversation id by agent', async () => {
+  it('scopes the default conversation id by agent and epoch on chat spans only', async () => {
     let agentId: string | null = null;
     const { exporter, provider, telemetry } = createSpanHarness('advanced', {
       getAgentId: () => agentId,
       fallbackAgentId: 'instance-1',
     });
-    const run = (callId: string, conversationId: string) => {
-      telemetry.onStart(
-        makeOtelStartEvent({
-          callId,
-          operationId: 'ai.generateText',
-          provider: 'openai',
-          modelId: 'gpt-test',
-          runtimeContext: { 'conversation.id': conversationId },
-        }),
-      );
-      telemetry.onEnd(
-        makeOtelEndEvent({
-          callId,
-          finishReason: 'stop',
-          usage: { inputTokens: 1, outputTokens: 1 },
-        }),
-      );
+    const run = async (conversationId: string, conversationEpoch?: string) => {
+      await generateText({
+        model: createMockLanguageModel('gpt-test'),
+        prompt: 'hello',
+        maxRetries: 0,
+        telemetry: {
+          isEnabled: true,
+          integrations: [telemetry],
+          functionId: 'chat-session',
+          includeRuntimeContext: {
+            'conversation.id': true,
+            ...(conversationEpoch !== undefined && {
+              'conversation.epoch': true,
+            }),
+          },
+        },
+        runtimeContext: {
+          'conversation.id': conversationId,
+          ...(conversationEpoch !== undefined && {
+            'conversation.epoch': conversationEpoch,
+          }),
+        },
+      });
     };
 
-    run('unenrolled', 'default');
+    await run('default', 'boot-1');
     agentId = 'client-1';
-    run('enrolled', 'default');
-    run('child', 'child-uuid');
+    await run('default', 'cp-2');
+    await run('child-uuid');
+    await run('memory-uuid', 'ep-3');
     await provider.forceFlush();
 
-    const ids = exporter
-      .getFinishedSpans()
+    const spans = exporter.getFinishedSpans();
+    const chatIds = spans
+      .filter((span) => span.attributes['gen_ai.operation.name'] === 'chat')
       .map((span) => span.attributes['gen_ai.conversation.id']);
-    expect(ids).toEqual([
-      'default:instance-1',
-      'default:client-1',
+    expect(chatIds).toEqual([
+      'default:instance-1:boot-1',
+      'default:client-1:cp-2',
       'child-uuid',
+      'memory-uuid:ep-3',
     ]);
+    for (const wrapper of spans.filter(
+      (span) => span.attributes['gen_ai.operation.name'] !== 'chat',
+    )) {
+      expect(wrapper.attributes['agento11y.record']).toBe(false);
+      expect(wrapper.attributes['gen_ai.conversation.id']).toBeUndefined();
+    }
     await provider.shutdown();
   });
 });
@@ -285,11 +478,13 @@ describe('GenAiIdentitySpanProcessor', () => {
   function createIdentityHarness(
     agentId: string | null,
     fallbackAgentId?: string,
+    agentName?: string,
   ) {
     const exporter = new InMemorySpanExporter();
     const provider = new BasicTracerProvider({
       spanProcessors: [
         new GenAiIdentitySpanProcessor({
+          agentName,
           getAgentId: () => agentId,
           fallbackAgentId,
         }),
@@ -299,14 +494,19 @@ describe('GenAiIdentitySpanProcessor', () => {
     return { exporter, provider, tracer: provider.getTracer('test') };
   }
 
-  it('marks Klex tool spans with the Agent Observability identity', async () => {
-    const { exporter, provider, tracer } = createIdentityHarness('client-1');
+  it('marks Klex tool spans with Agent Observability identity and bounded epoch', async () => {
+    const { exporter, provider, tracer } = createIdentityHarness(
+      'client-1',
+      undefined,
+      '  Knuth  ',
+    );
     tracer
       .startSpan('execute_tool read_file', {
         attributes: {
           'gen_ai.operation.name': 'execute_tool',
           'gen_ai.tool.name': 'read_file',
           'klex.session.id': 'session-1',
+          'klex.conversation.epoch': 'ep-42',
         },
       })
       .end();
@@ -315,16 +515,30 @@ describe('GenAiIdentitySpanProcessor', () => {
     const attributes = exporter.getFinishedSpans()[0]?.attributes ?? {};
     expect(attributes['agento11y.record']).toBe(true);
     expect(attributes['gen_ai.agent.id']).toBe('client-1');
-    expect(attributes['gen_ai.conversation.id']).toBe('session-1');
+    expect(attributes['gen_ai.agent.name']).toBe('Knuth');
+    expect(attributes['gen_ai.conversation.id']).toBe('session-1:ep-42');
     await provider.shutdown();
   });
 
   it.each([
-    { agentId: 'client-1', expected: 'default:client-1' },
-    { agentId: null, expected: 'default:instance-1' },
+    {
+      agentId: 'client-1',
+      epoch: 'cp-9',
+      expected: 'default:client-1:cp-9',
+    },
+    {
+      agentId: null,
+      epoch: 'cp-9',
+      expected: 'default:instance-1:cp-9',
+    },
+    {
+      agentId: 'client-1',
+      epoch: undefined,
+      expected: 'default:client-1',
+    },
   ])(
-    'scopes default tool spans by agent ($expected)',
-    async ({ agentId, expected }) => {
+    'scopes default tool spans by agent and epoch ($expected)',
+    async ({ agentId, epoch, expected }) => {
       const { exporter, provider, tracer } = createIdentityHarness(
         agentId,
         'instance-1',
@@ -334,6 +548,7 @@ describe('GenAiIdentitySpanProcessor', () => {
           attributes: {
             'gen_ai.operation.name': 'execute_tool',
             'klex.session.id': 'default',
+            ...(epoch !== undefined && { 'klex.conversation.epoch': epoch }),
           },
         })
         .end();
@@ -362,7 +577,7 @@ describe('GenAiIdentitySpanProcessor', () => {
     await provider.shutdown();
   });
 
-  it('leaves AI SDK spans and non-GenAI spans unchanged', async () => {
+  it('leaves AI SDK spans (both true and false) and non-GenAI spans unchanged', async () => {
     const { exporter, provider, tracer } = createIdentityHarness('client-1');
     tracer
       .startSpan('chat gpt-test', {
@@ -374,13 +589,28 @@ describe('GenAiIdentitySpanProcessor', () => {
       })
       .end();
     tracer
+      .startSpan('invoke_agent gpt-test', {
+        attributes: {
+          'gen_ai.operation.name': 'invoke_agent',
+          'agento11y.record': false,
+          'klex.session.id': 'default',
+        },
+      })
+      .end();
+    tracer
       .startSpan('turn', { attributes: { 'klex.session.id': 'session-1' } })
       .end();
     await provider.forceFlush();
 
-    const [sdkSpan, turnSpan] = exporter.getFinishedSpans();
-    expect(sdkSpan?.attributes['gen_ai.agent.id']).toBeUndefined();
-    expect(sdkSpan?.attributes['gen_ai.conversation.id']).toBe('session-sdk');
+    const [sdkChatSpan, sdkWrapperSpan, turnSpan] = exporter.getFinishedSpans();
+    expect(sdkChatSpan?.attributes['gen_ai.agent.id']).toBeUndefined();
+    expect(sdkChatSpan?.attributes['gen_ai.conversation.id']).toBe(
+      'session-sdk',
+    );
+    expect(sdkWrapperSpan?.attributes['agento11y.record']).toBe(false);
+    expect(
+      sdkWrapperSpan?.attributes['gen_ai.conversation.id'],
+    ).toBeUndefined();
     expect(turnSpan?.attributes['agento11y.record']).toBeUndefined();
     expect(turnSpan?.attributes['gen_ai.conversation.id']).toBeUndefined();
     await provider.shutdown();
@@ -575,6 +805,8 @@ describe('evaluation telemetry', () => {
           cacheUsageReported: false,
         });
         const span = exporter.getFinishedSpans()[0];
+        expect(span?.attributes['agento11y.record']).toBe(false);
+        expect(span?.attributes['gen_ai.conversation.id']).toBeUndefined();
         expect(span?.attributes['gen_ai.response.model']).toBe('returned');
         expect(span?.attributes['gen_ai.usage.input_tokens']).toBe(
           usage?.inputTokens,

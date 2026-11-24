@@ -97,6 +97,8 @@ export interface SessionHistoryWindowEntry {
   isCheckpoint: boolean;
   /** SHA-1 of the stored content, used to detect later changes. */
   hash: string;
+  /** ISO timestamp when this message was persisted. */
+  persistedAt?: string;
 }
 
 /**

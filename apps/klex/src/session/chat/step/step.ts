@@ -78,6 +78,8 @@ export interface StepDependencies {
    */
   turnInitialFallbackIndex: number;
   sessionId: string;
+  /** Advances and returns the bounded conversation epoch for each generation attempt. */
+  beginConversationGeneration?: () => string;
   telemetryMetrics?: TelemetryMetrics;
   /**
    * Base system prompt forwarded to the generation runner.
@@ -706,6 +708,10 @@ class StepModule implements Step {
             allowEmptyStop,
             logger: this.deps.logger,
             sessionId: this.deps.sessionId,
+            ...(this.deps.beginConversationGeneration !== undefined && {
+              beginConversationGeneration:
+                this.deps.beginConversationGeneration,
+            }),
             stepSpan,
             modelMessages,
             messages: this.deps.messages,

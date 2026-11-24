@@ -197,6 +197,7 @@ describe('memory retrieval coordinator recalls', () => {
         extensionIdentifier: 'memory',
         modelPurpose: 'chat',
         basePrompt: `Retrieve memory.\n\n${LINES_FORMAT_PROMPT}`,
+        boundedConversation: true,
       }),
     );
     await coordinator.close();

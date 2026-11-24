@@ -684,6 +684,32 @@ describe('memory writer tools', () => {
     expect(entities.list()).toHaveLength(2);
   });
 
+  it('rejects a merge whose combined tags exceed the tag limit', async () => {
+    const { tools, entities } = await fixture();
+    const tags = (prefix: string) =>
+      Array.from({ length: 11 }, (_, n) => `${prefix}-${n}`);
+    const keep = await entities.create(
+      { title: 'Alex Smith', tags: tags('keep') },
+      { General: [fact('Engineer')] },
+    );
+    const drop = await entities.create(
+      { title: 'Alex S', tags: tags('drop') },
+      { General: [fact('Owns billing')] },
+    );
+    await expect(
+      call(tools, 'mergeEntities', {
+        keepId: keep.id,
+        keepRevision: entityRevision(keep),
+        dropId: drop.id,
+        dropRevision: entityRevision(drop),
+      }),
+    ).resolves.toMatchObject({
+      status: 'rejected',
+      reason: expect.stringContaining('tags 22/20'),
+    });
+    expect(entities.list()).toHaveLength(2);
+  });
+
   it('supersedes, rewords, merges, restores, moves and removes facts by read address', async () => {
     const { tools, entities } = await fixture();
     await call(tools, 'createEntity', {

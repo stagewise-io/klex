@@ -1126,10 +1126,14 @@ class WriterToolsModule implements WriterTools {
               throw new Error('Never merge into or from self');
             const merged = mergedEntity(keep, drop);
             checkShape(merged.sections, Object.keys(merged.sections), [], []);
-            const { RelatedTo, LinkedIdentities } = merged.frontmatter;
-            if (RelatedTo.length > 100 || LinkedIdentities.length > 30)
+            const { RelatedTo, LinkedIdentities, Tags } = merged.frontmatter;
+            if (
+              RelatedTo.length > 100 ||
+              LinkedIdentities.length > 30 ||
+              Tags.length > 20
+            )
               throw new Error(
-                `Merged entity would exceed limits (relations ${RelatedTo.length}/100, linked identities ${LinkedIdentities.length}/30). Remove weak relations or stale identities with updateEntity first`,
+                `Merged entity would exceed limits (relations ${RelatedTo.length}/100, linked identities ${LinkedIdentities.length}/30, tags ${Tags.length}/20). Remove weak relations, stale identities or redundant tags with updateEntity first`,
               );
             if (options.signal.aborted) throw new Error('Writer closed');
             const result = await options.entities.merge(

@@ -975,6 +975,11 @@ export interface EntityStoreOptions {
   migrate?: boolean;
   /** Called with the conversion plan before anything is written. */
   onConversionPlanned?: (summary: FlatConversionSummary) => void;
+  /**
+   * Awaited after planning and before the first write of a real conversion,
+   * e.g. to persist the compatibility marker older binaries check.
+   */
+  beforeConversionWrite?: () => Promise<void>;
 }
 
 const MAX_QUALIFIER = 60;
@@ -1056,8 +1061,16 @@ export function planFlatTitles(
           let number = 2;
           taken.has(entityKey(candidate)) || used.has(entityKey(candidate));
           number++
-        )
-          candidate = qualifiedTitle(leaf, `${path} ${number}`);
+        ) {
+          if (number > 100_000)
+            throw new Error(`Cannot plan a unique memory title for ${leaf}`);
+          // Reserve room for the number so qualifier truncation never drops it.
+          const suffix = ` ${number}`;
+          candidate = qualifiedTitle(
+            leaf,
+            `${path.slice(0, MAX_QUALIFIER - suffix.length).trimEnd()}${suffix}`,
+          );
+        }
         used.add(entityKey(candidate));
         return candidate;
       });
@@ -1657,10 +1670,12 @@ class EntityStoreModule implements EntityStore {
     const resolve = (id: string) =>
       replacements.get(id) ?? byKey.get(entityKey(id));
     const droppedLinks: FlatConversionSummary['droppedLinks'] = [];
+    // Current notes are repointed too, so their dangling links are dropped and
+    // reported like everyone else's. Prose is rewritten only on old notes.
     const final = active.map(({ entity, outdated }) =>
-      outdated
+      outdated || moves.length
         ? retargetRelations(
-            rewriteProse(entity, replacements),
+            outdated ? rewriteProse(entity, replacements) : entity,
             resolve,
             (target) => droppedLinks.push({ entity: entity.id, target }),
           )
@@ -1717,8 +1732,10 @@ class EntityStoreModule implements EntityStore {
       this.options.onConversionPlanned?.(structuredClone(this.summary));
     }
     // Older binaries refuse format 7 (and compatibility 4) before touching it.
-    if (moves.length && !this.options.dryRun)
+    if (moves.length && !this.options.dryRun) {
+      await this.options.beforeConversionWrite?.();
       await this.commit({ moves, documents: snapshots });
+    }
     for (const entity of final)
       if (!this.entities.has(entityKey(entity.id)))
         this.entities.set(entityKey(entity.id), entity);

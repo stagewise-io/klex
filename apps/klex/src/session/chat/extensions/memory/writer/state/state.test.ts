@@ -9,6 +9,7 @@ import { createLogger } from '@stagewise/logger';
 import { createLocalData } from '@/local-data';
 import { KLEX_LOCAL_DATA_STORES } from '@/local-data-registry';
 
+import { migrateMemoryDocuments } from '../../memory';
 import { createEntityStore } from '../entities';
 import { createWriterState, MEMORY_WRITER_STORE_DEFINITION } from './state';
 
@@ -163,6 +164,42 @@ describe('registered memory writer state', () => {
       expect(await readFile(migrated, 'utf8')).toBe(note);
     },
   );
+  it('writes the compatibility marker before moving notes when no writer state exists', async () => {
+    const { root, file } = await fixture();
+    const entityFile = join(dirname(file), 'entities/person/Ada.md');
+    await mkdir(dirname(entityFile), { recursive: true });
+    await writeFile(
+      entityFile,
+      '---\nFormatVersion: 5\nCreatedAt: 2026-11-17T10:00:00.000Z\nLastUpdatedAt: 2026-11-17T11:00:00.000Z\nLastReadAt: null\nLinkedIdentities: []\nLoadOn: []\nRelatedTo: []\nTrustScore: 2\nAuthorityScore: 5\n---\n\n## General\n\n- Engineer [old](history:abc)\n',
+    );
+    await startup(root);
+    await expect(readFile(file, 'utf8')).rejects.toThrow('ENOENT');
+    const logger = { info: () => undefined, warn: () => undefined };
+    await migrateMemoryDocuments(root, logger, { dryRun: true });
+    await expect(readFile(file, 'utf8')).rejects.toThrow('ENOENT');
+    await migrateMemoryDocuments(root, logger);
+    expect(JSON.parse(await readFile(file, 'utf8'))._klex).toMatchObject({
+      compatibilityVersion: 4,
+    });
+    await expect(readFile(entityFile, 'utf8')).rejects.toThrow('ENOENT');
+    const oldReader = createLocalData({
+      logging,
+      dataDirectory: root,
+      klexVersion: '0.38.0',
+      stores: [
+        {
+          ...MEMORY_WRITER_STORE_DEFINITION,
+          compatibilityVersion: 2,
+          minimumKlexVersion: '0.37.1',
+        },
+      ],
+    });
+    try {
+      await expect(oldReader.start()).rejects.toThrow();
+    } finally {
+      await oldReader.close();
+    }
+  });
   it.each(['newer', 'invalid'])(
     'rejects %s data before mutation',
     async (kind) => {

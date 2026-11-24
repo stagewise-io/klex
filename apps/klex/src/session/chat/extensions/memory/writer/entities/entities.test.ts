@@ -646,9 +646,57 @@ describe('planFlatTitles', () => {
     }
     expect(titles[0]?.endsWith(' (person)')).toBe(true);
   });
+  it('keeps the number in long numeric fallbacks instead of retrying forever', () => {
+    const folder = `team/${'x'.repeat(70)}`;
+    const { titles } = planFlatTitles(
+      [
+        { folder, leaf: 'Billing' },
+        { folder, leaf: 'billing' },
+        { folder, leaf: 'BILLING' },
+      ],
+      [],
+    );
+    expect(new Set(titles.map((title) => title.toLowerCase())).size).toBe(3);
+    expect(titles[1]?.endsWith(' 2)')).toBe(true);
+    expect(titles[2]?.endsWith(' 3)')).toBe(true);
+    for (const title of titles)
+      expect(entityIdSchema.safeParse(title).success).toBe(true);
+  });
 });
 
 describe('startup flattening', () => {
+  it('drops dangling links on already-flat notes too and runs the pre-write hook first', async () => {
+    const { root } = await fixture();
+    const current = await createEntityStore(root);
+    await current.start();
+    await current.create(
+      {
+        ...entityFieldsSchema.parse({ title: 'Klex', tags: ['projects'] }),
+        relatedTo: [relation('Ghost')],
+      },
+      sections(),
+    );
+    await seed(root, 'person/Ada.md', v6Note());
+    const order: string[] = [];
+    let planned: FlatConversionSummary | undefined;
+    await migrate(root, {
+      onConversionPlanned: (summary) => {
+        planned = summary;
+        order.push('planned');
+      },
+      beforeConversionWrite: async () => {
+        order.push(existsSync(join(root, 'person/Ada.md')) ? 'hook' : 'late');
+      },
+    });
+    expect(order).toEqual(['planned', 'hook']);
+    expect(planned?.droppedLinks).toContainEqual({
+      entity: 'Klex',
+      target: 'Ghost',
+    });
+    expect((await restart(root)).get('Klex')?.frontmatter.RelatedTo).toEqual(
+      [],
+    );
+  });
   it('converts format 6 folders to root titles with literal folder tags, qualified clashes and paired predicates', async () => {
     const { root } = await fixture();
     await seed(

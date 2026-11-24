@@ -137,9 +137,14 @@ const WORK_ITEMS = new Set(['work-items', 'issue', 'pull-request']);
 const ISSUES = new Set(['work-items/issues', 'issue']);
 const EVENTS = new Set(['events', 'event']);
 const PERSONS = new Set(['people', 'person', 'bot']);
-/** A tag matches when it, or its root segment, is one of `kinds`. */
+/** A tag matches when it, or any ancestor (`a`, `a/b` of `a/b/c`), is one of `kinds`. */
 const tagged = (tags: readonly string[], kinds: ReadonlySet<string>) =>
-  tags.some((tag) => kinds.has(tag) || kinds.has(tag.split('/')[0] ?? ''));
+  tags.some((tag) => {
+    const segments = tag.split('/');
+    return segments.some((_, index) =>
+      kinds.has(segments.slice(0, index + 1).join('/')),
+    );
+  });
 
 const sourceIdsSchema = z
   .array(z.string().min(1).max(4096))

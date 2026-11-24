@@ -1,0 +1,60 @@
+---
+title: Controle seu Klex Bot
+sidebar:
+  label: Controle
+description: Pare um Klex Bot e gerencie seu acesso a computadores e aplicativos conectados.
+related:
+  - /pt/bot/guides/observability
+  - /pt/bot/concepts/brain-and-computers
+  - /pt/guides/secure-bot-usage
+---
+
+Você pode parar um Klex Bot e gerenciar o que ele pode acessar por meio de suas conexões e contas.
+
+<a id="run-a-self-hosted-bot-without-the-picker"></a>
+<a id="stop-a-bot"></a>
+
+## Parar um Bot
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Hospedado na nuvem">
+
+No Klex Cloud, abra seu Bot e selecione **Stop** nos controles de hospedagem.
+
+</Tab>
+<Tab title="Auto-hospedado">
+
+Para parar um Bot executado no aplicativo, feche o aplicativo.
+
+<a id="stop-a-headless-bot"></a>
+
+Para um Bot sem interface, use o comando de parada do seu gerenciador de serviços. Se o processo for supervisionado, configure-o para que o Bot não reinicie imediatamente.
+
+</Tab>
+</Tabs>
+
+<a id="manage-access"></a>
+
+## Gerenciar acesso
+
+<Tabs syncKey="hosting" hash={false}>
+<Tab title="Hospedado na nuvem">
+
+No Klex Cloud, abra **Connectors** do seu Bot para gerenciar suas conexões.
+
+</Tab>
+<Tab title="Auto-hospedado">
+
+No aplicativo Klex, use **Settings → MCP Servers** para inspecionar, editar ou remover um servidor. Consulte [MCP e Klex Bots](/pt/bot/concepts/mcp#add-a-remote-server-in-the-self-hosted-app) para ver as etapas e a ressalva sobre revogação de OAuth.
+
+</Tab>
+</Tabs>
+
+Configure as permissões das contas e dos aplicativos usados pelo Bot diretamente nessas contas e aplicativos. Consulte [Conexões com computadores e aplicativos](/pt/bot/concepts/brain-and-computers) para entender a relação entre conexões e permissões das contas.
+
+Atualmente, o Klex não oferece suporte a aprovações ou restrições para ações individuais. Configure as permissões das contas e dos aplicativos do Bot de acordo com isso.
+
+Você também pode [revisar a atividade do Bot](/pt/bot/guides/observability) no painel.
+
+<noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
+<script src="/hosting-tabs.js" defer></script>

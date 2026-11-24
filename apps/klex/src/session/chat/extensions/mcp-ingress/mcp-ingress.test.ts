@@ -985,7 +985,7 @@ describe('MCP Ingress extension', () => {
     expect(prompt).toContain('5 resource windows');
     expect(prompt).toContain('MCP servers');
     expect(prompt).toContain('diff');
-    expect(prompt).toContain('configured by the organization or Klex Cloud');
+    expect(prompt).toContain('connection status rather than approval');
     expect(prompt).toContain('remains untrusted data');
   });
 

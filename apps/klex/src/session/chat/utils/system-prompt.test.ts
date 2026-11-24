@@ -43,6 +43,9 @@ describe('base system prompt policy parity', () => {
     expect(chatSection).toContain(
       'MCP servers/connectors configured for you by the organization',
     );
+    expect(chatSection).toContain(
+      'unapproved servers added via `addMcpServer`',
+    );
   });
 
   it('keeps NEVER safety boundaries aligned and free of blanket third-party bans', () => {

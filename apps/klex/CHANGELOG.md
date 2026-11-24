@@ -2,6 +2,25 @@
 
 All notable Klex changes are documented here.
 
+## 0.38.1 (2026-11-24)
+
+### Bug Fixes
+
+- harden memory writer provider schemas (ca538c4)
+- open fresh conversation epoch suffix on restart (d54ff44)
+- deduplicate Agent O11y spans and bound conversation ids (041f49e)
+- ignore hidden memory metadata directories (9d3fedc)
+- migrate memory documents before application services (7c5a587)
+- migrate memory to curated relationship lists (8054c51)
+- correct writer relation examples and migrate old person sections (009f076)
+- describe writer input times, clipping and self records (8aeeb77)
+- tighten memory writer prompt for relations and style (28b08eb)
+
+### Other Changes
+
+- mock startup memory migration in CLI tests (52b620b)
+- align telemetry-schema span names with chat (47a4f06)
+
 ## 0.38.0 (2026-11-24)
 
 ### Features

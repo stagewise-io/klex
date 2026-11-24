@@ -207,6 +207,52 @@ describe('temporary memory recall', () => {
     });
   });
 
+  it('preserves search matches and scans later sources after a read failure', async () => {
+    const h = setup();
+    await call(tools(h.extension), 'recallFromMemory', { question: 'Recall' });
+    h.activities.manifest.mockResolvedValue([
+      { id: 'last', bytes: 100 },
+      { id: 'broken', bytes: 100 },
+      { id: 'first', bytes: 100 },
+    ]);
+    h.activities.readPage.mockImplementation(async (id?: string) => {
+      if (id === 'broken') throw new Error('unavailable');
+      return {
+        text: 'deployment evidence',
+        scannedBytes: 100,
+        truncated: false,
+      };
+    });
+    expect(
+      await call(tools(h.reader()), 'searchHistory', {
+        query: 'deployment',
+        offset: 0,
+      }),
+    ).toMatchObject({
+      matches: [{ id: 'first' }, { id: 'last' }],
+      unavailable: 1,
+      truncated: true,
+    });
+  });
+
+  it('stops an unanswered helper at its step budget', async () => {
+    const h = setup();
+    h.child.waitForIdle.mockImplementation(async () => {
+      await h.reader().onStepComplete?.({
+        generation: {},
+        shouldContinue: true,
+      } as StepCompleteEvent);
+      return false;
+    });
+    expect(
+      await call(tools(h.extension), 'recallFromMemory', {
+        question: 'Recall',
+      }),
+    ).toMatchObject({ error: expect.stringContaining('Do not retry') });
+    expect(h.child.waitForIdle).toHaveBeenCalledTimes(20);
+    expect(h.child.close).toHaveBeenCalledOnce();
+  });
+
   it('forces plain-text helper steps to continue until an answer tool call', async () => {
     const h = setup();
     h.child.waitForIdle.mockImplementationOnce(async () => {

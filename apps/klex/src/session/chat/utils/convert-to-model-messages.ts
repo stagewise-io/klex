@@ -47,7 +47,7 @@ export const convertToModelMessagesExtended = async (
   transformers: DataPartTransformers,
   onMemoryMetrics?: Parameters<typeof materializeMemories>[1],
 ): ReturnType<typeof convertToModelMessages> => {
-  const materialized = materializeContextParts(materializeSkills(messages));
+  const materialized = materializeContextParts(messages);
   // Find the last user message index.
   let lastUserMsgIdx = -1;
   for (let i = materialized.length - 1; i >= 0; i--) {
@@ -60,7 +60,7 @@ export const convertToModelMessagesExtended = async (
   if (lastUserMsgIdx === -1) {
     return projectSandboxToolMedia(
       await convertToModelMessages<ExtendedUIMessage>(
-        materializeMemories(materialized, onMemoryMetrics),
+        materializeMemories(materializeSkills(materialized), onMemoryMetrics),
         {
           convertDataPart: makeConvertDataPart(transformers),
         },
@@ -102,7 +102,7 @@ export const convertToModelMessagesExtended = async (
 
   return projectSandboxToolMedia(
     await convertToModelMessages<ExtendedUIMessage>(
-      materializeMemories(filtered, onMemoryMetrics),
+      materializeMemories(materializeSkills(filtered), onMemoryMetrics),
       {
         convertDataPart: makeConvertDataPart(transformers),
       },

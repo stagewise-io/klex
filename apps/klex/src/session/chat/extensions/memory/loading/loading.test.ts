@@ -635,12 +635,18 @@ describe('memory materialization', () => {
 
   it('reports rendering counts and ignores unknown snapshot versions without exposing facts', () => {
     const metrics = vi.fn();
-    materializeMemories(
+    const rendered = materializeMemories(
       [
         base('a', 'Private fact'),
         message('bad', [
           createDataPart('loadedMemories', {
-            unknown: JSON.stringify({ version: 99 }),
+            unknown: JSON.stringify({
+              version: 99,
+              kind: 'entity',
+              title: 'Invalid',
+              body: 'INVALID SNAPSHOT SECRET',
+              sections: [],
+            }),
           }),
         ]),
       ],
@@ -655,7 +661,23 @@ describe('memory materialization', () => {
         omittedDocuments: 0,
       }),
     );
+    expect(texts(rendered)).toContain('Private fact');
+    expect(texts(rendered)).not.toContain('INVALID SNAPSHOT SECRET');
     expect(JSON.stringify(metrics.mock.calls)).not.toContain('Private fact');
+  });
+
+  it.each([
+    null,
+    { version: 1 },
+    { version: 1, budget: 8000, ranked: [null], removed: [], unavailable: [] },
+    { version: 1, budget: NaN, ranked: [], removed: [], unavailable: [] },
+  ])('ignores malformed rendering status %j', (data) => {
+    expect(() =>
+      materializeMemories([
+        base('valid', 'Visible'),
+        message('bad-status', [createDataPart('memoryLoadingStatus', data)]),
+      ]),
+    ).not.toThrow();
   });
 
   it('escapes hostile wrappers and attributes', () => {
@@ -820,12 +842,12 @@ describe('memory materialization', () => {
   });
 
   it('uses a complete replacement when diff work exceeds its independent limit', () => {
-    const before = 'unchanged line\n'.repeat(6000);
-    const history = [base('old', before), base('latest', `${before}new fact`)];
+    const before = 'unchanged line\n'.repeat(10001);
+    const history = [base('old', before), base('latest', 'new fact')];
     history[1]!.parts.push(
       createDataPart('memoryLoadingStatus', {
         version: 1,
-        budget: 30000,
+        budget: 8000,
         ranked: [],
         removed: [],
         unavailable: [],

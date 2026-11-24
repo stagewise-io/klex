@@ -32,6 +32,7 @@ import { SessionInboxUrgency } from '@/session/inbox';
 import type { ChildSessionHandle } from '@/session/types';
 import type { SkillRegistry } from '@/skills';
 
+import memoryPrompt from '../system-prompt-part.md';
 import {
   createEntityStore,
   type EntityStore,
@@ -86,6 +87,10 @@ class WriterToolsExtension implements Extension {
     private readonly get: () => ToolSet,
     readonly onStepComplete: (event: StepCompleteEvent) => void,
   ) {}
+  getSystemPromptPart(): string {
+    return memoryPrompt;
+  }
+
   getTools(): ToolSet {
     return this.get();
   }
@@ -226,12 +231,15 @@ class MemoryWriterExtension implements Extension {
     return this.loader?.tools ?? {};
   }
 
-  onHistoryAnnotationsCommitted(parts: ExtendedUIMessage['parts']): void {
+  onHistoryAnnotationsCommitted(parts: ExtendedUIMessage['parts']): undefined {
     this.loader?.commit(parts);
+    return undefined;
   }
 
-  onIdle(): ExtendedUIMessage['parts'] | undefined {
-    return this.loader?.idle();
+  onIdle(
+    history: readonly ExtendedUIMessage[],
+  ): ExtendedUIMessage['parts'] | undefined {
+    return this.loader?.idle(history);
   }
 
   getCheckpointCarry(): Promise<ExtendedUIMessage['parts']> {

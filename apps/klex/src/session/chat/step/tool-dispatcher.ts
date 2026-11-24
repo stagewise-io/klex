@@ -5,7 +5,7 @@ import type { ModuleLogger } from '@stagewise/logger';
 
 import { createDataPart } from '@/session/chat/extensions/extension-api';
 import { normalizeJsonValue, ToolExecutor } from '@/session/interaction';
-import type { McpInvocation } from '@/tool-provider';
+import { createInvocationEvidence } from '@/tool-provider';
 
 import type { ExtendedUIMessage } from '../message-types';
 import type { AgentTools } from '../tools';
@@ -32,7 +32,7 @@ export class ToolDispatcher {
     | { state: 'output-error'; errorText: string }
   >();
   private readonly toolExecutor: ToolExecutor;
-  private readonly invocations = new Map<string, McpInvocation>();
+  private readonly invocations = createInvocationEvidence();
 
   constructor(
     private readonly deps: {
@@ -96,7 +96,7 @@ export class ToolDispatcher {
    */
   reconcile(message: ExtendedUIMessage | null): void {
     if (!message) return;
-    if (this.invocations.size) {
+    if (this.invocations.values().length) {
       message.parts = message.parts.filter(
         (part) => part.type !== ('data-mcpInvocations' as string),
       );
@@ -227,7 +227,7 @@ export class ToolDispatcher {
       input,
     });
     for (const invocation of result.mcpInvocations ?? [])
-      this.invocations.set(invocation.id, invocation);
+      this.invocations.add(invocation);
     if (result.status === 'success') {
       const terminal = {
         output: result.output,

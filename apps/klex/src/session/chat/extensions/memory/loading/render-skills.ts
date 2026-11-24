@@ -50,7 +50,16 @@ export function materializeSkills(
     for (const part of message.parts) {
       if (isDataPartOf('availableSkills', part)) {
         const skills = (part as unknown as { data: Listed[] }).data;
-        if (!Array.isArray(skills)) continue;
+        if (
+          !Array.isArray(skills) ||
+          !skills.every(
+            (skill) =>
+              skill &&
+              typeof skill.name === 'string' &&
+              typeof skill.description === 'string',
+          )
+        )
+          continue;
         if (catalogue === undefined)
           prefix.push(
             `<available-skills>\n${table(skills)}\n</available-skills>`,
@@ -75,9 +84,10 @@ export function materializeSkills(
         continue;
       }
       const remaining: Record<string, string> = {};
-      for (const [filename, value] of Object.entries(
-        (part as unknown as { data: Record<string, string> }).data,
-      )) {
+      const data = (part as unknown as { data: unknown }).data;
+      if (!data || typeof data !== 'object' || Array.isArray(data)) continue;
+      for (const [filename, value] of Object.entries(data)) {
+        if (typeof value !== 'string') continue;
         const snapshot = parseSnapshot(value);
         if (
           !snapshot ||

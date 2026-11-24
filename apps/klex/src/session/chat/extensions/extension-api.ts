@@ -689,7 +689,9 @@ export interface Extension {
   onClose?: () => Promise<void>;
 
   /** True session idle: no queued/unconsumed input or pending retry. Not a step boundary or lane lease. Must be synchronous. */
-  onIdle?: () => void | ExtendedUIMessage['parts'];
+  onIdle?: (
+    history: readonly ExtendedUIMessage[],
+  ) => void | ExtendedUIMessage['parts'];
 
   /**
    * Returns the tools this extension provides to the LLM for the given
@@ -776,7 +778,9 @@ export interface Extension {
   ) => ProvisionalStepContext | Promise<ProvisionalStepContext>;
 
   /** Synchronous state commit after annotation validation and history acceptance. Must not throw. */
-  onHistoryAnnotationsCommitted?: (parts: ExtendedUIMessage['parts']) => void;
+  onHistoryAnnotationsCommitted?: (
+    parts: ExtendedUIMessage['parts'],
+  ) => undefined;
 
   /** Stage extension-owned data annotations on the latest canonical message.
    * Core validates ownership and commits only if the captured window is unchanged.

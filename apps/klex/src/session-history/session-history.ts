@@ -1186,6 +1186,19 @@ class SessionHistoryModule implements SessionHistory {
                 ORDER BY ord ASC`,
           args: [sessionId, checkpoint.coversThroughOrd],
         });
+        const tailEntries: SessionHistoryWindowEntry[] = [];
+        // Hydration can issue snapshot queries. Keep startup fan-out bounded.
+        for (const row of tail.rows) {
+          tailEntries.push(
+            await toWindowEntry(
+              client,
+              toNumber(row.ord),
+              toText(row.instance_id),
+              toText(row.content),
+              false,
+            ),
+          );
+        }
         return {
           hasCheckpoint: true,
           entries: [
@@ -1196,17 +1209,7 @@ class SessionHistoryModule implements SessionHistory {
               checkpoint.content,
               true,
             ),
-            ...(await Promise.all(
-              tail.rows.map((row) =>
-                toWindowEntry(
-                  client,
-                  toNumber(row.ord),
-                  toText(row.instance_id),
-                  toText(row.content),
-                  false,
-                ),
-              ),
-            )),
+            ...tailEntries,
           ],
         };
       }

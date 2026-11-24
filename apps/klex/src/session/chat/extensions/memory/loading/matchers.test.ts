@@ -13,6 +13,8 @@ vi.mock('node:worker_threads', () => ({
       super();
       workers.instances.push(this);
     }
+    ref = vi.fn();
+    unref = vi.fn();
     postMessage = vi.fn();
     terminate = vi.fn(async () => 0);
   },
@@ -22,6 +24,20 @@ afterEach(() => {
   vi.useRealTimers();
 });
 describe('matcher isolation', () => {
+  it.each(['memory', 'memory-update', 'memory-detail'])(
+    'excludes generated %s text',
+    (tag) => {
+      expect(
+        project({
+          id: 'generated',
+          role: 'user',
+          parts: [
+            { type: 'text', text: `<${tag} filename="x">trigger</${tag}>` },
+          ],
+        } as ExtendedUIMessage).text,
+      ).toEqual([]);
+    },
+  );
   it.each(['tool-recallFromMemory', 'realtime'])(
     'excludes generated recall evidence from %s',
     (kind) => {
@@ -115,7 +131,7 @@ describe('matcher isolation', () => {
       [...rules],
     );
     await vi.advanceTimersByTimeAsync(0);
-    (workers.instances[1] as EventEmitter).emit('message', 'ready');
+    expect(workers.instances).toHaveLength(1);
     await vi.advanceTimersByTimeAsync(151);
     expect(await runaway).toBe(0);
     expect(timeout).toHaveBeenCalledOnce();

@@ -104,6 +104,44 @@ function getConvertDataPart() {
 // --- tests ---
 
 describe('convertToModelMessagesExtended', () => {
+  it.each(['continue', 'check'])(
+    'preserves %s signals when skills append generated user messages',
+    async (signal) => {
+      await convertToModelMessagesExtended(
+        [
+          {
+            ...makeMessage(
+              [{ type: 'text', text: 'Not finished' }],
+              'assistant',
+            ),
+            id: 'assistant',
+          },
+          {
+            ...makeMessage([
+              { type: `data-${signal}`, data: {} } as never,
+              {
+                type: 'data-loadedMemories',
+                data: {
+                  'skills/test/SKILL.md': JSON.stringify({
+                    version: 1,
+                    kind: 'skill',
+                    title: 'test',
+                    sections: [],
+                    body: 'Procedure',
+                  }),
+                },
+              } as never,
+            ]),
+            id: 'signal',
+          },
+        ],
+        makeTransformers(),
+      );
+      const rendered = vi.mocked(convertToModelMessages).mock.calls.at(-1)?.[0];
+      expect(JSON.stringify(rendered)).toContain(`data-${signal}`);
+      expect(JSON.stringify(rendered)).toContain('<skill');
+    },
+  );
   it('delegates to convertToModelMessages with the messages and transformers', async () => {
     const messages = [makeMessage([{ type: 'text', text: 'hello' }])];
     const transformers = makeTransformers();

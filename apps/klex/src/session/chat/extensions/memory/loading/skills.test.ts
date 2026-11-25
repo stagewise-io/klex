@@ -80,7 +80,11 @@ describe('skill context lifecycle', () => {
       expect(text([first])).toContain('Run tests.');
       const idle = message('idle', loader.idle([recall, first, next]));
       const after = await loader.prepare([recall, first, next, idle], model);
-      expect(after[0]).toMatchObject({ data: {} });
+      expect(after).toContainEqual({
+        type: 'data-loadedMemories',
+        data: {},
+      });
+      expect(text([message('after-idle', after)])).not.toContain('Run tests.');
       const fresh = { ...recall, id: 'fresh-recall' };
       const reloaded = await loader.prepare(
         [recall, first, next, idle, fresh],

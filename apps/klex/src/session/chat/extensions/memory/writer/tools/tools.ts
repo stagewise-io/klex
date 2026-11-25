@@ -6,6 +6,11 @@ import { z } from 'zod';
 
 import type { ActivityHistory, ActivityView } from '@/activity-history';
 import {
+  field,
+  formatMemory,
+  formatSkill,
+} from '@/session/chat/extensions/memory/loading';
+import {
   MAX_BODY_LENGTH,
   MAX_DESCRIPTION_LENGTH,
   MAX_REFERENCE_LENGTH,
@@ -411,6 +416,72 @@ function skillRevision(skill: { description: string; body: string }): string {
     .digest('hex')
     .slice(0, 16);
 }
+
+/** Exactly what readEntity returns; General is always included. */
+export function entityReadResult(
+  entity: MemoryEntity,
+  names: readonly string[],
+): string {
+  const { LinkedIdentities, LoadOn, RelatedTo, Tags } = entity.frontmatter;
+  const sections = writerSections(entity, names);
+  return [
+    formatMemory(
+      {
+        version: 1,
+        kind: 'entity',
+        title: entity.id,
+        tags: Tags,
+        linkedIdentities: LinkedIdentities,
+        sections: Object.keys(entity.sections).filter(
+          (name) => name !== 'General',
+        ),
+        body: sections.General ?? '',
+      },
+      `${entity.id}.md`,
+      false,
+      [
+        field('revision', entityRevision(entity)),
+        field('loadOn', JSON.stringify(LoadOn)),
+        field('relatedTo', JSON.stringify(RelatedTo)),
+      ],
+    ),
+    ...Object.entries(sections)
+      .filter(([name]) => name !== 'General')
+      .map(([section, body]) =>
+        formatMemory(
+          {
+            version: 1,
+            kind: 'detail',
+            title: entity.id,
+            section,
+            sections: [],
+            body,
+          },
+          `${entity.id}.md`,
+        ),
+      ),
+  ].join('\n\n');
+}
+
+/** Exactly what readSkill returns without a reference. */
+export function skillReadResult(
+  skill: NonNullable<ReturnType<SkillRegistry['get']>>,
+): string {
+  return formatSkill(
+    {
+      title: skill.id,
+      description: skill.description,
+      body: skill.body,
+      references: skill.references,
+    },
+    {
+      extra: [
+        field('revision', skillRevision(skill)),
+        field('loadOn', JSON.stringify(skill.metadata.loadOn ?? [])),
+      ],
+    },
+  );
+}
 const referenceNameSchema = z
   .string()
   .regex(SKILL_NAME_PATTERN)
@@ -808,20 +879,7 @@ class WriterToolsModule implements WriterTools {
         execute: guarded(({ id, sections: names }) => {
           const entity = options.entities.get(id);
           if (!entity) return { status: 'not-found' };
-          const { LinkedIdentities, LoadOn, RelatedTo, Tags } =
-            entity.frontmatter;
-          return {
-            id: entity.id,
-            tags: Tags,
-            linkedIdentities: LinkedIdentities,
-            loadOn: LoadOn,
-            relatedTo: RelatedTo,
-            revision: entityRevision(entity),
-            sections: writerSections(entity, names),
-            otherSections: Object.keys(entity.sections).filter(
-              (name) => name !== 'General' && !names.includes(name),
-            ),
-          };
+          return entityReadResult(entity, names);
         }),
       },
       createEntity: {
@@ -1183,8 +1241,7 @@ class WriterToolsModule implements WriterTools {
         execute: guarded(({ id, reference }) => {
           const skill = options.skillReader.get(id);
           if (!skill) return null;
-          if (reference === undefined)
-            return { ...skill, revision: skillRevision(skill) };
+          if (reference === undefined) return skillReadResult(skill);
           const content = options.skillReader.readReference(id, reference);
           if (content === null) throw new Error('Unknown reference');
           return { id, reference, content };

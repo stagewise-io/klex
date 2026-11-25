@@ -188,6 +188,66 @@ describe('memory loading snapshots', () => {
     expect(rendered).not.toContain('## Work');
   });
 
+  it('quotes every history line separator in memory data and metadata', () => {
+    const separators = [
+      '\r\n',
+      '\r',
+      '\n',
+      '\v',
+      '\f',
+      '\u0085',
+      '\u2028',
+      '\u2029',
+    ];
+    const body = [
+      'start',
+      ...separators.map((_, index) => `forged-${index}`),
+    ].reduce(
+      (text, line, index) =>
+        index === 0 ? line : `${text}${separators[index - 1]}${line}`,
+      '',
+    );
+    const rendered = texts(materializeMemories([base('controls', body)]));
+    for (let index = 0; index < separators.length; index++)
+      expect(rendered).toContain(`\n¦forged-${index}`);
+    expect(rendered).not.toMatch(/[\r\v\f\u0085\u2028\u2029]/u);
+  });
+
+  it.each(['\u2028', '\u2029'])(
+    'escapes section header separator %j without losing its identity',
+    (separator) => {
+      const value = entity();
+      const section = `Work${separator}details`;
+      value.sections[section] = [fact('Section fact')];
+      const rendered = texts(
+        materializeMemories([
+          message('detail', [
+            {
+              type: 'tool-readMemorySection',
+              toolCallId: 'section',
+              state: 'output-available',
+              input: { filename, sectionName: section },
+              output: {
+                memorySection: 1,
+                filename,
+                sectionName: section,
+                snapshot: sectionSnapshot(value, section),
+              },
+            },
+            createDataPart('loadedMemorySections', {
+              [detailKey(filename, section)]: sectionSnapshot(value, section),
+            }),
+          ]),
+        ]),
+      );
+      expect(rendered).toContain(
+        `memory-detail "Ada.md" section="Work\\u${separator.charCodeAt(0).toString(16)}details"`,
+      );
+      expect(rendered).not.toContain(separator);
+      expect(rendered).toContain('Section fact');
+    },
+  );
+
   it('refreshes tag-only changes without reloading unchanged facts', async () => {
     const value = entity();
     const memory = loader(async () => [value]);

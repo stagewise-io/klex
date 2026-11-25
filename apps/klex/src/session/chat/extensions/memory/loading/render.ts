@@ -17,10 +17,15 @@ import {
 
 const quote = (value: string) =>
   value
-    .split(/\r\n|[\r\n\u2028\u2029]/u)
+    .split(/\r\n|[\r\n\v\f\u0085\u2028\u2029]/u)
     .map((line) => `¦${line}`)
     .join('\n');
-const inline = (value: string) => value.replace(/[\r\n\u2028\u2029]/gu, ' ');
+const inline = (value: string) =>
+  value.replace(/[\r\n\v\f\u0085\u2028\u2029]/gu, ' ');
+const labelString = (value: string) =>
+  JSON.stringify(value)
+    .replace(/\u2028/gu, '\\u2028')
+    .replace(/\u2029/gu, '\\u2029');
 const displayFilename = (filename: string) =>
   filename.startsWith(ENTITY_PREFIX)
     ? filename.slice(ENTITY_PREFIX.length)
@@ -111,7 +116,7 @@ function block(
   replacement = false,
 ): string {
   const snapshot = entry.snapshot;
-  const label = `${JSON.stringify(displayFilename(entry.filename))}${snapshot.section ? ` section=${JSON.stringify(snapshot.section)}` : ''}`;
+  const label = `${labelString(displayFilename(entry.filename))}${snapshot.section ? ` section=${labelString(snapshot.section)}` : ''}`;
   if (snapshot.removed) return `memory-update ${label} removed`;
   const current = body(snapshot);
   if (previous && !previous.removed) {

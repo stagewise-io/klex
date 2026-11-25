@@ -475,6 +475,7 @@ export function skillReadResult(
       references: skill.references,
     },
     {
+      referenceTool: 'readSkill',
       extra: [
         field('revision', skillRevision(skill)),
         field('loadOn', JSON.stringify(skill.metadata.loadOn ?? [])),

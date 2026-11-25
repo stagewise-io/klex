@@ -1118,6 +1118,13 @@ describe('memory writer tools', () => {
         sourceIds: [source],
       }),
     ).toMatchObject({ status: 'written', references: ['flags'] });
+    const withReference = await call(tools, 'readSkill', {
+      id: 'learning/deploy',
+    });
+    expect(withReference).toContain(
+      'References (readSkill with reference): flags',
+    );
+    expect(withReference).not.toContain('loadSkill');
     expect(
       await call(tools, 'readSkill', {
         id: 'learning/deploy',

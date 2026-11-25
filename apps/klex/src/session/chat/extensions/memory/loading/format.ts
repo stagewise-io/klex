@@ -54,11 +54,12 @@ export function formatMemory(
 
 export function skillBody(
   snapshot: Pick<MemorySnapshot, 'body' | 'references'>,
+  referenceTool: 'loadSkill' | 'readSkill' = 'loadSkill',
 ): string {
   return (
     snapshot.body +
     (snapshot.references?.length
-      ? `\n\nReferences (loadSkill with reference): ${snapshot.references.join(', ')}`
+      ? `\n\nReferences (${referenceTool} with reference): ${snapshot.references.join(', ')}`
       : '')
   );
 }
@@ -70,6 +71,7 @@ export function formatSkill(
   >,
   options: {
     reference?: string;
+    referenceTool?: 'loadSkill' | 'readSkill';
     replacement?: boolean;
     extra?: readonly string[];
   } = {},
@@ -80,6 +82,6 @@ export function formatSkill(
       ? [field('description', snapshot.description)]
       : []),
     ...(options.extra ?? []),
-    field('content', skillBody(snapshot)),
+    field('content', skillBody(snapshot, options.referenceTool)),
   ].join('\n');
 }

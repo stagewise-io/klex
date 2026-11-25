@@ -351,6 +351,8 @@ describe('temporary memory recall', () => {
       'skill learning/deploy\ndescription\n¦Deploying\ncontent\n¦Push first',
     );
     expect(skill).not.toContain('metadata');
+    expect(skill).toContain('References (readSkill with reference): flags');
+    expect(skill).not.toContain('loadSkill');
     h.skills.readReference.mockReturnValue('Use --dry-run' as never);
     expect(
       await call(set, 'readSkill', {

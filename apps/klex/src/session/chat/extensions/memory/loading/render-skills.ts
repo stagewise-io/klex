@@ -3,19 +3,28 @@ import { createHash } from 'node:crypto';
 import { isDataPartOf } from '@/session/chat/extensions/extension-api';
 import type { ExtendedUIMessage } from '@/session/chat/message-types';
 
-import { parseSnapshot } from './types';
+import { diff } from './render';
+import { type MemorySnapshot, parseSnapshot } from './types';
 
-const escapeSkill = (value: string) =>
+const quote = (value: string) =>
   value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;');
+    .split(/\r\n|[\r\n\u2028\u2029]/u)
+    .map((line) => `¦${line}`)
+    .join('\n');
+const inline = (value: string) => value.replace(/[\r\n\u2028\u2029]/gu, ' ');
 const cell = (value: string) =>
-  escapeSkill(value).replaceAll('|', '&#124;').replace(/\s+/gu, ' ');
+  value.replaceAll('\\', '\\\\').replaceAll('|', '\\|').replace(/\s+/gu, ' ');
 interface Listed {
   name: string;
   description: string;
+}
+function skillBody(snapshot: MemorySnapshot): string {
+  return (
+    snapshot.body +
+    (snapshot.references?.length
+      ? `\n\nReferences (loadSkill with reference): ${snapshot.references.join(', ')}`
+      : '')
+  );
 }
 function table(skills: Listed[]): string {
   return [
@@ -42,6 +51,7 @@ export function materializeSkills(
     carried as unknown as { data?: { window?: string } } | undefined
   )?.data?.window;
   const seen = new Map<string, string>();
+  const snapshots = new Map<string, MemorySnapshot>();
   const prefix: string[] = [];
   const output: ExtendedUIMessage[] = [];
   for (const message of history) {
@@ -61,19 +71,33 @@ export function materializeSkills(
         )
           continue;
         if (catalogue === undefined)
-          prefix.push(
-            `<available-skills>\n${table(skills)}\n</available-skills>`,
-          );
+          prefix.push(`available-skills\n${quote(table(skills))}`);
         else if (JSON.stringify(catalogue) !== JSON.stringify(skills)) {
+          const previous = new Map(
+            catalogue.map((skill) => [skill.name, skill.description]),
+          );
+          const added = skills.filter((skill) => !previous.has(skill.name));
+          const changed = skills.filter(
+            (skill) =>
+              previous.has(skill.name) &&
+              previous.get(skill.name) !== skill.description,
+          );
           const removed = catalogue
             .filter(
               (previous) =>
                 !skills.some((skill) => skill.name === previous.name),
             )
-            .map((skill) => `Removed: ${cell(skill.name)}`);
-          blocks.push(
-            `<available-skills-change>\n${table(skills)}${removed.length ? `\n${removed.join('\n')}` : ''}\n</available-skills-change>`,
-          );
+            .map((skill) => `Deleted: ${cell(skill.name)}`);
+          if (added.length || changed.length || removed.length)
+            blocks.push(
+              `available-skills-change\n${quote(
+                [
+                  ...(added.length ? [`New:\n${table(added)}`] : []),
+                  ...(changed.length ? [`Updated:\n${table(changed)}`] : []),
+                  ...removed,
+                ].join('\n'),
+              )}`,
+            );
         }
         catalogue = skills;
         continue;
@@ -100,12 +124,46 @@ export function materializeSkills(
         const hash = createHash('sha256').update(value).digest('hex');
         if (seen.get(filename) === hash) continue;
         seen.set(filename, hash);
-        const attrs = `name="${escapeSkill(snapshot.title)}"${snapshot.kind === 'skill-reference' ? ` reference="${escapeSkill(snapshot.section ?? '')}"` : ''}`;
+        const label = `${inline(snapshot.title)}${snapshot.kind === 'skill-reference' ? ` reference=${JSON.stringify(snapshot.section ?? '')}` : ''}`;
         const tag = snapshot.kind;
-        const references = snapshot.references?.length
-          ? `\n\nReferences (loadSkill with reference): ${snapshot.references.join(', ')}`
-          : '';
-        const text = `<${tag} ${attrs}>\n${escapeSkill(snapshot.body)}${escapeSkill(references)}\n</${tag}>`;
+        const previous = snapshots.get(filename);
+        snapshots.set(filename, snapshot);
+        const current = skillBody(snapshot);
+        const full = (replacement = false) =>
+          [
+            `${tag} ${label}${replacement ? ' replacement' : ''}`,
+            ...(snapshot.description
+              ? [`description\n${quote(snapshot.description)}`]
+              : []),
+            `content\n${quote(current)}`,
+          ].join('\n');
+        let text = full();
+        if (snapshot.removed) {
+          text = `${tag}-update ${label} deleted`;
+        } else if (previous && !previous.removed) {
+          const before = skillBody(previous);
+          const metadata =
+            previous.description !== snapshot.description
+              ? `\nDescription changed: ${snapshot.description ?? '(removed)'}`
+              : '';
+          if (before === current && !metadata) continue;
+          // Bound diff work, and use a full replacement when the patch is larger.
+          const bounded =
+            before.length + current.length <= 100_000 &&
+            before.split('\n').length + current.split('\n').length <= 10_000;
+          const patch =
+            bounded && before !== current ? diff(before, current) : '';
+          text =
+            bounded &&
+            (before === current ||
+              patch.length + metadata.length < current.length)
+              ? [
+                  `${tag}-update ${label}`,
+                  ...(patch ? [`patch\n${quote(patch)}`] : []),
+                  ...(metadata ? [`metadata\n${quote(metadata.trim())}`] : []),
+                ].join('\n')
+              : full(true);
+        }
         if (
           message === history[0] &&
           message.parts.some((item) => isDataPartOf('context-summary', item))

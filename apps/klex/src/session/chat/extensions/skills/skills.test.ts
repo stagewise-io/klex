@@ -149,7 +149,7 @@ describe('skills extension', () => {
     await ext.onStart?.();
     const prompt = ext.getSystemPromptPart?.() ?? '';
     expect(prompt).toContain('loadSkill');
-    expect(prompt).toContain('<skill name=');
+    expect(prompt).toContain('skill namespace/name');
     const loader = createMemoryLoader({
       entities: { snapshot: async () => [] },
       skills: registry,

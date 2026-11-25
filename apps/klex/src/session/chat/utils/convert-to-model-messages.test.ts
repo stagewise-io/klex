@@ -139,7 +139,7 @@ describe('convertToModelMessagesExtended', () => {
       );
       const rendered = vi.mocked(convertToModelMessages).mock.calls.at(-1)?.[0];
       expect(JSON.stringify(rendered)).toContain(`data-${signal}`);
-      expect(JSON.stringify(rendered)).toContain('<skill');
+      expect(JSON.stringify(rendered)).toContain('skill ');
     },
   );
   it('delegates to convertToModelMessages with the messages and transformers', async () => {

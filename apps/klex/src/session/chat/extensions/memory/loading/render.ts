@@ -8,18 +8,32 @@ import type { ExtendedUIMessage } from '@/session/chat/message-types';
 import {
   detailKey,
   detailResultSchema,
+  ENTITY_PREFIX,
   type LoadingStatus,
   lexical,
   type MemorySnapshot,
   parseSnapshot,
 } from './types';
 
-const escapeMemory = (value: string) =>
+const quote = (value: string) =>
   value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;');
+    .split(/\r\n|[\r\n\u2028\u2029]/u)
+    .map((line) => `¦${line}`)
+    .join('\n');
+const inline = (value: string) => value.replace(/[\r\n\u2028\u2029]/gu, ' ');
+const displayFilename = (filename: string) =>
+  filename.startsWith(ENTITY_PREFIX)
+    ? filename.slice(ENTITY_PREFIX.length)
+    : filename;
+const identities = (snapshot: MemorySnapshot) =>
+  (snapshot.linkedIdentities ?? [])
+    .map(
+      (identity) =>
+        `${identity.server}: ${Object.entries(identity.match)
+          .map(([key, value]) => `${key}=${value}`)
+          .join(', ')}`,
+    )
+    .join('\n');
 const encoder = getEncoding('cl100k_base');
 const loadingStatusSchema = z.object({
   version: z.literal(1),
@@ -42,17 +56,18 @@ interface Entry {
 }
 function body(snapshot: MemorySnapshot): string {
   return [
-    snapshot.body,
     ...(snapshot.sections.length
       ? [
-          'Additional sections (readMemorySection):',
-          ...snapshot.sections.map((section) => `## ${section}`),
+          'additionalSections',
+          ...snapshot.sections.map((section) => `- ${inline(section)}`),
         ]
       : []),
+    'facts',
+    snapshot.body,
   ].join('\n');
 }
 /** Bounded contiguous line replacement. Common prefix/suffix are omitted. */
-function diff(before: string, after: string): string {
+export function diff(before: string, after: string): string {
   const a = before.split('\n'),
     b = after.split('\n');
   let start = 0,
@@ -77,18 +92,16 @@ function metadataDiff(
   const changes: string[] = [];
   if (previous.description !== snapshot.description)
     changes.push(`Description changed: ${snapshot.description ?? '(removed)'}`);
-  if (previous.title !== snapshot.title)
-    changes.push(`Title changed: ${snapshot.title}`);
   if (previous.entityType !== snapshot.entityType)
     changes.push(`Entity type changed: ${snapshot.entityType ?? '(removed)'}`);
   if (JSON.stringify(previous.tags) !== JSON.stringify(snapshot.tags))
-    changes.push(`Tags changed: ${JSON.stringify(snapshot.tags ?? [])}`);
+    changes.push(`Tags changed: ${snapshot.tags?.join(',') || '(removed)'}`);
   if (
     JSON.stringify(previous.linkedIdentities) !==
     JSON.stringify(snapshot.linkedIdentities)
   )
     changes.push(
-      `Linked identities changed: ${JSON.stringify(snapshot.linkedIdentities ?? [])}`,
+      `Linked identities changed:\n${identities(snapshot) || '(removed)'}`,
     );
   return changes.length ? `\n${changes.join('\n')}` : '';
 }
@@ -98,11 +111,9 @@ function block(
   replacement = false,
 ): string {
   const snapshot = entry.snapshot;
-  const attrs = `filename="${escapeMemory(entry.filename)}"${snapshot.section ? ` section="${escapeMemory(snapshot.section)}"` : ''}`;
-  if (snapshot.removed) return `<memory-update ${attrs} removed="true" />`;
+  const label = `${JSON.stringify(displayFilename(entry.filename))}${snapshot.section ? ` section=${JSON.stringify(snapshot.section)}` : ''}`;
+  if (snapshot.removed) return `memory-update ${label} removed`;
   const current = body(snapshot);
-  const metadataChanged =
-    previous !== undefined && previous.description !== snapshot.description;
   if (previous && !previous.removed) {
     // Bound diff work independently of admission; oversized changes use a
     // complete replacement and still pass through the shared token budget.
@@ -118,14 +129,40 @@ function block(
       const patch = diff(before, current);
       const metadata = metadataDiff(previous, snapshot);
       if (body(previous) === current && metadata)
-        return `<memory-update ${attrs}>${escapeMemory(metadata.trim())}</memory-update>`;
+        return `memory-update ${label}\nmetadata\n${quote(metadata.trim())}`;
       if (patch.length + metadata.length < current.length)
-        return `<memory-update ${attrs}>\n${escapeMemory(patch + metadata)}\n</memory-update>`;
+        return `memory-update ${label}\npatch\n${quote(patch)}${metadata ? `\nmetadata\n${quote(metadata.trim())}` : ''}`;
       replacement = true;
     }
   }
   const tag = snapshot.kind === 'detail' ? 'memory-detail' : 'memory';
-  return `<${tag} ${attrs} title="${escapeMemory(snapshot.title)}"${snapshot.entityType ? ` entity-type="${escapeMemory(snapshot.entityType)}"` : ''}${snapshot.tags?.length ? ` tags="${escapeMemory(JSON.stringify(snapshot.tags))}"` : ''}${snapshot.linkedIdentities?.length ? ` linked-identities="${escapeMemory(JSON.stringify(snapshot.linkedIdentities))}"` : ''}${snapshot.description && (!previous || metadataChanged) ? ` description="${escapeMemory(snapshot.description)}"` : ''}${metadataChanged && snapshot.description === undefined ? ' description-removed="true"' : ''}${replacement ? ' replacement="true"' : ''}>\n${escapeMemory(current)}\n</${tag}>`;
+  const linked = (snapshot.linkedIdentities ?? [])
+    .map(
+      (identity) =>
+        `${inline(identity.server)}:\n${Object.entries(identity.match)
+          .map(([key, value]) => `  ${inline(key)}: ${inline(value)}`)
+          .join('\n')}`,
+    )
+    .join('\n');
+  return [
+    `${tag} ${label}${replacement ? ' replacement' : ''}`,
+    ...(snapshot.entityType
+      ? [`entityType\n${quote(snapshot.entityType)}`]
+      : []),
+    ...(snapshot.tags?.length
+      ? [`tags\n${quote(snapshot.tags.join(','))}`]
+      : []),
+    ...(snapshot.description
+      ? [`description\n${quote(snapshot.description)}`]
+      : []),
+    ...(linked ? [`linkedIdentities\n${quote(linked)}`] : []),
+    ...(snapshot.sections.length
+      ? [
+          `additionalSections\n${quote(snapshot.sections.map((section) => `- ${inline(section)}`).join('\n'))}`,
+        ]
+      : []),
+    `facts\n${quote(snapshot.body)}`,
+  ].join('\n');
 }
 export interface MemoryRenderingMetrics {
   emittedFull: number;
@@ -283,8 +320,8 @@ export function materializeMemories(
     }
     remaining -= cost;
     for (const item of rendered) {
-      if (item.text.startsWith('<memory-detail ')) metrics.emittedDetail++;
-      else if (item.text.startsWith('<memory-update ')) metrics.emittedDiff++;
+      if (item.text.startsWith('memory-detail ')) metrics.emittedDetail++;
+      else if (item.text.startsWith('memory-update ')) metrics.emittedDiff++;
       else metrics.emittedFull++;
       add(item.index, item.text, chain[0]!.filename);
     }
@@ -292,7 +329,7 @@ export function materializeMemories(
   // Notices share the same hard token budget as facts; a large deletion set
   // must not bypass admission or crowd out an explicitly requested section.
   const omissionCount = `Memory context budget omitted ${omitted.length} documents/sections.`;
-  const detailedOmission = `${omissionCount} ${omitted.slice(0, 5).map(escapeMemory).join(', ')}${omitted.length > 5 ? ', …' : ''}. Explicit section content may be omitted; do not assume it was loaded.`;
+  const detailedOmission = `${omissionCount} ${omitted.slice(0, 5).map(displayFilename).map(inline).join(', ')}${omitted.length > 5 ? ', …' : ''}. Explicit section content may be omitted; do not assume it was loaded.`;
   const notices = [
     ...(omitted.length
       ? [
@@ -303,7 +340,7 @@ export function materializeMemories(
       : []),
     ...(status?.removed ?? []).map(
       (filename) =>
-        `<memory-update filename="${escapeMemory(filename)}" removed="true" />`,
+        `memory-update ${JSON.stringify(displayFilename(filename))} removed`,
     ),
     ...(status?.unavailable.length
       ? [

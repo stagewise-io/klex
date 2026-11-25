@@ -834,7 +834,7 @@ class WriterToolsModule implements WriterTools {
         );
       for (const fact of facts) checkFact(fact, title, tagged(tags, PERSONS));
       const evidence = options.evidenceText;
-      if (evidence !== undefined) {
+      if (!curation && evidence !== undefined) {
         checkCopied(copied.identities, evidence, 'Identity value');
         checkCopied(copied.matchers, evidence, 'LoadOn value');
       }
@@ -1462,7 +1462,7 @@ class WriterToolsModule implements WriterTools {
             checkSkillWhen(input.when);
             checkSkill(skill);
             checkShape(Object.create(null), [], input.loadOn);
-            if (options.evidenceText !== undefined)
+            if (!curation && options.evidenceText !== undefined)
               checkCopied(
                 copiedValues({ loadOn: input.loadOn }).matchers,
                 options.evidenceText,
@@ -1532,7 +1532,7 @@ class WriterToolsModule implements WriterTools {
             if (input.when !== undefined) checkSkillWhen(input.when);
             checkSkill(skill);
             checkShape(Object.create(null), [], input.loadOn);
-            if (options.evidenceText !== undefined)
+            if (!curation && options.evidenceText !== undefined)
               checkCopied(
                 copiedValues({ loadOn: input.loadOn }).matchers,
                 options.evidenceText,

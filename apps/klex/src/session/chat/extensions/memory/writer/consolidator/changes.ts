@@ -57,7 +57,7 @@ export function collectChanges(
     // Oversized documents are discoverable, never silently skipped. The child
     // reads their full content (and references) through its ordinary read tools.
     const text =
-      candidate.text.length > budget
+      candidate.text.length + 1 > budget
         ? JSON.stringify({
             kind: candidate.kind,
             id: candidate.id,

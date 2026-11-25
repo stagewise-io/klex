@@ -51,6 +51,45 @@ function fixture() {
   return { loader, skills, load, recordRead, prepare };
 }
 describe('skill context lifecycle', () => {
+  it.each(['dynamic-tool', 'tool-recallFromMemory'])(
+    'auto-loads supporting skills from %s once and consumes the recall at idle',
+    async (type) => {
+      const { loader } = fixture();
+      const recall = message('recall', [
+        {
+          type,
+          toolName: 'recallFromMemory',
+          toolCallId: 'recall',
+          state: 'output-available',
+          input: { question: 'Testing advice?' },
+          output: {
+            answer: 'Run tests.',
+            entities: [],
+            skills: ['learning/testing', 'missing', 'learning/testing'],
+          },
+        },
+      ]);
+      const first = message('first', await loader.prepare([recall], model));
+      const next = message(
+        'next',
+        await loader.prepare([recall, first], model),
+      );
+      expect(
+        text([recall, first, next]).match(/^skill learning\/testing$/gm),
+      ).toHaveLength(1);
+      expect(text([first])).toContain('Run tests.');
+      const idle = message('idle', loader.idle([recall, first, next]));
+      const after = await loader.prepare([recall, first, next, idle], model);
+      expect(after[0]).toMatchObject({ data: {} });
+      const fresh = { ...recall, id: 'fresh-recall' };
+      const reloaded = await loader.prepare(
+        [recall, first, next, idle, fresh],
+        model,
+      );
+      expect(JSON.stringify(reloaded[0])).toContain('Run tests.');
+    },
+  );
+
   it('renders loaded skill and reference updates as bounded diffs and restores full bodies after compaction', async () => {
     const { loader, skills, load } = fixture();
     await load('learning/testing', 'unit');

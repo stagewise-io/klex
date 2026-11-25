@@ -218,7 +218,11 @@ describe('temporary memory recall', () => {
       call(tools(h.extension), 'recallFromMemory', {
         question: 'Who owns deployment?',
       }),
-    ).resolves.toEqual({ answer: 'Ada owns deployment. [person/ada]' });
+    ).resolves.toEqual({
+      answer: 'Ada owns deployment. [person/ada]',
+      entities: [],
+      skills: [],
+    });
     expect(h.options()).toMatchObject({
       name: 'memory-recall',
       modelPurpose: 'memory',
@@ -364,6 +368,45 @@ describe('temporary memory recall', () => {
     );
   });
 
+  it('returns supporting entity and skill IDs, deduplicating and validating them before finishing', async () => {
+    const h = setup();
+    h.source.snapshot.mockResolvedValue([{ id: 'Ada' }] as never);
+    h.skills.snapshot.mockResolvedValue([{ id: 'learning/deploy' }] as never);
+    h.child.waitForIdle.mockImplementationOnce(async () => {
+      const set = tools(h.reader());
+      expect(
+        await call(set, 'answerRecall', {
+          answer: 'Unknown',
+          entities: ['invented'],
+        }),
+      ).toEqual({ error: 'Unknown entity IDs', entities: ['invented'] });
+      expect(
+        await call(set, 'answerRecall', {
+          answer: 'Unknown',
+          skills: ['invented'],
+        }),
+      ).toEqual({ error: 'Unknown skill IDs', skills: ['invented'] });
+      expect(
+        await call(set, 'answerRecall', {
+          answer: 'Owns deployment.',
+          entities: ['Ada', 'Ada'],
+          skills: ['learning/deploy', 'learning/deploy'],
+        }),
+      ).toEqual({ accepted: true });
+      return true;
+    });
+    expect(
+      await call(tools(h.extension), 'recallFromMemory', {
+        question: 'Who owns deployment?',
+      }),
+    ).toEqual({
+      answer: 'Owns deployment.',
+      entities: ['Ada'],
+      skills: ['learning/deploy'],
+    });
+    expect(h.child.close).toHaveBeenCalledOnce();
+  });
+
   it('preserves search matches and scans later sources after a read failure', async () => {
     const h = setup();
     await call(tools(h.extension), 'recallFromMemory', { question: 'Recall' });
@@ -425,23 +468,24 @@ describe('temporary memory recall', () => {
     },
   );
 
-  it('stops an unanswered helper at its step budget', async () => {
+  it('continues beyond 20 steps until answerRecall is accepted', async () => {
     const h = setup();
     h.child.waitForIdle.mockImplementation(async () => {
       await h.reader().onStepComplete?.({
         generation: {},
         shouldContinue: true,
       } as StepCompleteEvent);
-      if (h.child.waitForIdle.mock.calls.length === 20)
-        expect(h.child.close).toHaveBeenCalledOnce();
+      expect(h.child.close).not.toHaveBeenCalled();
+      if (h.child.waitForIdle.mock.calls.length === 25)
+        await call(tools(h.reader()), 'answerRecall', { answer: 'Done' });
       return false;
     });
     expect(
       await call(tools(h.extension), 'recallFromMemory', {
         question: 'Recall',
       }),
-    ).toMatchObject({ error: expect.stringContaining('Do not retry') });
-    expect(h.child.waitForIdle).toHaveBeenCalledTimes(20);
+    ).toEqual({ answer: 'Done', entities: [], skills: [] });
+    expect(h.child.waitForIdle).toHaveBeenCalledTimes(25);
     expect(h.child.close).toHaveBeenCalledOnce();
   });
 
@@ -464,7 +508,7 @@ describe('temporary memory recall', () => {
     });
     await expect(
       call(tools(h.extension), 'recallFromMemory', { question: 'Recall' }),
-    ).resolves.toEqual({ answer: 'Done' });
+    ).resolves.toEqual({ answer: 'Done', entities: [], skills: [] });
   });
 
   it('keeps oversized text, tool and event evidence available to the history pager', async () => {
@@ -508,12 +552,26 @@ describe('temporary memory recall', () => {
     }
   });
 
-  it('does not fabricate answers if the child stops or terminates', async () => {
+  it('repeatedly resumes unanswered idle sessions, including rejected answers', async () => {
     const h = setup();
-    h.child.waitForIdle.mockImplementationOnce(async () => true);
+    h.child.waitForIdle.mockImplementation(async () => {
+      const attempt = h.child.waitForIdle.mock.calls.length;
+      expect(h.child.close).not.toHaveBeenCalled();
+      if (attempt === 2)
+        expect(
+          await call(tools(h.reader()), 'answerRecall', {
+            answer: 'Unverified',
+            entities: ['missing'],
+          }),
+        ).toHaveProperty('error');
+      if (attempt === 4)
+        await call(tools(h.reader()), 'answerRecall', { answer: 'Done' });
+      return true;
+    });
     await expect(
       call(tools(h.extension), 'recallFromMemory', { question: 'Recall' }),
-    ).resolves.toHaveProperty('error');
+    ).resolves.toEqual({ answer: 'Done', entities: [], skills: [] });
+    expect(h.child.inbox.sendMessage).toHaveBeenCalledTimes(4);
     expect(h.child.close).toHaveBeenCalledOnce();
   });
 

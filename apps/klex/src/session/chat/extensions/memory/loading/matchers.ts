@@ -67,7 +67,8 @@ export function project(message: ExtendedUIMessage): Projection {
   for (const part of message.parts) {
     if (part.type === 'text') {
       if (
-        !/^\s*(?:<memory(?:-update|-detail)?(?:\s|>)|memory(?:-update|-detail)? [^\r\n]+(?:\r?\n|$))/iu.test(
+        !/^\s*<memory(?:-update|-detail)?(?:\s|>)/iu.test(part.text) &&
+        !/^memory(?:-update|-detail)? "(?:[^"\\\r\n\u2028\u2029]|\\[^\r\n\u2028\u2029])+\.md"(?: section="(?:[^"\\\r\n\u2028\u2029]|\\[^\r\n\u2028\u2029])*")?(?: replacement| removed)?(?:\r?\n|$)/u.test(
           part.text,
         )
       )

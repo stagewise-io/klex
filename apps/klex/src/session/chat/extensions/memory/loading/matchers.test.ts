@@ -163,11 +163,33 @@ describe('matcher isolation', () => {
         project({
           id: 'generated',
           role: 'user',
-          parts: [{ type: 'text', text: `${kind} Ada.md\nfacts\n¦trigger` }],
+          parts: [{ type: 'text', text: `${kind} "Ada.md"\nfacts\n¦trigger` }],
         } as ExtendedUIMessage).text,
       ).toEqual([]);
     },
   );
+  it.each([
+    'Memory of Ada',
+    'memory leak in production',
+    'Memory is important\ntrigger',
+    'memory-update the deployment',
+    'memory-detail about Ada',
+    'Memory "Ada.md"\nfacts\n¦trigger',
+    'memory Ada.md\nfacts\n¦trigger',
+    'memory "Ada.md" is ordinary prose',
+  ])('retains ordinary prose: %s', async (text) => {
+    const projection = project({
+      id: 'prose',
+      role: 'user',
+      parts: [{ type: 'text', text }],
+    } as ExtendedUIMessage);
+    expect(projection.text).toEqual([text.toLowerCase()]);
+    expect(
+      await createMatcherEngine(vi.fn()).match(projection, [
+        { type: 'contentPattern', pattern: 'memory' },
+      ]),
+    ).toBeGreaterThan(0);
+  });
   it.each(['tool-recallFromMemory', 'realtime'])(
     'excludes generated recall evidence from %s',
     (kind) => {

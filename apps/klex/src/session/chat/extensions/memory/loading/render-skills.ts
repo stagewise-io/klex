@@ -8,10 +8,11 @@ import { type MemorySnapshot, parseSnapshot } from './types';
 
 const quote = (value: string) =>
   value
-    .split(/\r\n|[\r\n\u2028\u2029]/u)
+    .split(/\r\n|[\r\n\v\f\u0085\u2028\u2029]/u)
     .map((line) => `¦${line}`)
     .join('\n');
-const inline = (value: string) => value.replace(/[\r\n\u2028\u2029]/gu, ' ');
+const inline = (value: string) =>
+  value.replace(/[\r\n\v\f\u0085\u2028\u2029]/gu, ' ');
 const cell = (value: string) =>
   value.replaceAll('\\', '\\\\').replaceAll('|', '\\|').replace(/\s+/gu, ' ');
 interface Listed {

@@ -171,6 +171,49 @@ class MemoryLoaderModule implements MemoryLoader {
       .parts([])
       .filter((part) => isDataPartOf('activeSkills', part));
   }
+  private retainedSkillSnapshots(
+    context: SkillContext,
+    history: readonly ExtendedUIMessage[],
+    window?: string,
+  ): SnapshotMap {
+    const active = (
+      context
+        .parts(undefined)
+        .find((part) => isDataPartOf('activeSkills', part)) as unknown as {
+        data: { skills: Record<string, string[]> };
+      }
+    ).data.skills;
+    const allowed = Object.entries(active).flatMap(([id, refs]) => [
+      `skills/${id}/SKILL.md`,
+      ...refs.map((ref) => `skills/${id}/references/${ref}.md`),
+    ]);
+    let latest: Record<string, unknown> | undefined;
+    for (const message of history)
+      for (const part of message.parts) {
+        if (!isDataPartOf('loadedMemories', part)) continue;
+        const data = (part as unknown as { data: unknown }).data;
+        if (data && typeof data === 'object' && !Array.isArray(data))
+          latest = data as Record<string, unknown>;
+      }
+    // Only use the live cache if no complete historical map exists.
+    // Missing/corrupt entries in the latest map must never revive older bodies.
+    latest ??= context.fork().snapshots(this.lastSkills);
+    const snapshots: SnapshotMap = Object.create(null);
+    for (const filename of allowed) {
+      const value = latest[filename];
+      const snapshot = typeof value === 'string' ? parseSnapshot(value) : null;
+      const kind = filename.endsWith('/SKILL.md') ? 'skill' : 'skill-reference';
+      if (!snapshot || snapshot.kind !== kind || snapshot.removed)
+        throw new Error(
+          `Cannot carry missing or corrupt skill snapshot: ${filename}`,
+        );
+      snapshots[filename] =
+        window === undefined
+          ? (value as string)
+          : JSON.stringify({ ...snapshot, window });
+    }
+    return snapshots;
+  }
   async carry(history = this.lastHistory): Promise<ExtendedUIMessage['parts']> {
     this.skillContext.initialize(history);
     const window = randomUUID();
@@ -184,54 +227,15 @@ class MemoryLoaderModule implements MemoryLoader {
       .catch(() => undefined);
     if (skills === undefined) {
       const parts = this.skillContext.parts(undefined, window);
-      const active = (
-        parts.find((part) => isDataPartOf('activeSkills', part)) as unknown as {
-          data: { skills: Record<string, string[]> };
-        }
-      ).data.skills;
-      const allowed = new Set(
-        Object.entries(active).flatMap(([id, refs]) => [
-          `skills/${id}/SKILL.md`,
-          ...refs.map((ref) => `skills/${id}/references/${ref}.md`),
-        ]),
+      const snapshots = this.retainedSkillSnapshots(
+        this.skillContext,
+        history,
+        window,
       );
-      const snapshots: SnapshotMap = Object.create(null);
-      const historical = new Map<string, unknown>();
-      let hasHistoricalSnapshots = false;
       let catalogue: ExtendedUIMessage['parts'][number] | undefined;
       for (const message of history)
-        for (const part of message.parts) {
+        for (const part of message.parts)
           if (isDataPartOf('availableSkills', part)) catalogue = part;
-          if (!isDataPartOf('loadedMemories', part)) continue;
-          const data = (part as unknown as { data: unknown }).data;
-          if (!data || typeof data !== 'object' || Array.isArray(data))
-            continue;
-          hasHistoricalSnapshots = true;
-          historical.clear();
-          for (const [filename, value] of Object.entries(data)) {
-            if (allowed.has(filename)) historical.set(filename, value);
-          }
-        }
-      // A successful prepare may not yet be attached to the supplied history.
-      for (const [filename, value] of Object.entries(
-        this.skillContext.fork().snapshots(this.lastSkills, window),
-      ))
-        if (!(filename in snapshots)) snapshots[filename] = value;
-      for (const filename of allowed) {
-        const value = hasHistoricalSnapshots
-          ? historical.get(filename)
-          : snapshots[filename];
-        const snapshot =
-          typeof value === 'string' ? parseSnapshot(value) : null;
-        const kind = filename.endsWith('/SKILL.md')
-          ? 'skill'
-          : 'skill-reference';
-        if (!snapshot || snapshot.kind !== kind || snapshot.removed)
-          throw new Error(
-            `Cannot carry missing or corrupt skill snapshot: ${filename}`,
-          );
-        snapshots[filename] = JSON.stringify({ ...snapshot, window });
-      }
       return [
         ...(catalogue ? [catalogue] : []),
         ...parts,
@@ -405,7 +409,12 @@ class MemoryLoaderModule implements MemoryLoader {
         ranked.push({ filename: candidate.filename, tier, recency });
       }
     }
-    if (skills) Object.assign(loaded, skillContext.snapshots(skills));
+    Object.assign(
+      loaded,
+      skills
+        ? skillContext.snapshots(skills)
+        : this.retainedSkillSnapshots(skillContext, history),
+    );
     const subscriptions = new Map<
       string,
       { filename: string; section: string }

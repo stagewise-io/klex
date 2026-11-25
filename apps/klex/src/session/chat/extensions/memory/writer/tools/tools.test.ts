@@ -1249,22 +1249,12 @@ describe('memory writer tools', () => {
     'creates %s entities without linked identities or loading triggers',
     async (tag) => {
       const { tools, entities } = await fixture();
-      const person = await entities.create(
-        { title: 'Alex Smith', tags: ['people'] },
-        { General: [fact('Owner')] },
-      );
       expect(
         await call(tools, 'createEntity', {
           ...create(),
           fields: {
             title: 'CLOUD-254',
             tags: [tag],
-            relatedTo: [
-              {
-                target: { kind: 'entity', id: person.id },
-                relationship: 'requestedBy',
-              },
-            ],
           },
         }),
       ).toMatchObject({ status: 'created' });
@@ -1323,6 +1313,62 @@ describe('memory writer tools', () => {
       expect(f.entities.get(entity.id)?.sections).toEqual(entity.sections);
     },
   );
+  it.each(['writer', 'curation'] as const)(
+    'allows creation and %s updates without tag-dependent semantics',
+    async (mode) => {
+      const f = await fixture();
+      const { tools } = createWriterTools({
+        ...f,
+        skillReader: f.registry,
+        mode,
+        signal: f.controller.signal,
+        sourceIds: new Set([source]),
+      });
+      for (const tag of [
+        'work-items',
+        'work-items/issues/bugs',
+        'issue',
+        'pull-request',
+        'events',
+        'events/meetings',
+        'event',
+        'people',
+        'people/colleagues',
+        'person',
+        'bot',
+      ]) {
+        const title = `Alex Smith (${tag.replaceAll('/', '-')})`;
+        expect(
+          await call(f.tools, 'createEntity', {
+            ...create(source, 'Alex prefers short replies'),
+            fields: { title, tags: [tag] },
+          }),
+        ).toMatchObject({ status: 'created' });
+        const entity = f.entities.get(title);
+        if (!entity) throw new Error('Missing entity');
+        expect(entity.frontmatter).toMatchObject({
+          LinkedIdentities: [],
+          LoadOn: [],
+          RelatedTo: [],
+        });
+        expect(
+          await call(tools, 'updateEntity', {
+            id: entity.id,
+            revision: entityRevision(entity),
+            fields: { tags: [tag], relatedTo: [] },
+            operations: [
+              {
+                op: 'reword',
+                fact: 'General#1',
+                text: 'Alex prefers concise replies',
+              },
+            ],
+          }),
+        ).toMatchObject({ status: 'updated' });
+        expect(f.entities.get(entity.id)?.frontmatter.RelatedTo).toEqual([]);
+      }
+    },
+  );
   it('rejects entity output a cheap model gets wrong, with a fix in the message', async () => {
     const evidence =
       'issue 0eff93ac-11f0-4da1-ac13-78d5697ca0e7 PR_kwDOT3Z8XM8AAAABO4mHbw';
@@ -1352,10 +1398,6 @@ describe('memory writer tools', () => {
       'Drop the subject',
     );
     await reject(
-      create(source, 'Alex prefers short replies'),
-      'Drop the subject',
-    );
-    await reject(
       create(source, 'Tests passed on the branch'),
       'progress or status',
     );
@@ -1374,13 +1416,6 @@ describe('memory writer tools', () => {
         }),
       },
       'not found in the activities',
-    );
-    await reject(
-      {
-        ...create(),
-        fields: fields({ title: 'PR 12', tags: ['pull-request'] }),
-      },
-      'Link who requested',
     );
     expect(entities.list()).toHaveLength(0);
     // Copied exactly: accepted, and a truncated Linear ID is not.

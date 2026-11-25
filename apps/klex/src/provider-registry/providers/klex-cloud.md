@@ -35,8 +35,9 @@ There is no `headers` setting.
 Each model uses exactly one protocol, chosen in this order:
 
 1. `settings.protocols[modelId]` (exact, case-sensitive match).
-2. Name rules: `gpt-audio` and `gpt-audio-*`, with or without a vendor prefix,
-   use Chat Completions. `anthropic/*` and `claude-*` use Anthropic Messages.
+2. Name rules: `gpt-audio-*`, with or without a vendor prefix, uses Chat
+   Completions, matching the `openai` type and its audio catalog entries.
+   `anthropic/*` and `claude-*` use Anthropic Messages.
 3. Everything else uses Responses.
 
 | Protocol | Adapter | Request |
@@ -63,7 +64,9 @@ inference. The gateway returns only `id`, `object`, `created` and `owned_by`,
 so other metadata comes from Klex's OpenAI and Anthropic catalogs (by vendor
 prefix) and the provider's `knownModels`. IDs matching the shared
 non-language filter (embedding, TTS, Whisper, `realtime`, moderation and image
-models) are left out of the list.
+models) are left out of the list, and so are IDs the catalogs classify as
+another kind, such as speech-to-speech `gpt-live-*` and speech-to-text models.
+Uncatalogued IDs stay listed.
 
 ## Reserved realtime fields
 

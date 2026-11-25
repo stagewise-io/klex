@@ -48,7 +48,7 @@ export function klexCloudProtocol(
     : undefined;
   if (KLEX_CLOUD_PROTOCOLS.some((protocol) => protocol === configured))
     return configured as KlexCloudProtocol;
-  if (/^(?:[^/]+\/)?gpt-audio(?:-|$)/i.test(modelId)) return 'chat-completions';
+  if (/^(?:[^/]+\/)?gpt-audio-/i.test(modelId)) return 'chat-completions';
   if (/^(?:anthropic\/|claude-)/i.test(modelId)) return 'anthropic-messages';
   return 'responses';
 }
@@ -123,7 +123,9 @@ async function discoverModels(
     if (!isRecord(body) || !Array.isArray(body.data))
       return unavailable('discovery_failed', 'Invalid Klex Cloud model list');
     // The gateway currently returns only `id`, `object`, `created` and
-    // `owned_by`; metadata comes from catalogs and `knownModels`.
+    // `owned_by`; metadata comes from catalogs and `knownModels`. Models the
+    // catalog knows as non-language (e.g. speech-to-speech `gpt-live-*`) are
+    // left out: this provider serves language generation only.
     return available(
       body.data.flatMap((item) => {
         if (
@@ -133,6 +135,8 @@ async function discoverModels(
           isNonLanguageModel(item.id)
         )
           return [];
+        const kind = resolveModelMetadata(item.id)?.kind;
+        if (kind && kind !== 'language' && kind !== 'unknown') return [];
         const createdAt = parseModelCreatedAt(item.created);
         return [{ modelId: item.id, ...(createdAt && { createdAt }) }];
       }),

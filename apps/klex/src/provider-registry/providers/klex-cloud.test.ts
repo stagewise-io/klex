@@ -2,7 +2,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { getProviderSettingsJsonSchema, parseProviderSettings } from '@/config';
 
-import type { ProviderContext, ProviderInstance } from '../provider-registry';
+import type {
+  ProviderContext,
+  ProviderDefinition,
+  ProviderInstance,
+} from '../provider-registry';
 import {
   klexCloudProtocol,
   klexCloudProviderDefinition as provider,
@@ -127,7 +131,7 @@ describe('Klex Cloud routing', () => {
     ['openai/gpt-audiobook', 'klex-cloud.responses'],
     ['openai/claude-compatible', 'klex-cloud.responses'],
     ['openai/gpt-audio-mini', 'klex-cloud.chat'],
-    ['openai/gpt-audio', 'klex-cloud.chat'],
+    ['openai/gpt-audio', 'klex-cloud.responses'],
     ['gpt-audio-mini', 'klex-cloud.chat'],
     ['GPT-AUDIO-2', 'klex-cloud.chat'],
     ['anthropic/claude-sonnet-5', 'klex-cloud.messages'],
@@ -183,8 +187,11 @@ describe('Klex Cloud routing', () => {
       discoveredModel: (modelId) => ({ modelId, kind: 'language' }),
     };
     expect(
-      provider.createLanguageModel(instance, 'vendor/discovered', context)
-        .provider,
+      (provider as ProviderDefinition).createLanguageModel?.(
+        instance,
+        'vendor/discovered',
+        context,
+      ).provider,
     ).toBe('klex-cloud.responses');
   });
 
@@ -274,6 +281,9 @@ describe('Klex Cloud discovery', () => {
             },
             { id: 'anthropic/claude-sonnet-5', object: 'model' },
             { id: 'openai/text-embedding-3-small', object: 'model' },
+            { id: 'openai/gpt-live-1', object: 'model' },
+            { id: 'openai/gpt-transcribe', object: 'model' },
+            { id: 'vendor/uncatalogued', object: 'model' },
             { id: 42 },
             { id: '' },
             'invalid',
@@ -291,6 +301,7 @@ describe('Klex Cloud discovery', () => {
           createdAt: new Date(1764000000 * 1000).toISOString(),
         },
         { modelId: 'anthropic/claude-sonnet-5' },
+        { modelId: 'vendor/uncatalogued' },
       ],
     });
     expect(calls).toHaveLength(1);

@@ -13,6 +13,7 @@ import type { ChildSessionHandle } from '@/session/types';
 import { createSkillRegistry } from '@/skills';
 
 import { createEntityStore } from './entities';
+import { skillReadResult } from './tools';
 import { createMemoryWriterExt, firstRunStart } from './writer';
 
 vi.mock('./system-prompt.md', () => ({ default: 'Memory writer' }));
@@ -557,6 +558,61 @@ describe('oldest-first memory writer', () => {
     expect(opened).toContain('skill templates/deploy\n');
     expect(opened?.match(/\nrevision\n¦[a-f0-9]+\n/g)).toHaveLength(2);
   });
+  it.each(['separators', 'notice'] as const)(
+    'budgets preload %s without truncating memory entries',
+    async (boundary) => {
+      const f = await fixture();
+      await f.registry.replaceTemplateSkills([
+        { name: 'alpha', description: 'Alpha', body: 'A' },
+        { name: 'beta', description: 'Beta', body: 'B' },
+      ]);
+      const alpha = f.registry.get('templates/alpha');
+      const beta = f.registry.get('templates/beta');
+      if (!alpha || !beta) throw new Error('Missing template skills');
+      const target =
+        boundary === 'notice' ? 30_000 : 30_000 - skillReadResult(beta).length;
+      const padded = {
+        ...alpha,
+        body: `A${'x'.repeat(target - skillReadResult(alpha).length)}`,
+      };
+      const get = f.registry.get.bind(f.registry);
+      vi.spyOn(f.registry, 'get').mockImplementation((id) =>
+        id === 'templates/alpha' ? padded : get(id),
+      );
+      f.hostHistory.push({
+        id: 'host',
+        role: 'user',
+        parts: [
+          {
+            type: 'data-loadedMemories',
+            data: {
+              'skills/templates/alpha/SKILL.md': '{}',
+              'skills/templates/beta/SKILL.md': '{}',
+            },
+          },
+        ],
+      } as unknown as ExtendedUIMessage);
+      await f.extension.onStart?.();
+      await vi.waitFor(async () =>
+        expect((await f.state()).cursor).toBe(id(4)),
+      );
+      const input =
+        (f.messages[0]?.parts[0] as { text: string } | undefined)?.text ?? '';
+      const opened = input
+        .split('<opened-memory>\n')[1]
+        ?.split('\n</opened-memory>')[0];
+      expect(opened).toBeDefined();
+      expect(opened?.length).toBeLessThanOrEqual(30_000);
+      const omitted = boundary === 'notice' ? 2 : 1;
+      expect(opened).toContain(
+        `${omitted} more loaded entries omitted for size; read them if needed.`,
+      );
+      if (boundary === 'separators')
+        expect(opened).toContain(skillReadResult(padded));
+      else expect(opened).not.toContain('skill templates/alpha');
+      expect(opened).not.toContain('skill templates/beta');
+    },
+  );
   it('does not create a child after shutdown', async () => {
     const f = await fixture();
     await f.extension.onStart?.();

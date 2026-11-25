@@ -282,12 +282,15 @@ class RecallReader implements Extension {
           );
           if (!item) return { error: 'Unknown skill' };
           if (reference === undefined)
-            return formatSkill({
-              title: item.id,
-              description: item.description,
-              body: item.body,
-              references: item.references,
-            });
+            return formatSkill(
+              {
+                title: item.id,
+                description: item.description,
+                body: item.body,
+                references: item.references,
+              },
+              { referenceTool: 'readSkill' },
+            );
           const content = skills.readReference(skill, reference);
           return content === null
             ? { error: 'Unknown reference' }

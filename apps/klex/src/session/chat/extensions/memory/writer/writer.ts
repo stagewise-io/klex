@@ -355,11 +355,12 @@ class MemoryWriterExtension implements Extension {
     let remaining = OPENED_MEMORY_CHARACTERS;
     let omitted = 0;
     const add = (text: string) => {
-      if (text.length > remaining) {
+      const cost = text.length + (blocks.length ? 2 : 0);
+      if (cost > remaining) {
         omitted++;
         return;
       }
-      remaining -= text.length;
+      remaining -= cost;
       blocks.push(text);
     };
     for (const [id, sections] of entities) {
@@ -370,10 +371,18 @@ class MemoryWriterExtension implements Extension {
       const skill = this.options.skillReader.get(id);
       if (skill) add(skillReadResult(skill));
     }
-    if (omitted)
-      blocks.push(
-        `${omitted} more loaded entries omitted for size; read them if needed.`,
-      );
+    if (omitted) {
+      const notice = () =>
+        `${omitted} more loaded entries omitted for size; read them if needed.`;
+      // Keep entries intact, making room for the notice and its separator.
+      while (notice().length + (blocks.length ? 2 : 0) > remaining) {
+        const removed = blocks.pop();
+        if (removed === undefined) break;
+        remaining += removed.length + (blocks.length ? 2 : 0);
+        omitted++;
+      }
+      blocks.push(notice());
+    }
     return blocks.join('\n\n');
   }
 

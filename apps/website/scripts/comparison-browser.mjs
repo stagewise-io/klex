@@ -16,7 +16,7 @@ try {
     headless: true,
     executablePath: process.env.CHROMIUM_PATH,
   });
-  for (const width of [1440, 390]) {
+  for (const width of [1440, 768, 390, 320]) {
     const context = await browser.newContext({
       viewport: { width, height: 900 },
       reducedMotion: 'reduce',
@@ -26,9 +26,49 @@ try {
     const errors = [];
     page.on('pageerror', (error) => errors.push(error.message));
     await page.goto(base);
-    const link = page.locator('footer a[href="/compare/rerun"]');
-    assert.equal(await link.count(), 1, 'footer exposes comparison');
-    await link.click();
+    const comparisons = page.getByRole('navigation', {
+      name: 'Compare Klex Bots to...',
+    });
+    const link = comparisons.getByRole('link', { name: 'Rerun', exact: true });
+    assert.equal(
+      await page.locator('footer a[href="/compare/rerun"]').count(),
+      1,
+    );
+    assert.equal(await link.getAttribute('href'), '/compare/rerun');
+    assert.equal(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth + 1,
+      ),
+      true,
+      'homepage horizontal overflow at ' + width + 'px',
+    );
+    const footerSections = await page
+      .locator('footer .new-footer-bottom > *')
+      .all();
+    const boxes = await Promise.all(
+      footerSections.map((section) => section.boundingBox()),
+    );
+    for (let i = 0; i < boxes.length; i++) {
+      for (let j = i + 1; j < boxes.length; j++) {
+        const a = boxes[i];
+        const b = boxes[j];
+        assert(a && b);
+        assert(
+          a.x + a.width <= b.x + 1 ||
+            b.x + b.width <= a.x + 1 ||
+            a.y + a.height <= b.y + 1 ||
+            b.y + b.height <= a.y + 1,
+          'footer sections overlap at ' + width + 'px',
+        );
+      }
+    }
+    await link.focus();
+    assert.equal(
+      await link.evaluate((el) => el === document.activeElement),
+      true,
+    );
+    await page.keyboard.press('Enter');
+    await page.waitForURL('**/compare/rerun');
     assert.equal(new URL(page.url()).pathname, '/compare/rerun');
     assert.match(await page.locator('main h1').textContent(), /Klex vs Rerun/);
     assert.equal(

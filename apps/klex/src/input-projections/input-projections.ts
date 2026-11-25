@@ -4,7 +4,7 @@ import type { ExtendedUIMessage } from '@/session/chat/message-types';
 import type { ContextDataUIPart, ContextMetadataValue } from '@/session/inbox';
 import type { SessionHistory } from '@/session-history';
 
-import { boundContext, limits, preview } from './bounds';
+import { boundContext, limits } from './bounds';
 import {
   catalog,
   compile,
@@ -484,7 +484,7 @@ class InputProjectionsModule implements InputProjections {
     // Preparation supplies references later; this pure layer reports omission explicitly.
     const payload = selected
       ? (select(selected, data, 'default') as ContextMetadataValue)
-      : preview(data);
+      : data;
     // Every selected field is still bounded, including routing and conversational names.
     const detailSections = selected
       ? sections.filter(
@@ -499,7 +499,7 @@ class InputProjectionsModule implements InputProjections {
         : 'projected';
     const metadata = {
       ...context.metadata,
-      data: preview(payload) as ContextMetadataValue,
+      data: payload as ContextMetadataValue,
       projectionStatus: status,
       moreInfoSections: [...detailSections, 'raw'],
     };

@@ -322,7 +322,11 @@ class ConsultExtension implements Extension {
       },
     ).render(this.deps.getHistory()).text;
     for (const reference of references) {
-      if (!serializedContext.includes(`"inputEventRef":"${reference}"`))
+      if (
+        !serializedContext.includes(
+          `inputEventRef: ${reference}; moreInfoSections:`,
+        )
+      )
         references.delete(reference);
     }
     const details = this.deps.createInputInfoExtension?.(references);

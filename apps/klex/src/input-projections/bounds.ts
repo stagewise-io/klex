@@ -113,9 +113,9 @@ export function boundContext(context: ContextDataUIPart): ContextDataUIPart {
     return { type: 'text' as const, text: `${bounded}… ${omitted}` };
   });
   const changed =
-    JSON.stringify(metadata) !== JSON.stringify(context.metadata) ||
+    JSON.stringify(metadata) !== JSON.stringify(fields) ||
     JSON.stringify(content) !== JSON.stringify(context.content) ||
-    context.sourceEnv.length > 128;
+    Buffer.byteLength(context.sourceEnv) > 128;
   return {
     ...context,
     sourceEnv: prefix(context.sourceEnv, 128),

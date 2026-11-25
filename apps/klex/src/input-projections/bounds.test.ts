@@ -6,6 +6,27 @@ import { createInputProjections } from './input-projections';
 
 const service = createInputProjections();
 describe('untrusted MCP size ceilings', () => {
+  it('does not mark unchanged fields limited when recovery framing is stripped', () => {
+    const result = boundContext({
+      sourceEnv: 'test',
+      metadata: {
+        data: { message: 'hello' },
+        inputEventRef: 'abcdefgh',
+        moreInfoSections: ['raw'],
+      },
+      content: [],
+    });
+    expect(result.metadata).toEqual({ data: { message: 'hello' } });
+  });
+  it('marks multibyte source truncation as size-limited', () => {
+    const result = boundContext({
+      sourceEnv: '😀'.repeat(100),
+      metadata: {},
+      content: [],
+    });
+    expect(result.metadata.inputPreviewLimited).toBe(true);
+    expect(Buffer.byteLength(result.sourceEnv)).toBeLessThanOrEqual(128);
+  });
   for (const field of [
     'message',
     'text',

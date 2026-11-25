@@ -645,13 +645,28 @@ function resolveOpenAILiveResponsesModel(
   return responsesModelId;
 }
 
+/**
+ * Resolves a realtime endpoint below an API root. `http:` maps to `ws:` and
+ * `https:` to `wss:`; `ws:` and `wss:` roots are kept. A root that already
+ * ends with `path` is not extended again.
+ */
+function realtimeWebSocketUrl(endpointUrl: string, path: string): URL {
+  const url = new URL(endpointUrl);
+  if (url.protocol === 'https:') url.protocol = 'wss:';
+  else if (url.protocol === 'http:') url.protocol = 'ws:';
+  const root = url.pathname.replace(/\/+$/, '');
+  url.pathname = root.endsWith(`/${path}`) ? root : `${root}/${path}`;
+  return url;
+}
+
 export function geminiLiveWebSocketUrl(
   endpointUrl: string,
   apiKey: string,
 ): string {
-  const url = new URL(endpointUrl);
-  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-  url.pathname = `${url.pathname.replace(/\/$/, '')}/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent`;
+  const url = realtimeWebSocketUrl(
+    endpointUrl,
+    'ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent',
+  );
   url.search = '';
   url.searchParams.set('key', apiKey);
   return url.toString();
@@ -661,12 +676,14 @@ export function openAIRealtimeWebSocketUrl(
   endpointUrl: string,
   modelId: string,
 ): string {
-  const url = new URL(endpointUrl);
-  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-  url.pathname = `${url.pathname.replace(/\/$/, '')}/realtime`;
+  const url = realtimeWebSocketUrl(endpointUrl, 'realtime');
   url.search = '';
   url.searchParams.set('model', modelId);
   return url.toString();
+}
+
+export function openAILiveWebSocketUrl(endpointUrl: string): string {
+  return realtimeWebSocketUrl(endpointUrl, 'live/sessions').toString();
 }
 
 export function createConfig(deps: ConfigDependencies): Config {

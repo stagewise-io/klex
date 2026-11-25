@@ -86,7 +86,7 @@ it('adds a Klex Cloud provider to a migrated managed config with deterministic r
             'vendor/custom-audio': 'chat-completions',
             'openai/gpt-live-1': 'openai-live',
           },
-          realtimeBaseUrl: 'wss://gateway.example/v1/realtime',
+          realtimeBaseUrl: 'https://gateway.example/v1',
         },
         knownModels: {
           'openai/gpt-live-1': {
@@ -166,7 +166,7 @@ it('adds a Klex Cloud provider to a migrated managed config with deterministic r
         'vendor/custom-audio': 'chat-completions',
         'openai/gpt-live-1': 'openai-live',
       },
-      realtimeBaseUrl: 'wss://gateway.example/v1/realtime',
+      realtimeBaseUrl: 'https://gateway.example/v1',
     });
     expect(stored.modelSelection.voice.sts).toEqual([
       { providerId: 'primary', modelId: 'gpt-realtime' },

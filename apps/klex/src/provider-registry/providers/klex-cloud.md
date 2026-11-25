@@ -26,7 +26,7 @@ Cloud's managed-inference guards apply.
 | `baseUrl` | Yes | Literal URL including `/v1`. Environment references are rejected, so an environment change cannot send the token to another endpoint. |
 | `apiKey` | Yes | Gateway token, sent as `Authorization: Bearer`. Secret. |
 | `protocols` | No | Map from exact model ID to `responses`, `chat-completions`, `anthropic-messages` or the reserved `openai-live`. |
-| `realtimeBaseUrl` | No | Reserved, unused. Literal URL. |
+| `realtimeBaseUrl` | No | Reserved, unused. Literal API root URL (`https://`, `wss://`, `http://` or `ws://`), for example `https://gateway.example/v1`. |
 
 There is no `headers` setting.
 
@@ -75,7 +75,12 @@ not need another config schema version:
 
 - `openai-live` is an accepted `protocols` value, intended for `gpt-live-*`.
 - `realtimeBaseUrl` is an accepted optional literal URL. It is read-only in
-  setup forms.
+  setup forms. It is an API root like `baseUrl` (for example
+  `https://gateway.example/v1`), not a full endpoint. Klex appends the realtime
+  path (`/live/sessions` for gpt-live, `/realtime?model=…` for OpenAI
+  Realtime) and maps `https://` to `wss://` and `http://` to `ws://`; `wss://`
+  and `ws://` roots are kept as given. A root that already ends with the
+  realtime path is not extended again.
 
 Both validate and persist, but nothing reads them. A model mapped to
 `openai-live` cannot be used for language generation. Realtime speech still

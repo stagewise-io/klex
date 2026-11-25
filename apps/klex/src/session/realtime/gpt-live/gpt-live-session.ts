@@ -6,7 +6,10 @@ import WebSocket, { type ClientOptions, type RawData } from 'ws';
 
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
-import type { ResolvedOpenAILiveConfig } from '@/config';
+import {
+  openAILiveWebSocketUrl,
+  type ResolvedOpenAILiveConfig,
+} from '@/config';
 import {
   type AudioFrame,
   type AudioSource,
@@ -884,7 +887,7 @@ class GPTLiveSessionFactory implements RealtimeModelSessionFactory {
     signal: AbortSignal;
     context?: PreparedInferenceContext;
   }): Promise<RealtimeModelSession> {
-    const endpoint = new URL(toWebSocketUrl(this.config.baseUrl));
+    const endpoint = new URL(openAILiveWebSocketUrl(this.config.baseUrl));
     const span = tracer.startSpan('gpt_live.session', {
       attributes: {
         'gpt_live.external_media_session_id': options.sessionId,
@@ -960,13 +963,6 @@ export function createGPTLiveProcessorFactory(options: {
       bindings: { module: 'gpt-live' },
     }),
   );
-}
-
-function toWebSocketUrl(baseUrl: string): string {
-  const url = new URL(baseUrl);
-  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-  url.pathname = `${url.pathname.replace(/\/$/, '')}/live/sessions`;
-  return url.toString();
 }
 
 function concat(left: Uint8Array, right: Uint8Array): Uint8Array {

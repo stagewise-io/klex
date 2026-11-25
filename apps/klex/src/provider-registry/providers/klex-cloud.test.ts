@@ -57,7 +57,7 @@ describe('Klex Cloud settings', () => {
         'anthropic/claude-sonnet-5': 'anthropic-messages',
         'openai/gpt-live-1': 'openai-live',
       },
-      realtimeBaseUrl: 'wss://gateway.example/v1/realtime',
+      realtimeBaseUrl: 'wss://gateway.example/v1',
     };
     expect(parseProviderSettings('klex-cloud', settings)).toEqual(settings);
     expect(
@@ -81,6 +81,14 @@ describe('Klex Cloud settings', () => {
         baseUrl: 'https://gateway.example/v1',
         apiKey: 'key',
         realtimeBaseUrl: '${env:REALTIME_URL}',
+      },
+    ],
+    [
+      'non-HTTP realtime URL',
+      {
+        baseUrl: 'https://gateway.example/v1',
+        apiKey: 'key',
+        realtimeBaseUrl: 'ftp://gateway.example/v1',
       },
     ],
     [

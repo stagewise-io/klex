@@ -19,7 +19,10 @@ import {
   CONFIG_FILE_NAME,
   type ConfigValidationError,
   createConfig,
+  geminiLiveWebSocketUrl,
   interpolateEnvironment,
+  openAILiveWebSocketUrl,
+  openAIRealtimeWebSocketUrl,
 } from './config';
 import {
   completeV2Config,
@@ -2039,5 +2042,57 @@ describe('providerSettingKeysForAuthMode', () => {
     expect(
       providerSettingKeysForAuthMode('amazon-bedrock', 'unknown'),
     ).toBeUndefined();
+  });
+});
+
+describe('realtime WebSocket URLs', () => {
+  it.each([
+    ['https://gateway.example/v1', 'wss://gateway.example/v1/live/sessions'],
+    ['https://gateway.example/v1/', 'wss://gateway.example/v1/live/sessions'],
+    ['wss://gateway.example/v1', 'wss://gateway.example/v1/live/sessions'],
+    ['http://127.0.0.1:3000/v1', 'ws://127.0.0.1:3000/v1/live/sessions'],
+    ['ws://127.0.0.1:3000/v1', 'ws://127.0.0.1:3000/v1/live/sessions'],
+    [
+      'wss://gateway.example/v1/live/sessions',
+      'wss://gateway.example/v1/live/sessions',
+    ],
+    [
+      'https://gateway.example/v1/live/sessions/',
+      'wss://gateway.example/v1/live/sessions',
+    ],
+  ])('resolves the gpt-live endpoint for %s', (root, expected) => {
+    expect(openAILiveWebSocketUrl(root)).toBe(expected);
+  });
+
+  it.each([
+    [
+      'https://gateway.example/v1',
+      'wss://gateway.example/v1/realtime?model=gpt-realtime-2',
+    ],
+    [
+      'wss://gateway.example/v1',
+      'wss://gateway.example/v1/realtime?model=gpt-realtime-2',
+    ],
+    [
+      'http://127.0.0.1:3000/v1',
+      'ws://127.0.0.1:3000/v1/realtime?model=gpt-realtime-2',
+    ],
+    [
+      'wss://gateway.example/v1/realtime?model=other',
+      'wss://gateway.example/v1/realtime?model=gpt-realtime-2',
+    ],
+  ])('resolves the OpenAI realtime endpoint for %s', (root, expected) => {
+    expect(openAIRealtimeWebSocketUrl(root, 'gpt-realtime-2')).toBe(expected);
+  });
+
+  it('keeps secure Gemini Live roots and does not repeat the service path', () => {
+    const path =
+      '/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent';
+    expect(geminiLiveWebSocketUrl('wss://gemini.example', 'key')).toBe(
+      `wss://gemini.example${path}?key=key`,
+    );
+    expect(geminiLiveWebSocketUrl(`https://gemini.example${path}`, 'key')).toBe(
+      `wss://gemini.example${path}?key=key`,
+    );
   });
 });

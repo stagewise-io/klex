@@ -32,6 +32,9 @@ import { InstinctPreparationBuffer } from './instinct-preparation';
 type Parts = ExtendedUIMessage['parts'];
 
 export interface InstinctRunnerDeps {
+  projectContext?: (
+    context: import('@/session/inbox').ContextDataUIPart,
+  ) => import('@/session/inbox').ContextDataUIPart;
   readonly logger: ModuleLogger;
   readonly extensionHandler: ExtensionHandler;
   /** Read on every run, so config changes apply to the next step. */
@@ -247,6 +250,7 @@ class InstinctRunnerModule implements InstinctRunner {
           const prompt = buildInstinctClassifierInput({
             entries,
             history: input.history,
+            projectContext: this.deps.projectContext,
             dataPartTransformers:
               this.deps.extensionHandler.getDataPartTransformers(),
             limits: config,

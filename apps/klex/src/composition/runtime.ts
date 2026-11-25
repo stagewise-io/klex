@@ -16,6 +16,7 @@ export interface RuntimeResource extends ClosableResource {
 export interface RuntimeStartupModules {
   modelCallLogger: RuntimeResource;
   sessionHistory: RuntimeResource;
+  inputProjections?: RuntimeResource;
   skillRegistry: RuntimeResource;
   adminApi: RuntimeResource;
   cloudConnectivity: RuntimeResource;
@@ -53,6 +54,9 @@ export function runtimeStartupOrder(
     { name: 'model-call-logger', resource: modules.modelCallLogger },
     // Sessions and the admin API read/write it; start before both.
     { name: 'session-history', resource: modules.sessionHistory },
+    ...(modules.inputProjections
+      ? [{ name: 'input-projections', resource: modules.inputProjections }]
+      : []),
     // Extensions and the admin API read/write skills; start before both.
     { name: 'skill-registry', resource: modules.skillRegistry },
     { name: 'admin-api', resource: modules.adminApi },
@@ -141,6 +145,7 @@ function runtimeShutdownOrder(
     'skill-registry',
     'model-call-logger',
     // Last: closing sessions flush their final transcript sync into it.
+    'input-projections',
     'session-history',
   ].flatMap((name) => {
     const resource = byName.get(name);

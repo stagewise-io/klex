@@ -517,6 +517,7 @@ class ContextCompactionExt implements Extension {
       undefined,
       this.deps.getDataPartTransformers?.(),
       ['time', 'timezone', 'todos', 'consult-report'],
+      this.deps.projectInputContext,
     ).render(slice).text;
     span.setAttribute('compaction.transcriptLength', transcript.length);
 

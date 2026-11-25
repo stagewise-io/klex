@@ -47,6 +47,9 @@ export class GenerationLaneClosedError extends Error {
  * interaction mode can run on canonical session state.
  */
 export interface GenerationLaneHost {
+  prepareUpdate?: (
+    update: import('./types').InteractionUpdateEnvelope,
+  ) => Promise<import('./types').InteractionUpdateEnvelope>;
   readonly sessionId: string;
   /**
    * Stops the chat generation lane at its next commit boundary and
@@ -139,6 +142,7 @@ export class GenerationLaneLeaseManager {
         maxPendingUpdates: this.deps.maxPendingUpdates,
       }),
       bootstrap: () => this.deps.host.prepareContext(request),
+      prepareUpdate: this.deps.host.prepareUpdate,
       executeTool: (toolRequest) => this.deps.host.executeTool(toolRequest),
       commit: (event) => this.deps.host.commit(event),
       onRelease: (reason) => this.finalize(lease, reason),

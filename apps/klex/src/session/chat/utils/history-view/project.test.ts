@@ -67,6 +67,44 @@ describe('applyScope', () => {
 });
 
 describe('projectMessage', () => {
+  it.each(['events', 'push-notifications'])(
+    'uses prepared %s payloads in metadata-free model views without mutating canonical data',
+    (origin) => {
+      const message = msg(
+        [
+          context({
+            metadata: { origin, data: { message: 'keep', traceId: 'hidden' } },
+            content: [{ type: 'text', text: 'native content' }],
+          }),
+        ],
+        'user',
+      );
+      const before = structuredClone(message);
+      const result = records(message, {
+        context: {
+          metadata: false,
+          text: { max: 2_000, truncate: 'end' },
+          media: 'placeholder',
+          resources: 'placeholder',
+        },
+        projectContext: (input) => ({
+          ...input,
+          metadata: {
+            ...input.metadata,
+            data: { message: 'keep' },
+            inputEventRef: 'abcdefgh',
+            moreInfoSections: ['raw'],
+          },
+        }),
+      });
+      const rendered = JSON.stringify(result);
+      expect(rendered).toContain('keep');
+      expect(rendered).toContain('native content');
+      expect(rendered).toContain('abcdefgh');
+      expect(rendered).not.toContain('hidden');
+      expect(message).toEqual(before);
+    },
+  );
   it.each([
     'https://example.test/audio?token=SECRET',
     'file:///private/SECRET',

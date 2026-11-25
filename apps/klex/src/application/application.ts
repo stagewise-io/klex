@@ -29,6 +29,7 @@ import {
   type Drain,
 } from '@/drain';
 import type { HealthServer } from '@/health-server';
+import { createInputProjections } from '@/input-projections';
 import { createIntrospector } from '@/introspection';
 import { createLocalData, type LocalData } from '@/local-data';
 import { KLEX_LOCAL_DATA_STORES } from '@/local-data-registry';
@@ -60,6 +61,7 @@ import {
 } from '@/session/chat/extensions/episode-summary';
 import type { ExtensionFactory } from '@/session/chat/extensions/extension-api';
 import { createImageInputOptimizerExt } from '@/session/chat/extensions/image-input-optimizer';
+import { createInputInfoExt } from '@/session/chat/extensions/input-info';
 import { createJsReplSandboxExt } from '@/session/chat/extensions/js-repl-sandbox';
 import { createMcpIngressExt } from '@/session/chat/extensions/mcp-ingress';
 import {
@@ -637,6 +639,11 @@ class ApplicationModule implements Application {
       config,
     });
 
+    const inputProjections = createInputProjections(sessionHistory);
+    introspector
+      .child('input-projections')
+      .introspect(() => inputProjections.diagnostics());
+
     const skillRegistry = createSkillRegistry({
       dataDirectory: cli.dataDirectory,
       logger: logging.child({
@@ -677,6 +684,7 @@ class ApplicationModule implements Application {
       telemetryMetrics,
       productAnalytics,
       sessionHistory,
+      inputProjections,
     };
 
     /**
@@ -711,7 +719,7 @@ class ApplicationModule implements Application {
     });
 
     // Shared canonical reader; grouping and progress belong to each consumer.
-    const activities = createActivityHistory(sessionHistory);
+    const activities = createActivityHistory(sessionHistory, inputProjections);
     const episodeSummaryLog = createEpisodeSummaryLog();
     const memoryRecall = createMemoryRecall({
       time: {
@@ -728,6 +736,7 @@ class ApplicationModule implements Application {
     // Default session: full extension set + MCP access.
     const defaultSessionFactory = makeSessionFactory([
       createEffortExt,
+      createInputInfoExt(inputProjections),
       createNameLoaderExt,
       createSoulExt,
       createJsReplSandboxExt,
@@ -833,6 +842,7 @@ class ApplicationModule implements Application {
       modules: {
         modelCallLogger,
         sessionHistory,
+        inputProjections,
         skillRegistry,
         adminApi: {
           start: async () => {

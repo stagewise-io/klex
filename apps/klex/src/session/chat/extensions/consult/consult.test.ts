@@ -50,6 +50,74 @@ function toolExecute<T>(tool: unknown): (input: T) => Promise<unknown> {
 }
 
 describe('consult extension', () => {
+  it('delegates only trusted projected references visible in child context', async () => {
+    const spawned = child();
+    const detailFactory: ExtensionFactory = {
+      identifier: 'io.stagewise/input-info',
+      create: () => ({}),
+    };
+    const createInputInfoExtension = vi.fn(() => detailFactory);
+    const createChildSession = vi.fn(async () => spawned);
+    const deps = makeDeps({
+      createChildSession,
+      createInputInfoExtension,
+      projectInputContext: (context) =>
+        context.sourceEnv === 'trusted'
+          ? {
+              ...context,
+              metadata: {
+                origin: 'events',
+                data: { message: 'keep' },
+                inputEventRef: 'abcdefgh',
+                moreInfoSections: ['raw'],
+              },
+            }
+          : context,
+      getHistory: (): ExtendedUIMessage[] => [
+        {
+          id: 'source',
+          role: 'user',
+          parts: [
+            {
+              type: 'data-context',
+              data: {
+                sourceEnv: 'trusted',
+                metadata: { origin: 'events', data: { traceId: 'hidden' } },
+                content: [],
+              },
+            },
+            {
+              type: 'data-context',
+              data: {
+                sourceEnv: 'untrusted',
+                metadata: { origin: 'events', inputEventRef: 'ijklmnop' },
+                content: [],
+              },
+            },
+          ],
+        },
+      ],
+      config: {
+        getModelSelection: () => [{ providerId: 'provider', modelId: 'model' }],
+      } as never,
+    });
+    const extension = createConsultExt(DEEP_THINK_CONFIG).create(deps);
+    await toolExecute<{ task: string }>(getTools(extension).startConsult)({
+      task: 'review',
+    });
+    expect(createInputInfoExtension).toHaveBeenCalledWith(
+      new Set(['abcdefgh']),
+    );
+    expect(createChildSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        extensions: expect.arrayContaining([detailFactory]),
+      }),
+    );
+    expect(
+      JSON.stringify(vi.mocked(spawned.inbox.sendMessage).mock.calls),
+    ).not.toContain('hidden');
+  });
+
   it('starts an isolated child and sends updates deferrably', async () => {
     const spawned = child();
     const createChildSession = vi.fn(async () => spawned);

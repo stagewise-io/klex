@@ -6,6 +6,21 @@ import type {
   GenerationHealthError,
 } from './generation-health';
 
+export interface InputProjectionBinding {
+  reference: string;
+  sessionId: string;
+  messageId: string;
+  part: number;
+  contextHash: string;
+  revision: string;
+}
+export interface InputProjectionPlanRecord {
+  revision: string;
+  family: string;
+  shape: string;
+  body: string;
+}
+
 /** Static metadata of one `ChatSession` instance. */
 export interface SessionHistoryRecorderMetadata {
   /** Unique per `ChatSession` instance; stable for its lifetime. */

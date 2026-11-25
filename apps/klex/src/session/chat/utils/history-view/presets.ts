@@ -77,10 +77,12 @@ export function createTranscriptHistoryView(
   budget: HistoryBudget = { keep: 'newest' },
   transformers: DataPartRegistry = {},
   keys: readonly string[] = [],
+  projectContext?: HistoryFilterOptions['projectContext'],
 ): HistoryView {
   return createHistoryView({
     filter: {
       ...TRANSCRIPT_HISTORY_FILTER,
+      projectContext,
       dataParts: {
         keys,
         limit: { max: 500, truncate: 'middle' },
@@ -101,6 +103,7 @@ export function createTranscriptHistoryView(
  */
 export function createInstinctHistoryView(options: {
   transformers?: DataPartRegistry;
+  projectContext?: HistoryFilterOptions['projectContext'];
 }): HistoryView {
   return createHistoryView({
     transformers: options.transformers,
@@ -109,6 +112,7 @@ export function createInstinctHistoryView(options: {
       dataParts: options.transformers
         ? { keys: 'all', exclude: [CONTEXT_SUMMARY_KEY], media: 'placeholder' }
         : undefined,
+      projectContext: options.projectContext,
     },
   });
 }

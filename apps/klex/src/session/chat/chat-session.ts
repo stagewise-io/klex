@@ -78,6 +78,7 @@ import type {
   MakeDecisionArgs,
   MakeDecisionResult,
 } from './extensions/extension-api';
+import { createInputInfoExt } from './extensions/input-info';
 import {
   materializeMemories,
   materializeSkills,
@@ -127,6 +128,7 @@ const INSTINCT_CLASSIFIER_IDENTIFIER = 'core:instinct-classifier';
 const RESTORE_FALLBACK_MAX_BYTES = 2 * 1024 * 1024;
 
 export interface ChatSessionDependencies {
+  inputProjections?: import('@/input-projections').InputProjections;
   logging: RootLogger;
   modelResolver: ProviderModelResolver;
   config: Config;
@@ -386,6 +388,7 @@ class ChatSessionModule implements AgentSession {
       productAnalytics?: ProductAnalyticsRecorder;
       parentSpanContext?: SpanContext;
       sessionHistory?: SessionHistory;
+      inputProjections?: import('@/input-projections').InputProjections;
       conversationEpochOptions?: ConversationEpochOptions;
     },
   ) {
@@ -568,6 +571,16 @@ class ChatSessionModule implements AgentSession {
       getHistory: () => [...this.messages],
       getDataPartTransformers: () =>
         this.extensionHandler.getDataPartTransformers(),
+      createInputInfoExtension: this.deps.inputProjections
+        ? (references) =>
+            createInputInfoExt(
+              this.deps.inputProjections!,
+              this.sessionId,
+              references,
+            )
+        : undefined,
+      projectInputContext: (context) =>
+        this.deps.inputProjections?.present(this.sessionId, context) ?? context,
       checkpoints: {
         commit: (request) => {
           if (this._status === 'terminated') {
@@ -633,6 +646,8 @@ class ChatSessionModule implements AgentSession {
     }
 
     this.instinctRunner = createInstinctRunner({
+      projectContext: (context) =>
+        this.deps.inputProjections?.present(this.sessionId, context) ?? context,
       logger: this.deps.logger,
       extensionHandler: this.extensionHandler,
       // Automatic instincts are disabled, including for saved enabled configs.
@@ -652,6 +667,27 @@ class ChatSessionModule implements AgentSession {
         quiesceGenerationLane: (reason) => this.quiesceGenerationLane(reason),
         resumeGenerationLane: () => this.resumeGenerationLane(),
         prepareContext: (request) => this.prepareLeaseContext(request),
+        prepareUpdate: async (update) => {
+          this.scheduleTranscriptSync();
+          try {
+            await this.deps.inputProjections?.prepare(this.sessionId, [
+              ...this.messages,
+            ]);
+          } catch {
+            /* Keep canonical input visible on storage failure. */
+          }
+          return {
+            ...update,
+            event: {
+              ...update.event,
+              context:
+                this.deps.inputProjections?.present(
+                  this.sessionId,
+                  update.event.context,
+                ) ?? update.event.context,
+            },
+          };
+        },
         executeTool: (request) => this.executeLeaseTool(request),
         finalizeLease: () => this.finalizeLeaseState(),
         commit: (event) => this.commitLeaseEvent(event),
@@ -1181,6 +1217,45 @@ class ChatSessionModule implements AgentSession {
   };
 
   /** Coalesced, non-throwing transcript persistence. */
+  private prepareProjectedInputs = async (
+    signal?: AbortSignal,
+  ): Promise<void> => {
+    if (!this.deps.inputProjections) return;
+    this.scheduleTranscriptSync();
+    const entries = this.deps.config.get().modelSelection.chat;
+    const active = this.fallbackManager.getChatModelEntry();
+    const modelIds = [active, ...entries]
+      .filter(
+        (entry): entry is NonNullable<typeof entry> => entry !== undefined,
+      )
+      .filter(
+        (entry, i, all) =>
+          all.findIndex(
+            (candidate) => JSON.stringify(candidate) === JSON.stringify(entry),
+          ) === i,
+      );
+    try {
+      await this.deps.inputProjections.prepare(
+        this.sessionId,
+        [...this.messages],
+        {
+          generate: (args) =>
+            context.with(
+              withExtensionIdentifier(
+                context.active(),
+                'io.stagewise/input-info',
+              ),
+              () => this.generateTextForExtension(args),
+            ),
+          modelIds,
+          signal,
+        },
+      );
+    } catch {
+      // Persistence/generation must never prevent canonical delivery. Unprepared data stays raw.
+    }
+  };
+
   private scheduleTranscriptSync(): void {
     this.transcriptRecorder?.scheduleSync(() => this.messages);
   }
@@ -1332,7 +1407,10 @@ class ChatSessionModule implements AgentSession {
     const history = [...this.messages];
     const historyRevision = history.length;
     const updateWatermark = this.leaseManager.updateWatermark;
+    await this.prepareProjectedInputs();
     const assembled = await assembleInferenceContext({
+      projectContext: (context) =>
+        this.deps.inputProjections?.present(this.sessionId, context) ?? context,
       history,
       extensionHandler: this.extensionHandler,
       model,
@@ -1674,6 +1752,10 @@ class ChatSessionModule implements AgentSession {
           },
           flushPendingImmediate: this.flushPendingImmediate,
           atStepBoundary: this.atStepBoundary,
+          prepareInputs: this.prepareProjectedInputs,
+          projectContext: (context) =>
+            this.deps.inputProjections?.present(this.sessionId, context) ??
+            context,
           shouldYieldGenerationLane: () =>
             this.laneSuspended || this._status === 'terminated',
           basePrompt: this.deps.basePrompt,
@@ -2430,6 +2512,7 @@ export function createChatSession(
     basePrompt: deps.basePrompt,
     parentSpanContext: deps.parentSpanContext,
     sessionHistory: deps.sessionHistory,
+    inputProjections: deps.inputProjections,
     ...(deps.conversationEpochOptions !== undefined && {
       conversationEpochOptions: deps.conversationEpochOptions,
     }),

@@ -2,7 +2,7 @@ import type { SqliteStoreDefinition } from '@/local-data';
 import { LOCAL_DATA_MIGRATIONS } from '@/local-data-migrations';
 
 /** Schema version — increment when adding migrations. */
-export const SESSION_HISTORY_SCHEMA_VERSION = 5;
+export const SESSION_HISTORY_SCHEMA_VERSION = 6;
 
 /** Relative path of the session-history database inside the data directory. */
 export const SESSION_HISTORY_RELATIVE_PATH = 'sessions.sqlite';
@@ -65,6 +65,19 @@ CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions (parent_instance_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_ended ON sessions (ended_at, updated_at);
 CREATE INDEX IF NOT EXISTS idx_messages_instance_ord ON messages (instance_id, ord);
 CREATE INDEX IF NOT EXISTS idx_messages_session_checkpoint ON messages (session_id, is_checkpoint, ord);
+CREATE TABLE input_projection_plans (revision TEXT PRIMARY KEY, family TEXT NOT NULL, shape TEXT NOT NULL, body TEXT NOT NULL, created_at TEXT NOT NULL);
+CREATE TABLE input_projection_feedback (revision TEXT NOT NULL, section TEXT NOT NULL, count INTEGER NOT NULL, reasons TEXT NOT NULL, PRIMARY KEY(revision, section));
+CREATE TABLE input_projection_reviews (revision TEXT NOT NULL, section TEXT NOT NULL, batch INTEGER NOT NULL, reasons TEXT NOT NULL, completed INTEGER NOT NULL DEFAULT 0, retry_after TEXT NOT NULL DEFAULT '', attempts INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(revision, section, batch));
+CREATE TABLE input_projection_bindings (reference TEXT PRIMARY KEY CHECK(length(reference) = 8), session_id TEXT NOT NULL, ord INTEGER NOT NULL, part INTEGER NOT NULL, context_hash TEXT NOT NULL, revision TEXT NOT NULL, created_at TEXT NOT NULL, UNIQUE(session_id, ord, part));
+CREATE INDEX idx_input_projection_family ON input_projection_plans(family, shape, created_at);
+CREATE INDEX idx_input_projection_revision ON input_projection_bindings(revision);
+CREATE INDEX idx_messages_projection_source ON messages(session_id, message_id);
+CREATE TRIGGER input_projection_delete AFTER DELETE ON messages BEGIN DELETE FROM input_projection_bindings WHERE session_id = OLD.session_id AND ord = OLD.ord; END;
+CREATE TRIGGER input_projection_update AFTER UPDATE OF content, ord ON messages BEGIN
+  DELETE FROM input_projection_bindings WHERE session_id = OLD.session_id AND ord = OLD.ord
+    AND json_extract(OLD.content, '$.parts[' || part || '].data') IS NOT json_extract(NEW.content, '$.parts[' || part || '].data');
+  UPDATE input_projection_bindings SET ord = NEW.ord WHERE session_id = OLD.session_id AND ord = OLD.ord;
+END;
 CREATE TABLE memory_snapshots (hash TEXT PRIMARY KEY, content TEXT NOT NULL);
 CREATE TABLE message_memory_snapshots (
   session_id TEXT NOT NULL, ord INTEGER NOT NULL, hash TEXT NOT NULL,
@@ -111,13 +124,25 @@ export const SESSION_HISTORY_STORE_DEFINITION: SqliteStoreDefinition = {
   schemaVersion: SESSION_HISTORY_SCHEMA_VERSION,
   // Older binaries must not read storage-only snapshot references.
   compatibilityVersion: 1,
-  // First binary hydrating content-addressed memory snapshots.
-  minimumKlexVersion: '0.38.2',
+  // Next stable release after the released schema-5 binary.
+  minimumKlexVersion: '0.38.3',
   // Must run before the first table exists; afterwards it has no effect.
   initPragmas: ['PRAGMA auto_vacuum = INCREMENTAL'],
   initSql: SESSION_HISTORY_INIT_SQL,
   migrations: SESSION_HISTORY_MIGRATIONS,
   validate: async (client) => {
+    await client.execute(
+      'SELECT revision, section, count, reasons FROM input_projection_feedback LIMIT 1',
+    );
+    await client.execute(
+      'SELECT revision, section, batch, reasons, completed, retry_after, attempts FROM input_projection_reviews LIMIT 1',
+    );
+    await client.execute(
+      'SELECT revision, family, shape, body FROM input_projection_plans LIMIT 1',
+    );
+    await client.execute(
+      'SELECT reference, session_id, ord, part, context_hash, revision FROM input_projection_bindings LIMIT 1',
+    );
     await client.execute('SELECT hash, content FROM memory_snapshots LIMIT 1');
     await client.execute(
       'SELECT session_id, ord, hash FROM message_memory_snapshots LIMIT 1',

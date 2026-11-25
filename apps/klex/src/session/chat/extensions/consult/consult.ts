@@ -299,6 +299,33 @@ class ConsultExtension implements Extension {
     const reporter = createReporterFactory((content, final) =>
       this.receiveReport(handle, generationId, content, final),
     );
+    // Capture exactly the bounded context sent to this child. Reference access
+    // is delegated only when its framing survived transcript fitting.
+    const references = new Set<string>();
+    const serializedContext = createTranscriptHistoryView(
+      {
+        keep: 'newest',
+        maxCharacters: CONSULT_CONTEXT_MAX_CHARACTERS,
+        recentMessageLimit:
+          this.config.maxContextMessages ?? CONSULT_DEFAULT_CONTEXT_MESSAGES,
+      },
+      this.deps.getDataPartTransformers?.(),
+      ['time', 'timezone', 'todos', CONSULT_REPORT_KEY],
+      (context) => {
+        const projected = this.deps.projectInputContext?.(context) ?? context;
+        const reference = projected.metadata.inputEventRef;
+        // Only the trusted projector can mint delegated capabilities. Never
+        // extract authorization from payload strings or unchanged raw metadata.
+        if (projected !== context && typeof reference === 'string')
+          references.add(reference);
+        return projected;
+      },
+    ).render(this.deps.getHistory()).text;
+    for (const reference of references) {
+      if (!serializedContext.includes(`"inputEventRef":"${reference}"`))
+        references.delete(reference);
+    }
+    const details = this.deps.createInputInfoExtension?.(references);
     let child: ConsultEntry['child'];
     try {
       child = await this.deps.createChildSession({
@@ -306,7 +333,11 @@ class ConsultExtension implements Extension {
         // metric label. The handle ↔ session id mapping is logged below.
         name: 'consult',
         extensionIdentifier: 'consult',
-        extensions: [...this.config.childExtensionFactories, reporter],
+        extensions: [
+          ...this.config.childExtensionFactories,
+          reporter,
+          ...(details ? [details] : []),
+        ],
         modelPurpose: 'consult',
         basePrompt: CONSULT_BASE_PROMPT,
         hooks: {
@@ -347,17 +378,6 @@ class ConsultExtension implements Extension {
     );
 
     try {
-      const history = this.deps.getHistory();
-      const serializedContext = createTranscriptHistoryView(
-        {
-          keep: 'newest',
-          maxCharacters: CONSULT_CONTEXT_MAX_CHARACTERS,
-          recentMessageLimit:
-            this.config.maxContextMessages ?? CONSULT_DEFAULT_CONTEXT_MESSAGES,
-        },
-        this.deps.getDataPartTransformers?.(),
-        ['time', 'timezone', 'todos', CONSULT_REPORT_KEY],
-      ).render(history).text;
       const delivered = child.inbox.sendMessage(
         {
           id: randomUUID(),

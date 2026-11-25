@@ -122,6 +122,9 @@ export type InteractionLeaseClosure =
   | { readonly type: 'failed'; readonly error: unknown };
 
 export interface InteractionLease {
+  prepareUpdate?: (
+    update: InteractionUpdateEnvelope,
+  ) => Promise<InteractionUpdateEnvelope>;
   readonly id: string;
   readonly sessionId: string;
   readonly mode: InteractionMode;

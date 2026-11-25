@@ -47,6 +47,10 @@ live state. Missing history gets a fresh baseline at the next step. No heartbeat
 metadata or subscription arguments enter automatic context, and status observation
 does not trigger a model turn. Unwatch does not retract already-ingested events.
 
+## Input detail feedback
+
+`getMoreInputInfo(eventId, infoSection, reason, cursor?)` requires a nonblank explanation of the missing facts and why they are needed (maximum 1,000 characters). Only successful initial-page fetches count; continuations, invalid sections/cursors and inaccessible references do not. Counts are shared across events using the same immutable projection revision and section, including `raw`. Every tenth fetch atomically queues those ten reasons, surviving restart. At the next safe projection-preparation boundary, one serialized helper review uses the configured Chat model selection and the existing bounded, tool-free assignment generator. It can retain the definition, promote needed fields, or regroup detail fields, but code preserves existing default fields. Reasons and paths are untrusted evidence. Failed reviews stay queued; delivery and detail access remain usable. Revisions apply only to future bindings, never to already-presented events. Delayed reviews cannot overwrite newer revisions. Pagination does not inflate learning counts; delegated consult fetches count against their authorized source revision.
+
 ## Inbox
 
 Three-urgency event buffer. Two entry points: `send(event)` for context events (from MCP push notifications, session host) and `sendMessage(message, urgency)` for native messages (from extensions). Both share the same urgency semantics.
@@ -361,6 +365,16 @@ Consult receives the latest durable context-compaction summary plus the configur
 3. **Budget**: `newest` keeps the latest summary plus the newest messages and marks truncation; `oldest` consumes messages in order and returns a resume cursor.
 
 Consumers own their presets. The line-format transcript preset (`createTranscriptHistoryView`, `CONTEXT_SUMMARY_KEY`) serves context compaction without a limit and consult with a character and message budget. The canonical activity preset lives in `activity-history/history-projection.ts`.
+
+## Structured input projections
+
+The application-owned `input-projections` service prepares MCP Events and Push Notifications at awaited inference boundaries before Instinct and main conversion. Canonical history, delivery IDs, acknowledgements and memory/skill matching remain raw. Only structured `metadata.data` is selected: nested object children are independent, arrays are atomic, strings are literal, and native content blocks retain their order and values.
+
+Plans classify runtime-owned field IDs into default/routing/objectIds/links/other. A tool-free helper uses configured Chat models, at most two attempts within eight seconds; invalid output and unavailable helpers use deterministic fallback. Shape keys ignore values and array contents; new fields/types require another variant. Same-type semantic drift cannot be detected automatically. Runtime reply-target heuristics are not a guarantee for unfamiliar domains. Actual token savings and live-model semantic quality remain unmeasured.
+
+Durable bindings pin each event to its plan revision and eight-character reference before presentation hides fields. `getMoreInputInfo` returns lossless JSON text chunks capped at 12 KiB, including raw metadata recovery. Lookups are session-scoped; consult receives a reference allow-list rather than global access. Auxiliary activity views are prepared without initiating helper calls, while search and canonical revisions remain raw. Live realtime updates are prepared in the shared coordinator before dispatch to any provider, leaving sequence assignment and acknowledgement unchanged. Unknown live shapes do not initiate generation.
+
+Bindings expire when canonical source rows are evicted or changed. Plans persist in the registered sessions database; unreferenced definitions are bounded by storage cleanup. Introspection exposes count/byte diagnostics without payloads. In-memory prepared contexts and concurrent helper generations are capped at 2,048 and two respectively.
 
 ## Transcript persistence
 

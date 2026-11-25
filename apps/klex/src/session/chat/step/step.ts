@@ -64,6 +64,10 @@ import {
  * `recordSuccessfulGeneration` is enforced by the manager's encapsulation.
  */
 export interface StepDependencies {
+  prepareInputs?: (signal: AbortSignal) => Promise<void>;
+  projectContext?: (
+    context: import('@/session/inbox').ContextDataUIPart,
+  ) => import('@/session/inbox').ContextDataUIPart;
   logger: ModuleLogger;
   turnContext: Context;
   messages: ExtendedUIMessage[];
@@ -297,6 +301,8 @@ class StepModule implements Step {
         // reactions. Runs after the decision (skipped steps never classify)
         // and before model resolution. Persistent parts are committed here
         // synchronously; provisional and ephemeral parts are applied below.
+        await this.deps.prepareInputs?.(this.stepAbort.signal);
+        if (this.stepAbort.signal.aborted) return abortPreparation();
         const instinct = await this.runInstinct(stepSpan);
         instinctSummary =
           instinct.status !== 'skipped' ? instinct.summary : undefined;
@@ -651,6 +657,7 @@ class StepModule implements Step {
             preResult.history,
             (metrics) =>
               this.deps.logger.debug(metrics, 'Memory context rendered'),
+            this.deps.projectContext,
           );
           if (this.stepAbort.signal.aborted) {
             transformSpan.end();

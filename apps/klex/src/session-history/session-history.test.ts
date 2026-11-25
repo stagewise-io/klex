@@ -1,14 +1,15 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { createClient } from '@libsql/client';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createLogger } from '@stagewise/logger';
 
 import { type KlexConfig, klexConfigSchema } from '@/config';
+import { createInputProjections } from '@/input-projections';
 import type { SqliteStoreDefinition } from '@/local-data';
 import { createLocalData } from '@/local-data';
 import { KLEX_VERSION } from '@/release';
@@ -55,7 +56,9 @@ function meta(
   };
 }
 
-async function setup(options: { maxBytes?: number; directory?: string } = {}) {
+async function setup(
+  options: { maxBytes?: number; directory?: string; now?: () => Date } = {},
+) {
   const directory =
     options.directory ??
     (await mkdtemp(join(tmpdir(), 'klex-session-history-')));
@@ -74,6 +77,7 @@ async function setup(options: { maxBytes?: number; directory?: string } = {}) {
     logging: logger,
     dataDirectory: directory,
     config: { get: () => config },
+    now: options.now,
   });
   modules.push(history);
   await history.start();
@@ -98,6 +102,644 @@ afterEach(async () => {
       .splice(0)
       .map((directory) => rm(directory, { recursive: true, force: true })),
   );
+});
+
+describe('input projection storage', () => {
+  // Recovery and review fairness regression contracts.
+  it('audit: realtime fallback stays pinned while a later helper can learn for future events', async () => {
+    const { history } = await setup();
+    const recorder = history.openRecorder(meta());
+    const messages: ExtendedUIMessage[] = [
+      {
+        id: 'realtime-first',
+        role: 'user',
+        parts: [
+          {
+            type: 'data-context',
+            data: {
+              sourceEnv: 'audit',
+              metadata: {
+                origin: 'events',
+                type: 'message',
+                data: {
+                  message: 'hello',
+                  traceId: 'x'.repeat(8_000),
+                },
+              },
+              content: [],
+            },
+          },
+        ],
+      },
+    ];
+    recorder.scheduleSync(() => messages);
+    const projections = createInputProjections(history);
+    await projections.prepare('default', messages);
+    const part = messages[0]!.parts[0];
+    if (part?.type !== 'data-context') throw new Error('Missing context');
+    const before = projections.present('default', part.data);
+    expect(before.metadata.projectionStatus).toBe('fallback');
+    const generate = vi.fn().mockResolvedValue({ success: false });
+    await projections.prepare('default', messages, {
+      generate,
+      modelIds: [{ providerId: 'audit', modelId: 'chat' }],
+    });
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(projections.present('default', part.data)).toEqual(before);
+    await projections.close();
+  });
+
+  it('caps helper calls across a flood of new shapes', async () => {
+    const { history } = await setup();
+    const recorder = history.openRecorder(meta());
+    const messages: ExtendedUIMessage[] = Array.from(
+      { length: 12 },
+      (_, i) => ({
+        id: `shape-${i}`,
+        role: 'user',
+        parts: [
+          {
+            type: 'data-context',
+            data: {
+              sourceEnv: 'flood',
+              metadata: {
+                origin: 'events',
+                data: { message: 'hello', [`trace${i}`]: 'x'.repeat(8_000) },
+              },
+              content: [],
+            },
+          },
+        ],
+      }),
+    );
+    recorder.scheduleSync(() => messages);
+    const projections = createInputProjections(history);
+    const generate = vi.fn().mockResolvedValue({ success: false });
+    await projections.prepare('default', messages, {
+      generate,
+      modelIds: [{ providerId: 'test', modelId: 'chat' }],
+    });
+    expect(generate).toHaveBeenCalledTimes(2);
+    for (const message of messages) {
+      const part = message.parts[0];
+      if (part?.type !== 'data-context') throw new Error('Missing context');
+      const ref = projections.present('default', part.data).metadata
+        .inputEventRef as string;
+      expect(await history.readInputProjection('default', ref)).toBeDefined();
+    }
+    await projections.close();
+  });
+
+  it('audit: reordering an unchanged source message preserves its durable reference', async () => {
+    const { history } = await setup();
+    const recorder = history.openRecorder(meta());
+    const source: ExtendedUIMessage = {
+      id: 'source',
+      role: 'user',
+      parts: [
+        {
+          type: 'data-context',
+          data: {
+            sourceEnv: 'audit',
+            metadata: {
+              origin: 'events',
+              data: {
+                message: 'hello',
+                traceId: 'x'.repeat(8_000),
+              },
+            },
+            content: [],
+          },
+        },
+      ],
+    };
+    const later = message('later');
+    let messages = [source, later];
+    recorder.scheduleSync(() => messages);
+    const projections = createInputProjections(history);
+    await projections.prepare('default', messages);
+    const part = source.parts[0];
+    if (part?.type !== 'data-context') throw new Error('Missing context');
+    const reference = projections.present('default', part.data).metadata
+      .inputEventRef as string;
+    expect(
+      await history.readInputProjection('default', reference),
+    ).toBeDefined();
+    messages = [later, source];
+    recorder.scheduleSync(() => messages);
+    await projections.prepare('default', messages);
+    expect(
+      await history.readInputProjection('default', reference),
+    ).toBeDefined();
+    expect(
+      projections.present('default', part.data).metadata.inputEventRef,
+    ).toBe(reference);
+    await projections.close();
+  });
+
+  it('audit: a failed review backs off without blocking other sections', async () => {
+    const { history } = await setup();
+    await history.saveInputProjectionPlan({
+      revision: 'review-audit',
+      family: 'audit',
+      shape: 'shape',
+      body: JSON.stringify({
+        version: 1,
+        fields: [{ path: ['message'], type: 'string', section: 'other' }],
+      }),
+    });
+    for (const section of ['other', 'raw'])
+      for (let i = 0; i < 10; i++)
+        await history.recordInputProjectionFetch(
+          'review-audit',
+          section,
+          `Need ${section} ${i}`,
+        );
+    const generate = vi.fn().mockResolvedValue({ success: false });
+    const projections = createInputProjections(history);
+    const generation = {
+      generate,
+      modelIds: [{ providerId: 'audit', modelId: 'chat' }],
+    };
+    await projections.prepare('default', [], generation);
+    await projections.prepare('default', [], generation);
+    expect(generate).toHaveBeenCalledTimes(2);
+    expect(
+      generate.mock.calls.map(
+        (call) => JSON.parse(call[0].prompt).review.section,
+      ),
+    ).toEqual(['other', 'raw']);
+    expect(await history.pendingInputProjectionReviews()).toEqual([]);
+    await projections.close();
+  });
+  it('persists ten-fetch batches, reviews at a safe boundary, and pins old events', async () => {
+    const first = await setup();
+    const recorder = first.history.openRecorder(meta());
+    const make = (id: string): ExtendedUIMessage => ({
+      id,
+      role: 'user',
+      parts: [
+        {
+          type: 'data-context',
+          data: {
+            sourceEnv: 'feedback',
+            metadata: {
+              origin: 'events',
+              type: 'message',
+              eventId: id,
+              data: { message: id, traceId: 'x'.repeat(8_000) },
+            },
+            content: [],
+          },
+        },
+      ],
+    });
+    const messages = [make('before')];
+    const generate = vi.fn().mockImplementation(async (args) => {
+      const parsed = JSON.parse(args.prompt);
+      const fields = Array.isArray(parsed) ? parsed : parsed.fields;
+      return {
+        success: true,
+        finishReason: 'stop',
+        output: {
+          assignments: fields.map(
+            (field: { fieldId: string; path: string[] }) => ({
+              fieldId: field.fieldId,
+              section:
+                !Array.isArray(parsed) || field.path[0] === 'message'
+                  ? 'default'
+                  : 'objectIds',
+            }),
+          ),
+        },
+      };
+    });
+    const generation = {
+      generate,
+      modelIds: [{ providerId: 'test', modelId: 'chat' }],
+    };
+    const projections = createInputProjections(first.history);
+    recorder.scheduleSync(() => messages);
+    await projections.prepare('default', messages, generation);
+    const context = messages[0]!.parts[0];
+    if (context?.type !== 'data-context') throw new Error('Missing context');
+    const before = projections.present('default', context.data);
+    const ref = before.metadata.inputEventRef as string;
+    for (let i = 0; i < 9; i++)
+      await projections.readSection(
+        'default',
+        ref,
+        'objectIds',
+        undefined,
+        `Need trace ${i}`,
+      );
+    expect(await first.history.pendingInputProjectionReviews()).toEqual([]);
+    const page = (await projections.readSection(
+      'default',
+      ref,
+      'objectIds',
+    )) as { nextCursor: string };
+    await projections.readSection(
+      'default',
+      ref,
+      'objectIds',
+      page.nextCursor,
+      'Continuation must not count',
+    );
+    await projections.readSection(
+      'wrong',
+      ref,
+      'objectIds',
+      undefined,
+      'Denied must not count',
+    );
+    await projections.readSection(
+      'default',
+      ref,
+      'links',
+      undefined,
+      'Unknown must not count',
+    );
+    await projections.close();
+    await first.history.close();
+    let now = Date.now();
+    const second = await setup({
+      directory: first.directory,
+      now: () => new Date(now),
+    });
+    const restored = createInputProjections(second.history);
+    await restored.readSection(
+      'default',
+      ref,
+      'objectIds',
+      undefined,
+      'Need trace 9',
+    );
+    const pending = await second.history.pendingInputProjectionReviews();
+    expect(pending).toHaveLength(1);
+    expect(pending[0]?.reasons).toEqual(
+      Array.from({ length: 10 }, (_, i) => `Need trace ${i}`),
+    );
+    const failed = {
+      ...generation,
+      generate: vi.fn().mockResolvedValue({ success: false }),
+    };
+    await restored.prepare('default', messages, failed);
+    expect(await second.history.pendingInputProjectionReviews()).toEqual([]);
+    await restored.prepare('default', messages, generation);
+    expect(generate).toHaveBeenCalledTimes(1);
+    now += 60_001;
+    expect(await second.history.pendingInputProjectionReviews()).toHaveLength(
+      1,
+    );
+    await restored.prepare('default', messages, generation);
+    expect(await second.history.pendingInputProjectionReviews()).toEqual([]);
+    expect(generate).toHaveBeenCalledTimes(2);
+    const reviewPrompt = JSON.parse(generate.mock.calls[1]![0].prompt);
+    expect(reviewPrompt.review.reasons).toEqual(pending[0]?.reasons);
+    expect(restored.present('default', context.data)).toEqual(before);
+    const nextRecorder = second.history.openRecorder(meta());
+    messages.push(make('after'));
+    nextRecorder.scheduleSync(() => messages);
+    await restored.prepare('default', messages, generation);
+    const next = messages[1]!.parts[0];
+    if (next?.type !== 'data-context') throw new Error('Missing context');
+    expect(restored.present('default', next.data).metadata.data).toHaveProperty(
+      'traceId',
+    );
+    // Requests pinned to the old revision still produce the next disjoint ten-reason batch.
+    await Promise.all(
+      Array.from({ length: 10 }, (_, i) =>
+        restored.readSection(
+          'default',
+          ref,
+          'objectIds',
+          undefined,
+          `Again ${i}`,
+        ),
+      ),
+    );
+    const batch2 = await second.history.pendingInputProjectionReviews();
+    expect(batch2[0]?.batch).toBe(2);
+    expect(batch2[0]?.reasons).toHaveLength(10);
+    // The first review already superseded this revision: do not spend a helper
+    // call or let feedback from pinned old events overwrite the learned plan.
+    await restored.prepare('default', messages, generation);
+    expect(generate).toHaveBeenCalledTimes(2);
+    expect(await second.history.pendingInputProjectionReviews()).toEqual([]);
+    expect(restored.present('default', context.data)).toEqual(before);
+    await restored.close();
+  });
+
+  it('reuses known shapes, isolates variants and preserves pinned details', async () => {
+    const { history } = await setup();
+    const recorder = history.openRecorder(meta());
+    const make = (
+      id: string,
+      extra: Record<string, string> = {},
+    ): ExtendedUIMessage => ({
+      id,
+      role: 'user',
+      parts: [
+        {
+          type: 'data-context',
+          data: {
+            sourceEnv: 'fixture',
+            metadata: {
+              origin: 'events',
+              type: 'message',
+              eventId: id,
+              data: {
+                message: `Fact ${id}`,
+                traceId: 'x'.repeat(8_000),
+                ...extra,
+              },
+            },
+            content: [],
+          },
+        },
+      ],
+    });
+    const messages = [make('first')];
+    const generate = vi.fn().mockImplementation(async (args) => ({
+      success: true,
+      finishReason: 'stop',
+      output: {
+        assignments: JSON.parse(args.prompt).map(
+          (field: { fieldId: string; path: string[] }) => ({
+            fieldId: field.fieldId,
+            section: field.path.at(-1) === 'traceId' ? 'objectIds' : 'default',
+          }),
+        ),
+      },
+    }));
+    const generation = {
+      generate,
+      modelIds: [{ providerId: 'fixture', modelId: 'chat' }],
+    };
+    const projections = createInputProjections(history);
+    const prepare = async () => {
+      recorder.scheduleSync(() => messages);
+      await projections.prepare('default', messages, generation);
+    };
+    await prepare();
+    const first = messages[0]!.parts[0];
+    if (first?.type !== 'data-context')
+      throw new Error('Missing fixture context');
+    const pinned = projections.present('default', first.data);
+    expect(pinned.metadata.data).toEqual({ message: 'Fact first' });
+    expect(Buffer.byteLength(JSON.stringify(pinned.metadata))).toBeLessThan(
+      Buffer.byteLength(JSON.stringify(first.data.metadata)) / 2,
+    );
+    messages.push(make('second'));
+    await prepare();
+    expect(generate).toHaveBeenCalledTimes(1);
+    messages.push(make('changed', { newFact: 'Must stay visible' }));
+    await prepare();
+    expect(generate).toHaveBeenCalledTimes(2);
+    const changed = messages[2]!.parts[0];
+    if (changed?.type !== 'data-context')
+      throw new Error('Missing fixture context');
+    expect(projections.present('default', changed.data).metadata.data).toEqual({
+      message: 'Fact changed',
+      newFact: 'Must stay visible',
+    });
+    expect(projections.present('default', first.data)).toEqual(pinned);
+    const details = (await projections.readSection(
+      'default',
+      pinned.metadata.inputEventRef as string,
+      'objectIds',
+    )) as { chunk: string; nextCursor: string | null };
+    expect(details.chunk).toContain('traceId');
+    expect(first.data.metadata.data).toHaveProperty(
+      'traceId',
+      'x'.repeat(8_000),
+    );
+  });
+
+  it('detects reference collisions without binding another source and expires evicted sources', async () => {
+    const { history } = await setup();
+    const context = {
+      sourceEnv: 'fixture',
+      metadata: { origin: 'events', data: { message: 'fact' } },
+      content: [],
+    };
+    const sources: ExtendedUIMessage[] = ['one', 'two'].map((id) => ({
+      id,
+      role: 'user',
+      parts: [{ type: 'data-context', data: context }],
+    }));
+    history.openRecorder(meta()).scheduleSync(() => sources);
+    await history.flush();
+    const binding = {
+      reference: 'abcdefgh',
+      sessionId: 'default',
+      messageId: 'one',
+      part: 0,
+      contextHash: createHash('sha256')
+        .update(JSON.stringify(context))
+        .digest('hex'),
+      revision: 'identity-v1',
+    };
+    expect(await history.bindInputProjection(binding)).toEqual(binding);
+    expect(
+      await history.bindInputProjection({ ...binding, messageId: 'two' }),
+    ).toBeUndefined();
+    expect(
+      await history.bindInputProjection({
+        ...binding,
+        messageId: 'two',
+        reference: 'ijklmnop',
+      }),
+    ).toMatchObject({ reference: 'ijklmnop', messageId: 'two' });
+    expect(
+      (await history.readInputProjection('default', 'abcdefgh'))?.binding
+        .messageId,
+    ).toBe('one');
+  });
+  it('does not cache small-event identity decisions for later large events of the same shape', async () => {
+    const { history } = await setup();
+    const recorder = history.openRecorder(meta());
+    const context = (traceId: string) => ({
+      sourceEnv: 'fixture',
+      metadata: {
+        origin: 'events',
+        type: 'message',
+        data: { message: 'keep', traceId },
+      },
+      content: [],
+    });
+    const small = context('short');
+    const large = context('x'.repeat(8_000));
+    const source = (id: string, data: typeof small): ExtendedUIMessage => ({
+      id,
+      role: 'user',
+      parts: [{ type: 'data-context', data }],
+    });
+    const messages = [source('small', small)];
+    recorder.scheduleSync(() => messages);
+    const projections = createInputProjections(history);
+    const generate = vi.fn().mockResolvedValue({
+      success: true,
+      finishReason: 'stop',
+      output: {
+        assignments: [
+          { fieldId: 'f0', section: 'default' },
+          { fieldId: 'f1', section: 'objectIds' },
+        ],
+      },
+    });
+    const generation = {
+      generate,
+      modelIds: [{ providerId: 'fixture', modelId: 'chat' }],
+    };
+    await projections.prepare('default', messages, generation);
+    expect(generate).not.toHaveBeenCalled();
+    expect(projections.present('default', small).metadata.data).toEqual(
+      small.metadata.data,
+    );
+    messages.push(source('large', large));
+    recorder.scheduleSync(() => messages);
+    await projections.prepare('default', messages, generation);
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(projections.present('default', large).metadata.data).toEqual({
+      message: 'keep',
+    });
+    expect(projections.present('default', small).metadata.data).toEqual(
+      small.metadata.data,
+    );
+  });
+  it('assigns references to content-only notifications and rejects unadvertised sections', async () => {
+    const { history } = await setup();
+    const context = {
+      sourceEnv: 'fixture',
+      metadata: { origin: 'push-notifications' },
+      content: [{ type: 'text' as const, text: 'hello' }],
+    };
+    const source: ExtendedUIMessage = {
+      id: 'content-only',
+      role: 'user',
+      parts: [{ type: 'data-context', data: context }],
+    };
+    history.openRecorder(meta()).scheduleSync(() => [source]);
+    const projections = createInputProjections(history);
+    await projections.prepare('default', [source]);
+    const presented = projections.present('default', context);
+    expect(presented.content).toEqual(context.content);
+    expect(presented.metadata.inputEventRef).toMatch(/^[a-z0-9]{8}$/);
+    expect(
+      await projections.readSection(
+        'default',
+        presented.metadata.inputEventRef as string,
+        'links',
+      ),
+    ).toEqual({ status: 'unknown-section' });
+  });
+  it('prepares compact defaults and recovers all raw details across service restart', async () => {
+    const { history } = await setup();
+    const context = {
+      sourceEnv: 'fixture',
+      metadata: {
+        origin: 'events',
+        type: 'message',
+        data: {
+          message: 'Keep this fact',
+          debug: { traceId: 'x'.repeat(8_000) },
+        },
+      },
+      content: [],
+    };
+    const source = {
+      id: 'compact-source',
+      role: 'user',
+      parts: [{ type: 'data-context', data: context }],
+    } as ExtendedUIMessage;
+    const recorder = history.openRecorder(meta());
+    recorder.scheduleSync(() => [source]);
+    const projections = createInputProjections(history);
+    await projections.prepare('default', [source]);
+    const compact = projections.present('default', context);
+    expect(compact.metadata.data).toEqual({ message: 'Keep this fact' });
+    expect(context.metadata.data.debug.traceId).toHaveLength(8_000);
+    const reference = compact.metadata.inputEventRef as string;
+    const restarted = createInputProjections(history);
+    await restarted.prepare('default', [source]);
+    expect(restarted.present('default', context).metadata.inputEventRef).toBe(
+      reference,
+    );
+    let cursor: string | undefined;
+    let text = '';
+    do {
+      const result = (await restarted.readSection(
+        'default',
+        reference,
+        'raw',
+        cursor,
+      )) as { chunk: string; nextCursor: string | null };
+      text += result.chunk;
+      cursor = result.nextCursor ?? undefined;
+    } while (cursor);
+    expect(JSON.parse(text)).toEqual(context.metadata);
+    expect(await restarted.readSection('child', reference, 'raw')).toEqual({
+      status: 'unavailable',
+    });
+  });
+  it('binds only durable matching sources, pins plans, scopes reads and survives restart', async () => {
+    const { history, directory } = await setup();
+    const context = {
+      sourceEnv: 'fixture',
+      metadata: { origin: 'events', data: { nested: { id: 'original' } } },
+      content: [],
+    };
+    const source = {
+      id: 'event-source',
+      role: 'user',
+      parts: [{ type: 'data-context', data: context }],
+    } as ExtendedUIMessage;
+    const binding = {
+      reference: 'abcdefgh',
+      sessionId: 'default',
+      messageId: source.id,
+      part: 0,
+      contextHash: createHash('sha256')
+        .update(JSON.stringify(context))
+        .digest('hex'),
+      revision: 'revision-1',
+    };
+    expect(await history.bindInputProjection(binding)).toBeUndefined();
+    const recorder = history.openRecorder(meta());
+    recorder.scheduleSync(() => [source]);
+    await history.flush();
+    const plan = {
+      revision: 'revision-1',
+      family: 'fixture/events/test',
+      shape: 'shape-1',
+      body: '{"version":1,"fields":[]}',
+    };
+    await history.saveInputProjectionPlan(plan);
+    expect(
+      await history.bindInputProjection({ ...binding, contextHash: 'bad' }),
+    ).toBeUndefined();
+    expect(await history.bindInputProjection(binding)).toEqual(binding);
+    expect(
+      await history.bindInputProjection({
+        ...binding,
+        reference: 'ijklmnop',
+        revision: 'new',
+      }),
+    ).toEqual(binding);
+    expect(
+      await history.readInputProjection('child', 'abcdefgh'),
+    ).toBeUndefined();
+    await history.close();
+    const restarted = await setup({ directory });
+    expect(
+      await restarted.history.readInputProjection('default', 'abcdefgh'),
+    ).toEqual({ context, binding, plan });
+    expect(
+      await restarted.history.findInputProjectionPlan(plan.family, plan.shape),
+    ).toEqual(plan);
+  });
 });
 
 describe('snapshot storage', () => {
@@ -418,7 +1060,7 @@ describe('snapshot storage', () => {
           (step) => step.to <= 4,
         ),
       }),
-    ).rejects.toThrow(/schema=5.*schema=4/);
+    ).rejects.toThrow(/schema=6.*schema=4/);
     expect(await readFile(path)).toEqual(bytes);
     const migrated = createClient({ url: `file:${path}` });
     expect((await migrated.execute('SELECT * FROM messages')).rows).toEqual(
@@ -658,7 +1300,7 @@ describe('canonical activity queries', () => {
           "SELECT value FROM meta WHERE key = 'schemaVersion'",
         )
       ).rows[0]?.value,
-    ).toBe('5');
+    ).toBe('6');
     migrated.close();
     const bytes = await readFile(path);
     await migrate(SESSION_HISTORY_STORE_DEFINITION);
@@ -672,7 +1314,7 @@ describe('canonical activity queries', () => {
           (step) => step.to <= 3,
         ),
       }),
-    ).rejects.toThrow(/schema=5.*schema=3/);
+    ).rejects.toThrow(/schema=6.*schema=3/);
     expect(await readFile(path)).toEqual(bytes);
     const second = await setup({ directory });
     expect(await second.history.activityManifest()).toEqual(sources);
@@ -875,7 +1517,7 @@ describe('session history sync', () => {
         '',
       )
         .replace('  content_revision TEXT,\n', '')
-        .replace(/CREATE TABLE memory_snapshots[\s\S]*$/, ''),
+        .replace(/CREATE TABLE input_projection_plans[\s\S]*$/, ''),
       migrations: SESSION_HISTORY_STORE_DEFINITION.migrations.filter(
         (migration) => migration.to <= 2,
       ),
@@ -927,7 +1569,7 @@ describe('session history sync', () => {
       name: 'old',
     });
     await history.close();
-    await expect(migrate(v2)).rejects.toThrow(/schema=5.*schema=2/);
+    await expect(migrate(v2)).rejects.toThrow(/schema=6.*schema=2/);
   });
 
   it('persists and deduplicates zero-message failures through sync, end, and restart', async () => {

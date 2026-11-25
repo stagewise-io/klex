@@ -131,7 +131,12 @@ function projectPart(
   }
 
   if (part.type === 'data-context') {
-    return filter.context ? projectContext(part.data, filter.context) : null;
+    return filter.context
+      ? projectContext(
+          filter.projectContext?.(part.data) ?? part.data,
+          filter.context,
+        )
+      : null;
   }
 
   if (part.type.startsWith('data-')) {
@@ -217,6 +222,15 @@ function projectContext(
       : data.sourceEnv,
     items: [],
   };
+  if (
+    typeof data.metadata?.inputEventRef === 'string' &&
+    /^[a-z0-9]{8}$/.test(data.metadata.inputEventRef)
+  ) {
+    record.items.push({
+      kind: 'text',
+      text: `inputEventRef: ${data.metadata.inputEventRef}; moreInfoSections: ${JSON.stringify(data.metadata.moreInfoSections ?? []).slice(0, 100)}`,
+    });
+  }
   if (options.metadata) {
     const metadata = serializeValue(data.metadata, options.metadata);
     if (metadata !== null && metadata !== '{}') record.metadata = metadata;
@@ -224,7 +238,10 @@ function projectContext(
   // Events carry their semantic body in metadata rather than MCP content
   // blocks. Transcript presets omit general metadata, but must retain Events
   // for compaction, consult and the classifier under the context text budget.
-  if (!options.metadata && data.metadata?.origin === 'events') {
+  if (
+    !options.metadata &&
+    (data.metadata?.origin === 'events' || data.metadata?.inputEventRef)
+  ) {
     // Occurrences are size/depth bounded at ingress. Serialize their JSON body
     // directly before applying the text budget: compactJson's node cap would
     // replace wide but valid payloads wholesale with [unserializable]. Keep
@@ -234,6 +251,15 @@ function projectContext(
         type: data.metadata.type,
         data: data.metadata.data,
         createdAt: data.metadata.createdAt,
+        ...(data.metadata.projectionStatus
+          ? { projectionStatus: data.metadata.projectionStatus }
+          : {}),
+        ...(data.metadata.inputEventRef
+          ? {
+              inputEventRef: data.metadata.inputEventRef,
+              moreInfoSections: data.metadata.moreInfoSections,
+            }
+          : {}),
       },
       {
         ...options.text,

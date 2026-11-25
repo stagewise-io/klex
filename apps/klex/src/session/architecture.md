@@ -98,9 +98,12 @@ The composition root wires shared deps once and passes a `sessionFactory` to `Se
 ### Startup order
 
 ```
-model-call-logger → session-history → admin-api → cloud-connectivity
+model-call-logger → session-history → input-projections → skill-registry
+  → admin-api → cloud-connectivity
   → session-host → realtime → mcp → telemetry-manager
 ```
+
+The application owns one shared input-projection service and injects it into sessions and activity readers. It starts after history and closes after session consumers but before history. Default sessions expose scoped `getMoreInputInfo`; consult children receive only delegated references and no MCP access. The shared realtime coordinator awaits projection preparation before provider dispatch.
 
 ### Soul administration
 

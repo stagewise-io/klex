@@ -894,6 +894,15 @@ export interface ExtensionDeps {
   getHistory: () => ExtendedUIMessage[];
   /** Shared projections for history consumers; resolved after extension initialization. */
   getDataPartTransformers?: () => DataPartTransformers;
+  /** Prepared model-facing projection only; internal matching must use getHistory. */
+  projectInputContext?: (
+    context: import('@/session/inbox').ContextDataUIPart,
+  ) => import('@/session/inbox').ContextDataUIPart;
+
+  /** Delegate detail access to only the references explicitly supplied to a child. */
+  createInputInfoExtension?: (
+    references: ReadonlySet<string>,
+  ) => ExtensionFactory;
 
   /** Core checkpoint API; see {@link CheckpointApi}. */
   checkpoints: CheckpointApi;

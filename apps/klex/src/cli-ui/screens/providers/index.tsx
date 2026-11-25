@@ -336,6 +336,7 @@ const PROVIDER_GROUP_BY_TYPE: Partial<Record<string, ProviderGroup>> = {
   'google-vertex': 'Cloud platforms',
   openrouter: 'Gateways & plans',
   langdock: 'Gateways & plans',
+  'klex-cloud': 'Gateways & plans',
   'glm-coding-plan': 'Gateways & plans',
   'minimax-coding-plan': 'Gateways & plans',
   'opencode-go': 'Gateways & plans',

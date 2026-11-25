@@ -582,6 +582,7 @@ describe('remote input capability contract', () => {
       'google-vertex',
       'vercel-ai-gateway',
       'langdock',
+      'klex-cloud',
     ].includes(type);
     const result = await prepareRemoteInput(model(type), capabilities, {
       url,

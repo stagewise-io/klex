@@ -21,6 +21,7 @@ const nativeModelIdSchema = z.string().min(1);
 const modelIdSchema = nativeModelIdSchema;
 
 const providerTypeSchema = z.enum([
+  'klex-cloud',
   'langdock',
   'openai',
   'anthropic',
@@ -321,7 +322,30 @@ const vercelAiGatewaySettingsSchema = openAiSettingsSchema.extend({
   teamIdOrSlug: z.string().min(1).optional(),
 });
 
+const KLEX_CLOUD_PROTOCOLS = [
+  'responses',
+  'chat-completions',
+  'anthropic-messages',
+  // Reserved for realtime voice (gpt-live-*); accepted and persisted, unused.
+  'openai-live',
+] as const;
+type KlexCloudProtocol = (typeof KLEX_CLOUD_PROTOCOLS)[number];
+const klexCloudSettingsSchema = z
+  .object({
+    baseUrl: literalUrlSchema,
+    apiKey: z.string().min(1),
+    protocols: z
+      .record(nativeModelIdSchema, z.enum(KLEX_CLOUD_PROTOCOLS))
+      .optional(),
+    realtimeBaseUrl: literalUrlSchema.optional().meta({
+      readOnly: true,
+      description: 'Reserved for realtime voice; currently unused.',
+    }),
+  })
+  .strict();
+
 const providerSettingsSchemas = {
+  'klex-cloud': klexCloudSettingsSchema,
   langdock: openAiSettingsSchema.extend({
     region: z.enum(['eu', 'us']).default('eu'),
   }),
@@ -355,6 +379,7 @@ const providerSettingsSchemas = {
 } satisfies Record<ProviderType, z.ZodType<Record<string, unknown>>>;
 
 const providerSecretSettings = {
+  'klex-cloud': ['apiKey'],
   langdock: ['apiKey'],
   'vercel-ai-gateway': ['apiKey'],
   'typesafe-ai': ['apiKey'],
@@ -694,7 +719,7 @@ const effortConfigSchema = z
     'Effort floor must not exceed ceiling',
   );
 
-/** Live application config, persisted schema version 13. */
+/** Live application config, persisted schema version 14. */
 const klexConfigSchema = z.object({
   configVersion: z.literal(2).default(2),
   officialName: z
@@ -729,6 +754,7 @@ export type {
   HttpServerConfig,
   InstinctConfig,
   InstinctModelSelectionEntry,
+  KlexCloudProtocol,
   KlexConfig,
   McpEventSubscription,
   McpServerConfig,
@@ -753,6 +779,7 @@ export {
   getProviderSettingsJsonSchema,
   instinctModelSelectionEntrySchema,
   isProviderSecretSetting,
+  KLEX_CLOUD_PROTOCOLS,
   klexConfigSchema,
   mcpServerConfigSchema,
   modelCapabilitiesSchema,

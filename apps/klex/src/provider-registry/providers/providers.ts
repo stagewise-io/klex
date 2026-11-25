@@ -11,6 +11,7 @@ import { glmCodingPlanProviderDefinition } from './glm-coding-plan';
 import { googleGeminiProviderDefinition } from './google-gemini';
 import { googleGenerativeProviderDefinition } from './google-generative';
 import { googleVertexProviderDefinition } from './google-vertex';
+import { klexCloudProviderDefinition } from './klex-cloud';
 import { langdockProviderDefinition } from './langdock';
 import { minimaxProviderDefinition } from './minimax';
 import { minimaxCodingPlanProviderDefinition } from './minimax-coding-plan';
@@ -37,6 +38,7 @@ export const builtInProviderDefinitions: readonly ProviderDefinition[] = [
   azureOpenAiProviderDefinition,
   openRouterProviderDefinition,
   langdockProviderDefinition,
+  klexCloudProviderDefinition,
   moonshotProviderDefinition,
   alibabaQwenProviderDefinition,
   deepSeekProviderDefinition,

@@ -11,8 +11,9 @@ import {
 } from './providers';
 
 describe('provider instance ID', () => {
-  it('groups Langdock with gateways', () => {
+  it('groups Langdock and Klex Cloud with gateways', () => {
     expect(providerGroup('langdock')).toBe('Gateways & plans');
+    expect(providerGroup('klex-cloud')).toBe('Gateways & plans');
   });
   it('uses the provider type and skips existing IDs', () => {
     expect(nextProviderInstanceId('openai', [])).toBe('openai');

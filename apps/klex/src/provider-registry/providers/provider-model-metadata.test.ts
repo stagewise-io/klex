@@ -11,6 +11,7 @@ const CASES: ReadonlyArray<{
 }> = [
   { type: 'openai', modelId: 'gpt-4o', kind: 'language' },
   { type: 'langdock', modelId: 'gpt-4o', kind: 'language' },
+  { type: 'klex-cloud', modelId: 'openai/gpt-oss-120b', kind: 'language' },
   { type: 'typesafe-ai', modelId: 'jev-latest', kind: 'evaluation' },
   { type: 'vercel-ai-gateway', modelId: 'typesafe-ai/jev', kind: 'evaluation' },
   { type: 'anthropic', modelId: 'claude-sonnet-5', kind: 'language' },

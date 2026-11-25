@@ -1,0 +1,120 @@
+{
+  "_klex": {
+    "store": "config",
+    "schemaVersion": 14,
+    "compatibilityVersion": 8,
+    "minimumKlexVersion": "0.36.0",
+    "writtenByKlexVersion": "0.38.2"
+  },
+  "configVersion": 2,
+  "officialName": "Frozen Managed Agent",
+  "timezone": "Europe/Berlin",
+  "providers": {
+    "primary": {
+      "type": "openai",
+      "settings": {
+        "apiKey": "${env:PRIMARY_API_KEY}"
+      }
+    },
+    "stagewise-managed-cloud": {
+      "type": "klex-cloud",
+      "displayName": "Klex Cloud",
+      "settings": {
+        "baseUrl": "https://gateway.example/v1",
+        "apiKey": "${env:KLEX_CLOUD_TOKEN}",
+        "protocols": {
+          "openai/gpt-6-luna": "responses",
+          "openai/gpt-audio-mini": "chat-completions",
+          "anthropic/claude-sonnet-5": "anthropic-messages",
+          "openai/gpt-live-1": "openai-live"
+        },
+        "realtimeBaseUrl": "wss://gateway.example/v1/realtime"
+      },
+      "knownModels": {
+        "openai/gpt-6-luna": {
+          "kind": "language",
+          "displayName": "GPT-6 Luna",
+          "contextSize": 400000,
+          "capabilities": {
+            "tools": true,
+            "reasoning": true
+          }
+        },
+        "openai/gpt-audio-mini": {
+          "kind": "language",
+          "capabilities": {
+            "input": {
+              "audio": {
+                "mediaTypes": ["audio/wav", "audio/mpeg"]
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "modelSelection": {
+    "chat": [
+      {
+        "providerId": "stagewise-managed-cloud",
+        "modelId": "openai/gpt-6-luna",
+        "providerOptions": {
+          "klex-cloud": {
+            "reasoningEffort": "medium"
+          }
+        }
+      },
+      {
+        "providerId": "stagewise-managed-cloud",
+        "modelId": "anthropic/claude-sonnet-5",
+        "providerOptions": {
+          "anthropic": {
+            "thinking": {
+              "type": "enabled",
+              "budgetTokens": 1024
+            }
+          }
+        }
+      }
+    ],
+    "compaction": [],
+    "memory": [],
+    "imageVision": [],
+    "audioListening": [
+      {
+        "providerId": "stagewise-managed-cloud",
+        "modelId": "openai/gpt-audio-mini"
+      }
+    ],
+    "consult": [],
+    "instincts": [],
+    "voice": {
+      "sts": [
+        {
+          "providerId": "primary",
+          "modelId": "gpt-realtime"
+        }
+      ]
+    }
+  },
+  "mcpServers": {},
+  "extensions": {
+    "memory": {
+      "episodes": {
+        "maxCharacters": 50000,
+        "maxDurationMs": 3600000,
+        "idleTimeoutMs": 600000
+      }
+    }
+  },
+  "instinct": {
+    "enabled": true,
+    "timeoutMs": 12000,
+    "classifierTimeoutMs": 10000,
+    "historyCharacterCap": 16000,
+    "messageCharacterCap": 2000,
+    "contextCharacterCap": 2000,
+    "attemptTimeoutMs": 5000,
+    "fallbackResetIdleMs": 600000
+  }
+}

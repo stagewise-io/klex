@@ -1,0 +1,116 @@
+{
+  "_klex": {
+    "store": "config",
+    "schemaVersion": 13,
+    "compatibilityVersion": 8,
+    "minimumKlexVersion": "0.36.0",
+    "writtenByKlexVersion": "0.38.2-nightly20261125c001"
+  },
+  "configVersion": 2,
+  "officialName": "Frozen Managed Agent",
+  "timezone": "Europe/Berlin",
+  "providers": {
+    "primary": {
+      "type": "openai",
+      "settings": {
+        "apiKey": "${env:PRIMARY_API_KEY}"
+      }
+    },
+    "stagewise-managed-openai": {
+      "type": "responses",
+      "displayName": "Klex Cloud",
+      "settings": {
+        "baseUrl": "https://gateway.example/v1",
+        "apiKey": "sk_sw_frozen_managed_token"
+      },
+      "knownModels": {
+        "openai/gpt-6-luna": {
+          "kind": "language",
+          "displayName": "GPT-6 Luna",
+          "contextSize": 400000,
+          "capabilities": {
+            "input": {
+              "image": {
+                "mediaTypes": ["image/png", "image/jpeg"]
+              }
+            },
+            "tools": true,
+            "reasoning": true
+          }
+        }
+      }
+    },
+    "stagewise-managed-audio": {
+      "type": "chat-completions",
+      "displayName": "Klex Cloud Audio",
+      "settings": {
+        "baseUrl": "https://gateway.example/v1",
+        "apiKey": "sk_sw_frozen_managed_token"
+      },
+      "knownModels": {
+        "openai/gpt-audio-mini": {
+          "kind": "language",
+          "capabilities": {
+            "input": {
+              "audio": {
+                "mediaTypes": ["audio/wav", "audio/mpeg"]
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "modelSelection": {
+    "chat": [
+      {
+        "providerId": "stagewise-managed-openai",
+        "modelId": "openai/gpt-6-luna",
+        "providerOptions": {
+          "responses": {
+            "reasoningEffort": "medium"
+          }
+        }
+      }
+    ],
+    "compaction": [],
+    "memory": [],
+    "imageVision": [],
+    "audioListening": [
+      {
+        "providerId": "stagewise-managed-audio",
+        "modelId": "openai/gpt-audio-mini"
+      }
+    ],
+    "consult": [],
+    "instincts": [],
+    "voice": {
+      "sts": [
+        {
+          "providerId": "primary",
+          "modelId": "gpt-realtime"
+        }
+      ]
+    }
+  },
+  "mcpServers": {},
+  "extensions": {
+    "memory": {
+      "episodes": {
+        "maxCharacters": 50000,
+        "maxDurationMs": 3600000,
+        "idleTimeoutMs": 600000
+      }
+    }
+  },
+  "instinct": {
+    "enabled": true,
+    "timeoutMs": 12000,
+    "classifierTimeoutMs": 10000,
+    "historyCharacterCap": 16000,
+    "messageCharacterCap": 2000,
+    "contextCharacterCap": 2000,
+    "attemptTimeoutMs": 5000,
+    "fallbackResetIdleMs": 600000
+  }
+}

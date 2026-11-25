@@ -156,6 +156,18 @@ describe('matcher isolation', () => {
       ).toEqual([]);
     },
   );
+  it.each(['memory', 'memory-update', 'memory-detail'])(
+    'excludes generated line-format %s text',
+    (kind) => {
+      expect(
+        project({
+          id: 'generated',
+          role: 'user',
+          parts: [{ type: 'text', text: `${kind} Ada.md\nfacts\n¦trigger` }],
+        } as ExtendedUIMessage).text,
+      ).toEqual([]);
+    },
+  );
   it.each(['tool-recallFromMemory', 'realtime'])(
     'excludes generated recall evidence from %s',
     (kind) => {

@@ -66,7 +66,11 @@ export function project(message: ExtendedUIMessage): Projection {
   const result: Projection = { text: [], events: [], tools: [] };
   for (const part of message.parts) {
     if (part.type === 'text') {
-      if (!/^\s*<memory(?:-update|-detail)?(?:\s|>)/iu.test(part.text))
+      if (
+        !/^\s*(?:<memory(?:-update|-detail)?(?:\s|>)|memory(?:-update|-detail)? [^\r\n]+(?:\r?\n|$))/iu.test(
+          part.text,
+        )
+      )
         result.text.push(part.text);
     } else if (part.type === 'data-context') {
       if (

@@ -124,6 +124,93 @@ function setup() {
 }
 
 describe('temporary memory recall', () => {
+  it('inherits the same compact facts, identities, catalogue deltas and skill diffs as main context', async () => {
+    const h = setup();
+    const entity = JSON.stringify({
+      version: 1,
+      kind: 'entity',
+      title: 'Ada',
+      tags: ['people/humans', 'people/bots'],
+      linkedIdentities: [
+        {
+          server: 'github',
+          match: { repositoryId: '123', subjectNodeId: 'PR_123' },
+        },
+      ],
+      body: 'Owns deployment',
+      sections: ['Work', 'Details'],
+    });
+    const skill = (last: string) =>
+      JSON.stringify({
+        version: 1,
+        kind: 'skill',
+        title: 'test',
+        body: `${'Stable instruction\n'.repeat(30)}${last}`,
+        sections: [],
+      });
+    h.messages[0]!.parts = [
+      {
+        type: 'data-loadedMemories',
+        data: {
+          'extensions/io.stagewise/memory/entities/Ada.md': entity,
+          'skills/test/SKILL.md': skill('Old'),
+        },
+      },
+      {
+        type: 'data-availableSkills',
+        data: [
+          { name: 'test', description: 'Old description' },
+          { name: 'stable', description: 'Same' },
+          { name: 'gone', description: 'Deleted' },
+        ],
+      },
+    ] as never;
+    h.messages.push({
+      id: 'next',
+      role: 'assistant',
+      parts: [
+        {
+          type: 'data-loadedMemories',
+          data: {
+            'extensions/io.stagewise/memory/entities/Ada.md': entity,
+            'skills/test/SKILL.md': skill('New'),
+          },
+        },
+        {
+          type: 'data-availableSkills',
+          data: [
+            { name: 'test', description: 'Updated description' },
+            { name: 'stable', description: 'Same' },
+            { name: 'new', description: 'New skill' },
+          ],
+        },
+      ] as never,
+    });
+    await call(tools(h.extension), 'recallFromMemory', {
+      question: 'Recall formatting',
+    });
+    const sent = (
+      h.child.inbox.sendMessage.mock.calls as unknown[][]
+    )[0]?.[0] as ExtendedUIMessage;
+    const text = sent.parts
+      .flatMap((part) => (part.type === 'text' ? [part.text] : []))
+      .join('\n');
+    expect(text).toContain('memory "Ada.md"\ntags\n¦people/humans,people/bots');
+    expect(text).toContain('facts\n¦Owns deployment');
+    expect(text).toContain(
+      'linkedIdentities\n¦github:\n¦  repositoryId: 123\n¦  subjectNodeId: PR_123',
+    );
+    expect(text).toContain('additionalSections\n¦- Work\n¦- Details');
+    expect(text).not.toContain('title="Ada"');
+    expect(text).not.toContain('&quot;');
+    expect(text).toContain('skill-update test\npatch');
+    expect(text).toContain('¦-Old\n¦+New');
+    const delta = text.split('available-skills-change\n')[1]?.split('\n\n')[0];
+    expect(delta).toContain('New:');
+    expect(delta).toContain('Updated:');
+    expect(delta).toContain('Deleted: gone');
+    expect(delta).not.toContain('stable');
+  });
   it('waits for answerRecall, inherits main memory, and automatically closes its isolated child', async () => {
     const h = setup();
     expect(Object.keys(tools(h.extension))).toEqual(['recallFromMemory']);
@@ -142,7 +229,7 @@ describe('temporary memory recall', () => {
       h.child.inbox.sendMessage.mock.calls as unknown[][]
     )[0]?.[0] as ExtendedUIMessage;
     expect(JSON.stringify(sent)).toContain('Owns deployment');
-    expect(JSON.stringify(sent)).toContain('<memory');
+    expect(JSON.stringify(sent)).toContain('memory ');
     expect(JSON.stringify(sent)).toContain('Who owns deployment?');
     expect(h.child.close).toHaveBeenCalledOnce();
   });

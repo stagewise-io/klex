@@ -129,6 +129,9 @@ class MemoryLoaderModule implements MemoryLoader {
           })
           .strict(),
         execute: async ({ filename, sectionName }) => {
+          // Keep canonical snapshot keys while accepting compact rendered filenames.
+          if (!filename.startsWith(ENTITY_PREFIX))
+            filename = `${ENTITY_PREFIX}${filename}`;
           try {
             const entity = (await deps.entities.snapshot()).find(
               (item) => `${ENTITY_PREFIX}${item.id}.md` === filename,

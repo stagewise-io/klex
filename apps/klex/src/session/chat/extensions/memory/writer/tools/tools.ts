@@ -140,7 +140,7 @@ const factInputSchema = z
     text: z
       .string()
       .min(1)
-      .max(1_000)
+      .max(320)
       .describe(
         'One fact, one line, caveman style, without the subject. No citations or IDs.',
       ),

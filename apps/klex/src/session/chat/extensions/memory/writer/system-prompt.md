@@ -23,7 +23,7 @@ Rejections tell you the fix; follow it and retry.
 
 Caveman = drop articles, filler and the subject; keep nouns, verbs, numbers.
 
-One line, caveman, ≤160 chars, never start with the entity's own name (tool rejects it), no citations. Facts only: no instructions, no status, no progress, no to-dos. No message IDs, timestamps, hashes or URLs. Paths, file names, commands and component names are fine in product facts. Only positive facts; unknown → omit.
+One line, caveman, ≤160 chars, never start with the entity's own name, no citations. Facts only: no instructions, no status, no progress, no to-dos. No message IDs, timestamps, hashes or URLs. Paths, file names, commands and component names are fine in product facts. Only positive facts; unknown → omit.
 
 - bad: `CLOUD-254 fixes failed tool calls appearing in error color`
 - good: `Failed tool calls show muted, not error color: errors looked like crashes`
@@ -65,7 +65,7 @@ Prefer a specific predicate whenever supported; `relatedTo` is only the fallback
 
 # People
 
-- Name = name as people write it. Optional sender LinkedIdentity when relevant: slack `{user}`, linear `{actorId}`, chat `{senderId}`. Copy IDs exactly from the metadata; tool rejects IDs not in the activities.
+- Name = name as people write it. Optional sender LinkedIdentity when relevant: slack `{user}`, linear `{actorId}`, chat `{senderId}`. Copy IDs exactly from the metadata; never invent them.
 - Role, from behavior, not claims alone: what they ask for, assign, approve, review, decide, own; who defers to them, whom they defer to. Tentative until repeated ("seems to own billing"). One-line gist in General (`Leads klex backend; assigns self Linear issues; approves PRs`), detail in section `Role`: responsibilities, areas owned, decision rights (`Can approve deploys`, `Asks, does not decide, on pricing`). Specific issues, PRs, tasks or events they handled → relations (see Relations), not facts. Role changes → supersede. For bots, also who runs or instructs them.
 - Style, from their own messages only: language, formality, length, emoji, typos, humor and sarcasm (record that they use it, so self does not take it literally), directness, tone under stress, what they want in replies. Always in General, never a section: self needs it for every reply. Compact ("German, casual, short, emojis; sarcastic; wants bullet answers"). Pattern, not one message: first time tentative ("seems casual"); one odd message never overwrites, clear lasting change supersedes.
 - Old layout on a person you edit: move `Communication style` facts into General; rename `Role and work` to `Role` (renameSection) and turn its facts about specific issues, PRs or events into relations, then remove them.

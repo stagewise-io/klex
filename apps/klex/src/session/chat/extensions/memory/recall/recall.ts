@@ -37,6 +37,12 @@ import type { SkillRegistry } from '@/skills';
 
 import prompt from './system-prompt.md';
 
+interface RecallAnswer {
+  answer: string;
+  entities: string[];
+  skills: string[];
+}
+
 export interface MemoryRecallSource {
   snapshot(): Promise<MemoryEntity[]>;
   getHistory(): ExtendedUIMessage[];
@@ -113,20 +119,14 @@ function inheritedContext(
 
 class RecallReader implements Extension {
   private answered = false;
-  private steps = 0;
   constructor(
     private readonly options: MemoryRecallOptions,
     private readonly source: MemoryRecallSource,
     private readonly inbox: ExtensionDeps['inbox'],
-    private readonly answer: (answer: string) => void,
-    private readonly exhausted: () => void,
+    private readonly answer: (answer: RecallAnswer) => void,
   ) {}
 
   onStepComplete(event: StepCompleteEvent): void {
-    if (!this.answered && ++this.steps >= 20) {
-      this.exhausted();
-      return;
-    }
     // Plain assistant text is not an answer. Keep working until answerRecall.
     if (
       !this.answered &&
@@ -155,14 +155,37 @@ class RecallReader implements Extension {
     return {
       answerRecall: {
         description:
-          'Finish recall with an evidence-grounded answer, or explicitly state that nothing relevant was found. This closes the helper.',
+          'Finish recall and close the helper; plain text does not finish it. Answer in 1–3 short sentences by default, with only requested facts and essential caveats or history citations. If nothing relevant was found, say so. Include the exact supporting entity IDs and qualified skill IDs so the caller can auto-load them; use empty lists where none apply.',
         inputSchema: z
-          .object({ answer: z.string().trim().min(1).max(24000) })
+          .object({
+            answer: z.string().trim().min(1).max(4000),
+            entities: z.array(z.string().min(1).max(1000)).max(20).default([]),
+            skills: z.array(z.string().min(1).max(1000)).max(20).default([]),
+          })
           .strict(),
-        execute: async ({ answer }) => {
+        execute: async ({ answer, entities = [], skills: usedSkills = [] }) => {
+          if (this.answered) return { accepted: false };
+          const ids = [...new Set<string>(entities)];
+          if (ids.length) {
+            const known = new Set(
+              (await this.source.snapshot()).map(({ id }) => id),
+            );
+            const unknown = ids.filter((id) => !known.has(id));
+            if (unknown.length)
+              return { error: 'Unknown entity IDs', entities: unknown };
+          }
+          const skillIds = [...new Set<string>(usedSkills)];
+          if (skillIds.length) {
+            const known = new Set(
+              (await skills.snapshot()).map(({ id }) => id),
+            );
+            const unknown = skillIds.filter((id) => !known.has(id));
+            if (unknown.length)
+              return { error: 'Unknown skill IDs', skills: unknown };
+          }
           if (this.answered) return { accepted: false };
           this.answered = true;
-          this.answer(answer);
+          this.answer({ answer, entities: ids, skills: skillIds });
           return { accepted: true };
         },
       },
@@ -423,7 +446,7 @@ class RecallExtension implements Extension {
   ) {}
 
   getSystemPromptPart(): string {
-    return 'Use recallFromMemory(question) when you need evidence from durable memories, skills, or older activity history. It returns the answer from a temporary read-only helper; do not invent missing memories.';
+    return 'Use recallFromMemory(question) when you need evidence from durable memories, skills, or older activity history. It returns a brief answer and supporting entity and skill IDs, which the memory loader brings into context; do not invent missing memories.';
   }
 
   getTools(): ToolSet {
@@ -449,7 +472,7 @@ class RecallExtension implements Extension {
   private async recall(
     question: string,
     signal?: AbortSignal,
-  ): Promise<{ answer: string } | { error: string }> {
+  ): Promise<RecallAnswer | { error: string }> {
     const source = this.source();
     if (this.closed) return { error: 'Recall is closed' };
     if (!source) return { error: 'Memory source unavailable' };
@@ -480,7 +503,7 @@ class RecallExtension implements Extension {
     signal?.addEventListener('abort', cancel, { once: true });
     if (signal?.aborted) abort.abort();
     this.pending.add(abort);
-    let answer: string | undefined;
+    let answer: RecallAnswer | undefined;
     let terminated = false;
     try {
       abort.signal.throwIfAborted();
@@ -498,15 +521,9 @@ class RecallExtension implements Extension {
           {
             identifier: 'io.stagewise/memory-recall-reader',
             create: (deps) =>
-              new RecallReader(
-                this.options,
-                source,
-                deps.inbox,
-                (value) => {
-                  answer ??= value;
-                },
-                exhaust,
-              ),
+              new RecallReader(this.options, source, deps.inbox, (value) => {
+                answer ??= value;
+              }),
           },
         ],
         hooks: {
@@ -536,15 +553,34 @@ class RecallExtension implements Extension {
         if (terminated || child.getSessionInfo().status === 'terminated')
           throw new Error('Recall helper terminated without an answer');
         const idle = await child.waitForIdle(250);
-        if (idle && answer === undefined)
-          throw new Error('Recall helper stopped without calling answerRecall');
+        if (idle && answer === undefined) {
+          abort.signal.throwIfAborted();
+          if (terminated || child.getSessionInfo().status === 'terminated')
+            throw new Error('Recall helper terminated without an answer');
+          if (
+            child.inbox.sendMessage(
+              {
+                id: randomUUID(),
+                role: 'user',
+                parts: [
+                  {
+                    type: 'text',
+                    text: 'Continue recall. Finish by calling answerRecall, including when no relevant evidence was found.',
+                  },
+                ],
+              },
+              SessionInboxUrgency.Default,
+            ) === false
+          )
+            throw new Error('Recall continuation delivery failed');
+        }
       }
-      return { answer };
+      return answer;
     } catch (error) {
       this.deps.logger.warn({ error }, 'Memory recall failed');
       return {
         error: budgetExceeded
-          ? 'Recall exceeded its time or step budget; no answer available. Do not retry the same question.'
+          ? 'Recall exceeded its time budget; no answer available. Do not retry the same question.'
           : abort.signal.aborted
             ? 'Recall cancelled'
             : 'Recall failed; no answer available',

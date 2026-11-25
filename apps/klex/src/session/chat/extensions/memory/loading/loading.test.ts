@@ -137,6 +137,78 @@ describe('memory loading snapshots', () => {
     ).toContain('Current fact');
   });
 
+  it.each(['dynamic-tool', 'tool-recallFromMemory'])(
+    'loads explicit recall entities from %s through the normal deduplicated renderer',
+    async (type) => {
+      const value = entity();
+      value.frontmatter.LoadOn = [];
+      const instance = loader(async () => [value]);
+      const recall = message(
+        'recall',
+        [
+          {
+            type,
+            toolName: 'recallFromMemory',
+            toolCallId: 'recall',
+            state: 'output-available',
+            input: { question: 'Who owns this?' },
+            output: {
+              answer: 'Owns deployment.',
+              entities: ['Ada', 'missing', 'Ada'],
+            },
+          },
+        ],
+        'assistant',
+      );
+      const prepared = await instance.prepare([recall], model);
+      expect(prepared[0]).toMatchObject({
+        data: { [filename]: entitySnapshot(value) },
+      });
+      const history = [recall, message('first', prepared)];
+      const next = await instance.prepare(history, model);
+      const rendered = texts(
+        materializeMemories([...history, message('next', next)]),
+      );
+      expect(rendered.match(/memory "Ada.md"/g)).toHaveLength(1);
+      expect(rendered).toContain('Current fact');
+      expect(rendered).toContain('additionalSections\n¦- Work');
+      expect(rendered).not.toContain('Private detail');
+      expect(rendered).not.toContain('private-source');
+      expect((await instance.prepare([], model))[0]).toMatchObject({
+        data: {},
+      });
+    },
+  );
+
+  it('does not use recall prose, inputs, failed or malformed outputs as entity references', async () => {
+    const instance = loader(async () => [entity()]);
+    for (const output of [
+      { answer: 'Ada' },
+      { error: 'Unavailable', entities: ['Ada'] },
+      { answer: 'Ada', entities: 'Ada' },
+    ]) {
+      const history = [
+        message(
+          'recall',
+          [
+            {
+              type: 'dynamic-tool',
+              toolName: 'recallFromMemory',
+              toolCallId: 'recall',
+              state: 'output-available',
+              input: { question: 'Ada' },
+              output,
+            },
+          ],
+          'assistant',
+        ),
+      ];
+      expect((await instance.prepare(history, model))[0]).toMatchObject({
+        data: {},
+      });
+    }
+  });
+
   it('loads General and headings, never unread bodies, citations or history', async () => {
     const value = entity();
     const result = await loader(async () => [value]).prepare(

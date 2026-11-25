@@ -318,6 +318,39 @@ class MemoryLoaderModule implements MemoryLoader {
     const details: SnapshotMap = Object.create(null);
     const catalogue = new Set<string>();
     const ranked: LoadingStatus['ranked'] = [];
+    // Recall is excluded from literal matching. Only its explicit, validated
+    // entity/skill references opt content in; answer prose cannot trigger loading.
+    const recalled = new Map<string, number>();
+    for (const [index, message] of history.entries())
+      for (const part of message.parts) {
+        if (
+          !isToolUIPart(part) ||
+          part.state !== 'output-available' ||
+          (part.type === 'dynamic-tool'
+            ? part.toolName !== 'recallFromMemory'
+            : part.type !== 'tool-recallFromMemory')
+        )
+          continue;
+        const result = z
+          .object({
+            answer: z.string(),
+            entities: z.array(z.string().min(1).max(1000)).max(20),
+            skills: z.array(z.string().min(1).max(1000)).max(20).default([]),
+          })
+          .safeParse(part.output);
+        if (result.success) {
+          for (const id of result.data.entities)
+            recalled.set(`${ENTITY_PREFIX}${id}.md`, index);
+          if (
+            !message.parts.some((part) =>
+              isDataPartOf('context-summary', part),
+            ) &&
+            skillContext.eligible(message.id, evidence[index]!.projection)
+          )
+            for (const id of result.data.skills)
+              recalled.set(`skills/${id}/SKILL.md`, index);
+        }
+      }
     const candidates: {
       filename: string;
       content: string;
@@ -378,8 +411,9 @@ class MemoryLoaderModule implements MemoryLoader {
     for (const candidate of candidates.sort((a, b) =>
       lexical(a.filename, b.filename),
     )) {
-      let tier = 0,
-        recency = -1;
+      const recallIndex = recalled.get(candidate.filename);
+      let tier = recallIndex === undefined ? 0 : 2,
+        recency = recallIndex ?? -1;
       for (let index = 0; index < projections.length; index++) {
         const hit = await this.matcher.match(
           projections[index]!,
@@ -399,7 +433,7 @@ class MemoryLoaderModule implements MemoryLoader {
               )))
         ) {
           tier = Math.max(tier, hit);
-          recency = index;
+          recency = Math.max(recency, index);
         }
       }
       if (tier) {

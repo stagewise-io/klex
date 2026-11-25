@@ -53,6 +53,13 @@ export function klexCloudProtocol(
   return 'responses';
 }
 
+// Dated snapshots share the base model's catalog entry, as realtime config
+// accepts them for `gpt-live-1`.
+const DATED_GPT_LIVE = /^(gpt-live-1)-\d{4}-\d{2}-\d{2}$/i;
+// gpt-live-* models are speech-to-speech or speech-to-text, including IDs
+// the catalog does not know yet.
+const GPT_LIVE = /^(?:[^/]+\/)?gpt-live-/i;
+
 function resolveModelMetadata(modelId: string) {
   const [, vendor, id = modelId] =
     /^(?:(openai|anthropic)\/)?(.+)$/i.exec(modelId) ?? [];
@@ -62,7 +69,9 @@ function resolveModelMetadata(modelId: string) {
   )
     return resolveAnthropicModelMetadata(id);
   return (
-    (id.includes('/') ? undefined : resolveOpenAiModelMetadata(id)) ??
+    (id.includes('/')
+      ? undefined
+      : resolveOpenAiModelMetadata(id.replace(DATED_GPT_LIVE, '$1'))) ??
     resolveCatalogMetadata(modelId, [], modelId)
   );
 }
@@ -132,7 +141,8 @@ async function discoverModels(
           !isRecord(item) ||
           typeof item.id !== 'string' ||
           !item.id ||
-          isNonLanguageModel(item.id)
+          isNonLanguageModel(item.id) ||
+          GPT_LIVE.test(item.id)
         )
           return [];
         const kind = resolveModelMetadata(item.id)?.kind;

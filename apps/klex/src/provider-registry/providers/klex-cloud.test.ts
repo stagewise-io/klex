@@ -269,6 +269,24 @@ describe('Klex Cloud requests', () => {
       type: 'ephemeral',
     });
   });
+
+  it('forwards cache control set in the klex-cloud namespace', async () => {
+    const requests = captureRequests();
+    await expect(
+      provider
+        .createLanguageModel(instance, 'anthropic/claude-sonnet-5')
+        .doGenerate({
+          prompt,
+          providerOptions: {
+            'klex-cloud': { cacheControl: { type: 'ephemeral', ttl: '1h' } },
+          },
+        }),
+    ).rejects.toThrow();
+    expect(JSON.parse(String(requests[0]?.init.body)).cache_control).toEqual({
+      type: 'ephemeral',
+      ttl: '1h',
+    });
+  });
 });
 
 describe('Klex Cloud discovery', () => {
@@ -290,6 +308,8 @@ describe('Klex Cloud discovery', () => {
             { id: 'anthropic/claude-sonnet-5', object: 'model' },
             { id: 'openai/text-embedding-3-small', object: 'model' },
             { id: 'openai/gpt-live-1', object: 'model' },
+            { id: 'openai/gpt-live-1-2026-11-01', object: 'model' },
+            { id: 'openai/gpt-live-2', object: 'model' },
             { id: 'openai/gpt-transcribe', object: 'model' },
             { id: 'vendor/uncatalogued', object: 'model' },
             { id: 42 },
@@ -357,6 +377,7 @@ describe('Klex Cloud discovery', () => {
     ['anthropic/claude-sonnet-5', 'language'],
     ['claude-sonnet-5', 'language'],
     ['openai/gpt-live-1', 'speech-to-speech'],
+    ['openai/gpt-live-1-2026-11-01', 'speech-to-speech'],
     ['vendor/unknown-model', undefined],
   ])('resolves catalog metadata for %s', (modelId, kind) => {
     expect(provider.resolveModelMetadata(modelId)?.kind).toBe(kind);

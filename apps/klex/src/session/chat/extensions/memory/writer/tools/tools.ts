@@ -40,16 +40,9 @@ import {
   sectionNameSchema,
 } from '../entities';
 import {
-  checkCopied,
-  checkFact,
-  checkSkill,
-  checkSkillWhen,
-  copiedValues,
-  MAX_WRITER_FACT,
   parseSkillBody,
   renderSkillBody,
   type StructuredSkill,
-  similarSkills,
 } from './quality';
 import { rejectSecrets } from './secrets';
 
@@ -147,7 +140,7 @@ const factInputSchema = z
     text: z
       .string()
       .min(1)
-      .max(MAX_WRITER_FACT * 2)
+      .max(1_000)
       .describe(
         'One fact, one line, caveman style, without the subject. No citations or IDs.',
       ),
@@ -270,7 +263,6 @@ function checkShape(
   sections: Record<string, Fact[]>,
   changed: readonly string[],
   loadOn: readonly { type: string; pattern?: string }[] = [],
-  identities: readonly { match: Record<string, string> }[] = [],
   previousCount = 0,
 ): void {
   const count = Object.keys(sections).length;
@@ -278,9 +270,6 @@ function checkShape(
     throw new Error(
       `Max ${SHAPE.detailSections} sections besides General; merge into existing sections`,
     );
-  const ids = identities
-    .flatMap((identity) => Object.values(identity.match))
-    .filter((value) => value.length >= 4);
   for (const name of changed) {
     const facts = sections[name];
     if (!facts) continue;
@@ -291,13 +280,6 @@ function checkShape(
       );
     if (facts.length > SHAPE.facts)
       throw new Error(`${name} exceeds ${SHAPE.facts} facts; merge facts`);
-    for (const fact of facts) {
-      const id = ids.find((value) => fact.text.includes(value));
-      if (id)
-        throw new Error(
-          `Fact repeats linked identity value "${id}"; IDs live in LinkedIdentities only`,
-        );
-    }
   }
   for (const matcher of loadOn)
     if (
@@ -569,11 +551,6 @@ const skillCreateSchema = z
       .max(6)
       .describe('SQLite message IDs from this batch.'),
     loadOn: skillLoadOnSchema.default([]),
-    notDuplicateOf: z
-      .array(z.string())
-      .max(10)
-      .default([])
-      .describe('Only after a Similar rejection: ids you checked that differ.'),
   })
   .strict();
 const skillUpdateSchema = z
@@ -638,10 +615,6 @@ export interface WriterToolsOptions {
   signal: AbortSignal;
   sourceIds: ReadonlySet<string>;
   view?: ActivityView;
-  /** The bot itself; never an entity. */
-  selfName?: string;
-  /** Batch text; identity and matcher values must be copied from it. */
-  evidenceText?: string;
   /**
    * `curation`: maintenance without a batch. Only `CURATION_TOOLS`; facts
    * inherit sources of the facts they replace or restate. Default `writer`.
@@ -802,24 +775,6 @@ class WriterToolsModule implements WriterTools {
           );
       }
     };
-    /** Shape rules code can check; messages name the fix. */
-    const checkEntity = (
-      title: string,
-      facts: readonly string[],
-      copied: { identities: string[]; matchers: string[] },
-    ) => {
-      const self = options.selfName?.toLowerCase();
-      if (self && title.trim().toLowerCase() === self)
-        throw new Error(
-          `"${title}" is self. Never create or edit an entity for self; put facts on the people and things self works with`,
-        );
-      for (const fact of facts) checkFact(fact, title);
-      const evidence = options.evidenceText;
-      if (!curation && evidence !== undefined) {
-        checkCopied(copied.identities, evidence, 'Identity value');
-        checkCopied(copied.matchers, evidence, 'LoadOn value');
-      }
-    };
     /** Writes or removes the reverse side of entity relations of `id`. */
     const syncInverses = async (
       id: string,
@@ -957,14 +912,8 @@ class WriterToolsModule implements WriterTools {
             (section) => section.facts.map(({ text }) => text),
           );
           rejectSecrets([fields, input], texts);
-          checkEntity(fields.title, texts, copiedValues(fields));
           const content = await sections(input);
-          checkShape(
-            content,
-            Object.keys(content),
-            fields.loadOn,
-            fields.linkedIdentities,
-          );
+          checkShape(content, Object.keys(content), fields.loadOn);
           checkRelations(fields.relatedTo);
           const entity = await options.entities.create(fields, content);
           try {
@@ -1029,18 +978,6 @@ class WriterToolsModule implements WriterTools {
           checkExisting(fields.linkedIdentities, fields.loadOn);
           const nextRelations: WriterRelation[] =
             fields.relatedTo ?? entity.frontmatter.RelatedTo;
-          checkEntity(
-            fields.title ?? entity.id,
-            (operations as Operation[])
-              .filter(({ op }) =>
-                ['add', 'supersede', 'reword', 'merge'].includes(op),
-              )
-              .map(({ text }) => text),
-            copiedValues({
-              linkedIdentities: fields.linkedIdentities,
-              loadOn: fields.loadOn,
-            }),
-          );
           const draft: Record<string, Fact[]> = Object.assign(
             Object.create(null),
             structuredClone(entity.sections),
@@ -1166,7 +1103,6 @@ class WriterToolsModule implements WriterTools {
             draft,
             [...changed],
             fields.loadOn,
-            fields.linkedIdentities ?? entity.frontmatter.LinkedIdentities,
             Object.keys(entity.sections).length,
           );
           checkRelations(fields.relatedTo ?? entity.frontmatter.RelatedTo);
@@ -1234,16 +1170,8 @@ class WriterToolsModule implements WriterTools {
             if (!keep || !drop) throw new Error('Unknown entity');
             if (keep.id === drop.id)
               throw new Error('Both IDs are the same entity');
-            const self = options.selfName?.trim().toLowerCase();
-            if (
-              self &&
-              [keep, drop].some(
-                (entity) => entity.id.trim().toLowerCase() === self,
-              )
-            )
-              throw new Error('Never merge into or from self');
             const merged = mergedEntity(keep, drop);
-            checkShape(merged.sections, Object.keys(merged.sections), [], []);
+            checkShape(merged.sections, Object.keys(merged.sections));
             const { RelatedTo, LinkedIdentities, Tags } = merged.frontmatter;
             if (
               RelatedTo.length > 100 ||
@@ -1408,29 +1336,10 @@ class WriterToolsModule implements WriterTools {
           async (input: z.infer<typeof skillCreateSchema>) => {
             const skill = structured(input);
             rejectSecrets(input, [input.when, ...skillTexts(skill)]);
-            checkSkillWhen(input.when);
-            checkSkill(skill);
             checkShape(Object.create(null), [], input.loadOn);
-            if (!curation && options.evidenceText !== undefined)
-              checkCopied(
-                copiedValues({ loadOn: input.loadOn }).matchers,
-                options.evidenceText,
-                'LoadOn value',
-              );
             await sources(input.sourceIds);
             if (options.skills.get(input.name))
               throw new Error('Skill already exists; read and update it');
-            const similar = similarSkills(
-              input.name,
-              input.loadOn,
-              options.skills
-                .list()
-                .filter((other) => !input.notDuplicateOf.includes(other.id)),
-            );
-            if (similar.length)
-              throw new Error(
-                `Similar: ${similar.join(', ')}. Read and extend it, or set notDuplicateOf: [ids] if it is a different procedure`,
-              );
             const created = await options.skills.put(
               input.name,
               { description: input.when, body: renderSkillBody(skill) },
@@ -1478,15 +1387,7 @@ class WriterToolsModule implements WriterTools {
               verify: input.verify ?? current?.verify ?? '',
             };
             rejectSecrets(input, [input.when ?? '', ...skillTexts(skill)]);
-            if (input.when !== undefined) checkSkillWhen(input.when);
-            checkSkill(skill);
             checkShape(Object.create(null), [], input.loadOn);
-            if (!curation && options.evidenceText !== undefined)
-              checkCopied(
-                copiedValues({ loadOn: input.loadOn }).matchers,
-                options.evidenceText,
-                'LoadOn value',
-              );
             checkExisting([], input.loadOn);
             if (!curation) await evidence(sourceIds);
             if (options.signal.aborted) throw new Error('Writer closed');

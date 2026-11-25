@@ -92,16 +92,8 @@ class ConsolidatorModule implements Consolidator {
         skills,
         skillReader,
         activities,
-        selfName: this.options.selfName?.(),
         signal: this.abort.signal,
         sourceIds: new Set(),
-        evidenceText: JSON.stringify([
-          ...before.map(({ frontmatter }) => ({
-            linkedIdentities: frontmatter.LinkedIdentities,
-            loadOn: frontmatter.LoadOn,
-          })),
-          ...beforeSkills.map(({ metadata }) => metadata.loadOn ?? []),
-        ]),
       }).tools;
       let completed = false;
       try {

@@ -80,7 +80,7 @@ Build a mental model of every product self works on, from everything self saw: c
 - bad: `Fixed bug in writer.ts`
 - good: `Drains chunks oldest-first; cursor moves only after a successful chunk`
 - Sections: `How it works`, `Layout`, `Commands`, `Pitfalls`.
-- Project LinkedIdentity: github `{repositoryId}` when present. LoadOn: repo name, path prefixes (`apps/klex/src/session`).
+- Projects and repositories are not actors: no LinkedIdentities. LoadOn, only when useful: repo name, path prefixes (`apps/klex/src/session`). An app or system may have LinkedIdentities only for its own actor account, never for its repository or other resources.
 
 # Events
 
@@ -98,16 +98,19 @@ Create a work-item entity for what matters later: what it is about, decisions wi
 
 - bad: facts copying the issue title or description verbatim.
 - good: `Skipped retry: server already dedupes by eventId`.
-- Linear issue exists → tag `work-items/issues`, LinkedIdentity linear `{issueId}`. Its PRs → extra LinkedIdentities github `{repositoryId, subjectNodeId}` on that issue, no separate entity.
-- PR without a Linear issue → tag `work-items/tasks`, LinkedIdentity github `{repositoryId, subjectNodeId}`.
+- Linear issue exists → tag `work-items/issues`. Keep its PR context on that issue, no separate entity.
+- PR without a Linear issue → tag `work-items/tasks`.
+- Issues and PRs are data, not actors: no LinkedIdentities. Skip their IDs; a deliberate LoadOn token such as `ENG-42` is optional when useful.
 - Relate who requested, owns, authored or reviews it, and related issues (see Relations). Never facts about who did it.
 
 # LinkedIdentities and LoadOn
 
-Literal triggers that load the entity. Never repeat in facts. Never per-message values (ts, message or comment IDs).
+LinkedIdentities identify actors; LoadOn supplies optional literal loading triggers. Both can load the entity. Never repeat them in facts. Never per-message values (ts, message or comment IDs).
 
-- LinkedIdentities `{server, match}`: server = MCP source (`slack`, `linear`, `github`); match = event metadata keys and values, copied exactly. Unique across memory. `identityId`, `workspaceId`, `installationId` = receiving account, not sender.
-- LoadOn: contentPattern = short verbatim token (`ENG-42`, `acme/web`), ≤60 chars, never a description. eventDataPattern (Events and Push Notification data, not transport envelopes) / toolCallPattern only for patterns identities cannot express.
+- Set `linkedIdentities` only on entities representing actors: people, personas, bots, apps or systems acting through an account. Store only relevant IDs that identify that actor, such as user, sender, actor, bot or app account IDs. An actor's issue, repository or other resource ID does not identify the actor.
+- Never put issue, PR, repository, document, event, task or other data/resource identifiers in LinkedIdentities, even when the entity represents that resource. Leave the list empty for non-actors; skip irrelevant IDs rather than storing every identifier seen.
+- LinkedIdentities `{server, match}`: server = MCP source (`slack`, `linear`, `github`); match = actor-identifying event metadata keys and values, copied exactly. Unique across memory. `identityId`, `workspaceId`, `installationId` = receiving account, not sender; do not use them as sender identities.
+- LoadOn: contentPattern = short verbatim token (`ENG-42`, `acme/web`), ≤60 chars, never a description. eventDataPattern (Events and Push Notification data, not transport envelopes) / toolCallPattern only for useful triggers actor identities cannot express. No trigger is required; do not move every skipped resource ID into LoadOn.
 
 # Skills
 

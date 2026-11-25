@@ -35,6 +35,8 @@ import type { ChildSessionHandle } from '@/session/types';
 import type { SkillRegistry } from '@/skills';
 
 import memoryPrompt from '../system-prompt-part.md';
+import { childToolsExtension, settleChild } from './child-tools';
+import { type Consolidator, createConsolidator } from './consolidator';
 import {
   createEntityStore,
   type EntityStore,
@@ -139,22 +141,6 @@ export interface MemoryWriterExtOptions {
   selfName?: () => string | undefined;
 }
 
-class WriterToolsExtension implements Extension {
-  constructor(
-    private readonly get: () => ToolSet,
-    readonly onStepComplete: (event: StepCompleteEvent) => void,
-  ) {}
-  getTools(): ToolSet {
-    return this.get();
-  }
-}
-function toolsExtension(
-  get: () => ToolSet,
-  complete: (event: StepCompleteEvent) => void,
-): Extension {
-  return new WriterToolsExtension(get, complete);
-}
-
 class MemoryWriterExtension implements Extension {
   getSystemPromptPart(): string {
     return memoryPrompt;
@@ -175,6 +161,7 @@ class MemoryWriterExtension implements Extension {
   private childCompleted = false;
   private readonly dataDirectory: string;
   private readonly state: WriterState;
+  private readonly consolidator: Consolidator;
   private readonly entities: EntityStore;
   private readonly loader: MemoryLoader | undefined;
   private detachRecallSource: (() => void) | undefined;
@@ -194,6 +181,13 @@ class MemoryWriterExtension implements Extension {
     this.dataDirectory = deps.getDataDir(true);
     this.state = createWriterState(this.dataDirectory);
     this.entities = createEntityStore(join(this.dataDirectory, 'entities'));
+    this.consolidator = createConsolidator({
+      deps,
+      entities: this.entities,
+      activities: options.activities,
+      skillReader: options.skillReader,
+      selfName: options.selfName,
+    });
     if (options.loadingSkills) {
       this.loader = createMemoryLoader({
         entities: {
@@ -228,6 +222,7 @@ class MemoryWriterExtension implements Extension {
       throw new Error('Memory writer requires the learning namespace');
     await this.state.start();
     await this.entities.start();
+    await this.consolidator.start();
     const legacy = createLearningState(this.options.legacyLearningDirectory);
     await legacy.start();
     // LEGACY(skill-registry): preserve pre-0.28 learned skills before allowing new writes.
@@ -336,6 +331,7 @@ class MemoryWriterExtension implements Extension {
     this.unsubscribe?.();
     clearTimeout(this.retry);
     this.abort?.abort();
+    await this.consolidator.close();
     await this.child?.close();
     await this.work;
     await this.child?.close();
@@ -448,6 +444,20 @@ class MemoryWriterExtension implements Extension {
               draft.pendingThrough = latest.id;
           });
           await this.drain();
+          if (
+            !this.closed &&
+            !this.wakePending &&
+            !this.state.get().pendingThrough
+          ) {
+            try {
+              await this.consolidator.run();
+            } catch (error) {
+              this.deps.logger.warn(
+                { error },
+                'Memory consolidator failed; changes remain pending for the next idle transition',
+              );
+            }
+          }
         }
       } catch (error) {
         this.deps.logger.warn(
@@ -592,19 +602,12 @@ class MemoryWriterExtension implements Extension {
             },
             SessionInboxUrgency.Default,
           );
-          while (!this.closed) {
-            if (child.getSessionInfo().status === 'terminated') {
-              throw new Error('Memory writer session terminated');
-            }
-            if (await child.waitForIdle(1_000)) {
-              if (child.getSessionInfo().status === 'terminated') {
-                throw new Error('Memory writer terminated before settling');
-              }
-              if (!this.childCompleted)
-                throw new Error('Memory writer did not complete successfully');
-              break;
-            }
-          }
+          await settleChild(
+            child,
+            'Memory writer',
+            () => this.closed,
+            () => this.childCompleted,
+          );
           if (this.closed) return;
         } finally {
           this.abort.abort();
@@ -632,24 +635,10 @@ class MemoryWriterExtension implements Extension {
         {
           identifier: 'io.stagewise/memory-writer-tools',
           create: () =>
-            toolsExtension(
+            childToolsExtension(
               () => this.tools,
-              (event) => {
-                if (
-                  event.forceNextStep ||
-                  event.generationFailed ||
-                  event.fatalError ||
-                  event.requestRejected ||
-                  event.modelFallbackOccurred ||
-                  event.instinctAborted
-                ) {
-                  this.childCompleted = false;
-                } else if (event.generation) {
-                  // Normal generations request another step; the following
-                  // no-generation decision step ends the turn. Preserve success
-                  // through that clean skip, but never through a later failure.
-                  this.childCompleted = true;
-                }
+              (completed) => {
+                this.childCompleted = completed;
               },
             ),
         },

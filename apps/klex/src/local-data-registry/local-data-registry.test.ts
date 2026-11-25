@@ -62,6 +62,7 @@ describe('Klex local-data registry', () => {
       'sessions',
       'skill-registry',
       'memory-writer-state',
+      'memory-consolidator-state',
     ]);
   });
 

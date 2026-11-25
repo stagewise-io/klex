@@ -124,8 +124,11 @@ async function fixture(completion: 'normal' | 'failed' | 'skip' = 'normal') {
       for (const previous of children)
         expect(previous.close).toHaveBeenCalledOnce();
       terminated = false;
-      const toolsFactory = options.extensions?.find(
-        (factory) => factory.identifier === 'io.stagewise/memory-writer-tools',
+      const toolsFactory = options.extensions?.find((factory) =>
+        [
+          'io.stagewise/memory-writer-tools',
+          'io.stagewise/memory-consolidator-tools',
+        ].includes(factory.identifier),
       );
       const tools = toolsFactory?.create({} as ExtensionDeps);
       expect(tools?.getSystemPromptPart).toBeUndefined();
@@ -229,6 +232,50 @@ async function fixture(completion: 'normal' | 'failed' | 'skip' = 'normal') {
 }
 
 describe('oldest-first memory writer', () => {
+  it('consolidates once after all writer chunks settle, not after each chunk', async () => {
+    const f = await fixture();
+    const store = createEntityStore(
+      join(f.root, 'extensions/io.stagewise/memory/entities'),
+    );
+    await store.start();
+    await store.create(
+      { title: 'Project', tags: ['projects'] },
+      { General: [{ text: 'Builds widgets', sources: [], history: [] }] },
+    );
+    await f.extension.onStart?.();
+    await vi.waitFor(() =>
+      expect(
+        f.createChildSession.mock.calls.map(([options]) => options.name),
+      ).toEqual([
+        'memory-writer',
+        'memory-writer',
+        'memory-writer',
+        'memory-consolidator',
+      ]),
+    );
+    await vi.waitFor(() =>
+      expect(f.children.at(-1)?.close).toHaveBeenCalledOnce(),
+    );
+    const part = f.messages.at(-1)?.parts[0];
+    if (part?.type !== 'text') throw new Error('Missing consolidator input');
+    const input = part.text;
+    expect(input).toContain('<changed-entities>');
+    expect(input).toContain('Builds widgets');
+    expect(input).toContain('revision');
+    expect(input).toContain('loadOn');
+    expect(input).toContain('<relationship-types>');
+    f.compact(['5']);
+    await vi.waitFor(async () => expect((await f.state()).cursor).toBe(id(5)));
+    expect(
+      f.createChildSession.mock.calls.map(([options]) => options.name),
+    ).toEqual([
+      'memory-writer',
+      'memory-writer',
+      'memory-writer',
+      'memory-consolidator',
+      'memory-writer',
+    ]);
+  });
   it('registers its managed read-only recall source on start and detaches it on close', async () => {
     const h = await fixture();
     expect(h.attachSource).not.toHaveBeenCalled();

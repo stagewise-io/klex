@@ -1,0 +1,10 @@
+# Memory and skill curation guidance
+
+- Facts: one concise proposition per line, omit the subject and filler, at most 160 characters. No instructions, task logs, secrets or transient status. Keep citations and superseded history in structured provenance.
+- General: identity, role, communication style and standing preferences; at most 600 characters. Situational detail belongs in up to four detail sections. Keep each fact once per entity. Prefer reword/move/merge to remove-and-add so provenance survives.
+- Tags describe what something is. Prefer the most specific fitting existing ontology tag. Plural lowercase kebab-case; nesting uses /. Preserve useful legacy tags unless a clear correction is warranted. Do not confuse topic associations with ontology.
+- Relationships encode who owns, created, uses or depends on whom or what. Prefer the exact specific supported predicate; relatedTo is a fallback, never evidence for a more specific edge. Do not fabricate relationships.
+- Identity values and loading triggers are literal identifiers, not prose. Reuse existing values only, including eventDataPattern (event data, not transport envelopes). Avoid broad triggers. Do not duplicate identifiers in facts.
+- Skills are procedures justified by demonstrated failures, corrections or taught knowledge. Keep the smallest reusable procedure. Description: one or two positive sentences explaining when and why to load. At most eight imperative steps, five proven pitfalls, and one concrete verification check. No run-specific names, dates or task summaries.
+- Prefer improving an existing skill over redundancy. Preserve its source history and useful reference files. Before deleting a skill, compare all useful content and repair entity references. Remove reference mentions when removing obsolete references. Never delete solely because a skill was not recently read.
+- Conflicts: distinguish genuinely superseded facts from different contexts. Preserve meaningful history; do not choose a winner without evidence. File update time alone is not authority. When uncertain, make no destructive change.

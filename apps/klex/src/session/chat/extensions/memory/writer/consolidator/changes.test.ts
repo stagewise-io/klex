@@ -100,6 +100,33 @@ describe('consolidator change cursor', () => {
         .items,
     ).toHaveLength(1);
   });
+  it('stubs an exact-budget document and advances past it', () => {
+    const record = entity('A');
+    const budget = entityReadResult(
+      record,
+      Object.keys(record.sections),
+    ).length;
+    const result = collectChanges([record], [], empty, budget);
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]?.text).toContain('Oversized document');
+    expect(result.cutoff).toBe(at);
+    expect(result.overflow).toBe(false);
+    expect(
+      collectChanges(
+        [record, entity('B')],
+        [],
+        {
+          lastRunAt: result.cutoff,
+          written: result.items.map(({ kind, id, writtenAt }) => ({
+            kind,
+            id,
+            writtenAt,
+          })),
+        },
+        budget,
+      ).items.map(({ id }) => id),
+    ).toEqual(['B']);
+  });
   it('lists oversized documents for tool reads rather than starving the cursor', () => {
     const record = entity('Huge');
     record.sections = {

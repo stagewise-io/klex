@@ -140,6 +140,54 @@ describe('memory writer tools', () => {
       reason: expect.stringContaining('existing LoadOn'),
     });
   });
+  it('reuses escaped identities and triggers in curation without raw-text evidence checks', async () => {
+    const f = await fixture();
+    const loadOn = [
+      { type: 'contentPattern' as const, pattern: 'deploy\\\\s+"staging"' },
+    ];
+    const linkedIdentities = [
+      { server: 'slack', match: { userId: 'user"quoted\\\\id' } },
+    ];
+    const entity = await f.entities.create(
+      { title: 'Project', tags: ['projects'], loadOn, linkedIdentities },
+      { General: [fact('Builds widgets')] },
+    );
+    await call(f.tools, 'createLearnedSkill', skillInput('deploy'));
+    const { tools } = createWriterTools({
+      ...f,
+      skillReader: f.registry,
+      mode: 'curation',
+      signal: f.controller.signal,
+      sourceIds: new Set(),
+      evidenceText: JSON.stringify({ loadOn, linkedIdentities }),
+    });
+    expect(
+      await call(tools, 'updateEntity', {
+        id: entity.id,
+        revision: entityRevision(entity),
+        fields: { loadOn, linkedIdentities },
+      }),
+    ).toMatchObject({ status: 'updated' });
+    const read = await call(tools, 'readSkill', { id: 'learning/deploy' });
+    expect(
+      await call(tools, 'updateLearnedSkill', {
+        name: 'deploy',
+        revision: revision(read),
+        loadOn,
+      }),
+    ).toMatchObject({ status: 'updated' });
+    const updated = await call(tools, 'readSkill', { id: 'learning/deploy' });
+    expect(
+      await call(tools, 'updateLearnedSkill', {
+        name: 'deploy',
+        revision: revision(updated),
+        loadOn: [{ type: 'contentPattern', pattern: 'new-trigger' }],
+      }),
+    ).toMatchObject({
+      status: 'rejected',
+      reason: expect.stringContaining('existing LoadOn'),
+    });
+  });
   it('exports only structural provider schemas while retaining full local validation', async () => {
     const { tools } = await fixture();
     const check = (value: unknown): void => {

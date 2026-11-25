@@ -22,7 +22,7 @@ export const comparisonMarkup =
     <div class="resource-section-body">
       <p>With Klex, you can give a coworker access to the tools the job needs and work with it in places such as Slack and GitHub. <a href="https://www.klex.bot/">Klex describes bots using their own identities in those apps</a>. Identity and permissions depend on the connector and setup. In this example, a team member asks the bot in Slack to gather changes from a connected source and bring back a draft for review.</p>
       <p>With Rerun, you can choose a ready-made role or create a coworker and use its shared board to see work and respond to requests. <a href="https://rerun.build/">Rerun describes connections to apps, schedules and coworker handoffs</a>. In this example, a team member chooses or creates a coworker, connects a source and reviews its draft on the shared board.</p>
-      <p>These examples illustrate possible workflows. The exact source, review location and setup for each path still need checking.</p>
+      <p>These examples are illustrative. Check that your sources and review steps work with your setup.</p>
     </div>
   </section>
   <section class="resource-section" id="models">
@@ -54,7 +54,7 @@ export const comparisonMarkup =
     <h2>Which is a better fit?</h2>
     <div class="resource-section-body">
       <p>Choose Klex when working alongside your team in existing tools is the priority and you want to supply your own model access. <a href="https://www.klex.bot/">Klex describes Cloud-hosted bots</a>, and its <a href="https://docs.klex.bot/quickstart">quickstart describes self-hosting</a>.</p>
-      <p>Consider Rerun when a shared board, ready-made roles and included model credits fit how your team wants to start. <a href="https://docs.rerun.build/self-host/open-source-vs-cloud">Its self-hosted edition differs from its managed service</a>: Rerun says the self-hosted edition lacks the hosted template library and included model credit.</p>
+      <p>Consider Rerun when a shared board and ready-made roles fit how your team wants to start. Rerun Pro also includes model credits. <a href="https://docs.rerun.build/self-host/open-source-vs-cloud">Its self-hosted edition differs from its managed service</a>: Rerun says the self-hosted edition lacks the hosted template library and included model credit.</p>
     </div>
   </section>
   <section class="resource-section" id="try">

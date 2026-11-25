@@ -12,7 +12,7 @@ Rejections tell you the fix; follow it and retry.
 
 # Per chunk
 
-1. People: who talked? Find with listEntities. Missing → create (tag `people` or a child, sender ID as LinkedIdentity). Add or refine role and style (see People).
+1. People: who talked? Find with listEntities. Missing → create (tag `people` or a child; relevant, evidenced sender ID may be a LinkedIdentity). Add or refine role and style (see People).
 2. Product: projects and components self touched or researched (see Product).
 3. Events: happenings worth remembering (see Events).
 4. Work items: decisions, reasons, constraints (see Work items).
@@ -65,7 +65,7 @@ Prefer a specific predicate whenever supported; `relatedTo` is only the fallback
 
 # People
 
-- Name = name as people write it. Sender ID as LinkedIdentity: slack `{user}`, linear `{actorId}`, chat `{senderId}`. Copy IDs exactly from the metadata; tool rejects IDs not in the activities.
+- Name = name as people write it. Optional sender LinkedIdentity when relevant: slack `{user}`, linear `{actorId}`, chat `{senderId}`. Copy IDs exactly from the metadata; tool rejects IDs not in the activities.
 - Role, from behavior, not claims alone: what they ask for, assign, approve, review, decide, own; who defers to them, whom they defer to. Tentative until repeated ("seems to own billing"). One-line gist in General (`Leads klex backend; assigns self Linear issues; approves PRs`), detail in section `Role`: responsibilities, areas owned, decision rights (`Can approve deploys`, `Asks, does not decide, on pricing`). Specific issues, PRs, tasks or events they handled → relations (see Relations), not facts. Role changes → supersede. For bots, also who runs or instructs them.
 - Style, from their own messages only: language, formality, length, emoji, typos, humor and sarcasm (record that they use it, so self does not take it literally), directness, tone under stress, what they want in replies. Always in General, never a section: self needs it for every reply. Compact ("German, casual, short, emojis; sarcastic; wants bullet answers"). Pattern, not one message: first time tentative ("seems casual"); one odd message never overwrites, clear lasting change supersedes.
 - Old layout on a person you edit: move `Communication style` facts into General; rename `Role and work` to `Role` (renameSection) and turn its facts about specific issues, PRs or events into relations, then remove them.
@@ -107,7 +107,7 @@ Create a work-item entity for what matters later: what it is about, decisions wi
 
 LinkedIdentities identify actors; LoadOn supplies optional literal loading triggers. Both can load the entity. Never repeat them in facts. Never per-message values (ts, message or comment IDs).
 
-- Set `linkedIdentities` only on entities representing actors: people, personas, bots, apps or systems acting through an account. Store only relevant IDs that identify that actor, such as user, sender, actor, bot or app account IDs. An actor's issue, repository or other resource ID does not identify the actor.
+- LinkedIdentities are optional, including for actors; leave empty when no relevant, evidenced actor ID is needed. Set `linkedIdentities` only on entities representing actors: people, personas, bots, apps or systems acting through an account. Store only relevant IDs that identify that actor, such as user, sender, actor, bot or app account IDs. An actor's issue, repository or other resource ID does not identify the actor.
 - Never put issue, PR, repository, document, event, task or other data/resource identifiers in LinkedIdentities, even when the entity represents that resource. Leave the list empty for non-actors; skip irrelevant IDs rather than storing every identifier seen.
 - LinkedIdentities `{server, match}`: server = MCP source (`slack`, `linear`, `github`); match = actor-identifying event metadata keys and values, copied exactly. Unique across memory. `identityId`, `workspaceId`, `installationId` = receiving account, not sender; do not use them as sender identities.
 - LoadOn: contentPattern = short verbatim token (`ENG-42`, `acme/web`), ≤60 chars, never a description. eventDataPattern (Events and Push Notification data, not transport envelopes) / toolCallPattern only for useful triggers actor identities cannot express. No trigger is required; do not move every skipped resource ID into LoadOn.

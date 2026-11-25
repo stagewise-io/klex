@@ -54,8 +54,10 @@ format in the middle of a session. Model IDs are sent unchanged
 
 All adapters use the `klex-cloud` provider-options namespace, so
 `providerOptions['klex-cloud']` applies to every protocol. Anthropic Messages
-also reads `providerOptions.anthropic`. Effort control stays `unknown`, as for
-the `responses` type.
+merges call-level `providerOptions.anthropic` and `providerOptions['klex-cloud']`
+(including `thinking` and `cacheControl`); the SDK reads message- and
+part-level cache breakpoints only from `providerOptions.anthropic`. Effort
+control stays `unknown`, as for the `responses` type.
 
 ## Discovery and metadata
 
@@ -64,9 +66,11 @@ inference. The gateway returns only `id`, `object`, `created` and `owned_by`,
 so other metadata comes from Klex's OpenAI and Anthropic catalogs (by vendor
 prefix) and the provider's `knownModels`. IDs matching the shared
 non-language filter (embedding, TTS, Whisper, `realtime`, moderation and image
-models) are left out of the list, and so are IDs the catalogs classify as
-another kind, such as speech-to-speech `gpt-live-*` and speech-to-text models.
-Uncatalogued IDs stay listed.
+models) are left out of the list, and so are all `gpt-live-*` IDs (including
+dated snapshots and IDs the catalog does not know yet) and IDs the catalogs
+classify as another kind, such as speech-to-text models. Dated `gpt-live-1`
+snapshots resolve to the `gpt-live-1` catalog entry. Uncatalogued IDs stay
+listed.
 
 ## Reserved realtime fields
 

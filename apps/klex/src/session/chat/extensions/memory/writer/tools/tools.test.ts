@@ -105,7 +105,6 @@ describe('memory writer tools', () => {
       mode: 'curation',
       signal: f.controller.signal,
       sourceIds: new Set(),
-      evidenceText: '',
     });
     expect(Object.keys(tools)).toEqual([...CURATION_TOOLS]);
     expect(
@@ -159,7 +158,6 @@ describe('memory writer tools', () => {
       mode: 'curation',
       signal: f.controller.signal,
       sourceIds: new Set(),
-      evidenceText: JSON.stringify({ loadOn, linkedIdentities }),
     });
     expect(
       await call(tools, 'updateEntity', {
@@ -891,7 +889,7 @@ describe('memory writer tools', () => {
     expect(entities.get(id)).toEqual(before);
   });
 
-  it('enforces section count, size, identity repetition and matcher length', async () => {
+  it('enforces section count, size and matcher length', async () => {
     const { tools, entities } = await fixture();
     const section = (name: string, text = 'Fact') => ({
       name,
@@ -919,19 +917,6 @@ describe('memory writer tools', () => {
         },
       },
       'exceeds 60',
-    );
-    await reject(
-      {
-        ...create(),
-        fields: {
-          ...create().fields,
-          linkedIdentities: [
-            { server: 'slack', match: { user: 'U071HL78SDN' } },
-          ],
-        },
-        sections: [section('General', 'Slack user U071HL78SDN')],
-      },
-      'repeats linked identity',
     );
     expect(entities.list()).toHaveLength(0);
     const created = await call(tools, 'createEntity', {
@@ -1004,7 +989,7 @@ describe('memory writer tools', () => {
     });
   });
 
-  it('renders structured skills, keeps omitted parts, and rejects stale, run-specific or duplicate input', async () => {
+  it('renders structured skills, keeps omitted parts, and rejects stale updates', async () => {
     const { tools, skills } = await fixture();
     const name = 'patch-workflow';
     await call(
@@ -1037,32 +1022,22 @@ describe('memory writer tools', () => {
     expect(await update({ pitfalls: [] }, stale)).toMatchObject({
       status: 'rejected',
     });
-    const reject = async (extra: object, reason: string) =>
-      expect(await update(extra)).toMatchObject({
-        status: 'rejected',
-        reason: expect.stringContaining(reason),
-      });
-    await reject({ steps: ['Free disk space this run'] }, 'ties it to one run');
-    await reject({ steps: ['Push'], verify: 'Push' }, 'verify repeats a step');
-    await reject(
+    for (const extra of [
+      { steps: ['Free disk space this run'] },
+      { steps: ['Push'], verify: 'Push' },
       { when: 'Deploying acme/web, except on Fridays' },
-      '"except" is a negation',
-    );
-    await reject(
       { when: "Deploying acme/web when CI can't run" },
-      `"can't" is a negation`,
-    );
-    await reject(
       { when: 'Deploying acme/web if staging cannot start' },
-      '"cannot" is a negation',
-    );
+    ]) {
+      expect(await update(extra)).toMatchObject({ status: 'updated' });
+    }
     expect(
       await update({ when: 'Deploying acme/web. Keeps staging in sync.' }),
     ).toMatchObject({ status: 'updated' });
     expect(
       await update({ when: 'Spotting a no-op deploy of acme/web.' }),
     ).toMatchObject({ status: 'updated' });
-    expect(skills.get(name)?.body).toContain('Push, then open the PR');
+    expect(skills.get(name)?.body).toContain('1. Push');
     await skills.put('legacy', { description: 'Old', body: 'Prose body.' });
     const legacy = await call(tools, 'readSkill', { id: 'learning/legacy' });
     expect(
@@ -1295,7 +1270,6 @@ describe('memory writer tools', () => {
         mode,
         signal: f.controller.signal,
         sourceIds: new Set(),
-        evidenceText: '',
       });
       expect(
         await call(tools, 'updateEntity', {
@@ -1369,56 +1343,41 @@ describe('memory writer tools', () => {
       }
     },
   );
-  it('rejects entity output a cheap model gets wrong, with a fix in the message', async () => {
-    const evidence =
-      'issue 0eff93ac-11f0-4da1-ac13-78d5697ca0e7 PR_kwDOT3Z8XM8AAAABO4mHbw';
+  it('accepts entity content without semantic restrictions and maintains inverse relations', async () => {
     const { entities, activities, skills, registry, controller } =
       await fixture();
-    const strict = createWriterTools({
+    const tools = createWriterTools({
       entities,
       skills,
       skillReader: registry,
       activities,
       signal: controller.signal,
       sourceIds: new Set([source]),
-      selfName: 'Jonathan',
-      evidenceText: evidence,
     }).tools;
-    const reject = async (input: unknown, reason: string) =>
-      expect(await call(strict, 'createEntity', input)).toMatchObject({
-        status: 'rejected',
-        reason: expect.stringContaining(reason),
+    const accept = async (input: unknown) =>
+      expect(await call(tools, 'createEntity', input)).toMatchObject({
+        status: 'created',
       });
     const fields = (extra: object) => ({
       ...create().fields,
       ...extra,
     });
-    await reject(
-      create(source, 'Alex Smith prefers short replies'),
-      'Drop the subject',
-    );
-    await reject(
-      create(source, 'Tests passed on the branch'),
-      'progress or status',
-    );
-    await reject(create(source, 'x'.repeat(161)), 'max 160');
-    await reject(
-      { ...create(), fields: fields({ title: 'Jonathan' }) },
-      'is self',
-    );
-    await reject(
-      {
-        ...create(),
-        fields: fields({
-          linkedIdentities: [
-            { server: 'slack', match: { user: 'U0C33JW11PS' } },
-          ],
-        }),
-      },
-      'not found in the activities',
-    );
-    expect(entities.list()).toHaveLength(0);
-    // Copied exactly: accepted, and a truncated Linear ID is not.
+    await accept(create(source, 'Alex Smith prefers short replies'));
+    for (const [title, text] of [
+      ['Progress', 'Tests passed on the branch'],
+      ['Long fact', 'x'.repeat(161)],
+      ['Jonathan', 'Self description'],
+    ]) {
+      await accept({ ...create(source, text), fields: fields({ title }) });
+    }
+    await accept({
+      ...create(source, 'Slack user U0C33JW11PS'),
+      fields: fields({
+        title: 'Unquoted identity',
+        linkedIdentities: [{ server: 'slack', match: { user: 'U0C33JW11PS' } }],
+      }),
+    });
+    // References still resolve and inverse relations are automatic.
     const issue = (id: string) => ({
       fields: {
         title: 'CLOUD-254',
@@ -1433,19 +1392,15 @@ describe('memory writer tools', () => {
       },
       sections: create().sections,
     });
-    await reject(
-      issue('0eff93ac-11f0-4da1-ac13-78d5697ca0'),
-      'not found in the activities',
-    );
     const person = await entities.create(
-      { title: 'Alex Smith', tags: ['people'] },
+      { title: 'Related person', tags: ['people'] },
       { General: [fact('Owner')] },
     );
     const linked = issue('0eff93ac-11f0-4da1-ac13-78d5697ca0e7');
     const relation = linked.fields.relatedTo[0];
     if (!relation) throw new Error('Missing relation');
     relation.target.id = person.id;
-    const created = (await call(strict, 'createEntity', linked)) as {
+    const created = (await call(tools, 'createEntity', linked)) as {
       status: string;
       id: string;
     };
@@ -1462,7 +1417,7 @@ describe('memory writer tools', () => {
       relationship: 'requestedBy',
     });
   });
-  it('rejects a new skill that duplicates an existing one', async () => {
+  it('allows distinct skills with overlapping names and triggers', async () => {
     const { tools } = await fixture();
     const trigger = {
       type: 'toolCallPattern',
@@ -1479,17 +1434,8 @@ describe('memory writer tools', () => {
       loadOn: [trigger],
     });
     expect(await call(tools, 'createLearnedSkill', duplicate)).toMatchObject({
-      status: 'rejected',
-      reason: expect.stringContaining(
-        'Similar: learning/linear-agent-session-response',
-      ),
+      status: 'created',
     });
-    expect(
-      await call(tools, 'createLearnedSkill', {
-        ...duplicate,
-        notDuplicateOf: ['learning/linear-agent-session-response'],
-      }),
-    ).toMatchObject({ status: 'created' });
   });
   it('rejects credentials in entity and skill writes', async () => {
     const { tools, entities, skills } = await fixture();

@@ -573,8 +573,6 @@ class MemoryWriterExtension implements Extension {
         const opened = this.openedMemory();
         this.abort = new AbortController();
         this.tools = createWriterTools({
-          selfName,
-          evidenceText: `${previousText}\n${batch.text}`,
           entities: this.entities,
           skills,
           skillReader: this.options.skillReader,

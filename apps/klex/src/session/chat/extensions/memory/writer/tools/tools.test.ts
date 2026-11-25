@@ -1245,6 +1245,84 @@ describe('memory writer tools', () => {
     ).toMatchObject({ status: 'deleted' });
     expect(skills.get('deploy')).toBeNull();
   });
+  it.each(['work-items/issues', 'work-items/issues/bugs', 'issue'])(
+    'creates %s entities without linked identities or loading triggers',
+    async (tag) => {
+      const { tools, entities } = await fixture();
+      const person = await entities.create(
+        { title: 'Alex Smith', tags: ['people'] },
+        { General: [fact('Owner')] },
+      );
+      expect(
+        await call(tools, 'createEntity', {
+          ...create(),
+          fields: {
+            title: 'CLOUD-254',
+            tags: [tag],
+            relatedTo: [
+              {
+                target: { kind: 'entity', id: person.id },
+                relationship: 'requestedBy',
+              },
+            ],
+          },
+        }),
+      ).toMatchObject({ status: 'created' });
+      expect(entities.get('CLOUD-254')?.frontmatter).toMatchObject({
+        Tags: [tag],
+        LinkedIdentities: [],
+        LoadOn: [],
+      });
+    },
+  );
+  it.each(['writer', 'curation'] as const)(
+    'allows %s to clear resource identities without replacement triggers',
+    async (mode) => {
+      const f = await fixture();
+      const person = await f.entities.create(
+        { title: 'Alex Smith', tags: ['people'] },
+        { General: [fact('Owner')] },
+      );
+      const entity = await f.entities.create(
+        {
+          title: 'CLOUD-254',
+          tags: ['work-items/issues'],
+          linkedIdentities: [
+            { server: 'linear', match: { issueId: 'issue-1' } },
+          ],
+          relatedTo: [
+            {
+              target: { kind: 'entity', id: person.id },
+              relationship: 'requestedBy',
+            },
+          ],
+        },
+        { General: [fact('Keeps retries bounded')] },
+      );
+      const { tools } = createWriterTools({
+        ...f,
+        skillReader: f.registry,
+        mode,
+        signal: f.controller.signal,
+        sourceIds: new Set(),
+        evidenceText: '',
+      });
+      expect(
+        await call(tools, 'updateEntity', {
+          id: entity.id,
+          revision: entityRevision(entity),
+          fields: { linkedIdentities: [] },
+        }),
+      ).toMatchObject({ status: 'updated' });
+      expect(f.entities.get(entity.id)?.frontmatter).toMatchObject({
+        Tags: ['work-items/issues'],
+        LinkedIdentities: [],
+        LoadOn: [],
+        RelatedTo: entity.frontmatter.RelatedTo,
+      });
+      expect(f.entities.get(entity.id)?.sections).toEqual(entity.sections);
+    },
+  );
   it('rejects entity output a cheap model gets wrong, with a fix in the message', async () => {
     const evidence =
       'issue 0eff93ac-11f0-4da1-ac13-78d5697ca0e7 PR_kwDOT3Z8XM8AAAABO4mHbw';
@@ -1296,33 +1374,6 @@ describe('memory writer tools', () => {
         }),
       },
       'not found in the activities',
-    );
-    await reject(
-      {
-        ...create(),
-        fields: fields({
-          title: 'CLOUD-254',
-          tags: ['work-items/issues'],
-          linkedIdentities: [
-            {
-              server: 'github',
-              match: { subjectNodeId: 'PR_kwDOT3Z8XM8AAAABO4mHbw' },
-            },
-          ],
-        }),
-      },
-      'work-items/tasks',
-    );
-    // Nested below an invariant tag: still needs the tracker ID.
-    await reject(
-      {
-        ...create(),
-        fields: fields({
-          title: 'CLOUD-255',
-          tags: ['work-items/issues/bugs'],
-        }),
-      },
-      'work-items/tasks',
     );
     await reject(
       {

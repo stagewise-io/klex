@@ -139,7 +139,6 @@ const canonical = (
 // default ontology tags (`people`, `work-items/issues`, …).
 const PEOPLE = new Set(['people', 'teams', 'person', 'bot', 'team']);
 const WORK_ITEMS = new Set(['work-items', 'issue', 'pull-request']);
-const ISSUES = new Set(['work-items/issues', 'issue']);
 const EVENTS = new Set(['events', 'event']);
 const PERSONS = new Set(['people', 'person', 'bot']);
 /** A tag matches when it, or any ancestor (`a`, `a/b` of `a/b/c`), is one of `kinds`. */
@@ -822,7 +821,6 @@ class WriterToolsModule implements WriterTools {
     const checkEntity = (
       title: string,
       tags: readonly string[],
-      identities: readonly { server: string; match: Record<string, string> }[],
       relations: readonly { target: { kind: string; id: string } }[],
       facts: readonly string[],
       copied: { identities: string[]; matchers: string[] },
@@ -838,16 +836,6 @@ class WriterToolsModule implements WriterTools {
         checkCopied(copied.identities, evidence, 'Identity value');
         checkCopied(copied.matchers, evidence, 'LoadOn value');
       }
-      if (
-        tagged(tags, ISSUES) &&
-        !identities.some(
-          (identity) =>
-            identity.server === 'linear' && 'issueId' in identity.match,
-        )
-      )
-        throw new Error(
-          'No tracker ID. Tag it "work-items" (or "work-items/tasks") until the Linear issueId appears; then retag to "work-items/issues"',
-        );
       const people = relations.filter(
         ({ target }) =>
           target.kind === 'entity' && tagged(tagsOf(target.id) ?? [], PEOPLE),
@@ -1001,7 +989,6 @@ class WriterToolsModule implements WriterTools {
           checkEntity(
             fields.title,
             fields.tags,
-            fields.linkedIdentities,
             fields.relatedTo,
             texts,
             copiedValues(fields),
@@ -1080,7 +1067,6 @@ class WriterToolsModule implements WriterTools {
           checkEntity(
             fields.title ?? entity.id,
             fields.tags ?? entity.frontmatter.Tags,
-            fields.linkedIdentities ?? entity.frontmatter.LinkedIdentities,
             nextRelations,
             (operations as Operation[])
               .filter(({ op }) =>

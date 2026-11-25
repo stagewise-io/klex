@@ -11,6 +11,7 @@ import { EPISODE_SUMMARY_STORE_DEFINITION } from '@/session/chat/extensions/epis
 import { LEARNING_STATE_STORE_DEFINITION } from '@/session/chat/extensions/learning';
 import {
   EPISODIC_SEARCH_INDEX_STORE_DEFINITION,
+  MEMORY_CONSOLIDATOR_STORE_DEFINITION,
   MEMORY_WRITER_STORE_DEFINITION,
 } from '@/session/chat/extensions/memory';
 import { TODOS_STORE_DEFINITION } from '@/session/chat/extensions/todos';
@@ -31,4 +32,5 @@ export const KLEX_LOCAL_DATA_STORES = [
   SESSION_HISTORY_STORE_DEFINITION,
   SKILL_REGISTRY_STORE_DEFINITION,
   MEMORY_WRITER_STORE_DEFINITION,
+  MEMORY_CONSOLIDATOR_STORE_DEFINITION,
 ] as const satisfies readonly LocalDataStoreDefinition[];

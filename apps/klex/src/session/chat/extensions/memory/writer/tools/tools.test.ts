@@ -11,7 +11,7 @@ import type { ActivityHistory } from '@/activity-history';
 import { createSkillRegistry } from '@/skills';
 
 import { createEntityStore, entityRevision } from '../entities';
-import { createWriterTools } from './tools';
+import { CURATION_TOOLS, createWriterTools } from './tools';
 
 const directories: string[] = [];
 const source = 'message-1';
@@ -93,6 +93,53 @@ const create = (id = source, text = 'Project owner') => ({
 });
 
 describe('memory writer tools', () => {
+  it('restricts curation tools and inherits fact sources without conversation evidence', async () => {
+    const f = await fixture();
+    const entity = await f.entities.create(
+      { title: 'Project', tags: ['projects'] },
+      { General: [fact('Builds widgets')] },
+    );
+    const { tools } = createWriterTools({
+      ...f,
+      skillReader: f.registry,
+      mode: 'curation',
+      signal: f.controller.signal,
+      sourceIds: new Set(),
+      evidenceText: '',
+    });
+    expect(Object.keys(tools)).toEqual([...CURATION_TOOLS]);
+    expect(
+      await call(tools, 'updateEntity', {
+        id: entity.id,
+        revision: entityRevision(entity),
+        fields: {},
+        operations: [
+          {
+            op: 'add',
+            section: 'Layout',
+            text: 'Builds widgets',
+            fromFacts: [{ entity: entity.id, fact: 'General#1' }],
+          },
+        ],
+      }),
+    ).toMatchObject({ status: 'updated' });
+    expect(f.entities.get(entity.id)?.sections.Layout?.[0]?.sources).toEqual(
+      fact('').sources,
+    );
+    expect(f.activities.readPage).not.toHaveBeenCalled();
+    const current = f.entities.get(entity.id);
+    if (!current) throw new Error('Missing curated entity');
+    expect(
+      await call(tools, 'updateEntity', {
+        id: entity.id,
+        revision: entityRevision(current),
+        fields: { loadOn: [{ type: 'contentPattern', pattern: 'xy' }] },
+      }),
+    ).toMatchObject({
+      status: 'rejected',
+      reason: expect.stringContaining('existing LoadOn'),
+    });
+  });
   it('exports only structural provider schemas while retaining full local validation', async () => {
     const { tools } = await fixture();
     const check = (value: unknown): void => {

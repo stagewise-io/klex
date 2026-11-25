@@ -232,7 +232,44 @@ const operationSchema = z
       ),
   })
   .strict();
-type Operation = z.infer<typeof operationSchema>;
+// Curation has no batch: new facts must name the existing facts they derive from.
+const curationOperationSchema = operationSchema.extend({
+  sourceIds: z
+    .array(z.string())
+    .max(0)
+    .default([])
+    .describe('Always empty: curation inherits sources.'),
+  fromFacts: z
+    .array(
+      z
+        .object({
+          entity: entityIdSchema,
+          fact: factRefSchema,
+        })
+        .strict(),
+    )
+    .max(10)
+    .default([])
+    .describe(
+      'Required for add: current facts (this or other entities, from latest reads) the new fact restates; their sources are copied.',
+    ),
+});
+type Operation = z.infer<typeof operationSchema> & {
+  fromFacts?: { entity: string; fact: string }[];
+};
+
+/** Tools of a curation session: no creation, no new evidence. */
+export const CURATION_TOOLS = [
+  'listEntities',
+  'readEntity',
+  'updateEntity',
+  'mergeEntities',
+  'listSkills',
+  'readSkill',
+  'updateLearnedSkill',
+  'deleteLearnedSkill',
+  'deleteSkillReference',
+] as const;
 
 // Shape limits for writer output; sizes count current fact text only.
 const SHAPE = {
@@ -620,6 +657,11 @@ export interface WriterToolsOptions {
   selfName?: string;
   /** Batch text; identity and matcher values must be copied from it. */
   evidenceText?: string;
+  /**
+   * `curation`: maintenance without a batch. Only `CURATION_TOOLS`; facts
+   * inherit sources of the facts they replace or restate. Default `writer`.
+   */
+  mode?: 'writer' | 'curation';
 }
 export interface WriterTools {
   tools: ToolSet;
@@ -630,6 +672,44 @@ class WriterToolsModule implements WriterTools {
   constructor(options: WriterToolsOptions) {
     if (options.skills.namespace !== 'learning')
       throw new Error('Writer requires learning namespace');
+    const curation = options.mode === 'curation';
+    const stable = (value: unknown): string =>
+      JSON.stringify(value, (_key, child) =>
+        child && typeof child === 'object' && !Array.isArray(child)
+          ? Object.fromEntries(
+              Object.entries(child).sort(([a], [b]) => a.localeCompare(b)),
+            )
+          : child,
+      );
+    const existingIdentities = new Set(
+      options.entities
+        .list()
+        .flatMap((entity) => entity.frontmatter.LinkedIdentities.map(stable)),
+    );
+    const existingMatchers = new Set(
+      [
+        ...options.entities
+          .list()
+          .flatMap((entity) => entity.frontmatter.LoadOn),
+        ...options.skillReader
+          .list()
+          .flatMap((skill) =>
+            Array.isArray(skill.metadata.loadOn) ? skill.metadata.loadOn : [],
+          ),
+      ].map(stable),
+    );
+    const checkExisting = (
+      identities: readonly unknown[] = [],
+      matchers: readonly unknown[] = [],
+    ) => {
+      if (!curation) return;
+      if (
+        identities.some((identity) => !existingIdentities.has(stable(identity)))
+      )
+        throw new Error('Curation may only reuse existing LinkedIdentities');
+      if (matchers.some((matcher) => !existingMatchers.has(stable(matcher))))
+        throw new Error('Curation may only reuse existing LoadOn triggers');
+    };
     const guarded =
       <T>(action: (input: T) => unknown | Promise<unknown>) =>
       async (input: T) => {
@@ -689,6 +769,23 @@ class WriterToolsModule implements WriterTools {
     const evidence = async (ids: string[]) => {
       if (!ids.length) throw new Error('This operation requires sourceIds');
       return sources(ids);
+    };
+    /** Curation: sources of current facts, addressed per entity. */
+    const inherited = (refs: readonly { entity: string; fact: string }[]) => {
+      if (!refs.length)
+        throw new Error(
+          'add requires fromFacts: the existing facts this one restates',
+        );
+      return capSources(
+        refs.flatMap(({ entity: id, fact: ref }) => {
+          const entity = options.entities.get(id);
+          if (!entity) throw new Error(`Unknown entity ${id}`);
+          const [name = '', index = ''] = ref.split('#');
+          const fact = entity.sections[name]?.[Number(index) - 1];
+          if (!fact) throw new Error(`Unknown fact ${id} ${ref}`);
+          return fact.sources;
+        }),
+      );
     };
     const sections = async (input: z.infer<typeof sectionSchema>[]) => {
       const result: Record<string, Fact[]> = Object.create(null);
@@ -954,7 +1051,10 @@ class WriterToolsModule implements WriterTools {
               .string()
               .regex(/^[a-f0-9]{16}$/)
               .describe('Revision from latest read. Conflict: read again.'),
-            operations: z.array(operationSchema).max(50).default([]),
+            operations: z
+              .array(curation ? curationOperationSchema : operationSchema)
+              .max(50)
+              .default([]),
           })
           .strict(),
         execute: guarded(async (input) => {
@@ -974,6 +1074,7 @@ class WriterToolsModule implements WriterTools {
           const id = entity.id;
           if (entityRevision(entity) !== revision)
             throw new Error('Entity changed; read it again before editing');
+          checkExisting(fields.linkedIdentities, fields.loadOn);
           const nextRelations: WriterRelation[] =
             fields.relatedTo ?? entity.frontmatter.RelatedTo;
           checkEntity(
@@ -1030,7 +1131,9 @@ class WriterToolsModule implements WriterTools {
               attach(
                 {
                   text: factText(text),
-                  sources: await evidence(sourceIds),
+                  sources: curation
+                    ? inherited(operation.fromFacts ?? [])
+                    : await evidence(sourceIds),
                   history: [],
                 },
                 operation.section,
@@ -1069,7 +1172,9 @@ class WriterToolsModule implements WriterTools {
               const { fact, section } = locate(operation.fact);
               changed.add(section);
               if (op === 'supersede') {
-                const added = await evidence(sourceIds);
+                const added = curation
+                  ? fact.sources
+                  : await evidence(sourceIds);
                 fact.history = [
                   { text: fact.text, sources: fact.sources },
                   ...fact.history,
@@ -1084,7 +1189,7 @@ class WriterToolsModule implements WriterTools {
                 const index = (operation.version ?? 0) - 1;
                 const version = fact.history[index];
                 if (!version) throw new Error('Unknown was: version');
-                const added = await evidence(sourceIds);
+                const added = curation ? [] : await evidence(sourceIds);
                 fact.history.splice(index, 1);
                 fact.history.unshift({
                   text: fact.text,
@@ -1399,9 +1504,16 @@ class WriterToolsModule implements WriterTools {
       updateLearnedSkill: {
         description:
           'Improve learning skill. Read first. Given lists replace whole lists; omitted keep. Free-form legacy skill: give steps to rewrite it.',
-        inputSchema: skillUpdateSchema,
+        inputSchema: curation
+          ? skillUpdateSchema.omit({ sourceIds: true })
+          : skillUpdateSchema,
         execute: skillWrite(
-          async (input: z.infer<typeof skillUpdateSchema>) => {
+          async (
+            input: Omit<z.infer<typeof skillUpdateSchema>, 'sourceIds'> & {
+              sourceIds?: string[];
+            },
+          ) => {
+            const sourceIds = input.sourceIds ?? [];
             const existing = options.skills.get(input.name);
             if (!existing) throw new Error('Unknown learned skill');
             if (skillRevision(existing) !== input.revision)
@@ -1426,7 +1538,8 @@ class WriterToolsModule implements WriterTools {
                 options.evidenceText,
                 'LoadOn value',
               );
-            await sources(input.sourceIds);
+            checkExisting([], input.loadOn);
+            if (!curation) await evidence(sourceIds);
             if (options.signal.aborted) throw new Error('Writer closed');
             const updated = await options.skills.put(
               input.name,
@@ -1447,7 +1560,7 @@ class WriterToolsModule implements WriterTools {
                             (id): id is string => typeof id === 'string',
                           )
                         : []),
-                      ...input.sourceIds,
+                      ...sourceIds,
                     ]),
                   ].slice(-20),
                 },
@@ -1463,6 +1576,10 @@ class WriterToolsModule implements WriterTools {
         ),
       },
     };
+    if (curation)
+      this.tools = Object.fromEntries(
+        CURATION_TOOLS.map((name) => [name, this.tools[name]]),
+      ) as ToolSet;
     for (const tool of Object.values(this.tools)) {
       const local = asSchema(tool.inputSchema);
       tool.inputSchema = jsonSchema(

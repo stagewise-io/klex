@@ -70,6 +70,11 @@ async function call(
     context: undefined,
   });
 }
+function revision(output: unknown): string {
+  const match = String(output).match(/\nrevision\n¦([a-f0-9]+)\n/);
+  if (!match?.[1]) throw new Error('Missing revision in memory block');
+  return match[1];
+}
 const fact = (text: string) => ({
   text,
   sources: [{ label: 'old', id: 'old' }],
@@ -225,10 +230,8 @@ describe('memory writer tools', () => {
       status: 'rejected',
       reason: expect.stringContaining('Klex'),
     });
-    const read = (await call(tools, 'readEntity', { id: created.id })) as {
-      revision: string;
-    };
-    expect(read.revision).toBeTruthy();
+    const read = await call(tools, 'readEntity', { id: created.id });
+    expect(revision(read)).toBeTruthy();
     const peer = (await call(tools, 'createEntity', {
       ...create(),
       fields: {
@@ -242,12 +245,10 @@ describe('memory writer tools', () => {
         ],
       },
     })) as { id: string };
-    const latest = (await call(tools, 'readEntity', { id: created.id })) as {
-      revision: string;
-    };
+    const latest = await call(tools, 'readEntity', { id: created.id });
     const moved = (await call(tools, 'updateEntity', {
       id: created.id,
-      revision: latest.revision,
+      revision: revision(latest),
       fields: { title: 'Klex Platform' },
       operations: [],
     })) as { id: string };
@@ -255,18 +256,14 @@ describe('memory writer tools', () => {
     expect(entities.get(peer.id)?.frontmatter.RelatedTo[0]?.target.id).toBe(
       moved.id,
     );
-    const keep = (await call(tools, 'readEntity', { id: moved.id })) as {
-      revision: string;
-    };
-    const drop = (await call(tools, 'readEntity', { id: peer.id })) as {
-      revision: string;
-    };
+    const keep = await call(tools, 'readEntity', { id: moved.id });
+    const drop = await call(tools, 'readEntity', { id: peer.id });
     expect(
       await call(tools, 'mergeEntities', {
         keepId: moved.id,
         dropId: peer.id,
-        keepRevision: keep.revision,
-        dropRevision: drop.revision,
+        keepRevision: revision(keep),
+        dropRevision: revision(drop),
       }),
     ).toMatchObject({ status: 'merged' });
     expect(entities.get(peer.id)).toBeNull();
@@ -353,10 +350,10 @@ describe('memory writer tools', () => {
       id: 'templates/deploy',
       description: external.description,
     });
-    const read = (await call(tools, 'readSkill', {
-      id: 'templates/deploy',
-    })) as { revision: string };
-    expect(read).toMatchObject({ id: external.id, body: external.body });
+    const read = await call(tools, 'readSkill', { id: 'templates/deploy' });
+    expect(read).toContain(`skill ${external.id}\n`);
+    expect(read).toContain(`content\n¦${external.body}`);
+    expect(revision(read)).toBeTruthy();
     expect(
       await call(tools, 'createEntity', {
         ...create(),
@@ -377,7 +374,7 @@ describe('memory writer tools', () => {
     await expect(
       call(tools, 'updateLearnedSkill', {
         ...skillInput(external.id),
-        revision: read.revision,
+        revision: revision(read),
       }),
     ).rejects.toThrow('Invalid tool input');
     await expect(
@@ -516,16 +513,13 @@ describe('memory writer tools', () => {
     expect(await call(second, 'createEntity', create(source))).toMatchObject({
       status: 'rejected',
     });
-    const read = (await call(second, 'readEntity', { id: entity.id })) as {
-      revision: string;
-      sections: Record<string, string>;
-    };
-    expect(read.sections).toEqual({ General: '[General#1] Project owner' });
+    const read = await call(second, 'readEntity', { id: entity.id });
+    expect(read).toContain('facts\n¦[General#1] Project owner');
     expect(JSON.stringify(read)).not.toContain('history:');
     expect(
       await call(second, 'updateEntity', {
         id: entity.id,
-        revision: read.revision,
+        revision: revision(read),
         fields: { tags: ['projects'] },
         operations: [
           {
@@ -549,13 +543,9 @@ describe('memory writer tools', () => {
         },
       ],
     });
-    expect(
-      (
-        (await call(second, 'readEntity', { id: 'Alex Smith' })) as {
-          sections: Record<string, string>;
-        }
-      ).sections.General,
-    ).toBe('[General#1] Former project owner\n  was 1: Project owner');
+    expect(await call(second, 'readEntity', { id: 'Alex Smith' })).toContain(
+      'facts\n¦[General#1] Former project owner\n¦  was 1: Project owner',
+    );
     await call(
       second,
       'createLearnedSkill',
@@ -933,20 +923,16 @@ describe('memory writer tools', () => {
     expect(skills.get(name)?.body).toBe(
       '## Steps\n1. Push head branch first\n\n## Pitfalls\n- 422 head invalid: branch not pushed\n\n## Verify\nPR page opens',
     );
-    const revision = async () =>
-      (
-        (await call(tools, 'readSkill', { id: `learning/${name}` })) as {
-          revision: string;
-        }
-      ).revision;
+    const currentRevision = async () =>
+      revision(await call(tools, 'readSkill', { id: `learning/${name}` }));
     const update = async (extra: object, rev?: string) =>
       call(tools, 'updateLearnedSkill', {
         name,
-        revision: rev ?? (await revision()),
+        revision: rev ?? (await currentRevision()),
         sourceIds: [source],
         ...extra,
       });
-    const stale = await revision();
+    const stale = await currentRevision();
     expect(await update({ steps: ['Push, then open the PR'] })).toMatchObject({
       status: 'updated',
     });
@@ -983,13 +969,11 @@ describe('memory writer tools', () => {
     ).toMatchObject({ status: 'updated' });
     expect(skills.get(name)?.body).toContain('Push, then open the PR');
     await skills.put('legacy', { description: 'Old', body: 'Prose body.' });
-    const legacy = (await call(tools, 'readSkill', {
-      id: 'learning/legacy',
-    })) as { revision: string };
+    const legacy = await call(tools, 'readSkill', { id: 'learning/legacy' });
     expect(
       await call(tools, 'updateLearnedSkill', {
         name: 'legacy',
-        revision: legacy.revision,
+        revision: revision(legacy),
         sourceIds: [source],
         verify: 'x',
       }),
@@ -999,7 +983,7 @@ describe('memory writer tools', () => {
     });
     const concurrent = {
       name,
-      revision: await revision(),
+      revision: await currentRevision(),
       sourceIds: [source],
       steps: ['Once'],
     };
@@ -1104,12 +1088,14 @@ describe('memory writer tools', () => {
     );
     expect(skills.get('pr-body')?.metadata.loadOn).toEqual([trigger]);
     const update = async (extra: object) => {
-      const { revision } = (await call(tools, 'readSkill', {
-        id: 'learning/pr-body',
-      })) as { revision: string };
+      const currentRevision = revision(
+        await call(tools, 'readSkill', {
+          id: 'learning/pr-body',
+        }),
+      );
       return call(tools, 'updateLearnedSkill', {
         name: 'pr-body',
-        revision,
+        revision: currentRevision,
         sourceIds: [source],
         steps: [`Step ${Math.random()}`],
         ...extra,
@@ -1148,13 +1134,11 @@ describe('memory writer tools', () => {
         reference: 'flags',
       }),
     ).toEqual({ status: 'deleted' });
-    const read = (await call(tools, 'readSkill', {
-      id: 'learning/deploy',
-    })) as { revision: string };
+    const read = await call(tools, 'readSkill', { id: 'learning/deploy' });
     expect(
       await call(tools, 'deleteLearnedSkill', {
         name: 'deploy',
-        revision: read.revision,
+        revision: revision(read),
       }),
     ).toMatchObject({ status: 'deleted' });
     expect(skills.get('deploy')).toBeNull();
@@ -1399,12 +1383,12 @@ describe('memory writer tools', () => {
     expect(await call(tools, 'createLearnedSkill', input)).toMatchObject({
       status: 'rejected',
     });
-    const read = (await call(tools, 'readSkill', {
+    const read = await call(tools, 'readSkill', {
       id: `learning/${input.name}`,
-    })) as { revision: string };
+    });
     await call(tools, 'updateLearnedSkill', {
       name: input.name,
-      revision: read.revision,
+      revision: revision(read),
       sourceIds: [source],
       steps: ['Updated workflow'],
     });

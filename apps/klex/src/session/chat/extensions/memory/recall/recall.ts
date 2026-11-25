@@ -12,10 +12,15 @@ import type {
   StepCompleteEvent,
 } from '@/session/chat/extensions/extension-api';
 import {
+  formatMemory,
+  formatSkill,
   materializeMemories,
   materializeSkills,
 } from '@/session/chat/extensions/memory/loading';
-import type { MemoryEntity } from '@/session/chat/extensions/memory/writer/entities';
+import {
+  formatFacts,
+  type MemoryEntity,
+} from '@/session/chat/extensions/memory/writer/entities';
 import { createNameLoaderExt } from '@/session/chat/extensions/name-loader';
 import {
   createTimeExt,
@@ -209,17 +214,37 @@ class RecallReader implements Extension {
             (item) => item.id === id,
           );
           if (!entity) return { error: 'Memory not found' };
-          return {
-            ...entity,
-            sections: Object.fromEntries(
-              Object.entries(entity.sections).filter(
-                ([name]) => name === 'General' || sections.includes(name),
+          return [
+            formatMemory(
+              {
+                version: 1,
+                kind: 'entity',
+                title: entity.id,
+                tags: entity.frontmatter.Tags,
+                linkedIdentities: entity.frontmatter.LinkedIdentities,
+                sections: Object.keys(entity.sections).filter(
+                  (name) => name !== 'General',
+                ),
+                body: formatFacts(entity.sections.General ?? []),
+              },
+              `${entity.id}.md`,
+            ),
+            ...Object.entries(entity.sections)
+              .filter(([name]) => name !== 'General' && sections.includes(name))
+              .map(([section, facts]) =>
+                formatMemory(
+                  {
+                    version: 1,
+                    kind: 'detail',
+                    title: entity.id,
+                    section,
+                    sections: [],
+                    body: formatFacts(facts),
+                  },
+                  `${entity.id}.md`,
+                ),
               ),
-            ),
-            otherSections: Object.keys(entity.sections).filter(
-              (name) => name !== 'General' && !sections.includes(name),
-            ),
-          };
+          ].join('\n\n');
         },
       },
       listSkills: {
@@ -256,13 +281,17 @@ class RecallReader implements Extension {
             (entry) => entry.id === skill,
           );
           if (!item) return { error: 'Unknown skill' };
-          return reference === undefined
-            ? item
-            : {
-                skill,
-                reference,
-                content: skills.readReference(skill, reference),
-              };
+          if (reference === undefined)
+            return formatSkill({
+              title: item.id,
+              description: item.description,
+              body: item.body,
+              references: item.references,
+            });
+          const content = skills.readReference(skill, reference);
+          return content === null
+            ? { error: 'Unknown reference' }
+            : formatSkill({ title: item.id, body: content }, { reference });
         },
       },
       listHistory: {

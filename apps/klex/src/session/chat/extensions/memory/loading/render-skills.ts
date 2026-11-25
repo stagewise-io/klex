@@ -3,29 +3,15 @@ import { createHash } from 'node:crypto';
 import { isDataPartOf } from '@/session/chat/extensions/extension-api';
 import type { ExtendedUIMessage } from '@/session/chat/message-types';
 
+import { formatSkill, inline, quote, skillBody } from './format';
 import { diff } from './render';
 import { type MemorySnapshot, parseSnapshot } from './types';
 
-const quote = (value: string) =>
-  value
-    .split(/\r\n|[\r\n\v\f\u0085\u2028\u2029]/u)
-    .map((line) => `¦${line}`)
-    .join('\n');
-const inline = (value: string) =>
-  value.replace(/[\r\n\v\f\u0085\u2028\u2029]/gu, ' ');
 const cell = (value: string) =>
   value.replaceAll('\\', '\\\\').replaceAll('|', '\\|').replace(/\s+/gu, ' ');
 interface Listed {
   name: string;
   description: string;
-}
-function skillBody(snapshot: MemorySnapshot): string {
-  return (
-    snapshot.body +
-    (snapshot.references?.length
-      ? `\n\nReferences (loadSkill with reference): ${snapshot.references.join(', ')}`
-      : '')
-  );
 }
 function table(skills: Listed[]): string {
   return [
@@ -131,13 +117,13 @@ export function materializeSkills(
         snapshots.set(filename, snapshot);
         const current = skillBody(snapshot);
         const full = (replacement = false) =>
-          [
-            `${tag} ${label}${replacement ? ' replacement' : ''}`,
-            ...(snapshot.description
-              ? [`description\n${quote(snapshot.description)}`]
-              : []),
-            `content\n${quote(current)}`,
-          ].join('\n');
+          formatSkill(snapshot, {
+            reference:
+              snapshot.kind === 'skill-reference'
+                ? (snapshot.section ?? '')
+                : undefined,
+            replacement,
+          });
         let text = full();
         if (snapshot.removed) {
           text = `${tag}-update ${label} deleted`;

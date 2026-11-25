@@ -167,6 +167,7 @@ async function fixture(completion: 'normal' | 'failed' | 'skip' = 'normal') {
       return handle;
     },
   );
+  const hostHistory: ExtendedUIMessage[] = [];
   const detachRecall = vi.fn();
   const attachSource = vi.fn(() => detachRecall);
   const factory = createMemoryWriterExt({
@@ -182,6 +183,7 @@ async function fixture(completion: 'normal' | 'failed' | 'skip' = 'normal') {
     logger,
     config: { getModelSelection: () => [] },
     createChildSession,
+    getHistory: () => hostHistory,
   } as unknown as ExtensionDeps;
   const extension = factory.create(deps);
   expect(await extension.getSystemPromptPart?.()).toContain(
@@ -218,6 +220,7 @@ async function fixture(completion: 'normal' | 'failed' | 'skip' = 'normal') {
     activities,
     attachSource,
     detachRecall,
+    hostHistory,
     terminate: () => {
       terminated = true;
     },
@@ -499,6 +502,60 @@ describe('oldest-first memory writer', () => {
       expect.any(String),
       expect.objectContaining({ limit: 1_200 }),
     );
+  });
+  it('opens memory already loaded by the host session in the first input', async () => {
+    const f = await fixture();
+    await f.registry.replaceTemplateSkills([
+      { name: 'deploy', description: 'Deploy', body: 'Deploy safely.' },
+    ]);
+    const store = createEntityStore(
+      join(f.root, 'extensions/io.stagewise/memory/entities'),
+    );
+    await store.start();
+    await store.create(
+      { title: 'Ada', tags: ['people'], loadOn: [] },
+      {
+        General: [{ text: 'Ada leads design', sources: [], history: [] }],
+        'Role and work': [
+          { text: 'Owns the roadmap', sources: [], history: [] },
+        ],
+      },
+    );
+    const prefix = 'extensions/io.stagewise/memory/entities/';
+    f.hostHistory.push({
+      id: 'host',
+      role: 'user',
+      parts: [
+        {
+          type: 'data-loadedMemories',
+          data: {
+            [`${prefix}Ada.md`]: '{}',
+            'skills/templates/deploy/SKILL.md': '{}',
+          },
+        },
+        {
+          type: 'data-loadedMemorySections',
+          data: {
+            [JSON.stringify([`${prefix}Ada.md`, 'Role and work'])]: '{}',
+          },
+        },
+      ],
+    } as unknown as ExtendedUIMessage);
+    await f.extension.onStart?.();
+    await vi.waitFor(async () => expect((await f.state()).cursor).toBe(id(4)));
+    const input =
+      (f.messages[0]?.parts[0] as { text: string } | undefined)?.text ?? '';
+    const opened = input
+      .split('<opened-memory>\n')[1]
+      ?.split('\n</opened-memory>')[0];
+    expect(opened).toContain('memory "Ada.md"\n');
+    expect(opened).toContain('facts\n¦[General#1] Ada leads design');
+    expect(opened).toContain(
+      'memory-detail "Ada.md" section="Role and work"\n',
+    );
+    expect(opened).toContain('¦[Role and work#1] Owns the roadmap');
+    expect(opened).toContain('skill templates/deploy\n');
+    expect(opened?.match(/\nrevision\n¦[a-f0-9]+\n/g)).toHaveLength(2);
   });
   it('does not create a child after shutdown', async () => {
     const f = await fixture();

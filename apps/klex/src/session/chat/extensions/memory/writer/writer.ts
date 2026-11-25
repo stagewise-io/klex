@@ -9,12 +9,13 @@ import {
   activityOrdinal,
 } from '@/activity-history';
 import { createContextCompactionExt } from '@/session/chat/extensions/context-compaction';
-import type {
-  Extension,
-  ExtensionDeps,
-  ExtensionFactory,
-  ResolvedModel,
-  StepCompleteEvent,
+import {
+  type Extension,
+  type ExtensionDeps,
+  type ExtensionFactory,
+  isDataPartOf,
+  type ResolvedModel,
+  type StepCompleteEvent,
 } from '@/session/chat/extensions/extension-api';
 import {
   createLearningState,
@@ -23,6 +24,7 @@ import {
 } from '@/session/chat/extensions/learning';
 import {
   createMemoryLoader,
+  ENTITY_PREFIX,
   type MemoryLoader,
 } from '@/session/chat/extensions/memory/loading';
 import type { MemoryRecall } from '@/session/chat/extensions/memory/recall';
@@ -41,7 +43,7 @@ import {
 } from './entities';
 import { createWriterState, type WriterState } from './state';
 import prompt from './system-prompt.md';
-import { createWriterTools } from './tools';
+import { createWriterTools, entityReadResult, skillReadResult } from './tools';
 import { writerView } from './view';
 
 // Enabling memory on an existing bot must not replay its whole history on the user's budget.
@@ -49,6 +51,61 @@ const FIRST_RUN_MAX_AGE_MS = 21 * 24 * 60 * 60_000;
 const FIRST_RUN_MAX_MESSAGES = 3_000;
 // New history per chunk; the fixed prompt and tools dominate smaller chunks.
 const CHUNK_CHARACTERS = 60_000;
+// Pre-opened memory is a shortcut, not a second history budget.
+const OPENED_MEMORY_CHARACTERS = 30_000;
+const SKILL_FILE = /^skills\/(.+)\/SKILL\.md$/;
+
+/**
+ * Memory currently loaded into the host session: the newest `loadedMemories`
+ * map (entities and skills) plus the sections opened via `readMemorySection`.
+ */
+export function loadedMemoryTargets(history: readonly ExtendedUIMessage[]): {
+  entities: Map<string, Set<string>>;
+  skills: string[];
+} {
+  let loaded: Record<string, unknown> | undefined;
+  let sections: Record<string, unknown> | undefined;
+  for (const message of history)
+    for (const part of message.parts) {
+      const data = (part as { data?: unknown }).data;
+      if (!data || typeof data !== 'object' || Array.isArray(data)) continue;
+      if (isDataPartOf('loadedMemories', part))
+        loaded = data as Record<string, unknown>;
+      else if (isDataPartOf('loadedMemorySections', part))
+        sections = data as Record<string, unknown>;
+    }
+  const entities = new Map<string, Set<string>>();
+  const skills: string[] = [];
+  for (const filename of Object.keys(loaded ?? {}).sort()) {
+    if (filename.startsWith(ENTITY_PREFIX) && filename.endsWith('.md'))
+      entities.set(filename.slice(ENTITY_PREFIX.length, -3), new Set());
+    else {
+      const skill = SKILL_FILE.exec(filename)?.[1];
+      if (skill && !skill.includes('/references/')) skills.push(skill);
+    }
+  }
+  for (const key of Object.keys(sections ?? {})) {
+    let filename: unknown;
+    let section: unknown;
+    try {
+      [filename, section] = JSON.parse(key) as unknown[];
+    } catch {
+      continue;
+    }
+    if (
+      typeof filename !== 'string' ||
+      typeof section !== 'string' ||
+      !filename.startsWith(ENTITY_PREFIX) ||
+      !filename.endsWith('.md')
+    )
+      continue;
+    const id = filename.slice(ENTITY_PREFIX.length, -3);
+    const opened = entities.get(id) ?? new Set<string>();
+    opened.add(section);
+    entities.set(id, opened);
+  }
+  return { entities, skills };
+}
 
 /** Starting cursor for a first activation: only the newest 21 days, at most 3,000 messages. */
 export function firstRunStart(
@@ -287,6 +344,39 @@ class MemoryWriterExtension implements Extension {
     this.removeDeletionGuard = undefined;
   }
 
+  /**
+   * Fresh writer reads of everything the host session has loaded, in the
+   * exact readEntity/readSkill result shape, so the child can edit without
+   * re-reading. Read at chunk start, so revisions are current.
+   */
+  private openedMemory(): string {
+    const { entities, skills } = loadedMemoryTargets(this.deps.getHistory());
+    const blocks: string[] = [];
+    let remaining = OPENED_MEMORY_CHARACTERS;
+    let omitted = 0;
+    const add = (text: string) => {
+      if (text.length > remaining) {
+        omitted++;
+        return;
+      }
+      remaining -= text.length;
+      blocks.push(text);
+    };
+    for (const [id, sections] of entities) {
+      const entity = this.entities.get(id);
+      if (entity) add(entityReadResult(entity, [...sections].sort()));
+    }
+    for (const id of skills) {
+      const skill = this.options.skillReader.get(id);
+      if (skill) add(skillReadResult(skill));
+    }
+    if (omitted)
+      blocks.push(
+        `${omitted} more loaded entries omitted for size; read them if needed.`,
+      );
+    return blocks.join('\n\n');
+  }
+
   private brokenReferences() {
     return this.entities
       .list()
@@ -461,6 +551,7 @@ class MemoryWriterExtension implements Extension {
         const selfName = this.options.selfName?.()?.trim() || undefined;
         // Static for this session: defaults plus every tag in use right now.
         const tagSnapshot = renderKnownTags(knownTags(this.entities.list()));
+        const opened = this.openedMemory();
         this.abort = new AbortController();
         this.tools = createWriterTools({
           selfName,
@@ -486,7 +577,7 @@ class MemoryWriterExtension implements Extension {
               parts: [
                 {
                   type: 'text',
-                  text: `${selfName ? `<self name="${selfName}"/>\n\n` : ''}<known-tags>\n${tagSnapshot}\n</known-tags>\n\n<previous-activities>\n${previousText}\n</previous-activities>\n\n<new-activities date="${date}">\n${newText}\n</new-activities>`,
+                  text: `${selfName ? `<self name="${selfName}"/>\n\n` : ''}<known-tags>\n${tagSnapshot}\n</known-tags>\n\n${opened ? `<opened-memory>\n${opened}\n</opened-memory>\n\n` : ''}<previous-activities>\n${previousText}\n</previous-activities>\n\n<new-activities date="${date}">\n${newText}\n</new-activities>`,
                 },
               ],
             },

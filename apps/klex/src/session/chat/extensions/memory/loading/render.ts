@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { isDataPartOf } from '@/session/chat/extensions/extension-api';
 import type { ExtendedUIMessage } from '@/session/chat/message-types';
 
+import { formatMemory, inline, labelString, quote } from './format';
 import {
   detailKey,
   detailResultSchema,
@@ -15,17 +16,6 @@ import {
   parseSnapshot,
 } from './types';
 
-const quote = (value: string) =>
-  value
-    .split(/\r\n|[\r\n\v\f\u0085\u2028\u2029]/u)
-    .map((line) => `¦${line}`)
-    .join('\n');
-const inline = (value: string) =>
-  value.replace(/[\r\n\v\f\u0085\u2028\u2029]/gu, ' ');
-const labelString = (value: string) =>
-  JSON.stringify(value)
-    .replace(/\u2028/gu, '\\u2028')
-    .replace(/\u2029/gu, '\\u2029');
 const displayFilename = (filename: string) =>
   filename.startsWith(ENTITY_PREFIX)
     ? filename.slice(ENTITY_PREFIX.length)
@@ -140,34 +130,7 @@ function block(
       replacement = true;
     }
   }
-  const tag = snapshot.kind === 'detail' ? 'memory-detail' : 'memory';
-  const linked = (snapshot.linkedIdentities ?? [])
-    .map(
-      (identity) =>
-        `${inline(identity.server)}:\n${Object.entries(identity.match)
-          .map(([key, value]) => `  ${inline(key)}: ${inline(value)}`)
-          .join('\n')}`,
-    )
-    .join('\n');
-  return [
-    `${tag} ${label}${replacement ? ' replacement' : ''}`,
-    ...(snapshot.entityType
-      ? [`entityType\n${quote(snapshot.entityType)}`]
-      : []),
-    ...(snapshot.tags?.length
-      ? [`tags\n${quote(snapshot.tags.join(','))}`]
-      : []),
-    ...(snapshot.description
-      ? [`description\n${quote(snapshot.description)}`]
-      : []),
-    ...(linked ? [`linkedIdentities\n${quote(linked)}`] : []),
-    ...(snapshot.sections.length
-      ? [
-          `additionalSections\n${quote(snapshot.sections.map((section) => `- ${inline(section)}`).join('\n'))}`,
-        ]
-      : []),
-    `facts\n${quote(snapshot.body)}`,
-  ].join('\n');
+  return formatMemory(snapshot, displayFilename(entry.filename), replacement);
 }
 export interface MemoryRenderingMetrics {
   emittedFull: number;

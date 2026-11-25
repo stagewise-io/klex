@@ -294,6 +294,74 @@ describe('temporary memory recall', () => {
     });
   });
 
+  it('renders memory reads like inherited context while retaining evidence and hiding editing metadata', async () => {
+    const h = setup();
+    await call(tools(h.extension), 'recallFromMemory', { question: 'Recall' });
+    h.source.snapshot.mockResolvedValue([
+      {
+        id: 'Ada',
+        frontmatter: { Tags: ['people'], LinkedIdentities: [] },
+        sections: {
+          General: [
+            {
+              text: 'Leads design',
+              sources: [{ label: 'Evidence', id: 'source-1' }],
+              history: [
+                {
+                  text: 'Designed icons',
+                  sources: [{ label: 'Earlier', id: 'source-0' }],
+                },
+              ],
+            },
+          ],
+          Role: [{ text: 'Owns roadmap', sources: [], history: [] }],
+        },
+      },
+    ] as never);
+    const set = tools(h.reader());
+    const general = await call(set, 'readEntity', { id: 'Ada', sections: [] });
+    expect(general).toContain('memory "Ada.md"\ntags\n¦people');
+    expect(general).toContain('additionalSections\n¦- Role');
+    expect(general).toContain(
+      'facts\n¦- Leads design [Evidence](history:source-1)',
+    );
+    expect(general).toContain(
+      'was: Designed icons [Earlier](history:source-0)',
+    );
+    expect(general).not.toContain('revision');
+    expect(general).not.toContain('Owns roadmap');
+    const detailed = await call(set, 'readEntity', {
+      id: 'Ada',
+      sections: ['Role'],
+    });
+    expect(detailed).toContain(
+      'memory-detail "Ada.md" section="Role"\nfacts\n¦- Owns roadmap',
+    );
+    h.skills.snapshot.mockResolvedValue([
+      {
+        id: 'learning/deploy',
+        description: 'Deploying',
+        body: 'Push first',
+        references: ['flags'],
+        metadata: { internal: true },
+      },
+    ] as never);
+    const skill = await call(set, 'readSkill', { skill: 'learning/deploy' });
+    expect(skill).toContain(
+      'skill learning/deploy\ndescription\n¦Deploying\ncontent\n¦Push first',
+    );
+    expect(skill).not.toContain('metadata');
+    h.skills.readReference.mockReturnValue('Use --dry-run' as never);
+    expect(
+      await call(set, 'readSkill', {
+        skill: 'learning/deploy',
+        reference: 'flags',
+      }),
+    ).toBe(
+      'skill-reference learning/deploy reference="flags"\ncontent\n¦Use --dry-run',
+    );
+  });
+
   it('preserves search matches and scans later sources after a read failure', async () => {
     const h = setup();
     await call(tools(h.extension), 'recallFromMemory', { question: 'Recall' });

@@ -123,6 +123,7 @@ it('loads the frozen v13 Langdock config with environment references and selecti
     ...parsed,
     _klex: {
       ...parsed._klex,
+      schemaVersion: CONFIG_STORE_DEFINITION.schemaVersion,
       writtenByKlexVersion: stored._klex.writtenByKlexVersion,
     },
   });

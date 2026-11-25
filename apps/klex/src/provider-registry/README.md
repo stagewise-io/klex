@@ -14,6 +14,7 @@ The provider registry is the single integration point for language-model transpo
 | `azure-openai` | Microsoft Azure OpenAI | No |
 | `openrouter` | OpenRouter | Yes |
 | `langdock` | Langdock (OpenAI, Anthropic, Google protocols) | Yes |
+| `klex-cloud` | Klex Cloud AI gateway (Responses, Chat Completions, Anthropic Messages protocols) | Yes, listing only |
 | `moonshot` | Moonshot AI | OpenAI-compatible discovery |
 | `alibaba-qwen` | Alibaba Qwen | OpenAI-compatible discovery |
 | `deepseek` | DeepSeek | OpenAI-compatible discovery |
@@ -38,7 +39,9 @@ This registry covers language-model transports only. Full Codex, Claude Code, an
 ## Google tool input schemas
 
 Langdock settings, protocol routing, and its transient discovery-cache contract
-are documented in [Langdock](./providers/langdock.md).
+are documented in [Langdock](./providers/langdock.md). Klex Cloud settings,
+deterministic protocol routing and the reserved realtime fields are documented
+in [Klex Cloud](./providers/klex-cloud.md).
 
 The Google model wrapper adapts unrestricted recursive JSON-value unions in
 function declarations for Gemini, custom Google Generative endpoints, Vertex,

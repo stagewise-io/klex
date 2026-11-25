@@ -65,6 +65,8 @@ afterEach(() => {
 
 function validSettings(type: ProviderType): Record<string, unknown> {
   if (type === 'ollama') return {};
+  if (type === 'klex-cloud')
+    return { baseUrl: 'https://gateway.example.test/v1', apiKey: 'sk_sw_key' };
   if (type === 'chatgpt-codex-subscription') return {};
   if (type === 'google-vertex')
     return { authMode: 'adc', project: 'project', testModelId: 'model' };
@@ -142,6 +144,7 @@ describe('ProviderRegistry', () => {
       'azure-openai',
       'openrouter',
       'langdock',
+      'klex-cloud',
       'moonshot',
       'alibaba-qwen',
       'deepseek',

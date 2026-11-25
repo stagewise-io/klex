@@ -22,6 +22,8 @@ import { configV11ToV12 } from './config/v11-to-v12/migration';
 import { configV12 } from './config/v11-to-v12/schemas';
 import { configV12ToV13 } from './config/v12-to-v13/migration';
 import { configV13 } from './config/v12-to-v13/schemas';
+import { configV13ToV14 } from './config/v13-to-v14/migration';
+import { configV14 } from './config/v13-to-v14/schemas';
 import { episodicSearchV1ToV2 } from './episodic-search-index/v1-to-v2/migration';
 import { learningStateV1ToV2 } from './learning-extension-state/v1-to-v2/migration';
 import {
@@ -57,6 +59,7 @@ export const LOCAL_DATA_MIGRATIONS = {
       configV11,
       configV12,
       configV13,
+      configV14,
     ],
     migrations: [
       configV1ToV2,
@@ -71,6 +74,7 @@ export const LOCAL_DATA_MIGRATIONS = {
       configV10ToV11,
       configV11ToV12,
       configV12ToV13,
+      configV13ToV14,
     ],
   },
   'learning-extension-state': {

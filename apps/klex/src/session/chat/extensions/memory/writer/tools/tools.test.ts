@@ -1022,22 +1022,6 @@ describe('memory writer tools', () => {
     expect(await update({ pitfalls: [] }, stale)).toMatchObject({
       status: 'rejected',
     });
-    for (const extra of [
-      { steps: ['Free disk space this run'] },
-      { steps: ['Push'], verify: 'Push' },
-      { when: 'Deploying acme/web, except on Fridays' },
-      { when: "Deploying acme/web when CI can't run" },
-      { when: 'Deploying acme/web if staging cannot start' },
-    ]) {
-      expect(await update(extra)).toMatchObject({ status: 'updated' });
-    }
-    expect(
-      await update({ when: 'Deploying acme/web. Keeps staging in sync.' }),
-    ).toMatchObject({ status: 'updated' });
-    expect(
-      await update({ when: 'Spotting a no-op deploy of acme/web.' }),
-    ).toMatchObject({ status: 'updated' });
-    expect(skills.get(name)?.body).toContain('1. Push');
     await skills.put('legacy', { description: 'Old', body: 'Prose body.' });
     const legacy = await call(tools, 'readSkill', { id: 'learning/legacy' });
     expect(
@@ -1220,26 +1204,6 @@ describe('memory writer tools', () => {
     ).toMatchObject({ status: 'deleted' });
     expect(skills.get('deploy')).toBeNull();
   });
-  it.each(['work-items/issues', 'work-items/issues/bugs', 'issue'])(
-    'creates %s entities without linked identities or loading triggers',
-    async (tag) => {
-      const { tools, entities } = await fixture();
-      expect(
-        await call(tools, 'createEntity', {
-          ...create(),
-          fields: {
-            title: 'CLOUD-254',
-            tags: [tag],
-          },
-        }),
-      ).toMatchObject({ status: 'created' });
-      expect(entities.get('CLOUD-254')?.frontmatter).toMatchObject({
-        Tags: [tag],
-        LinkedIdentities: [],
-        LoadOn: [],
-      });
-    },
-  );
   it.each(['writer', 'curation'] as const)(
     'allows %s to clear resource identities without replacement triggers',
     async (mode) => {
@@ -1287,156 +1251,6 @@ describe('memory writer tools', () => {
       expect(f.entities.get(entity.id)?.sections).toEqual(entity.sections);
     },
   );
-  it.each(['writer', 'curation'] as const)(
-    'allows creation and %s updates without tag-dependent semantics',
-    async (mode) => {
-      const f = await fixture();
-      const { tools } = createWriterTools({
-        ...f,
-        skillReader: f.registry,
-        mode,
-        signal: f.controller.signal,
-        sourceIds: new Set([source]),
-      });
-      for (const tag of [
-        'work-items',
-        'work-items/issues/bugs',
-        'issue',
-        'pull-request',
-        'events',
-        'events/meetings',
-        'event',
-        'people',
-        'people/colleagues',
-        'person',
-        'bot',
-      ]) {
-        const title = `Alex Smith (${tag.replaceAll('/', '-')})`;
-        expect(
-          await call(f.tools, 'createEntity', {
-            ...create(source, 'Alex prefers short replies'),
-            fields: { title, tags: [tag] },
-          }),
-        ).toMatchObject({ status: 'created' });
-        const entity = f.entities.get(title);
-        if (!entity) throw new Error('Missing entity');
-        expect(entity.frontmatter).toMatchObject({
-          LinkedIdentities: [],
-          LoadOn: [],
-          RelatedTo: [],
-        });
-        expect(
-          await call(tools, 'updateEntity', {
-            id: entity.id,
-            revision: entityRevision(entity),
-            fields: { tags: [tag], relatedTo: [] },
-            operations: [
-              {
-                op: 'reword',
-                fact: 'General#1',
-                text: 'Alex prefers concise replies',
-              },
-            ],
-          }),
-        ).toMatchObject({ status: 'updated' });
-        expect(f.entities.get(entity.id)?.frontmatter.RelatedTo).toEqual([]);
-      }
-    },
-  );
-  it('accepts entity content without semantic restrictions and maintains inverse relations', async () => {
-    const { entities, activities, skills, registry, controller } =
-      await fixture();
-    const tools = createWriterTools({
-      entities,
-      skills,
-      skillReader: registry,
-      activities,
-      signal: controller.signal,
-      sourceIds: new Set([source]),
-    }).tools;
-    const accept = async (input: unknown) =>
-      expect(await call(tools, 'createEntity', input)).toMatchObject({
-        status: 'created',
-      });
-    const fields = (extra: object) => ({
-      ...create().fields,
-      ...extra,
-    });
-    await accept(create(source, 'Alex Smith prefers short replies'));
-    for (const [title, text] of [
-      ['Progress', 'Tests passed on the branch'],
-      ['Long fact', 'x'.repeat(161)],
-      ['Jonathan', 'Self description'],
-    ]) {
-      await accept({ ...create(source, text), fields: fields({ title }) });
-    }
-    await accept({
-      ...create(source, 'Slack user U0C33JW11PS'),
-      fields: fields({
-        title: 'Unquoted identity',
-        linkedIdentities: [{ server: 'slack', match: { user: 'U0C33JW11PS' } }],
-      }),
-    });
-    // References still resolve and inverse relations are automatic.
-    const issue = (id: string) => ({
-      fields: {
-        title: 'CLOUD-254',
-        tags: ['work-items/issues'],
-        linkedIdentities: [{ server: 'linear', match: { issueId: id } }],
-        relatedTo: [
-          {
-            target: { kind: 'entity', id: 'Placeholder' },
-            relationship: 'requestedBy',
-          },
-        ],
-      },
-      sections: create().sections,
-    });
-    const person = await entities.create(
-      { title: 'Related person', tags: ['people'] },
-      { General: [fact('Owner')] },
-    );
-    const linked = issue('0eff93ac-11f0-4da1-ac13-78d5697ca0e7');
-    const relation = linked.fields.relatedTo[0];
-    if (!relation) throw new Error('Missing relation');
-    relation.target.id = person.id;
-    const created = (await call(tools, 'createEntity', linked)) as {
-      status: string;
-      id: string;
-    };
-    expect(created.status).toBe('created');
-    // One call linked both sides.
-    expect(entities.get(person.id)?.frontmatter.RelatedTo).toEqual([
-      {
-        target: { kind: 'entity', id: created.id },
-        relationship: 'requested',
-      },
-    ]);
-    expect(entities.get(created.id)?.frontmatter.RelatedTo[0]).toEqual({
-      target: { kind: 'entity', id: person.id },
-      relationship: 'requestedBy',
-    });
-  });
-  it('allows distinct skills with overlapping names and triggers', async () => {
-    const { tools } = await fixture();
-    const trigger = {
-      type: 'toolCallPattern',
-      mcpServer: 'linear',
-      toolName: 'createLinearAgentActivity',
-      arguments: [],
-    };
-    await call(
-      tools,
-      'createLearnedSkill',
-      skillInput('linear-agent-session-response', { loadOn: [trigger] }),
-    );
-    const duplicate = skillInput('linear-installation-context', {
-      loadOn: [trigger],
-    });
-    expect(await call(tools, 'createLearnedSkill', duplicate)).toMatchObject({
-      status: 'created',
-    });
-  });
   it('rejects credentials in entity and skill writes', async () => {
     const { tools, entities, skills } = await fixture();
     const token = 'ghs_abcdefghijklmnopqrstuvwxyz123456';

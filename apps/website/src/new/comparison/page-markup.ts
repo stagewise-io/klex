@@ -47,7 +47,7 @@ export const comparisonMarkup =
     <h2>Who reviews the work?</h2>
     <div class="resource-section-body">
       <p>In Klex, the connected app’s permissions determine what the coworker can access. You can give it instructions and skills about when to ask for confirmation. Klex currently has no product-enforced action-by-action approval queue, so choose permissions and a review process suited to the work.</p>
-      <p><a href="https://rerun.build/features/human-in-the-loop">Rerun says spending is product-locked</a>, while Rerun describes sending and deleting as governed by coworker instructions. <a href="https://rerun.build/changelog">Its paid-data settings include an always-allow option</a>, and its optional Autopilot can answer under rules you write. Review the settings for the actions you plan to delegate.</p>
+      <p><a href="https://rerun.build/changelog">Rerun says a coworker asks before spending credits on paid data</a>, with options to approve once, decline, or always allow that coworker. You can change that permission in the coworker’s Tools panel. Rerun describes <a href="https://rerun.build/features/human-in-the-loop">sending and deleting as governed by instructions</a>, and says its optional Autopilot can answer under rules you write. Review the settings for the actions you plan to delegate.</p>
     </div>
   </section>
   <section class="resource-section" id="fit">

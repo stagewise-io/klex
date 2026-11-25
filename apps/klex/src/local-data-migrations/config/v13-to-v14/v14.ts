@@ -267,7 +267,17 @@ const providerSettingsSchemas = {
           ]),
         )
         .optional(),
-      realtimeBaseUrl: literalUrlSchema.optional().meta({ readOnly: true }),
+      realtimeBaseUrl: literalUrlSchema
+        .refine(
+          (value) =>
+            !URL.canParse(value) ||
+            ['https:', 'wss:', 'http:', 'ws:'].includes(
+              new URL(value).protocol,
+            ),
+          'Must be an http(s) or ws(s) URL',
+        )
+        .optional()
+        .meta({ readOnly: true }),
     })
     .strict(),
   langdock: openAiSettingsSchema.extend({

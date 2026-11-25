@@ -28,7 +28,7 @@
           "anthropic/claude-sonnet-5": "anthropic-messages",
           "openai/gpt-live-1": "openai-live"
         },
-        "realtimeBaseUrl": "wss://gateway.example/v1/realtime"
+        "realtimeBaseUrl": "https://gateway.example/v1"
       },
       "knownModels": {
         "openai/gpt-6-luna": {

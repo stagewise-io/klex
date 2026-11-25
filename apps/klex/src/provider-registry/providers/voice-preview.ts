@@ -1,6 +1,10 @@
 import WebSocket from 'ws';
 
-import { geminiLiveWebSocketUrl } from '@/config';
+import {
+  geminiLiveWebSocketUrl,
+  openAILiveWebSocketUrl,
+  openAIRealtimeWebSocketUrl,
+} from '@/config';
 
 import type {
   ProviderInstance,
@@ -98,22 +102,19 @@ export async function generateVoicePreview(
         : 'https://api.openai.com/v1');
     const endpoint = new URL(base);
     if (
-      !['https:', 'http:'].includes(endpoint.protocol) ||
+      !['https:', 'http:', 'wss:', 'ws:'].includes(endpoint.protocol) ||
       endpoint.username ||
       endpoint.password
     )
       return unavailable('invalid_configuration', 'Invalid preview endpoint');
     endpoint.hash = '';
+    endpoint.search = '';
     const url = gemini
-      ? new URL(geminiLiveWebSocketUrl(endpoint.toString(), key))
-      : endpoint;
-    if (!gemini) {
-      url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-      url.search = '';
-      url.pathname = `${url.pathname.replace(/\/$/, '')}/${live ? 'live/sessions' : 'realtime'}`;
-      if (!live) url.searchParams.set('model', modelId);
-    }
-    socket = connect(url.toString(), {
+      ? geminiLiveWebSocketUrl(endpoint.toString(), key)
+      : live
+        ? openAILiveWebSocketUrl(endpoint.toString())
+        : openAIRealtimeWebSocketUrl(endpoint.toString(), modelId);
+    socket = connect(url, {
       headers: {
         ...customHeaders(instance),
         ...(!gemini && { Authorization: `Bearer ${key}` }),

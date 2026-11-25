@@ -337,10 +337,19 @@ const klexCloudSettingsSchema = z
     protocols: z
       .record(nativeModelIdSchema, z.enum(KLEX_CLOUD_PROTOCOLS))
       .optional(),
-    realtimeBaseUrl: literalUrlSchema.optional().meta({
-      readOnly: true,
-      description: 'Reserved for realtime voice; currently unused.',
-    }),
+    realtimeBaseUrl: literalUrlSchema
+      .refine(
+        (value) =>
+          !URL.canParse(value) ||
+          ['https:', 'wss:', 'http:', 'ws:'].includes(new URL(value).protocol),
+        'Must be an http(s) or ws(s) URL',
+      )
+      .optional()
+      .meta({
+        readOnly: true,
+        description:
+          'Reserved for realtime voice; currently unused. API root such as https://gateway.example/v1; realtime paths are appended.',
+      }),
   })
   .strict();
 

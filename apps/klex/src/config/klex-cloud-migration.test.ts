@@ -114,7 +114,7 @@ it('loads the frozen v14 Klex Cloud config with reserved realtime fields and env
   expect(provider?.type).toBe('klex-cloud');
   expect(provider?.settings).toMatchObject({
     protocols: { 'openai/gpt-live-1': 'openai-live' },
-    realtimeBaseUrl: 'wss://gateway.example/v1/realtime',
+    realtimeBaseUrl: 'https://gateway.example/v1',
   });
   expect(config.get().modelSelection.chat).toEqual(parsed.modelSelection.chat);
   await config.close();

@@ -135,20 +135,6 @@ const canonical = (
         }
       : relation,
   );
-// Literal folder tags from flattened notes (`person`, `bot`, …) count alongside
-// default ontology tags (`people`, `work-items/issues`, …).
-const PEOPLE = new Set(['people', 'teams', 'person', 'bot', 'team']);
-const WORK_ITEMS = new Set(['work-items', 'issue', 'pull-request']);
-const EVENTS = new Set(['events', 'event']);
-const PERSONS = new Set(['people', 'person', 'bot']);
-/** A tag matches when it, or any ancestor (`a`, `a/b` of `a/b/c`), is one of `kinds`. */
-const tagged = (tags: readonly string[], kinds: ReadonlySet<string>) =>
-  tags.some((tag) => {
-    const segments = tag.split('/');
-    return segments.some((_, index) =>
-      kinds.has(segments.slice(0, index + 1).join('/')),
-    );
-  });
 
 const sourceIdsSchema = z
   .array(z.string().min(1).max(4096))
@@ -816,12 +802,9 @@ class WriterToolsModule implements WriterTools {
           );
       }
     };
-    const tagsOf = (id: string) => options.entities.get(id)?.frontmatter.Tags;
     /** Shape rules code can check; messages name the fix. */
     const checkEntity = (
       title: string,
-      tags: readonly string[],
-      relations: readonly { target: { kind: string; id: string } }[],
       facts: readonly string[],
       copied: { identities: string[]; matchers: string[] },
     ) => {
@@ -830,24 +813,12 @@ class WriterToolsModule implements WriterTools {
         throw new Error(
           `"${title}" is self. Never create or edit an entity for self; put facts on the people and things self works with`,
         );
-      for (const fact of facts) checkFact(fact, title, tagged(tags, PERSONS));
+      for (const fact of facts) checkFact(fact, title);
       const evidence = options.evidenceText;
       if (!curation && evidence !== undefined) {
         checkCopied(copied.identities, evidence, 'Identity value');
         checkCopied(copied.matchers, evidence, 'LoadOn value');
       }
-      const people = relations.filter(
-        ({ target }) =>
-          target.kind === 'entity' && tagged(tagsOf(target.id) ?? [], PEOPLE),
-      ).length;
-      if (tagged(tags, WORK_ITEMS) && people < 1)
-        throw new Error(
-          'Link who requested, owns or is assigned it: add a relatedTo person, e.g. relationship "requestedBy", "ownedBy" or "assignedTo". Inverse is automatic. Create the person first if missing',
-        );
-      if (tagged(tags, EVENTS) && people < 2)
-        throw new Error(
-          'An event links everyone involved: add at least two relatedTo people using a curated predicate, or "relatedTo" when none fits',
-        );
     };
     /** Writes or removes the reverse side of entity relations of `id`. */
     const syncInverses = async (
@@ -986,13 +957,7 @@ class WriterToolsModule implements WriterTools {
             (section) => section.facts.map(({ text }) => text),
           );
           rejectSecrets([fields, input], texts);
-          checkEntity(
-            fields.title,
-            fields.tags,
-            fields.relatedTo,
-            texts,
-            copiedValues(fields),
-          );
+          checkEntity(fields.title, texts, copiedValues(fields));
           const content = await sections(input);
           checkShape(
             content,
@@ -1066,8 +1031,6 @@ class WriterToolsModule implements WriterTools {
             fields.relatedTo ?? entity.frontmatter.RelatedTo;
           checkEntity(
             fields.title ?? entity.id,
-            fields.tags ?? entity.frontmatter.Tags,
-            nextRelations,
             (operations as Operation[])
               .filter(({ op }) =>
                 ['add', 'supersede', 'reword', 'merge'].includes(op),

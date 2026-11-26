@@ -247,6 +247,63 @@ describe('MCP transient reconnects', () => {
     expect(second.invoke).toHaveBeenCalledTimes(1);
   });
 
+  it('does not spend tool-call attempts while waiting through several reconnects', async () => {
+    vi.useFakeTimers();
+    const first = connection();
+    const second = connection(
+      vi.fn().mockRejectedValueOnce(starting()).mockResolvedValueOnce(ok),
+    );
+    let options: ConnectMcpServerOptions | undefined;
+    const connect = vi
+      .fn<McpConnectionFactory>()
+      .mockImplementationOnce(async (next) => {
+        options = next;
+        return first;
+      })
+      .mockRejectedValueOnce(starting())
+      .mockRejectedValueOnce(starting())
+      .mockResolvedValueOnce(second);
+    const mcp = setup(connect);
+    await mcp.start();
+    await vi.advanceTimersByTimeAsync(0);
+    options?.onDisconnect(first);
+
+    // Reconnects fail at 1 s and 6 s, then succeed at 11 s.
+    const call = settle(mcp.invoke(reference, {}, toolContext));
+    await vi.advanceTimersByTimeAsync(10_999);
+    expect(call.done).toBe(false);
+    expect(second.invoke).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(second.invoke).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(call).toMatchObject({ done: true, value: ok });
+    expect(second.invoke).toHaveBeenCalledTimes(2);
+    expect(first.invoke).not.toHaveBeenCalled();
+  });
+
+  it('reports a reconnect that outlasts the budget without calling the closed connection', async () => {
+    vi.useFakeTimers();
+    const first = connection();
+    let options: ConnectMcpServerOptions | undefined;
+    const connect = vi
+      .fn<McpConnectionFactory>()
+      .mockImplementationOnce(async (next) => {
+        options = next;
+        return first;
+      })
+      .mockRejectedValue(starting());
+    const mcp = setup(connect);
+    await mcp.start();
+    await vi.advanceTimersByTimeAsync(0);
+    options?.onDisconnect(first);
+
+    const call = settle(mcp.invoke(reference, {}, toolContext));
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(call.error).toBeInstanceOf(McpServerStartingError);
+    expect((call.error as Error).message).toContain('Klex retried for 20 s');
+    expect(first.invoke).not.toHaveBeenCalled();
+  });
+
   it('drops retained tools when a reconnect fails for a non-transient reason', async () => {
     vi.useFakeTimers();
     const first = connection();

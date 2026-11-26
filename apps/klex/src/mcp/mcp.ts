@@ -990,21 +990,43 @@ class McpModule implements Mcp {
     signal: AbortSignal,
   ) {
     const startedAt = Date.now();
-    for (let attempt = 1; ; attempt++) {
-      let transient: TransientMcpError = {};
-      let failure: unknown;
+    let attempt = 0;
+    let reconnectLogged = false;
+    for (;;) {
       const live = this.getLiveTool(reference);
-      if (live) {
-        try {
-          return await live.connection.invoke(live.tool, input, signal);
-        } catch (error) {
-          const classified = signal.aborted
-            ? undefined
-            : classifyTransientMcpError(error);
-          if (!classified) throw error;
-          transient = classified;
-          failure = error;
+      if (!live) {
+        // Only issued calls count as attempts; a reconnect may take several
+        // transient connect retries before the new connection is live.
+        const remainingMs =
+          TOOL_CALL_RETRY_BUDGET_MS - (Date.now() - startedAt);
+        if (remainingMs <= 0) {
+          throw new McpServerStartingError(reference.namespace, {
+            retryAfterMs: this.nextReconnectDelayMs(reference.namespace),
+            waitedMs: Date.now() - startedAt,
+          });
         }
+        if (!reconnectLogged) {
+          reconnectLogged = true;
+          this.deps.logger.info(
+            { namespace: reference.namespace, toolName: reference.name },
+            'MCP tool call is waiting for a reconnecting server',
+          );
+        }
+        await this.waitForRetry(reference.namespace, remainingMs, signal);
+        continue;
+      }
+      attempt += 1;
+      let transient: TransientMcpError;
+      let failure: unknown;
+      try {
+        return await live.connection.invoke(live.tool, input, signal);
+      } catch (error) {
+        const classified = signal.aborted
+          ? undefined
+          : classifyTransientMcpError(error);
+        if (!classified) throw error;
+        transient = classified;
+        failure = error;
       }
       const waitedMs = Date.now() - startedAt;
       const delayMs = transientRetryDelayMs(transient, attempt);
@@ -1028,12 +1050,18 @@ class McpModule implements Mcp {
           toolName: reference.name,
           attempt,
           delayMs,
-          reason: live ? (transient.code ?? 'unavailable') : 'reconnecting',
+          code: transient.code,
         },
         'MCP tool call is waiting for a temporarily unavailable server',
       );
       await this.waitForRetry(reference.namespace, delayMs, signal);
     }
+  }
+
+  private nextReconnectDelayMs(namespace: string): number {
+    const nextRetryAt = this.servers.get(namespace)?.nextRetryAt;
+    const untilRetry = nextRetryAt ? Date.parse(nextRetryAt) - Date.now() : NaN;
+    return Number.isFinite(untilRetry) ? Math.max(untilRetry, 1_000) : 5_000;
   }
 
   /** Returns `undefined` while only retained tools of a reconnecting server exist. */

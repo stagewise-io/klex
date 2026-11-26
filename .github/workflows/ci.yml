@@ -147,6 +147,28 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           cache-key: ${{ matrix.target }}
+      # ring compiles C. cc-rs looks for <arch>-linux-musl-gcc, which
+      # musl-tools does not install under that name.
+      - if: runner.os == 'Linux'
+        name: Install the musl C toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes musl-tools
+          target=${{ matrix.target }}
+          echo "CC_${target//-/_}=musl-gcc" >> "$GITHUB_ENV"
+      # ring needs clang for aarch64-pc-windows-msvc.
+      - if: runner.os == 'Windows' && runner.arch == 'ARM64'
+        name: Put clang on PATH
+        shell: pwsh
+        run: |
+          if (-not (Get-Command clang -ErrorAction SilentlyContinue)) {
+            $llvm = 'C:\Program Files\LLVM\bin'
+            if (-not (Test-Path (Join-Path $llvm 'clang.exe'))) {
+              winget install --id LLVM.LLVM --exact --silent --accept-package-agreements --accept-source-agreements
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            }
+            Add-Content $env:GITHUB_PATH $llvm
+          }
       - if: ${{ !matrix.cross }}
         run: cargo test --locked --package klex-machine --target ${{ matrix.target }}
       - run: cargo build --release --locked --package klex-machine --bin klex-machine-rs --target ${{ matrix.target }}

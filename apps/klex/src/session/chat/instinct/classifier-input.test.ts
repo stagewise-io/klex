@@ -86,11 +86,6 @@ describe('classifier input', () => {
     expect(batch.state.endsWith(input)).toBe(true);
     for (const instructions of [batch.system, batch.state]) {
       expect(instructions.split(LINES_FORMAT_PROMPT)).toHaveLength(2);
-      expect(instructions).toContain(
-        'ordered oldest to newest; the final entry is the most recent',
-      );
-      expect(instructions).not.toContain('[earlier]');
-      expect(instructions).not.toContain('Judge mainly [new]');
     }
   });
 

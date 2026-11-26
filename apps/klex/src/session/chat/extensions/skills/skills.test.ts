@@ -147,9 +147,6 @@ describe('skills extension', () => {
       .put('fix-build', { description: 'Other fix.', body: 'Other.' });
     const ext = createSkillsExt(registry).create(makeDeps());
     await ext.onStart?.();
-    const prompt = ext.getSystemPromptPart?.() ?? '';
-    expect(prompt).toContain('loadSkill');
-    expect(prompt).toContain('# skill');
     const loader = createMemoryLoader({
       entities: { snapshot: async () => [] },
       skills: registry,

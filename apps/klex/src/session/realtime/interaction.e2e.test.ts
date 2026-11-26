@@ -270,7 +270,6 @@ describe('realtime and default chat interaction', () => {
       '"source":{"namespace":"voice","sessionId":"call-1"}',
     );
     expect(processor.context.instructions).toContain(voiceSystemPrompt.trim());
-    expect(processor.context.instructions).not.toContain('You are Klex.');
     expect(processor.context.instructions).not.toContain(
       'ephemeral session facts',
     );

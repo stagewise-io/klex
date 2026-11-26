@@ -1,0 +1,38 @@
+{
+  "tileSize": 128,
+  "frames": {
+    "desktop-260x140": {
+      "width": 260,
+      "height": 140,
+      "tight": {
+        "0,0": "fill",
+        "128,0": "mono",
+        "256,0": "mono",
+        "0,128": "palette",
+        "128,128": "full",
+        "256,128": "palette"
+      }
+    },
+    "desktop-260x140-changed": {
+      "width": 260,
+      "height": 140,
+      "after": "desktop-260x140",
+      "tight": {
+        "256,128": "fill"
+      }
+    },
+    "desktop-280x150": {
+      "width": 280,
+      "height": 150,
+      "after": "desktop-260x140",
+      "tight": {
+        "0,0": "fill",
+        "128,0": "mono",
+        "256,0": "mono",
+        "0,128": "palette",
+        "128,128": "full",
+        "256,128": "full"
+      }
+    }
+  }
+}

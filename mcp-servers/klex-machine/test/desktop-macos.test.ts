@@ -1,6 +1,8 @@
+import { spawn } from 'node:child_process';
 import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it, vi } from 'vitest';
 
@@ -20,6 +22,11 @@ import {
   type DesktopProviderFixture,
   describeDesktopProviderContract,
 } from './desktop-provider-contract.js';
+import { ENC, loadFrame, TestRfbClient } from './rfb-test-client.js';
+
+const FAKE_STREAM_HELPER = fileURLToPath(
+  new URL('./fixtures/fake-stream-helper.mjs', import.meta.url),
+);
 
 const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
@@ -133,6 +140,13 @@ async function fakeMac(
       helperPath: helper,
       run,
       launch: async () => ({ pid: 4242 }),
+      spawnStream: (file, env) => {
+        calls.push({ file, args: ['stream'] });
+        return spawn(process.execPath, [FAKE_STREAM_HELPER], {
+          env: { ...process.env, ...env },
+          stdio: 'pipe',
+        });
+      },
       warn: (hint) => warnings.push(hint),
       ...options,
     }),
@@ -144,7 +158,7 @@ async function fakeMac(
 
 describeDesktopProviderContract(
   'macOS with Screen Recording and Accessibility',
-  { computerUse: true, stream: false },
+  { computerUse: true, stream: true },
   () => fakeMac({}),
 );
 describeDesktopProviderContract(
@@ -190,7 +204,7 @@ describe('MacosDesktopProvider probe', () => {
     try {
       expect(await fixture.provider.probe()).toEqual({
         computerUse: true,
-        stream: false,
+        stream: true,
         screen: { width: 2880, height: 1800 },
       });
       expect(await fixture.provider.screenSize()).toEqual({
@@ -541,6 +555,47 @@ describe('MacosDesktopProvider keyboard and launch', () => {
       await expect(fixture.provider.move({ x: 1, y: 1 })).rejects.toThrow(
         MISSING_HELPER_HINT,
       );
+    } finally {
+      await fixture.close?.();
+    }
+  });
+});
+
+describe('MacosDesktopProvider stream', () => {
+  it('streams through `klex-desktop-helper stream` with macOS key codes', async () => {
+    const fixture = await fakeMac({});
+    try {
+      const client = new TestRfbClient(await fixture.provider.openStream());
+      await client.handshake();
+      client.setEncodings([ENC.raw, ENC.qemuKey]);
+      client.request(false);
+      await client.nextUpdate();
+      client.request(false);
+      await client.nextUpdate();
+      expect(client.screen).toEqual(loadFrame('desktop-260x140').pixels);
+      expect(fixture.calls).toContainEqual({
+        file: fixture.helper,
+        args: ['stream'],
+      });
+
+      client.qemuKey(true, 0xffe7, 0xdb);
+      client.qemuKey(false, 0xffe7, 0xdb);
+      await vi.waitFor(() =>
+        expect(fixture.warnings).toEqual(['key 1 k37', 'key 0 k37']),
+      );
+      client.socket.destroy();
+    } finally {
+      await fixture.close?.();
+    }
+  });
+
+  it('refuses to stream without permission', async () => {
+    const fixture = await fakeMac({ screenRecording: false });
+    try {
+      await expect(fixture.provider.openStream()).rejects.toThrow(
+        /needs Screen Recording permission/,
+      );
+      expect(fixture.calls.map(({ args }) => args[0])).not.toContain('stream');
     } finally {
       await fixture.close?.();
     }

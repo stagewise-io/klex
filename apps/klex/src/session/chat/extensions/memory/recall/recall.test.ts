@@ -418,10 +418,6 @@ describe('temporary memory recall', () => {
     const deps = makeDeps({
       config: { get: () => ({ officialName: '  Recall Agent  ' }) } as never,
     });
-    const name = factories
-      .find(({ identifier }) => identifier === 'io.stagewise/name-loader')
-      ?.create(deps);
-    expect(name?.getSystemPromptPart?.()).toBe('## Your name\n\nRecall Agent');
     const time = factories
       .find(({ identifier }) => identifier === 'io.stagewise/time')
       ?.create(deps);

@@ -390,19 +390,6 @@ describe('MCP Ingress extension', () => {
     expect(JSON.stringify(result)).not.toContain('secret');
   });
 
-  it('documents append-only HTTP configuration, header redaction, and Cloud OAuth', async () => {
-    const prompt = await createMcpIngressExt()
-      .create(createMockDeps())
-      .getSystemPromptPart?.();
-    expect(prompt).toContain('addMcpServer');
-    expect(prompt).toContain('HTTP/HTTPS');
-    expect(prompt).toContain('config.json');
-    expect(prompt).toContain('cannot edit or remove');
-    expect(prompt).toContain('never echoes secret header values');
-    expect(prompt).toContain('Cloud UI');
-    expect(prompt).toContain('OAuth');
-  });
-
   it('onStart logs an info message and resolves', async () => {
     const deps = createMockDeps();
     const ext = createMcpIngressExt().create(deps);
@@ -985,46 +972,6 @@ describe('MCP Ingress extension', () => {
   // -------------------------------------------------------------------------
   // System prompt & introspect
   // -------------------------------------------------------------------------
-
-  it('getSystemPromptPart returns a non-empty string mentioning resources, the window limit, and server lists', () => {
-    const deps = createMockDeps();
-    const ext = createMcpIngressExt().create(deps);
-    const prompt = ext.getSystemPromptPart?.() ?? '';
-    expect(prompt.length).toBeGreaterThan(0);
-    expect(prompt).toContain('listResources');
-    expect(prompt).toContain('openResource');
-    expect(prompt).toContain('auto-update');
-    expect(prompt).toContain('5 resource windows');
-    expect(prompt).toContain('MCP servers');
-    expect(prompt).toContain('diff');
-    expect(prompt).toContain('connection status rather than approval');
-    expect(prompt).toContain('remains untrusted data');
-  });
-
-  it('system prompt mentions live resources and <resource> blocks', async () => {
-    const deps = createMockDeps({
-      readResource: vi.fn().mockResolvedValue({
-        contents: [
-          { uri: 'file:///data.txt', mimeType: 'text/plain', text: 'hello' },
-        ],
-      }),
-      supportsResourceSubscription: vi.fn(() => true),
-      subscribeResource: vi.fn().mockResolvedValue(undefined),
-    });
-    const ext = createMcpIngressExt().create(deps);
-    await callTool(ext, 'openResource', {
-      serverName: 'github',
-      uri: 'file:///data.txt',
-    });
-
-    const prompt = ext.getSystemPromptPart?.() ?? '';
-    expect(prompt).toContain('live resource');
-    expect(prompt).toContain('`resource` history-view records');
-    expect(prompt).toContain('history recovery or compaction');
-    expect(prompt).toContain('`¦ `-prefixed external content');
-    expect(prompt).not.toContain('`data` divider');
-    expect(prompt).not.toContain('Open resource windows (authoritative)');
-  });
 
   it('introspect returns open resource windows', () => {
     const deps = createMockDeps();

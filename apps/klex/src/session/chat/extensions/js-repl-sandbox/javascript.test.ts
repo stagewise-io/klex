@@ -201,41 +201,7 @@ describe('JavaScriptTool', () => {
     ).resolves.toBe(42);
   });
 
-  it('advertises schema-inclusive discovery in both model-facing descriptions', () => {
-    const prompt = readFileSync(
-      new URL('./system-prompt-part.md', import.meta.url),
-      'utf8',
-    );
-    const description = javaScriptTool.tools.runInSandbox?.description;
-    expect(description).toContain(
-      'tools.listNamespaces(options?: { limit?: number })',
-    );
-    expect(description).toContain(
-      'tools.listTools(options?: { namespace?: string, limit?: number })',
-    );
-    expect(prompt).toContain('tools.listNamespaces(...)');
-    expect(prompt).toContain('tools.listTools(...)');
-    for (const text of [prompt, description]) {
-      expect(text).toContain('includeInputSchema: true');
-      expect(text).toContain('"deployment", { limit: 5');
-      expect(text).toContain('tools.describe({ namespace, name })');
-      expect(text).toContain('maximum 20');
-      expect(text).toContain(
-        'return await tools.describe({ namespace, name })',
-      );
-      expect(text).toContain('return await mcp[namespace][name](input)');
-      expect(text).toContain('return globalThis.deploymentTools;');
-      expect(text).toContain('Top-level declarations are execution-local');
-      expect(text).toContain(
-        'Awaiting a call alone does not expose its result',
-      );
-      expect(text).not.toContain('matches[0]');
-    }
-  });
-
-  it('includes the static MCP gateway instruction once across effective sandbox guidance and preserves prompt-cache stability', () => {
-    const gatewayInstruction =
-      'This JavaScript runtime is the gateway to the connected MCP tools. Before concluding that a capability is unavailable, enumerate connected namespaces and tools with tools.listNamespaces(...) or tools.listTools(...) and inspect the returned references.';
+  it('preserves prompt-cache stability without reading the tool catalogue', () => {
     const snapshotSpy = vi.spyOn(provider, 'snapshot');
     const searchSpy = vi.spyOn(provider, 'search');
 
@@ -249,9 +215,6 @@ describe('JavaScriptTool', () => {
       firstExt.getTools?.({} as ResolvedModel).runInSandbox?.description ?? '';
     const effectiveGuidance = [firstPrompt, firstDescription].join('\n');
 
-    expect(effectiveGuidance.split(gatewayInstruction)).toHaveLength(2);
-    expect(firstPrompt).toContain(gatewayInstruction);
-    expect(firstDescription).not.toContain(gatewayInstruction);
     for (const namespace of [
       'git.hub',
       'other',

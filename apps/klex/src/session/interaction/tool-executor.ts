@@ -457,6 +457,8 @@ export class ToolExecutor implements SessionToolRuntime {
         signal.removeEventListener('abort', resolveCancellation);
       }
     });
+    // Ends with the call's result, not the tool's own promise: a tool still
+    // running after a timeout or abort must not stay listed.
     return running.finally(() => active?.end());
   }
 }

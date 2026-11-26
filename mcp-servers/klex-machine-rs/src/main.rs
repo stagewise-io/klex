@@ -47,16 +47,16 @@ fn main() -> ExitCode {
                 Err(error) => return fail(&error.to_string()),
             };
             match runtime.block_on(run(command)) {
-                Ok(()) => ExitCode::SUCCESS,
+                Ok(code) => code,
                 Err(message) => fail(&message),
             }
         }
     }
 }
 
-async fn run(command: CliResult) -> Result<(), String> {
+async fn run(command: CliResult) -> Result<ExitCode, String> {
     match command {
-        CliResult::Help | CliResult::Version => Ok(()),
+        CliResult::Help | CliResult::Version => Ok(ExitCode::SUCCESS),
         CliResult::Serve {
             config,
             data_dir,
@@ -97,7 +97,7 @@ async fn run(command: CliResult) -> Result<(), String> {
             }
             let Some((config, omit_host_details)) = serve else {
                 println!("Start it with: {BIN_NAME}");
-                return Ok(());
+                return Ok(ExitCode::SUCCESS);
             };
             println!("Connecting to Klex Cloud...");
             serve_cloud(config, data_dir, omit_host_details, true).await
@@ -120,7 +120,7 @@ async fn serve_cloud(
     data_dir: PathBuf,
     omit_host_details: bool,
     announce: bool,
-) -> Result<(), String> {
+) -> Result<ExitCode, String> {
     let logger = Logger::stderr(config.log_level);
     let enrollment = load_machine_enrollment(&data_dir)?;
     let protected_resource = load_protected_resource(
@@ -160,23 +160,35 @@ async fn serve_cloud(
     let runtime = match runtime {
         Ok(runtime) => runtime,
         Err(error) => {
-            router.close().await;
-            store.close().await;
+            let _ = router.close().await;
+            let _ = store.close().await;
             return Err(error);
         }
     };
     if announce {
         println!("{}", machine_live_message(&enrollment.machine_id));
     }
-    signals::shutdown().await;
+    let first = signals::shutdown().await;
+    // The TS runtime registers one-shot listeners and never removes the other
+    // one, so only a repeat of an already-handled signal is fatal.
     tokio::spawn(async move {
-        let second = signals::shutdown().await;
-        std::process::exit(if second == "SIGTERM" { 143 } else { 130 });
+        let mut handled = vec![first];
+        loop {
+            let signal = signals::shutdown().await;
+            if handled.contains(&signal) {
+                signals::terminate_by(signal);
+            }
+            handled.push(signal);
+        }
     });
     runtime.close().await;
-    router.close().await;
-    store.close().await;
-    Ok(())
+    let router_closed = router.close().await;
+    let store_closed = store.close().await;
+    Ok(if router_closed.and(store_closed).is_ok() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    })
 }
 
 fn fail(message: &str) -> ExitCode {

@@ -255,7 +255,7 @@ impl Machine {
         .expect("valid server info")
     }
 
-    pub async fn close(&self) {
+    pub async fn close(&self) -> Result<(), String> {
         if let Some(unsubscribe) = lock(&self.unsubscribe).take() {
             unsubscribe();
         }
@@ -263,8 +263,9 @@ impl Machine {
         tokio::join!(self.watchers.close_all(), self.shell.close_all());
         lock(&self.shell_tracking).clear();
         if self.owns_store {
-            self.store.close().await;
+            self.store.close().await?;
         }
+        Ok(())
     }
 
     async fn blocking<T: DeserializeOwned + Send + 'static>(

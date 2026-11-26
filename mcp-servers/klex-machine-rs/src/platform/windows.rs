@@ -559,4 +559,10 @@ pub mod signals {
         }
         "SIGINT"
     }
+
+    /// The default Ctrl+C action Node falls back to once no listener remains.
+    pub fn terminate_by(_signal: &str) -> ! {
+        const STATUS_CONTROL_C_EXIT: u32 = 0xC000_013A;
+        std::process::exit(STATUS_CONTROL_C_EXIT as i32)
+    }
 }

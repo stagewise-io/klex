@@ -1,8 +1,12 @@
+import { chmod } from 'node:fs/promises';
+import { request } from 'node:http';
 import { createServer } from 'node:net';
+import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 
 import { describe, expect, it } from 'vitest';
 
-import { PUSH, startMachine, windows } from '../src/harness.js';
+import { PUSH, startMachine, waitFor, windows } from '../src/harness.js';
 
 describe('HTTP server', () => {
   it('serves health on GET and HEAD and 404s other routes', async () => {
@@ -164,6 +168,68 @@ describe('HTTP server', () => {
       }
     },
   );
+});
+
+describe('shutdown exit status', () => {
+  const root = process.getuid?.() === 0;
+
+  it.skipIf(windows)(
+    'dies by the signal when a second one arrives during shutdown',
+    async () => {
+      const machine = await startMachine();
+      // An unfinished upload keeps the listener from closing.
+      const upload = request(`${machine.origin}/mcp`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          accept: 'application/json, text/event-stream',
+        },
+      });
+      upload.on('error', () => undefined);
+      upload.write('{"jsonrpc":"2.0",');
+      await new Promise<void>((done) => upload.once('socket', () => done()));
+      await waitFor(() => upload.socket?.readyState === 'open' || undefined);
+      try {
+        machine.child.kill('SIGINT');
+        await waitFor(() =>
+          machine.logs.some(
+            (record) =>
+              record.message === 'Shutting down klex-machine MCP server',
+          )
+            ? true
+            : undefined,
+        );
+        expect(await Promise.race([machine.exited(), delay(300)])).toBe(
+          undefined,
+        );
+        machine.child.kill('SIGINT');
+        expect(await machine.exited()).toEqual({
+          code: null,
+          signal: 'SIGINT',
+        });
+      } finally {
+        upload.destroy();
+      }
+    },
+  );
+
+  it.skipIf(windows || root)('exits 1 when shutdown fails', async () => {
+    const machine = await startMachine();
+    const notifications = join(machine.dataDir, 'notifications');
+    await chmod(notifications, 0o500);
+    try {
+      expect(await machine.stop('SIGTERM')).toEqual({ code: 1, signal: null });
+      expect(
+        machine.logs.some(
+          (record) =>
+            record.message === 'Failed to shut down klex-machine' &&
+            record.signal === 'SIGTERM',
+        ),
+      ).toBe(true);
+    } finally {
+      await chmod(notifications, 0o700);
+    }
+  });
 });
 
 function initializeBody(): string {

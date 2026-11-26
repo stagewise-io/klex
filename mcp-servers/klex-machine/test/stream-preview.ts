@@ -66,6 +66,11 @@ const page = `<!doctype html>
   rfb.addEventListener('clipboard', (event) => {
     window.clipboardText = event.detail.text;
     console.log('clipboard from the desktop:', event.detail.text);
+    navigator.clipboard?.writeText(event.detail.text).catch(() => {});
+  });
+  // Offers the browser clipboard to the desktop whenever the page gets focus.
+  window.addEventListener('focus', () => {
+    navigator.clipboard?.readText().then((text) => rfb.clipboardPasteFrom(text), () => {});
   });
   window.rfb = rfb;
 </script>

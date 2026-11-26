@@ -152,24 +152,32 @@ export class RfbSession {
   resized(framebuffer: Framebuffer): void {
     if (this.#phase !== 'messages') return;
     this.#sent = new Uint32Array(framebuffer.tiles.length);
-    // Until SetEncodings arrives the viewer's resize support is unknown.
+    // Until SetEncodings arrives the viewer's resize support is unknown. An
+    // update request before it means the viewer settled for the defaults.
     if (this.#negotiated) this.#followResize();
     else this.#resizedEarly = true;
   }
 
-  #followResize(): void {
+  /** Queues the new size for the viewer, or closes it. False when closed. */
+  #followResize(): boolean {
     if (this.#encodings.has(EXTENDED_DESKTOP_SIZE)) {
       this.#pendingExtendedSize = { reason: 0, status: 0 };
     } else if (this.#encodings.has(DESKTOP_SIZE)) {
       this.#pendingDesktopSize = true;
     } else {
       this.close(new RfbProtocolError('The viewer cannot follow a resize'));
+      return false;
     }
+    return true;
   }
 
   /** New tiles were committed. */
   update(): void {
     if (this.#phase !== 'messages' || !this.#request || this.#draining) return;
+    if (this.#resizedEarly) {
+      this.#resizedEarly = false;
+      if (!this.#followResize()) return;
+    }
     const framebuffer = this.#host.framebuffer();
     if (!framebuffer) return;
     const rects: Buffer[] = [];
@@ -441,8 +449,7 @@ export class RfbSession {
     }
     if (this.#resizedEarly) {
       this.#resizedEarly = false;
-      this.#followResize();
-      if (this.#phase === 'closed') return;
+      if (!this.#followResize()) return;
     }
     if (encodings.has(QEMU_EXTENDED_KEY) && !this.#announcedQemu) {
       this.#announcedQemu = true;

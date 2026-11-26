@@ -185,6 +185,13 @@ describe('RfbServer', () => {
     legacy.setEncodings([ENC.tight]);
     await settle();
     expect(legacy.closed).toBe(true);
+
+    const defaults = new TestRfbClient(server.open());
+    await defaults.handshake();
+    defaults.request(false);
+    capture.show(RESIZED);
+    await settle();
+    expect(defaults.closed).toBe(true);
     server.close();
   });
 

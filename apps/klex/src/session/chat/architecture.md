@@ -195,7 +195,7 @@ Telemetry: `step.generation_invoked` carries both budgets; `step.first_output_re
 
 At-most-once tool execution via a `dispatchedToolCallIds` set. Owns tool lookup, execution, and in-place state mutation. Decoupled from generation abort. Post-generation sweep catches tool calls that reached `input-available` after the stream ended. Tool execution is bounded by a configurable timeout.
 
-The transcript is written only at step boundaries, so it never shows a call in flight. The session keeps a separate `ActiveToolCalls` record that step and realtime-lease tool execution both feed. Each running call lists the MCP calls it waits on: the sandbox reports them through the `onMcpCall` request-context hook. `getSessionInfo().activeTools` exposes it to introspection (`/v1/introspect/sessions/default`) for live UIs. It holds names and start times only, never inputs or results, and it is not persisted.
+Chat-step tool calls reach the transcript only at step boundaries, so it never shows one in flight. Realtime-lease calls are committed separately, before they run. The session keeps a separate `ActiveToolCalls` record that step and realtime-lease tool execution both feed. Each running call lists the MCP calls it waits on: the sandbox reports them through the `onMcpCall` request-context hook. A call leaves the record once the executor returns its result, also on timeout or abort, so a tool that never settles cannot stay listed. `getSessionInfo().activeTools` exposes it to introspection (`/v1/introspect/sessions/default`) for live UIs. It holds tool call IDs, names, and start times only, never inputs or results, and it is not persisted.
 
 ## Extensions
 

@@ -24,6 +24,10 @@ const ADVANCED_STRING_SPAN_ATTRIBUTES = new Set([
   'gen_ai.tool.call.id',
   'gen_ai.tool.type',
   'error.type',
+  // Bounded enum-like tokens extracted from APICallError's parsed envelope.
+  'klex.provider.error.code',
+  'klex.provider.error.type',
+  'klex.provider.error.status',
   // Klex model/provider identity
   'klex.model.provider_type',
   'klex.model.provider_id',

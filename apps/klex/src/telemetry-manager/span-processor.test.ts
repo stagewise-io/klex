@@ -75,6 +75,53 @@ function makeDelegate(): {
 }
 
 describe('TelemetrySpanProcessor', () => {
+  it('retains structured rejection diagnostics without enabling raw errors', () => {
+    const tp = createTelemetrySpanProcessor('advanced');
+    const { processor, onEnd } = makeDelegate();
+    tp.setDelegate(processor);
+    const diagnostics = {
+      'http.response.status_code': 400,
+      'error.type': 'AI_APICallError',
+      'klex.provider.error.code': 'context_length_exceeded',
+      'klex.provider.error.type': 'invalid_request_error',
+      'klex.provider.error.status': 'INVALID_ARGUMENT',
+    };
+    tp.onEnd(
+      makeSpan({
+        attributes: {
+          ...diagnostics,
+          'step.error': 'private step error',
+          'gen.failureDetails': 'private extension failure',
+          'exception.message': 'private message',
+          'klex.provider.error.message': 'private provider message',
+          'klex.provider.error.reason': 'private arbitrary reason',
+          'klex.provider.error.responseBody': 'private body',
+          'klex.provider.error.headers': 'private headers',
+          'gen_ai.input.messages': 'private prompt',
+        },
+        status: { code: SpanStatusCode.ERROR, message: 'private status' },
+        events: [
+          {
+            name: 'exception',
+            time: [0, 0],
+            attributes: {
+              'exception.type': 'AI_APICallError',
+              'exception.message': 'private exception',
+              'exception.stacktrace': 'private stack',
+            },
+          },
+        ],
+      }),
+    );
+    const forwarded = onEnd.mock.calls[0]?.[0] as ReadableSpan;
+    expect(forwarded.attributes).toEqual(diagnostics);
+    expect(forwarded.status).toEqual({ code: SpanStatusCode.ERROR });
+    expect(forwarded.events[0]?.attributes).toEqual({
+      'exception.type': 'AI_APICallError',
+    });
+    expect(JSON.stringify(forwarded)).not.toContain('private');
+  });
+
   it('drops all spans when level is "no"', () => {
     const tp = createTelemetrySpanProcessor();
     const { processor, onEnd } = makeDelegate();

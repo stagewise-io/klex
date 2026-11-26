@@ -7,9 +7,16 @@ import {
   InMemorySpanExporter,
   SimpleSpanProcessor,
 } from '@opentelemetry/sdk-trace-base';
-import { experimental_evaluate as evaluate, generateText, tool } from 'ai';
+import {
+  APICallError,
+  experimental_evaluate as evaluate,
+  generateText,
+  RetryError,
+  streamText,
+  tool,
+} from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
-import { describe, expect, it, vi } from 'vitest';
+import { assert, describe, expect, it, vi } from 'vitest';
 import z from 'zod';
 
 import type { ModelCallRecord } from '@/model-call-logger';
@@ -60,7 +67,7 @@ function createSpanHarness(
     contentAllowed: () => level === 'debug',
     ...options,
   });
-  return { exporter, provider, telemetry };
+  return { exporter, provider, telemetry, spanProcessor };
 }
 
 function makeAbortEvent(event: Record<string, unknown>): AbortEvent {
@@ -142,6 +149,368 @@ function parseAttribute(value: unknown): unknown {
   expect(typeof value).toBe('string');
   return JSON.parse(value as string);
 }
+
+describe('KlexOpenTelemetry — provider rejection privacy', () => {
+  const privateText =
+    'private message Bearer credential-token https://private.test/prompt';
+  it.each(['advanced', 'debug'] as const)(
+    'isolates overlapping calls during reentrant error handling at %s',
+    async (level) => {
+      const { exporter, provider, telemetry, spanProcessor } =
+        createSpanHarness(level);
+      const startCall = (callId: string, functionId: string) => {
+        telemetry.onStart({
+          callId,
+          operationId: 'ai.generateText',
+          provider: 'openai.chat',
+          modelId: callId,
+          functionId,
+          messages: [],
+        } as unknown as Parameters<KlexOpenTelemetry['onStart']>[0]);
+        telemetry.onStepStart({
+          callId,
+          steps: [],
+        } as unknown as Parameters<KlexOpenTelemetry['onStepStart']>[0]);
+        telemetry.onLanguageModelCallStart({
+          callId,
+          provider: 'openai.chat',
+          modelId: callId,
+          messages: [],
+        } as unknown as Parameters<
+          KlexOpenTelemetry['onLanguageModelCallStart']
+        >[0]);
+      };
+      const rejection = (code: string, statusCode: number) =>
+        new APICallError({
+          message: 'expected rejection',
+          url: 'https://example.test',
+          requestBodyValues: {},
+          statusCode,
+          data: { error: { code } },
+        });
+      const onEnd = spanProcessor.onEnd.bind(spanProcessor);
+      let reentered = false;
+      const endSpy = vi
+        .spyOn(spanProcessor, 'onEnd')
+        .mockImplementation((span) => {
+          onEnd(span);
+          if (reentered) return;
+          reentered = true;
+          telemetry.onError({
+            callId: 'extension',
+            error: rejection('rate_limit_exceeded', 429),
+          });
+          // End a third call while the outer onError is still on the stack.
+          telemetry.onAbort(makeAbortEvent({ callId: 'unrelated', steps: [] }));
+        });
+      try {
+        startCall('chat', 'chat-session');
+        startCall('extension', 'extension:test');
+        startCall('unrelated', 'extension:other');
+        telemetry.onError({
+          callId: 'chat',
+          error: rejection('context_length_exceeded', 400),
+        });
+        // A subsequent call must also be free of temporary diagnostics.
+        startCall('later', 'chat-session');
+        telemetry.onAbort(makeAbortEvent({ callId: 'later', steps: [] }));
+        await provider.forceFlush();
+        const spans = exporter.getFinishedSpans();
+        expect(reentered).toBe(true);
+        expect(spans).toHaveLength(12);
+        for (const span of spans) {
+          expect(span.attributes['klex.internal.call_id']).toBeUndefined();
+          const model = span.attributes['klex.model.model_id'];
+          expect(['chat', 'extension', 'unrelated', 'later']).toContain(model);
+          if (model === 'extension') {
+            expect(span.attributes['klex.provider.error.code']).toBe(
+              'rate_limit_exceeded',
+            );
+            expect(span.attributes['http.response.status_code']).toBe(429);
+          } else if (model === 'chat') {
+            expect(span.attributes['klex.provider.error.code']).toBe(
+              'context_length_exceeded',
+            );
+            expect(span.attributes['http.response.status_code']).toBe(400);
+          } else {
+            expect(span.attributes['error.type']).toBeUndefined();
+            expect(
+              span.attributes['http.response.status_code'],
+            ).toBeUndefined();
+            expect(span.attributes['klex.provider.error.code']).toBeUndefined();
+          }
+        }
+      } finally {
+        endSpy.mockRestore();
+        await provider.shutdown();
+      }
+    },
+  );
+
+  const cases = [
+    {
+      label: 'OpenAI',
+      data: {
+        error: {
+          code: 'context_length_exceeded',
+          type: 'invalid_request_error',
+          message: privateText,
+        },
+      },
+      expected: {
+        'klex.provider.error.code': 'context_length_exceeded',
+        'klex.provider.error.type': 'invalid_request_error',
+      },
+    },
+    {
+      label: 'Anthropic',
+      data: {
+        type: 'error',
+        error: { type: 'invalid_request_error', message: privateText },
+      },
+      expected: { 'klex.provider.error.type': 'invalid_request_error' },
+    },
+    {
+      label: 'Google',
+      data: {
+        error: {
+          code: 400,
+          status: 'INVALID_ARGUMENT',
+          message: privateText,
+          details: [{ reason: privateText }],
+        },
+      },
+      expected: { 'klex.provider.error.status': 'INVALID_ARGUMENT' },
+    },
+    ...[
+      privateText,
+      'sk-secret-token',
+      'x'.repeat(65),
+      'bad\nvalue',
+      'bad\n',
+      { reason: 'INVALID_ARGUMENT' },
+      123,
+    ].map((value) => ({
+      label: `unsafe ${typeof value}`,
+      data: { error: { code: value, type: value, status: value } },
+      expected: {},
+    })),
+    {
+      label: 'unrecognized payload',
+      data: {
+        code: 'DO_NOT_EXPORT',
+        reason: 'DO_NOT_EXPORT',
+        details: { error: { code: 'DO_NOT_EXPORT' } },
+      },
+      expected: {},
+    },
+  ];
+
+  describe.each(['chat', 'extension'] as const)('%s', (source) => {
+    it('unwraps SDK retry failures and clears diagnostics before the next call', async () => {
+      const { exporter, provider, telemetry } = createSpanHarness('advanced');
+      const error = new RetryError({
+        message: privateText,
+        reason: 'maxRetriesExceeded',
+        errors: [
+          new APICallError({
+            message: privateText,
+            url: 'https://private.test',
+            requestBodyValues: {},
+            statusCode: 429,
+            data: { error: { code: 'rate_limit_exceeded' } },
+          }),
+        ],
+      });
+      const model = new MockLanguageModelV4({
+        doGenerate: async () => {
+          throw error;
+        },
+        doStream: async () => {
+          throw error;
+        },
+      });
+      const options = {
+        model,
+        prompt: 'private-prompt',
+        maxRetries: 0,
+        telemetry: {
+          integrations: [telemetry],
+          functionId: source === 'chat' ? 'chat-session' : 'extension:test',
+        },
+      };
+      try {
+        if (source === 'chat') {
+          const onError = vi.fn();
+          await streamText({ ...options, onError }).consumeStream();
+          expect(onError).toHaveBeenCalledExactlyOnceWith({ error });
+        } else await expect(generateText(options)).rejects.toBe(error);
+        await generateText({ ...options, model: createMockLanguageModel() });
+        await provider.forceFlush();
+        const chats = exporter
+          .getFinishedSpans()
+          .filter(
+            (span) => span.attributes['gen_ai.operation.name'] === 'chat',
+          );
+        expect(chats).toHaveLength(2);
+        expect(chats[0]?.attributes).toMatchObject({
+          'error.type': 'AI_APICallError',
+          'http.response.status_code': 429,
+          'klex.provider.error.code': 'rate_limit_exceeded',
+        });
+        expect(chats[1]?.attributes['error.type']).toBeUndefined();
+        expect(
+          chats[1]?.attributes['http.response.status_code'],
+        ).toBeUndefined();
+        expect(
+          chats[1]?.attributes['klex.provider.error.code'],
+        ).toBeUndefined();
+      } finally {
+        await provider.shutdown();
+      }
+    });
+
+    it.each(cases)(
+      'exports only safe $label diagnostics',
+      async ({ data, expected }) => {
+        const { exporter, provider, telemetry } = createSpanHarness('advanced');
+        const usage = createTelemetry();
+        const records: ModelCallRecord[] = [];
+        usage.setModelCallSink((record) => records.push(record));
+        const rejection = new APICallError({
+          message: privateText,
+          statusCode: 400,
+          url: 'https://private.test/request',
+          requestBodyValues: { prompt: 'private-prompt' },
+          responseBody: 'private-body',
+          responseHeaders: { authorization: 'Bearer private-header-token' },
+          data,
+        });
+        const model = new MockLanguageModelV4({
+          provider: 'openai.chat',
+          modelId: 'test',
+          doGenerate: async () => {
+            throw rejection;
+          },
+          doStream: async () => {
+            throw rejection;
+          },
+        });
+        const options = {
+          model,
+          prompt: 'private-prompt',
+          maxRetries: 0,
+          telemetry: {
+            integrations: [telemetry, usage],
+            functionId: source === 'chat' ? 'chat-session' : 'extension:test',
+          },
+        };
+        try {
+          if (source === 'chat') {
+            const onError = vi.fn();
+            const result = streamText({ ...options, onError });
+            await result.consumeStream();
+            expect(onError).toHaveBeenCalledExactlyOnceWith({
+              error: rejection,
+            });
+          } else {
+            await expect(generateText(options)).rejects.toBe(rejection);
+          }
+          await provider.forceFlush();
+          const spans = exporter.getFinishedSpans();
+          for (const operation of ['chat', 'invoke_agent']) {
+            const span = findSpanByOp(spans, operation);
+            expect(span).toBeDefined();
+            expect(span?.attributes).toMatchObject({
+              'error.type': 'AI_APICallError',
+              'http.response.status_code': 400,
+              'klex.call.source': source,
+              ...expected,
+            });
+            expect(
+              Object.fromEntries(
+                Object.entries(span?.attributes ?? {}).filter(([key]) =>
+                  key.startsWith('klex.provider.error.'),
+                ),
+              ),
+            ).toEqual(expected);
+          }
+          for (const span of spans) {
+            expect(span.status.message).toBeUndefined();
+            const exported = JSON.stringify({
+              attributes: span.attributes,
+              events: span.events,
+              status: span.status,
+            });
+            for (const secret of [
+              'private',
+              'credential-token',
+              'DO_NOT_EXPORT',
+              'sk-secret-token',
+              'bad\\nvalue',
+              'x'.repeat(65),
+            ])
+              expect(exported).not.toContain(secret);
+          }
+          expect(records).toHaveLength(1);
+          expect(records[0]).toMatchObject({
+            source,
+            isError: true,
+            errorType: 'AI_APICallError',
+          });
+        } finally {
+          await provider.shutdown();
+        }
+      },
+    );
+
+    it('does not extract provider fields from unknown errors', async () => {
+      const { exporter, provider, telemetry } = createSpanHarness('advanced');
+      const error = Object.assign(new Error(privateText), {
+        statusCode: 400,
+        data: { error: { code: 'DO_NOT_EXPORT' } },
+      });
+      const model = new MockLanguageModelV4({
+        doGenerate: async () => {
+          throw error;
+        },
+        doStream: async () => {
+          throw error;
+        },
+      });
+      const options = {
+        model,
+        prompt: 'private-prompt',
+        maxRetries: 0,
+        telemetry: {
+          integrations: [telemetry],
+          functionId: source === 'chat' ? 'chat-session' : 'extension:test',
+        },
+      };
+      try {
+        if (source === 'chat') {
+          const onError = vi.fn();
+          await streamText({ ...options, onError }).consumeStream();
+          expect(onError).toHaveBeenCalledExactlyOnceWith({ error });
+        } else await expect(generateText(options)).rejects.toBe(error);
+        await provider.forceFlush();
+        const span = findSpanByOp(exporter.getFinishedSpans(), 'chat');
+        expect(span?.attributes['error.type']).toBe('Error');
+        expect(span?.attributes['http.response.status_code']).toBeUndefined();
+        expect(span?.attributes['klex.provider.error.code']).toBeUndefined();
+        expect(span?.status.message).toBeUndefined();
+        expect(
+          JSON.stringify({
+            attributes: span?.attributes,
+            events: span?.events,
+          }),
+        ).not.toContain('private');
+      } finally {
+        await provider.shutdown();
+      }
+    });
+  });
+});
 
 describe('KlexOpenTelemetry — model content', () => {
   it('exports model content in the GenAI parts format on chat spans at debug', async () => {
@@ -962,7 +1331,8 @@ describe('ModelCallUsageTelemetry — model ID propagation', () => {
     );
 
     expect(records).toHaveLength(1);
-    const record = records[0]!;
+    const record = records[0];
+    assert(record);
     expect(record.providerType).toBe('openai');
     expect(record.providerId).toBe('work');
     expect(record.endpointId).toBeNull();
@@ -1002,7 +1372,8 @@ describe('ModelCallUsageTelemetry — model ID propagation', () => {
     );
 
     expect(records).toHaveLength(1);
-    const record = records[0]!;
+    const record = records[0];
+    assert(record);
     expect(record.providerType).toBe('anthropic');
     expect(record.providerId).toBe('personal');
     expect(record.endpointId).toBeNull();
@@ -1047,7 +1418,8 @@ describe('ModelCallUsageTelemetry — model ID propagation', () => {
     );
 
     expect(records).toHaveLength(1);
-    const record = records[0]!;
+    const record = records[0];
+    assert(record);
     expect(record.modelId).toBe('gpt-4o');
     expect(record.providerId).toBe('openai');
     expect(record.modelId).not.toBe('unknown');
@@ -1079,7 +1451,8 @@ describe('ModelCallUsageTelemetry — model ID propagation', () => {
     );
 
     expect(records).toHaveLength(1);
-    const record = records[0]!;
+    const record = records[0];
+    assert(record);
     expect(record.modelId).toBe('claude-sonnet-4');
     expect(record.providerId).toBe('anthropic');
     expect(record.modelId).not.toBe('unknown');
@@ -1117,7 +1490,8 @@ describe('ModelCallUsageTelemetry — model ID propagation', () => {
     );
 
     expect(records).toHaveLength(1);
-    const record = records[0]!;
+    const record = records[0];
+    assert(record);
     expect(record.providerType).toBe('openai');
     expect(record.providerId).toBe('local');
     expect(record.endpointId).toBeNull();
@@ -1154,7 +1528,8 @@ describe('ModelCallUsageTelemetry — model ID propagation', () => {
     );
 
     expect(records).toHaveLength(1);
-    const record = records[0]!;
+    const record = records[0];
+    assert(record);
     expect(record.providerType).toBe('openai');
     expect(record.providerId).toBe('work');
     expect(record.modelId).toBe('gpt-4o');
@@ -1191,7 +1566,8 @@ describe('ModelCallUsageTelemetry — model ID propagation', () => {
     });
 
     expect(records).toHaveLength(1);
-    const record = records[0]!;
+    const record = records[0];
+    assert(record);
     expect(record.providerType).toBe('openai');
     expect(record.providerId).toBe('custom');
     expect(record.endpointId).toBeNull();
@@ -1266,7 +1642,8 @@ describe('ModelCallUsageTelemetry — model ID propagation', () => {
     );
 
     expect(records).toHaveLength(1);
-    const record = records[0]!;
+    const record = records[0];
+    assert(record);
     expect(record.inputCacheWriteTokens).toBe(100);
     expect(record.inputCacheReadTokens).toBe(300);
   });
@@ -1319,7 +1696,8 @@ describe('ModelCallUsageTelemetry — model ID propagation', () => {
     );
 
     expect(records).toHaveLength(1);
-    const record = records[0]!;
+    const record = records[0];
+    assert(record);
     expect(record.ttftMs).toBe(250);
     expect(record.totalDurationMs).toBe(1500);
   });
@@ -1353,11 +1731,12 @@ describe('ModelCallUsageTelemetry — model ID propagation', () => {
     );
 
     expect(records).toHaveLength(1);
-    const record = records[0]!;
+    const record = records[0];
+    assert(record);
     expect(record.ttftMs).toBeNull();
     // totalDurationMs falls back to wall-clock (now - spanStartTime).
     expect(record.totalDurationMs).not.toBeNull();
-    expect(record.totalDurationMs!).toBeGreaterThanOrEqual(0);
+    expect(record.totalDurationMs).toBeGreaterThanOrEqual(0);
   });
 
   it('ttftMs is null when performance object lacks timeToFirstOutputMs', () => {
@@ -1403,7 +1782,8 @@ describe('ModelCallUsageTelemetry — model ID propagation', () => {
     );
 
     expect(records).toHaveLength(1);
-    const record = records[0]!;
+    const record = records[0];
+    assert(record);
     expect(record.ttftMs).toBeNull();
     expect(record.totalDurationMs).toBe(3000);
   });

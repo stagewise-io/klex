@@ -160,6 +160,34 @@ describe('RfbServer', () => {
     server.close();
   });
 
+  it('follows a resize that lands before the viewer sets encodings', async () => {
+    const capture = new SyntheticCapture(DESKTOP);
+    const server = new RfbServer(capture.backend());
+    const client = new TestRfbClient(server.open());
+    await client.handshake();
+    capture.show(RESIZED);
+    await settle();
+    expect(client.closed).toBe(false);
+    client.setEncodings([ENC.tight, ENC.desktopSize]);
+    client.request(false);
+    const rects = await client.nextUpdate();
+    expect(rects[0]).toMatchObject({
+      encoding: ENC.desktopSize,
+      width: 280,
+      height: 150,
+    });
+    expect(client.screen).toEqual(RESIZED.pixels);
+
+    const legacy = new TestRfbClient(server.open());
+    await legacy.handshake();
+    capture.show(DESKTOP);
+    await settle();
+    legacy.setEncodings([ENC.tight]);
+    await settle();
+    expect(legacy.closed).toBe(true);
+    server.close();
+  });
+
   it('refuses resizes requested by the viewer', async () => {
     const capture = new SyntheticCapture(DESKTOP);
     const server = new RfbServer(capture.backend());

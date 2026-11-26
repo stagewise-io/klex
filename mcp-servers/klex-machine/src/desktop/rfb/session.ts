@@ -105,6 +105,7 @@ export class RfbSession {
   #buffer: Buffer = Buffer.alloc(0);
   #format: PixelFormat = SERVER_PIXEL_FORMAT;
   #encodings = new Set<number>();
+  #resizedEarly = false;
   #negotiated = false;
   #jpegLevel: number | undefined;
   #zlibLevel = DEFAULT_ZLIB_LEVEL;
@@ -151,6 +152,12 @@ export class RfbSession {
   resized(framebuffer: Framebuffer): void {
     if (this.#phase !== 'messages') return;
     this.#sent = new Uint32Array(framebuffer.tiles.length);
+    // Until SetEncodings arrives the viewer's resize support is unknown.
+    if (this.#negotiated) this.#followResize();
+    else this.#resizedEarly = true;
+  }
+
+  #followResize(): void {
     if (this.#encodings.has(EXTENDED_DESKTOP_SIZE)) {
       this.#pendingExtendedSize = { reason: 0, status: 0 };
     } else if (this.#encodings.has(DESKTOP_SIZE)) {
@@ -431,6 +438,11 @@ export class RfbSession {
     if (encodings.has(EXTENDED_DESKTOP_SIZE) && !this.#announcedExtendedSize) {
       this.#announcedExtendedSize = true;
       this.#pendingExtendedSize ??= { reason: 0, status: 0 };
+    }
+    if (this.#resizedEarly) {
+      this.#resizedEarly = false;
+      this.#followResize();
+      if (this.#phase === 'closed') return;
     }
     if (encodings.has(QEMU_EXTENDED_KEY) && !this.#announcedQemu) {
       this.#announcedQemu = true;

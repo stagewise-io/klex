@@ -915,8 +915,8 @@ final class StreamInput {
   }
 
   func releaseAll() {
-    for name in heldButtons { button(name, down: false, at: lastPoint) }
-    for code in heldKeys.reversed() { key("k" + String(code, radix: 16), down: false) }
+    for name in Array(heldButtons) { button(name, down: false, at: lastPoint) }
+    for code in Array(heldKeys.reversed()) { key("k" + String(code, radix: 16), down: false) }
   }
 
   private func location(_ x: String, _ y: String) -> CGPoint? {

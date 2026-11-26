@@ -226,4 +226,35 @@ describe('shell sessions', () => {
       );
     },
   );
+
+  // ConPTY has no exec step, so compare the Rust outcome with node-pty's.
+  it.runIf(windows && implementation === 'rust')(
+    'reports a missing Windows shell like node-pty',
+    async () => {
+      const outcomes = [];
+      for (const target of ['ts', 'rust'] as const) {
+        const machine = await startMachine({ implementation: target });
+        const { result, error } = await machine.call('createShellSession', {
+          shell: 'C:\\missing\\shell.exe',
+        });
+        expect(error).toBeUndefined();
+        const text = result?.content[0]?.text ?? '';
+        if (result?.isError) {
+          outcomes.push({ error: text });
+          continue;
+        }
+        const session = JSON.parse(text) as ShellInfo;
+        const exited = await readUntilExit(machine, session.id);
+        outcomes.push({
+          session: { shell: session.shell, running: session.running },
+          exited: {
+            running: exited.running,
+            exitCode: exited.exitCode,
+            signal: exited.signal,
+          },
+        });
+      }
+      expect(outcomes[1]).toEqual(outcomes[0]);
+    },
+  );
 });

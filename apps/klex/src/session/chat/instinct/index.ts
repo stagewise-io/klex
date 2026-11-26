@@ -1,8 +1,13 @@
 export {
+  compileInstinctClassificationBatch,
+  validateInstinctClassificationRequest,
+} from './classifier';
+export {
   executeInstinctClassification,
   type InstinctClassificationArgs,
   type InstinctClassifier,
 } from './classifier-executor';
+export { frameInstinctEvidence } from './external-input';
 export {
   createInstinctFallbackMemory,
   type InstinctFallbackMemory,

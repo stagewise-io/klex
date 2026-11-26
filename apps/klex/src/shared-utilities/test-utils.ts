@@ -42,6 +42,7 @@ export function makeDeps(overrides?: Partial<ExtensionDeps>): ExtensionDeps {
     config,
     modelResolver,
     generateText: vi.fn(),
+    makeDecision: vi.fn(),
     logger: {
       info: vi.fn(),
       warn: vi.fn(),

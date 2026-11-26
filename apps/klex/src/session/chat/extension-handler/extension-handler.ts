@@ -361,6 +361,16 @@ class ExtensionHandlerModule implements ExtensionHandler {
         // context (used for trace attribution as gen_ai.agent.name =
         // "extension:{identifier}") and to track per-extension token usage
         // on success.
+        makeDecision: (args) => {
+          const ctx = withExtensionIdentifier(
+            context.active(),
+            factory.identifier,
+          );
+          // The session accounts every settled decision attempt, including fallbacks.
+          return context.with(ctx, () =>
+            deps.extensionDeps.makeDecision(args, factory.identifier),
+          );
+        },
         generateText: async (args) => {
           const ctx = withExtensionIdentifier(
             context.active(),

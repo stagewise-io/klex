@@ -100,6 +100,7 @@ const noopDeps: BaseExtensionDeps = {
   },
   config: { get: () => ({}) } as unknown as BaseExtensionDeps['config'],
   modelResolver: {} as BaseExtensionDeps['modelResolver'],
+  makeDecision: vi.fn(async () => ({ status: 'unavailable' as const })),
   generateText: vi.fn(() =>
     Promise.resolve({
       success: false as const,

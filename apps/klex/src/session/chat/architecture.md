@@ -83,13 +83,19 @@ Every turn terminates. A hard cap of `MAX_STEPS_PER_TURN` (200) steps covers lon
 
 ## Step
 
-Coordinator: extension step decision → history repair → decision (can a step run?) → shared instinct → model fetch → history transformation (clone → extension pre-process → model-aware conversion → extension post-process) → delegate to GenerationRunner.
+Coordinator: extension step decision → history repair → decision (can a step run?) → model fetch → history transformation (clone → extension pre-process → model-aware conversion → extension post-process) → delegate to GenerationRunner.
 
 `shouldRunStep(history)` lets an extension remove newly added canonical messages and skip the step before lifecycle hooks or inference. The soul extension uses it to discard new history while no soul exists, preserving previously retained history. Skipped work is not queued for soul creation; there is no polling.
 
 Generation operates on a `structuredClone` copy, so mid-turn appends are visible to the next step without corrupting the original. The original is only mutated in synchronous sequential code (turn-start drain, history repair, Continue/check injection, response push, immediate inbox appends).
 
-### Instinct subsystem
+### On-demand decisions
+
+Extensions call `deps.makeDecision({ prompt, context, keys, abortSignal?, timeoutMs? })` for explicit boolean, predicate, enum, or rubric-score judgments. Only supplied evidence is sent; core never adds history implicitly. Results use `status: 'ok'` with validated `answers` and `modelId`, or `unavailable`, `failed`, `timeout`, or `aborted`. The helper uses Quick Decisions (`modelSelection.instincts`) candidates through generation or evaluation, then the existing Memory → Compaction → Chat fallback selection when no decision models are configured. Each settled attempt is attributed to the calling extension. Request and serialized payload limits still apply; oversized input fails instead of silently truncating evidence. `generateText` remains the general-purpose text/structured-output helper.
+
+### Instinct subsystem (disabled)
+
+**The automatic phase is unconditionally disabled, regardless of saved `instinct.enabled`.** Hooks, runner implementation, config, and historical tests remain for future reconsideration. Existing instinct consumers are not migrated and their hooks are inactive. The details below describe the retained implementation, not current runtime behavior. Session introspection reports `enabled: false`.
 
 `ChatSession` owns one `InstinctRunner`, shared through Turn and Step. It runs before every executable main-agent step, after history repair and the executable-step decision, but before main-model resolution and generation. Extensions opt into classification and/or context preparation through the hooks below; no built-in extension currently participates. With no participating extensions, the phase performs no classifier call.
 

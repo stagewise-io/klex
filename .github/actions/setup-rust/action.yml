@@ -1,0 +1,33 @@
+name: Set up Rust
+description: >-
+  Installs the toolchain pinned in rust-toolchain.toml and restores the Cargo
+  cache. Only pushes to main write the cache, matching setup-workspace.
+
+inputs:
+  cache-key:
+    description: >-
+      Extra cache key, for jobs on the same runner that build different
+      targets or profiles.
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    # windows-11-arm images do not ship rustup.
+    - if: runner.os == 'Windows' && runner.arch == 'ARM64'
+      shell: pwsh
+      run: |
+        if (-not (Get-Command rustup -ErrorAction SilentlyContinue)) {
+          $installer = Join-Path $env:RUNNER_TEMP 'rustup-init.exe'
+          Invoke-WebRequest https://static.rust-lang.org/rustup/dist/aarch64-pc-windows-msvc/rustup-init.exe -OutFile $installer
+          & $installer -y --default-toolchain none --profile minimal
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Add-Content $env:GITHUB_PATH (Join-Path $env:USERPROFILE '.cargo\bin')
+        }
+    # Reads the channel, components and targets from rust-toolchain.toml.
+    - shell: bash
+      run: rustup toolchain install && rustc --version
+    - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      with:
+        key: ${{ inputs.cache-key }}
+        save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}

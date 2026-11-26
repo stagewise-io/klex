@@ -22,6 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: ./.github/actions/setup-workspace
+      - uses: ./.github/actions/setup-rust
       - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         env:
           # Same fail-fast bound as the pnpm store restore in setup-workspace.
@@ -48,6 +49,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: ./.github/actions/setup-workspace
+      - uses: ./.github/actions/setup-rust
       - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         env:
           # Same fail-fast bound as the pnpm store restore in setup-workspace.
@@ -90,6 +92,109 @@ jobs:
       - run: pnpm --filter @klex/machine typecheck
       - run: pnpm --filter @klex/machine test
       - run: pnpm --filter @klex/machine verify
+
+  rust:
+    name: Rust
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: ./.github/actions/setup-rust
+      - run: cargo fmt-check
+      - run: cargo lint
+      - run: cargo test --workspace --locked
+      - name: cargo deny
+        run: |
+          version=0.22.1
+          archive="cargo-deny-$version-x86_64-unknown-linux-musl"
+          curl --fail --silent --show-error --location --output "$RUNNER_TEMP/$archive.tar.gz" \
+            "https://github.com/EmbarkStudios/cargo-deny/releases/download/$version/$archive.tar.gz"
+          echo "13f7e825e9cb811c2f8de63f29b0f45851dfb53004029f0f2501af524728364d  $RUNNER_TEMP/$archive.tar.gz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/$archive.tar.gz" -C "$RUNNER_TEMP"
+          "$RUNNER_TEMP/$archive/cargo-deny" check
+
+  klex-machine-rs:
+    name: klex-machine-rs (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x64-musl
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          - name: linux-arm64-musl
+            os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+          - name: darwin-arm64
+            os: macos-latest
+            target: aarch64-apple-darwin
+          # Cross-compiled on the arm64 runner, so it is built but not run.
+          - name: darwin-x64
+            os: macos-latest
+            target: x86_64-apple-darwin
+            cross: true
+          - name: win32-x64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - name: win32-arm64
+            os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache-key: ${{ matrix.target }}
+      - if: ${{ !matrix.cross }}
+        run: cargo test --locked --package klex-machine --target ${{ matrix.target }}
+      - run: cargo build --release --locked --package klex-machine --bin klex-machine-rs --target ${{ matrix.target }}
+      - if: ${{ !matrix.cross }}
+        run: target/${{ matrix.target }}/release/klex-machine-rs --version
+      - if: runner.os == 'Linux'
+        name: Verify the binary is fully static
+        run: |
+          binary=target/${{ matrix.target }}/release/klex-machine-rs
+          file "$binary"
+          file "$binary" | grep -Eq 'static(-pie)? linked'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: klex-machine-rs-${{ matrix.name }}
+          path: target/${{ matrix.target }}/release/klex-machine-rs${{ runner.os == 'Windows' && '.exe' || '' }}
+          retention-days: 14
+          if-no-files-found: error
+
+  # Linux runs the full conformance suite for both implementations in Unit
+  # Tests; this covers the platform-specific PTY and filesystem behaviour.
+  klex-machine-conformance:
+    name: klex-machine conformance (${{ matrix.implementation }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - macos-latest
+          - windows-latest
+        implementation:
+          - ts
+          - rust
+    env:
+      KLEX_MACHINE_IMPL: ${{ matrix.implementation }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: ./.github/actions/setup-workspace
+        with:
+          install-scope: machine-conformance
+          install-filter: --filter klex --filter @klex/machine-conformance...
+      - if: matrix.implementation == 'ts'
+        run: pnpm --filter @klex/machine... build
+      - if: matrix.implementation == 'rust'
+        uses: ./.github/actions/setup-rust
+      - if: matrix.implementation == 'rust'
+        run: pnpm --filter @klex/machine-rs build
+      - run: pnpm --filter @klex/machine-conformance typecheck
+      - run: pnpm --filter @klex/machine-conformance test
 
   package-release-scopes:
     name: Package Release Scopes

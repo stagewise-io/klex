@@ -125,6 +125,8 @@ describe('Node runtime options', () => {
     await enrollAndServe({
       ...proxyEnv(),
       NODE_USE_ENV_PROXY: '1',
+      // Windows treats both spellings as one variable.
+      NO_PROXY: 'localhost, 127.0.0.1',
       no_proxy: 'localhost, 127.0.0.1',
     });
     expect(proxy.tunnels).toEqual([]);

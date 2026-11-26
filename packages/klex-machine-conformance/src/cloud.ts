@@ -17,7 +17,13 @@ import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import type { Duplex } from 'node:stream';
 
-import { createEnvironmentId, createProxy } from '@klex/mcp-proxy-sdk/core';
+import {
+  createEnvironmentId,
+  createProxy,
+  type McpProxy,
+  type ProxyFrame,
+} from '@klex/mcp-proxy-sdk/core';
+import { createProxyHttp, type ProxyHttp } from '@klex/mcp-proxy-sdk/http';
 import { createProxyNodeHandlers } from '@klex/mcp-proxy-sdk/server';
 import {
   createLocalJWKSet,
@@ -27,6 +33,13 @@ import {
   jwtVerify,
   SignJWT,
 } from 'jose';
+import { type WebSocket, WebSocketServer } from 'ws';
+
+import {
+  type MachineReportedFacts,
+  type ParsedMachineFacts,
+  parseMachineFacts,
+} from './machine-facts.js';
 
 // --- A throwaway CA and localhost certificate, DER-encoded by hand. ---
 
@@ -165,7 +178,16 @@ export interface TokenRequest {
 
 export interface MachineConnection {
   machineId: string;
-  facts: unknown;
+  /** The facts Cloud would store, after its own validation. */
+  facts: MachineReportedFacts | undefined;
+  factsReport: ParsedMachineFacts | { status: 'invalid'; reason: 'storage' };
+}
+
+/** A frame the proxy exchanged with a machine. */
+export interface RecordedFrame {
+  machineId: string;
+  to: 'machine' | 'proxy';
+  frame: ProxyFrame;
 }
 
 export interface FakeCloud {
@@ -174,6 +196,7 @@ export interface FakeCloud {
   readonly machines: Map<string, EnrolledMachine>;
   readonly tokenRequests: TokenRequest[];
   readonly connections: MachineConnection[];
+  readonly frames: RecordedFrame[];
   readonly enrollRequests: unknown[];
   issueCode(): string;
   /** Plain-HTTP proxy URL for a machine's MCP endpoint. */
@@ -189,6 +212,13 @@ export interface FakeCloud {
     route: 'enroll' | 'token' | 'prm',
     respond: ((response: ServerResponse) => void) | undefined,
   ): void;
+  /**
+   * Hands later authenticated machine WebSockets to `accept` instead of the
+   * proxy, so a test can speak the frame protocol itself.
+   */
+  intercept(
+    accept: ((socket: WebSocket, machineId: string) => void) | undefined,
+  ): void;
   /** Severs machine WebSockets and revokes their tokens. */
   dropConnections(): void;
   close(): Promise<void>;
@@ -203,6 +233,46 @@ async function readBody(request: IncomingMessage): Promise<string> {
 function json(response: ServerResponse, status: number, value: unknown) {
   response.writeHead(status, { 'content-type': 'application/json' });
   response.end(JSON.stringify(value));
+}
+
+async function serveProxyHttp(
+  proxyHttp: ProxyHttp,
+  request: IncomingMessage,
+  response: ServerResponse,
+) {
+  const abort = new AbortController();
+  response.once('close', () => abort.abort());
+  const chunks: Buffer[] = [];
+  for await (const chunk of request) chunks.push(chunk as Buffer);
+  const headers = new Headers();
+  for (const [name, value] of Object.entries(request.headers))
+    for (const item of [value ?? []].flat()) headers.append(name, item);
+  const method = request.method ?? 'GET';
+  const proxied = await proxyHttp.fetch(
+    new Request(`http://${request.headers.host}${request.url ?? '/'}`, {
+      method,
+      headers,
+      ...(method === 'GET' || method === 'HEAD'
+        ? {}
+        : { body: Buffer.concat(chunks) }),
+      signal: abort.signal,
+    }),
+  );
+  response.writeHead(proxied.status, Object.fromEntries(proxied.headers));
+  if (!proxied.body) return void response.end();
+  const reader = proxied.body.getReader();
+  const cancel = () => void reader.cancel().catch(() => undefined);
+  if (abort.signal.aborted) cancel();
+  else abort.signal.addEventListener('abort', cancel, { once: true });
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!response.write(value))
+        await once(response, 'drain', { signal: abort.signal });
+    }
+  } catch {}
+  response.end();
 }
 
 async function listen(server: Server): Promise<number> {
@@ -228,33 +298,66 @@ export async function startFakeCloud(directory: string): Promise<FakeCloud> {
   const tokens = new Map<string, string>();
   const tokenRequests: TokenRequest[] = [];
   const connections: MachineConnection[] = [];
+  const frames: RecordedFrame[] = [];
   const enrollRequests: unknown[] = [];
   const overrides = new Map<string, (response: ServerResponse) => void>();
   let nextMachine = 1;
+  let intercept: ((socket: WebSocket, machineId: string) => void) | undefined;
 
-  const proxy = createProxy();
+  const authenticate = (request: IncomingMessage) => {
+    const token = /^Bearer (.+)$/.exec(
+      request.headers.authorization ?? '',
+    )?.[1];
+    const machineId = token ? tokens.get(token) : undefined;
+    if (!machineId) return undefined;
+    const parsed = parseMachineFacts(request);
+    // jsonb rejects NUL, so Cloud would drop such a report when storing it.
+    const report:
+      | ParsedMachineFacts
+      | { status: 'invalid'; reason: 'storage' } =
+      parsed.status === 'valid' &&
+      JSON.stringify(parsed.facts).includes('\\u0000')
+        ? { status: 'invalid', reason: 'storage' }
+        : parsed;
+    connections.push({
+      machineId,
+      facts: report.status === 'valid' ? report.facts : undefined,
+      factsReport: report,
+    });
+    return machineId;
+  };
+
+  const realProxy = createProxy();
+  const proxy: McpProxy = {
+    registerEnvironment: (environmentId, connection) =>
+      realProxy.registerEnvironment(environmentId, {
+        send: (frame) => {
+          frames.push({ machineId: environmentId, to: 'machine', frame });
+          return connection.send(frame);
+        },
+        onFrame: (handler) =>
+          connection.onFrame((frame) => {
+            frames.push({ machineId: environmentId, to: 'proxy', frame });
+            handler(frame);
+          }),
+        onClose: (handler) => connection.onClose(handler),
+        close: () => connection.close(),
+      }),
+    openExchange: (environmentId, request, options) =>
+      realProxy.openExchange(environmentId, request, options),
+    close: () => realProxy.close(),
+  };
   const handlers = createProxyNodeHandlers({
     proxy,
     parseEnvironmentId: createEnvironmentId,
     routePrefix: '/machines/',
     environmentWebSocketPath: '/machine-connections',
     authenticateEnvironment: ({ request }) => {
-      const token = /^Bearer (.+)$/.exec(
-        request.headers.authorization ?? '',
-      )?.[1];
-      const machineId = token ? tokens.get(token) : undefined;
-      if (!machineId) return undefined;
-      const facts = request.headers['x-klex-machine-facts'];
-      connections.push({
-        machineId,
-        facts:
-          typeof facts === 'string'
-            ? JSON.parse(Buffer.from(facts, 'base64url').toString('utf8'))
-            : undefined,
-      });
-      return createEnvironmentId(machineId);
+      const machineId = authenticate(request);
+      return machineId ? createEnvironmentId(machineId) : undefined;
     },
   });
+  const rawSockets = new WebSocketServer({ noServer: true });
 
   const httpsServer = createHttpsServer({ cert: leafPem, key: leafKey });
   const httpsPort = await listen(httpsServer);
@@ -374,12 +477,29 @@ export async function startFakeCloud(directory: string): Promise<FakeCloud> {
   httpsServer.on('upgrade', (request, socket, head) => {
     sockets.add(socket);
     socket.once('close', () => sockets.delete(socket));
-    void handlers.handleEnvironmentUpgrade(request, socket, head);
+    const accept = intercept;
+    if (!accept || request.url !== '/machine-connections')
+      return void handlers.handleEnvironmentUpgrade(request, socket, head);
+    const machineId = authenticate(request);
+    if (!machineId) {
+      socket.end('HTTP/1.1 401 Unauthorized\r\nconnection: close\r\n\r\n');
+      return;
+    }
+    rawSockets.handleUpgrade(request, socket, head, (webSocket) =>
+      accept(webSocket, machineId),
+    );
   });
 
-  // Test clients reach the proxy over plain HTTP.
+  // Test clients reach the proxy over plain HTTP. The adapter cancels the
+  // response as soon as the client goes away; toNodeHandler only notices on the
+  // next chunk, which an idle SSE stream never sends.
+  const proxyHttp = createProxyHttp({
+    proxy,
+    parseEnvironmentId: createEnvironmentId,
+    routePrefix: '/machines/',
+  });
   const httpServer = createHttpServer((request, response) => {
-    void handlers.handleHttp(request, response);
+    void serveProxyHttp(proxyHttp, request, response);
   });
   const httpPort = await listen(httpServer);
 
@@ -389,6 +509,7 @@ export async function startFakeCloud(directory: string): Promise<FakeCloud> {
     machines,
     tokenRequests,
     connections,
+    frames,
     enrollRequests,
     issueCode() {
       const code = `code-${randomBytes(8).toString('hex')}`;
@@ -410,13 +531,19 @@ export async function startFakeCloud(directory: string): Promise<FakeCloud> {
       if (respond) overrides.set(route, respond);
       else overrides.delete(route);
     },
+    intercept(accept) {
+      intercept = accept;
+    },
     dropConnections() {
       tokens.clear();
       for (const socket of sockets) socket.destroy();
     },
     async close() {
       await handlers.close();
+      await proxyHttp.close();
       await proxy.close();
+      for (const client of rawSockets.clients) client.terminate();
+      rawSockets.close();
       httpsServer.closeAllConnections();
       httpServer.closeAllConnections();
       await Promise.all([

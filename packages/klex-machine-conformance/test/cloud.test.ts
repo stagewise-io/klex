@@ -252,6 +252,37 @@ describe('cloud enrollment', () => {
       }
     },
   );
+
+  // Cloud renders the computer's icon and hardware from these facts and drops
+  // the whole report if any field fails its strict schema.
+  it.runIf(implementation === 'rust')(
+    'reports the same machine facts as the TypeScript implementation',
+    async () => {
+      const cwd = await temporaryDirectory();
+      const reports = [];
+      for (const target of ['ts', 'rust'] as const) {
+        const dataDir = await temporaryDirectory();
+        expect(
+          await enroll(cloud.issueCode(), dataDir, { implementation: target }),
+        ).toMatchObject({ code: 0 });
+        const before = cloud.connections.length;
+        const machine = spawnCli(
+          ['serve', '--mode', 'enrolled', '--data-dir', dataDir, '--cwd', cwd],
+          { env, implementation: target },
+        );
+        await machine.stdoutContains('is live');
+        const connection = cloud.connections[before]!;
+        expect(connection.factsReport).toMatchObject({ status: 'valid' });
+        reports.push(connection.facts);
+        await machine.stop();
+      }
+      const [ts, rust] = reports;
+      expect(rust).toEqual(ts);
+      expect(Object.keys(rust!.host!).sort()).toEqual(
+        Object.keys(ts!.host!).sort(),
+      );
+    },
+  );
 });
 
 describe('cloud serving', () => {
@@ -311,7 +342,8 @@ describe('cloud serving', () => {
     expect(claims.jti).toMatch(/^[A-Za-z0-9_-]{43}$/);
 
     const [connection] = cloud.connections;
-    const facts = connection!.facts as {
+    expect(connection!.factsReport).toMatchObject({ status: 'valid' });
+    const facts = connection!.facts as unknown as {
       v: number;
       machineVersion: string;
       os: Record<string, unknown>;

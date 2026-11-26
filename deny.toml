@@ -23,6 +23,10 @@ allow = [
   "Apache-2.0",
   "BSD-2-Clause",
   "BSD-3-Clause",
+  # Mozilla's root certificate list in webpki-roots.
+  "CDLA-Permissive-2.0",
+  # ring and rustls-webpki.
+  "ISC",
   "MIT",
   "Unicode-3.0",
   "Zlib",

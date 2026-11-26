@@ -112,11 +112,17 @@ export interface CliResult {
   stderr: string;
 }
 
+export interface CliOptions {
+  env?: NodeJS.ProcessEnv;
+  cwd?: string;
+  implementation?: Implementation;
+}
+
 export async function runCli(
   args: string[],
-  options: { env?: NodeJS.ProcessEnv; cwd?: string } = {},
+  options: CliOptions = {},
 ): Promise<CliResult> {
-  const { file, args: prefix } = executable();
+  const { file, args: prefix } = executable(options.implementation);
   const child = spawn(file, [...prefix, ...args], {
     cwd: options.cwd,
     env: { ...baseEnv(), ...options.env },
@@ -135,6 +141,74 @@ export async function runCli(
     child.once('close', done);
   });
   return { code, stdout, stderr };
+}
+
+export interface CliProcess {
+  readonly child: ChildProcess;
+  readonly output: { stdout: string; stderr: string };
+  readonly exited: Promise<{ code: number | null; signal: string | null }>;
+  /** Resolves once stdout contains `text`; rejects if the process exits first. */
+  stdoutContains(text: string, timeout?: number): Promise<void>;
+  stop(
+    signal?: NodeJS.Signals,
+  ): Promise<{ code: number | null; signal: string | null }>;
+}
+
+/** Spawns a long-running command, killed after the current test. */
+export function spawnCli(
+  args: string[],
+  options: CliOptions & { stdin?: string } = {},
+): CliProcess {
+  const { file, args: prefix } = executable(options.implementation);
+  const child = spawn(file, [...prefix, ...args], {
+    cwd: options.cwd,
+    env: { ...baseEnv(), ...options.env },
+    stdio: [options.stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
+  });
+  if (options.stdin !== undefined) child.stdin!.end(options.stdin);
+  const output = { stdout: '', stderr: '' };
+  child.stdout!.setEncoding('utf8').on('data', (chunk: string) => {
+    output.stdout += chunk;
+  });
+  child.stderr!.setEncoding('utf8').on('data', (chunk: string) => {
+    output.stderr += chunk;
+  });
+  const exited = new Promise<{ code: number | null; signal: string | null }>(
+    (done) => {
+      child.once('close', (code, signal) => done({ code, signal }));
+      child.once('error', () => done({ code: null, signal: null }));
+    },
+  );
+  let finished = false;
+  void exited.then(() => {
+    finished = true;
+  });
+  const stop = async (signal: NodeJS.Signals = 'SIGTERM') => {
+    if (child.exitCode === null && child.signalCode === null)
+      child.kill(signal);
+    return exited;
+  };
+  cleanups.push(async () => {
+    await stop('SIGKILL');
+  });
+  return {
+    child,
+    output,
+    exited,
+    stop,
+    stdoutContains: (text, timeout = 20_000) =>
+      waitFor(
+        () => {
+          if (output.stdout.includes(text)) return true;
+          if (finished)
+            throw new Error(
+              `Process exited before printing ${JSON.stringify(text)}:\n${output.stdout}\n${output.stderr}`,
+            );
+          return undefined;
+        },
+        { timeout },
+      ).then(() => undefined),
+  };
 }
 
 export interface JsonRpcError {

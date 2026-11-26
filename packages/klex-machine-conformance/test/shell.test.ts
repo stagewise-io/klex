@@ -65,13 +65,16 @@ async function readUntilExit(
     id,
     waitMs: 1000,
   });
-  for (let attempt = 0; attempt < 40 && result.running; attempt += 1)
+  let output = result.output;
+  for (let attempt = 0; attempt < 40 && result.running; attempt += 1) {
     result = await machine.tool<ReadResult>('readShellSession', {
       id,
       cursor: result.cursor,
       waitMs: 250,
     });
-  return result;
+    output += result.output;
+  }
+  return { ...result, output };
 }
 
 describe('shell sessions', () => {

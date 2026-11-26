@@ -157,7 +157,7 @@ jobs:
         run: |
           binary=target/${{ matrix.target }}/release/klex-machine-rs
           file "$binary"
-          file "$binary" | grep -Eq 'static(-pie)? linked'
+          file "$binary" | grep -Eq '(static-pie|statically) linked'
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: klex-machine-rs-${{ matrix.name }}
@@ -187,8 +187,8 @@ jobs:
         with:
           install-scope: machine-conformance
           install-filter: --filter klex --filter @klex/machine-conformance...
-      - if: matrix.implementation == 'ts'
-        run: pnpm --filter @klex/machine... build
+      # The Rust run also needs the TypeScript server for takeover tests.
+      - run: pnpm --filter @klex/machine... build
       - if: matrix.implementation == 'rust'
         uses: ./.github/actions/setup-rust
       - if: matrix.implementation == 'rust'

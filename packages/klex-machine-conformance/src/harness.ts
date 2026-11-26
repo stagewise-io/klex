@@ -89,6 +89,11 @@ const removeDirectory = (directory: string) =>
     maxRetries: 10,
     recursive: true,
     retryDelay: 100,
+  }).catch((error: NodeJS.ErrnoException) => {
+    // Windows keeps a killed server's shell children, and with them their cwd,
+    // alive for a while after the server exits.
+    if (!(windows && (error.code === 'EBUSY' || error.code === 'EPERM')))
+      throw error;
   });
 
 /** A real path under the OS temp dir, removed after the current test. */

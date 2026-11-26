@@ -546,10 +546,21 @@ fn spawn_reader(
     std::thread::spawn(move || {
         let mut decoder = Utf8Decoder::default();
         let mut chunk = vec![0u8; 64 * 1024];
+        #[cfg(windows)]
+        let mut cursor_answered = false;
         loop {
             match reader.read(&mut chunk) {
                 Ok(0) => break,
-                Ok(count) => session.append(&decoder.write(&chunk[..count])),
+                Ok(count) => {
+                    let text = decoder.write(&chunk[..count]);
+                    #[cfg(windows)]
+                    let text = if cursor_answered {
+                        text
+                    } else {
+                        answer_cursor_query(&session, text, &mut cursor_answered)
+                    };
+                    session.append(&text);
+                }
                 Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
                 Err(_) => break,
             }
@@ -557,6 +568,22 @@ fn spawn_reader(
         session.append(&decoder.end());
         let _ = drained.send(());
     });
+}
+
+/// portable-pty opens ConPTY with `PSEUDOCONSOLE_INHERIT_CURSOR`, so conhost
+/// asks for the cursor position and holds the shell until it gets an answer.
+/// node-pty does not set that flag, so the query never reaches the output.
+#[cfg(windows)]
+fn answer_cursor_query(session: &Session, text: String, answered: &mut bool) -> String {
+    const QUERY: &str = "\x1b[6n";
+    let Some(index) = text.find(QUERY) else {
+        return text;
+    };
+    *answered = true;
+    if let Some(writer) = lock(&session.writer).as_mut() {
+        let _ = writer.write_all(b"\x1b[1;1R").and_then(|()| writer.flush());
+    }
+    format!("{}{}", &text[..index], &text[index + QUERY.len()..])
 }
 
 fn spawn_exit_watcher(

@@ -20,20 +20,30 @@ axum = "0.8.9"
 base64 = "0.23.1"
 bytes = "1.12.2"
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
+ed25519-dalek = { version = "3.0.0", features = ["pkcs8"] }
 futures = "0.3.34"
+getrandom = "0.4.3"
 http-body-util = "0.1.5"
 icu_collator = "2.4.0"
 ignore = "0.4.35"
 indexmap = "2.14.2"
+p256 = { version = "0.14.0", features = ["ecdsa"] }
 portable-pty = "0.9.0"
 regex = "1.13.2"
 regress = "0.12.0"
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider"] }
 rmcp = { version = "3.11.0", features = ["server", "transport-streamable-http-server"] }
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-pki-types = { version = "1.16.0", features = ["std"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.154", features = ["preserve_order"] }
+sha2 = "0.11.2"
 tokio = { version = "1.54.1", features = ["full"] }
+tokio-tungstenite = { version = "0.30.0", features = ["rustls-tls-webpki-roots"] }
 tower = { version = "0.5.3", features = ["util"] }
+url = "2.5.9"
 uuid = { version = "1.26.1", features = ["v4"] }
+webpki-roots = "1.0.12"
 
 [target."cfg(unix)".dependencies]
 libc = "0.2.191"
@@ -43,6 +53,8 @@ windows-sys = { version = "0.61.2", features = [
   "Win32_Foundation",
   "Win32_Security",
   "Win32_Storage_FileSystem",
+  "Win32_System_Registry",
+  "Win32_System_SystemInformation",
   "Win32_System_Threading",
 ] }
 

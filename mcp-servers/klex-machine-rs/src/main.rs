@@ -1,13 +1,22 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::Arc;
 
 use klex_machine::cli::{CliResult, MachineMode, help_text, parse_cli};
+use klex_machine::cloud::auth::{Authenticator, load_protected_resource};
+use klex_machine::cloud::enrollment::{bootstrap_managed_machine, connect_machine};
+use klex_machine::cloud::facts::MachineFactsOptions;
+use klex_machine::cloud::machine_live_message;
+use klex_machine::cloud::principal_router::{PrincipalRouter, PrincipalRouterOptions};
+use klex_machine::cloud::runtime::start_cloud_runtime;
+use klex_machine::cloud::state::load_machine_enrollment;
+use klex_machine::config::RuntimeConfig;
 use klex_machine::logger::Logger;
+use klex_machine::notifications::NotificationStore;
+use klex_machine::platform::signals;
 use klex_machine::server::{ServeOptions, serve};
 use klex_machine::{BIN_NAME, VERSION};
-
-const CLOUD_UNSUPPORTED: &str =
-    "Klex Cloud modes are not yet supported by klex-machine-rs; use --mode local";
 
 fn main() -> ExitCode {
     let argv: Vec<String> = std::env::args().skip(1).collect();
@@ -29,12 +38,7 @@ fn main() -> ExitCode {
             println!("{VERSION}");
             ExitCode::SUCCESS
         }
-        CliResult::Serve {
-            config,
-            data_dir,
-            mode: MachineMode::Local,
-            omit_host_details,
-        } => {
+        command => {
             let runtime = match tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .build()
@@ -42,23 +46,137 @@ fn main() -> ExitCode {
                 Ok(runtime) => runtime,
                 Err(error) => return fail(&error.to_string()),
             };
+            match runtime.block_on(run(command)) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(message) => fail(&message),
+            }
+        }
+    }
+}
+
+async fn run(command: CliResult) -> Result<(), String> {
+    match command {
+        CliResult::Help | CliResult::Version => Ok(()),
+        CliResult::Serve {
+            config,
+            data_dir,
+            mode: MachineMode::Local,
+            omit_host_details,
+        } => {
             let logger = Logger::stderr(config.log_level);
-            match runtime.block_on(serve(
+            serve(
                 ServeOptions {
                     config,
                     data_dir,
                     omit_host_details,
                 },
                 logger,
-            )) {
-                Ok(()) => ExitCode::SUCCESS,
-                Err(message) => fail(&message),
-            }
+            )
+            .await
         }
-        CliResult::Serve { .. } | CliResult::Enroll { .. } | CliResult::ManagedBootstrap { .. } => {
-            fail(CLOUD_UNSUPPORTED)
+        CliResult::Serve {
+            config,
+            data_dir,
+            omit_host_details,
+            ..
+        } => serve_cloud(config, data_dir, omit_host_details, true).await,
+        CliResult::Enroll {
+            cloud_base_url,
+            code,
+            data_dir,
+            serve,
+        } => {
+            let connected = connect_machine(&cloud_base_url, &code, &data_dir).await?;
+            let machine_id = &connected.enrollment.machine_id;
+            if connected.reused {
+                println!(
+                    "Already enrolled as machine {machine_id}; enrollment code not used again."
+                );
+            } else {
+                println!("Enrolled machine {machine_id}");
+            }
+            let Some((config, omit_host_details)) = serve else {
+                println!("Start it with: {BIN_NAME}");
+                return Ok(());
+            };
+            println!("Connecting to Klex Cloud...");
+            serve_cloud(config, data_dir, omit_host_details, true).await
+        }
+        CliResult::ManagedBootstrap {
+            cloud_base_url,
+            config,
+            data_dir,
+            enrollment_code_file,
+            omit_host_details,
+        } => {
+            bootstrap_managed_machine(&cloud_base_url, &data_dir, &enrollment_code_file).await?;
+            serve_cloud(config, data_dir, omit_host_details, false).await
         }
     }
+}
+
+async fn serve_cloud(
+    config: RuntimeConfig,
+    data_dir: PathBuf,
+    omit_host_details: bool,
+    announce: bool,
+) -> Result<(), String> {
+    let logger = Logger::stderr(config.log_level);
+    let enrollment = load_machine_enrollment(&data_dir)?;
+    let protected_resource = load_protected_resource(
+        &enrollment.oauth_protected_resource_url,
+        &enrollment.mcp_resource_url,
+    )
+    .await?;
+    let store = Arc::new(NotificationStore::new(Some(&data_dir), logger.clone()));
+    store.ready().await.map_err(|error| error.0)?;
+    let router = Arc::new(PrincipalRouter::new(PrincipalRouterOptions {
+        authenticator: Authenticator::new(
+            protected_resource.issuer,
+            protected_resource.resource,
+            format!("{}/api/auth/jwks", enrollment.cloud_base_url),
+            &enrollment.oauth_protected_resource_url,
+        ),
+        default_cwd: config.cwd.clone(),
+        store: store.clone(),
+        logger: logger.clone(),
+        omit_host_details,
+    }));
+    let handler_router = router.clone();
+    let runtime = start_cloud_runtime(
+        &data_dir,
+        Arc::new(move |request| {
+            let router = handler_router.clone();
+            Box::pin(async move { router.fetch(request).await })
+        }),
+        Some(MachineFactsOptions {
+            cwd: config.cwd.clone(),
+            omit_host_details,
+            version: VERSION.into(),
+        }),
+        logger,
+    )
+    .await;
+    let runtime = match runtime {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            router.close().await;
+            store.close().await;
+            return Err(error);
+        }
+    };
+    if announce {
+        println!("{}", machine_live_message(&enrollment.machine_id));
+    }
+    signals::shutdown().await;
+    tokio::spawn(async move {
+        let second = signals::shutdown().await;
+        std::process::exit(if second == "SIGTERM" { 143 } else { 130 });
+    });
+    runtime.close().await;
+    router.close().await;
+    store.close().await;
+    Ok(())
 }
 
 fn fail(message: &str) -> ExitCode {

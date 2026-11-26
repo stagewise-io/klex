@@ -3,6 +3,7 @@
 //! and checked against the TypeScript server by the conformance suite.
 
 pub mod cli;
+pub mod cloud;
 pub mod collate;
 pub mod config;
 pub mod device_type;

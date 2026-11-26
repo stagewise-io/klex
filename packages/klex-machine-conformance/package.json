@@ -12,9 +12,11 @@
   "devDependencies": {
     "@klex/machine": "workspace:*",
     "@klex/machine-rs": "workspace:*",
+    "@klex/mcp-proxy-sdk": "workspace:*",
     "@modelcontextprotocol/client": "2.4.0",
     "@stagewise/typescript-config": "workspace:*",
     "@types/node": "26.1.1",
+    "jose": "6.2.10",
     "typescript": "7.0.2",
     "vitest": "4.1.10"
   },

@@ -602,6 +602,9 @@ importers:
       '@klex/machine-rs':
         specifier: workspace:*
         version: link:../../mcp-servers/klex-machine-rs
+      '@klex/mcp-proxy-sdk':
+        specifier: workspace:*
+        version: link:../mcp-proxy-sdk
       '@modelcontextprotocol/client':
         specifier: 2.4.0
         version: 2.4.0
@@ -611,6 +614,9 @@ importers:
       '@types/node':
         specifier: 26.1.1
         version: 26.1.1
+      jose:
+        specifier: 6.2.10
+        version: 6.2.10
       typescript:
         specifier: 7.0.2
         version: 7.0.2

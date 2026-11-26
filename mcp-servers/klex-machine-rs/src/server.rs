@@ -31,10 +31,63 @@ pub struct ServeOptions {
 
 type McpService = StreamableHttpService<MachineHandler, LocalSessionManager>;
 
+/// One principal's MCP endpoint: push subscriptions, then rmcp.
 #[derive(Clone)]
-struct AppState {
+pub struct MachineEndpoint {
     machine: Arc<Machine>,
     mcp: McpService,
+}
+
+impl MachineEndpoint {
+    pub fn new(machine: Arc<Machine>) -> Self {
+        let handler = MachineHandler::new(machine.clone());
+        let mcp = StreamableHttpService::new(
+            move || Ok(handler.clone()),
+            Arc::new(LocalSessionManager::default()),
+            StreamableHttpServerConfig::default()
+                .with_legacy_session_mode(false)
+                .with_json_response(true)
+                .disable_allowed_hosts()
+                .with_max_request_body_bytes(usize::MAX),
+        );
+        Self { machine, mcp }
+    }
+
+    pub fn machine(&self) -> &Arc<Machine> {
+        &self.machine
+    }
+
+    pub async fn handle(&self, request: Request) -> Response {
+        let request = if request.method() == Method::POST {
+            let (parts, body) = request.into_parts();
+            let bytes = match body.collect().await {
+                Ok(collected) => collected.to_bytes(),
+                Err(_) => return invalid_json(),
+            };
+            if let Ok(message) = serde_json::from_slice::<Value>(&bytes)
+                && message.is_object()
+                && is_push_listen(&message)
+            {
+                return self
+                    .machine
+                    .subscriptions()
+                    .listen(&message, self.machine.principal_id());
+            }
+            Request::from_parts(parts, Body::from(bytes))
+        } else {
+            request
+        };
+        self.machine.prepare_icons().await;
+        match self.mcp.clone().oneshot(request).await {
+            Ok(response) => response.map(Body::new),
+            Err(never) => match never {},
+        }
+    }
+}
+
+#[derive(Clone)]
+struct AppState {
+    endpoint: MachineEndpoint,
     /// `createMcpHonoApp` protects these listener hosts from DNS rebinding.
     validates_local_hosts: bool,
 }
@@ -71,19 +124,8 @@ pub async fn serve(options: ServeOptions, logger: Logger) -> Result<(), String> 
         .map(|address| address.port())
         .unwrap_or(config.port);
 
-    let handler = MachineHandler::new(machine.clone());
-    let mcp = StreamableHttpService::new(
-        move || Ok(handler.clone()),
-        Arc::new(LocalSessionManager::default()),
-        StreamableHttpServerConfig::default()
-            .with_legacy_session_mode(false)
-            .with_json_response(true)
-            .disable_allowed_hosts()
-            .with_max_request_body_bytes(usize::MAX),
-    );
     let state = AppState {
-        machine: machine.clone(),
-        mcp,
+        endpoint: MachineEndpoint::new(machine.clone()),
         validates_local_hosts: ["127.0.0.1", "localhost", "::1"].contains(&config.host.as_str()),
     };
     let app = Router::new()
@@ -295,30 +337,7 @@ fn invalid_json() -> Response {
 }
 
 async fn mcp_endpoint(State(state): State<AppState>, request: Request) -> Response {
-    let request = if request.method() == Method::POST {
-        let (parts, body) = request.into_parts();
-        let bytes = match body.collect().await {
-            Ok(collected) => collected.to_bytes(),
-            Err(_) => return invalid_json(),
-        };
-        if let Ok(message) = serde_json::from_slice::<Value>(&bytes)
-            && message.is_object()
-            && is_push_listen(&message)
-        {
-            return state
-                .machine
-                .subscriptions()
-                .listen(&message, state.machine.principal_id());
-        }
-        Request::from_parts(parts, Body::from(bytes))
-    } else {
-        request
-    };
-    state.machine.prepare_icons().await;
-    match state.mcp.clone().oneshot(request).await {
-        Ok(response) => response.map(Body::new),
-        Err(never) => match never {},
-    }
+    state.endpoint.handle(request).await
 }
 
 #[cfg(test)]

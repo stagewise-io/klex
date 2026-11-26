@@ -861,7 +861,7 @@ fn create_private_dir(path: &Path) -> std::io::Result<()> {
     platform::fs::create_dir(path, 0o700)
 }
 
-fn create_private_dir_all(path: &Path) -> std::io::Result<()> {
+pub(crate) fn create_private_dir_all(path: &Path) -> std::io::Result<()> {
     platform::fs::create_dir_all(path, 0o700)
 }
 

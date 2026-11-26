@@ -1,0 +1,39 @@
+[graph]
+targets = [
+  "x86_64-unknown-linux-musl",
+  "aarch64-unknown-linux-musl",
+  "x86_64-pc-windows-msvc",
+  "aarch64-pc-windows-msvc",
+  "x86_64-apple-darwin",
+  "aarch64-apple-darwin",
+]
+all-features = false
+
+[advisories]
+version = 2
+yanked = "deny"
+ignore = [
+  { id = "RUSTSEC-2026-0543", reason = "chrono is unmaintained but required by rmcp and schemars; revisit when rmcp moves off it" },
+]
+
+[licenses]
+version = 2
+confidence-threshold = 0.93
+allow = [
+  "Apache-2.0",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "MIT",
+  "Unicode-3.0",
+  "Zlib",
+]
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

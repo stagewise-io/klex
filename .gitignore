@@ -1,6 +1,8 @@
 node_modules/
 .pnpm-store/
 dist/
+# Cargo build output
+/target/
 .vercel/
 coverage/
 apps/website/test-results/

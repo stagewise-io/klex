@@ -1,0 +1,67 @@
+---
+title: Connect a computer
+description: Give a Klex Bot a managed computer or connect your own with @klex/machine.
+related:
+  - /bot/concepts/brain-and-computers
+  - /bot/concepts/mcp
+  - /bot/guides/control-and-limits
+---
+
+A Klex Bot can use a connected computer to work with files, run commands, and, when a desktop is available, use graphical apps. The Bot is the brain; the computer is a tool it uses. A Bot can use more than one computer, and you can assign a computer to more than one Bot.
+
+Choose a managed computer in Klex Cloud, or connect your own computer with the `@klex/machine` MCP server. The Bot's available tools depend on the computer and its configuration.
+
+## Before you connect
+
+A computer connection gives the Bot substantial access. `@klex/machine` can read and change files and run shell commands with the permissions of the operating-system user running it. Its working directory is not a sandbox: absolute paths remain accessible. A desktop can expose anything that user can see or use.
+
+Use a dedicated, unprivileged account or an isolated computer where practical. Remove unnecessary credentials and sensitive data, and grant access only to Bots and people you trust. Review important actions independently. See [Control and limits](/bot/guides/control-and-limits).
+
+## Use a managed computer
+
+In your Bot's **Computers** section, select **Add computer**, then **Set up a computer**. Choose **Cloud computer**, select a size and internet-access setting, review the price, and select **Create computer**. Check its status and any connection error in Cloud: an assignment alone does not guarantee that the computer is connected.
+
+Managed computers can provide a desktop for graphical work as well as file and shell tools. When a screen is available, you can watch it in Cloud. An administrator can take control, then give control back to the Bot. While a person holds control, Bot desktop input is blocked. The screen and tools depend on the computer being available and its desktop support being active.
+
+## Connect your own computer to Cloud
+
+You need Node.js 24 or later on the computer. An organization administrator can set up a computer in Cloud and assign it to an enrolled Bot.
+
+1. In Cloud, open your Bot's **Computers** section and select **Add computer**, then **Set up a computer**.
+2. Choose **Your own computer** and follow the setup instructions. Cloud provides an install and enrollment command. Treat the enrollment code as a secret and don't share it in chat or commit it to a repository.
+3. Run the command on the computer you want to connect. Enrollment starts the machine process; leave it running.
+4. Check that the computer connects and is assigned to the Bot. If it is not assigned, add it from the Bot's **Computers** section. You can assign the same computer to other Bots separately.
+
+The process connects outbound to Cloud. The computer appears offline when the process stops. Enrollment does not install a background service: closing the terminal or restarting the computer stops it. After enrollment, run `klex-machine` as the same operating-system user to start it again with its saved identity. Keep the identity directory, `~/.klex-machine` by default, private.
+
+A compatible desktop may also be available on your own computer. On macOS, desktop use requires a logged-in session and Screen Recording and Accessibility permissions. On Windows, it requires an interactive signed-in session. Linux desktop support depends on a working display and the required desktop tools. A headless computer can still provide file and shell tools.
+
+### Keep a Linux computer connected
+
+A Linux administrator can configure a systemd service to start `klex-machine` at boot and restart it on failure. The service must run as the intended unprivileged user and use that user's existing machine identity. A background service does not by itself provide a desktop session.
+
+If you use a coding agent to set up the service, you can adapt this prompt after enrolling the computer:
+
+```text
+Help me run my already-enrolled klex-machine as a systemd service on this Linux computer. First inspect the installed binary, the intended unprivileged user, and its existing identity directory. Propose a service that starts at boot and restarts on failure, using that same user and identity. Do not put enrollment codes or private keys in the unit, logs, or your response. Show me the proposed changes and commands and ask before making privileged changes. Explain how to check the service and stop or disable it.
+```
+
+Review the proposed service before enabling it. Protect the identity directory and avoid running the service as root unless you have a specific reason.
+
+## Connect locally without Cloud
+
+For a standalone Bot on the same computer, run the server in local mode:
+
+```sh
+# Install once with npm or pnpm. Node.js 24 or later is required.
+npm install -g @klex/machine
+klex-machine serve --mode local --cwd /path/to/workspace --port 3123
+```
+
+In the Bot's MCP server settings, add the local server URL `http://127.0.0.1:3123/mcp`. Keep the process running while the Bot uses it.
+
+Local mode is unauthenticated and defaults to the loopback interface. Do not expose its listener to the network: anyone who can reach it can use the server with the operating-system user's permissions. The `--cwd` setting changes the starting directory, not the access boundary.
+
+## Disconnect a computer
+
+In Cloud, use **Disconnect** on the Bot's computer connection to revoke that Bot's assignment. The computer remains in the organization, and other assigned Bots retain their access. To stop access through your own machine process, stop `klex-machine`; review any Cloud assignments and local credentials as well.

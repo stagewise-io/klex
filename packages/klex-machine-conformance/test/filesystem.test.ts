@@ -1,5 +1,6 @@
 import {
   chmod,
+  lstat,
   mkdir,
   readFile,
   stat,
@@ -138,22 +139,25 @@ describe('filesystem tools', () => {
     ).resolves.toBe('preserved');
   });
 
-  it.skipIf(windows)(
-    'replaces symlinks without copying their mode to the new file',
-    async () => {
-      const machine = await startMachine();
-      await machine.tool('write', { path: 'source', content: 'source' });
-      await chmod(join(machine.cwd, 'source'), 0o777);
-      await symlink(join(machine.cwd, 'source'), join(machine.cwd, 'link'));
-      await machine.tool('write', { path: 'link', content: 'replacement' });
-      const link = await stat(join(machine.cwd, 'link'));
-      expect(link.isFile()).toBe(true);
-      expect(link.mode & 0o777).not.toBe(0o777);
-      expect(await readFile(join(machine.cwd, 'source'), 'utf8')).toBe(
-        'source',
-      );
-    },
-  );
+  it('replaces symlinks without copying their mode to the new file', async () => {
+    const machine = await startMachine();
+    await machine.tool('write', { path: 'source', content: 'source' });
+    await chmod(join(machine.cwd, 'source'), 0o777);
+    await symlink(
+      join(machine.cwd, 'source'),
+      join(machine.cwd, 'link'),
+      'file',
+    );
+    await machine.tool('write', { path: 'link', content: 'replacement' });
+    const link = await lstat(join(machine.cwd, 'link'));
+    expect(link.isFile()).toBe(true);
+    // Windows has no POSIX mode bits to copy.
+    if (!windows) expect(link.mode & 0o777).not.toBe(0o777);
+    expect(await readFile(join(machine.cwd, 'link'), 'utf8')).toBe(
+      'replacement',
+    );
+    expect(await readFile(join(machine.cwd, 'source'), 'utf8')).toBe('source');
+  });
 
   it('applies sequential edits atomically', async () => {
     const machine = await startMachine();

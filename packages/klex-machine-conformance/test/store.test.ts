@@ -129,20 +129,17 @@ describe('notification state', () => {
     expect(await events(third)).toEqual([]);
   });
 
-  it.skipIf(windows)(
-    'quarantines corrupt state and reclaims stale locks',
-    async () => {
-      const dataDir = await temporaryDirectory();
-      const first = await startMachine({ dataDir });
-      await first.stop();
-      await writeFile(join(dataDir, 'notifications/lock'), '2147483647\n');
-      await writeFile(join(dataDir, 'notifications/state.json'), '{broken');
-      const second = await startMachine({ dataDir });
-      expect(await readdir(join(dataDir, 'notifications'))).toContainEqual(
-        expect.stringMatching(/^state\.json\.corrupt-/),
-      );
-      await completedWatcher(second);
-      await persisted(second, 'watcher.completed');
-    },
-  );
+  it('quarantines corrupt state and reclaims stale locks', async () => {
+    const dataDir = await temporaryDirectory();
+    const first = await startMachine({ dataDir });
+    await first.stop();
+    await writeFile(join(dataDir, 'notifications/lock'), '2147483647\n');
+    await writeFile(join(dataDir, 'notifications/state.json'), '{broken');
+    const second = await startMachine({ dataDir });
+    expect(await readdir(join(dataDir, 'notifications'))).toContainEqual(
+      expect.stringMatching(/^state\.json\.corrupt-/),
+    );
+    await completedWatcher(second);
+    await persisted(second, 'watcher.completed');
+  });
 });

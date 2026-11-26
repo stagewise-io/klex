@@ -5,7 +5,6 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { type FakeCloud, startFakeCloud } from '../src/cloud.js';
-import type { MachineReportedFacts } from '../src/machine-facts.js';
 import {
   type CliOptions,
   implementation,
@@ -16,6 +15,7 @@ import {
   waitFor,
   windows,
 } from '../src/harness.js';
+import type { MachineReportedFacts } from '../src/machine-facts.js';
 
 let cloud: FakeCloud;
 let env: NodeJS.ProcessEnv;

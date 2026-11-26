@@ -22,6 +22,16 @@ fn shape(device_type: Option<DeviceType>) -> &'static str {
     }
 }
 
+/// Icons for the detected device, probed once per process rather than per
+/// principal.
+pub async fn detected_machine_icons() -> Value {
+    static ICONS: tokio::sync::OnceCell<Value> = tokio::sync::OnceCell::const_new();
+    ICONS
+        .get_or_init(|| async { machine_icons(crate::device_type::detect().await) })
+        .await
+        .clone()
+}
+
 /// Self-contained images: no external requests, HTML, or inherited CSS colors.
 pub fn machine_icons(device_type: Option<DeviceType>) -> Value {
     let icons: Vec<Value> = ["light", "dark"]

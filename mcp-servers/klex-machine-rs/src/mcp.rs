@@ -212,14 +212,14 @@ impl Machine {
         &self.principal_id
     }
 
-    /// Probes the device type once per process; the result feeds `serverInfo`.
+    /// Resolves the icons that feed `serverInfo`.
     pub async fn prepare_icons(&self) {
         self.icons
             .get_or_init(|| async {
                 if self.omit_host_details {
                     crate::icons::machine_icons(None)
                 } else {
-                    crate::icons::machine_icons(crate::device_type::detect().await)
+                    crate::icons::detected_machine_icons().await
                 }
             })
             .await;

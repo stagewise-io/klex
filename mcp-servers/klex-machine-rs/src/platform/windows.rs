@@ -169,8 +169,9 @@ pub mod host {
     }
 
     /// `os.hostname()`.
+    /// `os.hostname()`: libuv asks Winsock, which answers with the DNS name.
     pub fn hostname() -> String {
-        std::env::var("COMPUTERNAME").unwrap_or_default()
+        dns_hostname().unwrap_or_default()
     }
 
     /// The hostname reported in machine facts.

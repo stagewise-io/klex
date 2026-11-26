@@ -1,6 +1,7 @@
 import { chmod } from 'node:fs/promises';
 import { request } from 'node:http';
 import { createServer } from 'node:net';
+import { hostname } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -37,7 +38,11 @@ describe('HTTP server', () => {
       cwd: machine.cwd,
       host: '127.0.0.1',
       port: machine.port,
-      _logMeta: { name: 'klex-machine', logLevelName: 'INFO' },
+      _logMeta: {
+        name: 'klex-machine',
+        logLevelName: 'INFO',
+        hostname: hostname(),
+      },
     });
   });
 

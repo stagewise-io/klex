@@ -371,13 +371,12 @@ describe('cloud serving', () => {
     expect(facts.machineVersion).toMatch(/^\d+\.\d+\.\d+/);
     if (process.platform === 'darwin') expect(facts.os.name).toBe('macOS');
     if (process.platform === 'win32') expect(facts.os.name).toBe('Windows');
-    if (process.platform !== 'linux' || process.arch === 'x64')
-      expect(facts.cpu.model).toBe(
-        os
-          .cpus()
-          .find((cpu) => cpu.model.trim())
-          ?.model.trim(),
-      );
+    expect(facts.cpu.model).toBe(
+      os
+        .cpus()
+        .find((cpu) => cpu.model.trim())
+        ?.model.trim(),
+    );
     expect(facts.host.workspaceVolumeTotalBytes).toBeGreaterThan(0);
 
     expect(await toolNames('machine-1', 'agent-a')).toContain(

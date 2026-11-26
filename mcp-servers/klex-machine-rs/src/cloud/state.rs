@@ -10,9 +10,6 @@ use sha2::{Digest, Sha256};
 
 use crate::fs_error;
 
-pub const IDENTITY_FILE: &str = "identity/private-key.pem";
-pub const ENROLLMENT_FILE: &str = "identity/enrollment.json";
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MachineEnrollment {
@@ -39,11 +36,11 @@ pub enum EnrollmentError {
 }
 
 pub fn identity_path(data_dir: &Path) -> PathBuf {
-    data_dir.join(IDENTITY_FILE)
+    data_dir.join("identity").join("private-key.pem")
 }
 
 pub fn enrollment_path(data_dir: &Path) -> PathBuf {
-    data_dir.join(ENROLLMENT_FILE)
+    data_dir.join("identity").join("enrollment.json")
 }
 
 pub fn hash_enrollment_code(code: &str) -> String {

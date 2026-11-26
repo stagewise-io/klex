@@ -164,7 +164,7 @@ mod tests {
     #[test]
     fn refuses_to_replace_a_key() {
         let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("identity/private-key.pem");
+        let path = directory.path().join("identity").join("private-key.pem");
         let identity = MachineIdentity::generate().unwrap();
         save_machine_identity(&path, &identity).unwrap();
         let loaded = load_machine_identity(&path).unwrap();

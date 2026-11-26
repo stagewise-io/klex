@@ -1,0 +1,22 @@
+{
+  "name": "@klex/machine-conformance",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Black-box conformance suite run against both klex-machine implementations",
+  "license": "Apache-2.0",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@klex/machine": "workspace:*",
+    "@klex/machine-rs": "workspace:*",
+    "@modelcontextprotocol/client": "2.4.0",
+    "@stagewise/typescript-config": "workspace:*",
+    "@types/node": "26.1.1",
+    "typescript": "7.0.2",
+    "vitest": "4.1.10"
+  },
+  "packageManager": "pnpm@11.22.0"
+}

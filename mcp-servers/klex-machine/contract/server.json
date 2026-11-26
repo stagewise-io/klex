@@ -1,0 +1,30 @@
+{
+  "serverInfo": {
+    "name": "klex-machine",
+    "version": "0.1.0",
+    "icons": [
+      {
+        "src": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjMzgzNjMzIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+PHJlY3QgeD0iNCIgeT0iNCIgd2lkdGg9IjE2IiBoZWlnaHQ9IjEzIiByeD0iMiIvPjxwYXRoIGQ9Ik04IDIxaDgiLz48L3N2Zz4=",
+        "mimeType": "image/svg+xml",
+        "sizes": ["any"],
+        "theme": "light"
+      },
+      {
+        "src": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZWVlY2U4IiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+PHJlY3QgeD0iNCIgeT0iNCIgd2lkdGg9IjE2IiBoZWlnaHQ9IjEzIiByeD0iMiIvPjxwYXRoIGQ9Ik04IDIxaDgiLz48L3N2Zz4=",
+        "mimeType": "image/svg+xml",
+        "sizes": ["any"],
+        "theme": "dark"
+      }
+    ]
+  },
+  "capabilities": {
+    "extensions": {
+      "io.stagewise/push-notifications": {}
+    },
+    "tools": {
+      "listChanged": true
+    }
+  },
+  "instructions": "UNRESTRICTED MACHINE ACCESS. Filesystem and shell operations run with the permissions of the server OS user. Relative paths resolve from ${cwd}. Operating system: ${platform}.",
+  "pushInstructionsSuffix": " Watcher outcomes and requested shell-exit notifications arrive as push notifications."
+}

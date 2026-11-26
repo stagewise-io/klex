@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 
+import type { JSONValue } from '@ai-sdk/provider';
 import type { ToolSet } from 'ai';
+import { stringify } from 'yaml';
 import { z } from 'zod';
 
 import type { ActivityHistory } from '@/activity-history';
@@ -35,13 +37,12 @@ import { SessionInboxUrgency } from '@/session/inbox';
 import type { ChildSessionHandle } from '@/session/types';
 import type { SkillRegistry } from '@/skills';
 
+import {
+  parseRecallAnswer,
+  type RecallAnswer,
+  recallAnswerSchema,
+} from './result';
 import prompt from './system-prompt.md';
-
-interface RecallAnswer {
-  answer: string;
-  entities: string[];
-  skills: string[];
-}
 
 export interface MemoryRecallSource {
   snapshot(): Promise<MemoryEntity[]>;
@@ -69,8 +70,16 @@ const recallHistory = createHistoryView({
     },
     reasoning: false,
     tools: {
-      input: { max: Number.MAX_SAFE_INTEGER, truncate: 'end', json: 'plain' },
-      output: { max: Number.MAX_SAFE_INTEGER, truncate: 'end', json: 'plain' },
+      input: {
+        max: Number.MAX_SAFE_INTEGER,
+        truncate: 'end',
+        json: 'readable',
+      },
+      output: {
+        max: Number.MAX_SAFE_INTEGER,
+        truncate: 'end',
+        json: 'readable',
+      },
       error: { max: Number.MAX_SAFE_INTEGER, truncate: 'end' },
       skip: (name) => name === 'recall' || name === 'recallFromMemory',
     },
@@ -78,7 +87,7 @@ const recallHistory = createHistoryView({
       metadata: {
         max: Number.MAX_SAFE_INTEGER,
         truncate: 'end',
-        json: 'plain',
+        json: 'readable',
       },
       text: { max: Number.MAX_SAFE_INTEGER, truncate: 'end' },
       resources: { limit: { max: Number.MAX_SAFE_INTEGER, truncate: 'end' } },
@@ -117,17 +126,76 @@ function inheritedContext(
   ).flatMap((message) => message.parts.filter((part) => part.type === 'text'));
 }
 
+export const RECALL_LIMITS = {
+  steps: 8,
+  calls: 12,
+  historyCalls: 4,
+  characters: 64000,
+  softMs: 90000,
+  hardMs: 120000,
+  finalSteps: 2,
+} as const;
+
 class RecallReader implements Extension {
   private answered = false;
+  private steps = 0;
+  private finalSteps = 0;
+  private calls = 0;
+  private historyCalls = 0;
+  private remaining: number = RECALL_LIMITS.characters;
+  private readonly startedAt = Date.now();
+  private nudged = false;
+  private finalizing = false;
+  scannedBytes = 0;
+  private currentAllowance = 12000;
+  get finishedWithoutAnswer(): boolean {
+    return !this.answered && this.finalSteps >= RECALL_LIMITS.finalSteps;
+  }
+  private get exhausted(): boolean {
+    return (
+      this.finalizing ||
+      this.calls >= RECALL_LIMITS.calls ||
+      this.historyCalls >= RECALL_LIMITS.historyCalls ||
+      this.steps >= RECALL_LIMITS.steps ||
+      this.remaining <= 0 ||
+      Date.now() - this.startedAt >= RECALL_LIMITS.softMs
+    );
+  }
+  continue(): void {
+    if (this.answered || this.nudged || this.finishedWithoutAnswer) return;
+    this.nudged = true;
+    this.inbox.sendMessage(
+      {
+        id: randomUUID(),
+        role: 'user',
+        parts: [
+          {
+            type: 'text',
+            text: this.exhausted
+              ? 'Exploration budget exhausted. Call answerRecall now with supported partial findings and uncertainty. No further retrieval.'
+              : 'Finish by calling answerRecall. Retrieve only a specific missing fact, not exhaustive history.',
+          },
+        ],
+      },
+      SessionInboxUrgency.Default,
+    );
+  }
   constructor(
     private readonly options: MemoryRecallOptions,
     private readonly source: MemoryRecallSource,
     private readonly inbox: ExtensionDeps['inbox'],
     private readonly answer: (answer: RecallAnswer) => void,
+    private readonly signal: AbortSignal,
   ) {}
 
   onStepComplete(event: StepCompleteEvent): void {
-    // Plain assistant text is not an answer. Keep working until answerRecall.
+    if (event.generation) {
+      this.nudged = false;
+      if (this.finalizing) this.finalSteps++;
+      else this.steps++;
+      if (this.exhausted) this.finalizing = true;
+    }
+    // Only one continuation can be queued at a time.
     if (
       !this.answered &&
       event.generation &&
@@ -135,37 +203,22 @@ class RecallReader implements Extension {
       !event.fatalError &&
       !event.shouldContinue
     )
-      this.inbox.sendMessage(
-        {
-          id: randomUUID(),
-          role: 'user',
-          parts: [
-            {
-              type: 'text',
-              text: 'Continue recall. Finish by calling answerRecall, including when no relevant evidence was found.',
-            },
-          ],
-        },
-        SessionInboxUrgency.Default,
-      );
+      this.continue();
   }
 
   getTools(): ToolSet {
     const { activities, skills } = this.options;
-    return {
+    if (this.exhausted) this.finalizing = true;
+    const tools: ToolSet = {
       answerRecall: {
         description:
-          'Finish recall and close the helper; plain text does not finish it. Answer in 1–3 short sentences by default, with only requested facts and essential caveats or history citations. If nothing relevant was found, say so. Include the exact supporting entity IDs and qualified skill IDs so the caller can auto-load them; use empty lists where none apply.',
-        inputSchema: z
-          .object({
-            answer: z.string().trim().min(1).max(4000),
-            entities: z.array(z.string().min(1).max(1000)).max(20).default([]),
-            skills: z.array(z.string().min(1).max(1000)).max(20).default([]),
-          })
-          .strict(),
-        execute: async ({ answer, entities = [], skills: usedSkills = [] }) => {
+          'Finish recall and close the helper; plain text does not finish it. Answer in 1–3 short sentences by default, with only requested facts and essential caveats. Do not include message IDs, source handles or citations unless requested or necessary to disambiguate. If nothing relevant was found, say so. Include the exact supporting entity IDs and qualified skill IDs so the caller can auto-load them; use empty lists where none apply. Select supporting detail sections and skill references separately; they also select their parents.',
+        inputSchema: recallAnswerSchema.strict(),
+        execute: async (input) => {
           if (this.answered) return { accepted: false };
-          const ids = [...new Set<string>(entities)];
+          const result = parseRecallAnswer(input);
+          if (!result) return { error: 'Invalid recall answer' };
+          const ids = result.entities;
           if (ids.length) {
             const known = new Set(
               (await this.source.snapshot()).map(({ id }) => id),
@@ -174,7 +227,7 @@ class RecallReader implements Extension {
             if (unknown.length)
               return { error: 'Unknown entity IDs', entities: unknown };
           }
-          const skillIds = [...new Set<string>(usedSkills)];
+          const skillIds = result.skills;
           if (skillIds.length) {
             const known = new Set(
               (await skills.snapshot()).map(({ id }) => id),
@@ -183,9 +236,30 @@ class RecallReader implements Extension {
             if (unknown.length)
               return { error: 'Unknown skill IDs', skills: unknown };
           }
+          const entities = result.entitySections.length
+            ? await this.source.snapshot()
+            : [];
+          for (const { entity, section } of result.entitySections)
+            if (
+              !entities.some(
+                (item) =>
+                  item.id === entity && Object.hasOwn(item.sections, section),
+              )
+            )
+              return { error: 'Unknown entity section', entity, section };
+          for (const { skill, reference } of result.skillReferences) {
+            const item = (await skills.snapshot()).find(
+              (item) => item.id === skill,
+            );
+            if (
+              !item?.references?.includes(reference) ||
+              skills.readReference(skill, reference) === null
+            )
+              return { error: 'Unknown skill reference', skill, reference };
+          }
           if (this.answered) return { accepted: false };
           this.answered = true;
-          this.answer({ answer, entities: ids, skills: skillIds });
+          this.answer(result);
           return { accepted: true };
         },
       },
@@ -225,14 +299,15 @@ class RecallReader implements Extension {
       },
       readEntity: {
         description:
-          'Read General and requested detail sections, including sources and prior fact versions. Omit sections to read General only.',
+          'Read current General facts and requested detail sections. Enable evidence only for provenance, contradictions or historical questions; it includes sources and superseded versions.',
         inputSchema: z
           .object({
             id: z.string().min(1).max(1000),
             sections: z.array(z.string().max(100)).max(50).default([]),
+            evidence: z.boolean().default(false),
           })
           .strict(),
-        execute: async ({ id, sections }) => {
+        execute: async ({ id, sections, evidence = false }) => {
           const entity = (await this.source.snapshot()).find(
             (item) => item.id === id,
           );
@@ -248,7 +323,11 @@ class RecallReader implements Extension {
                 sections: Object.keys(entity.sections).filter(
                   (name) => name !== 'General',
                 ),
-                body: formatFacts(entity.sections.General ?? []),
+                body: evidence
+                  ? formatFacts(entity.sections.General ?? [])
+                  : (entity.sections.General ?? [])
+                      .map((fact) => `- ${fact.text}`)
+                      .join('\n'),
               },
               `${entity.id}.md`,
             ),
@@ -262,7 +341,9 @@ class RecallReader implements Extension {
                     title: entity.id,
                     section,
                     sections: [],
-                    body: formatFacts(facts),
+                    body: evidence
+                      ? formatFacts(facts)
+                      : facts.map((fact) => `- ${fact.text}`).join('\n'),
                   },
                   `${entity.id}.md`,
                 ),
@@ -322,12 +403,12 @@ class RecallReader implements Extension {
       },
       listHistory: {
         description:
-          'List retained canonical history source IDs, oldest first, with pagination.',
+          'List retained canonical history sources, newest first. Continue only for a specific missing fact.',
         inputSchema: z
           .object({ offset: z.number().int().min(0).default(0) })
           .strict(),
         execute: async ({ offset }) => {
-          const sources = await activities.manifest();
+          const sources = (await activities.manifest()).reverse();
           return {
             sources: sources.slice(offset, offset + 100),
             nextOffset: offset + 100 < sources.length ? offset + 100 : null,
@@ -336,15 +417,24 @@ class RecallReader implements Extension {
       },
       searchHistory: {
         description:
-          'Search retained canonical activity history. Follow nextOffset when truncated; missing evidence may have expired from retention.',
+          'Search recent-first canonical history for a specific missing fact. Optional timestamp and exact source-environment hints are not authorization boundaries. Continue only if needed; missing evidence may have expired.',
         inputSchema: z
           .object({
             query: z.string().trim().min(1).max(200),
+            after: z.iso.datetime().optional(),
+            before: z.iso.datetime().optional(),
+            sourceEnv: z.string().min(1).max(200).optional(),
             offset: z.number().int().min(0).default(0),
           })
           .strict(),
-        execute: async ({ query, offset }) => {
-          const sources = (await activities.manifest()).reverse();
+        execute: async ({ query, offset, after, before, sourceEnv }) => {
+          const sources = (await activities.manifest())
+            .filter(
+              (source) =>
+                (!after || source.persistedAt >= after) &&
+                (!before || source.persistedAt <= before),
+            )
+            .reverse();
           const matches: { id: string; snippet: string }[] = [];
           let index = offset;
           let scannedBytes = 0;
@@ -356,6 +446,8 @@ class RecallReader implements Extension {
             scannedBytes < 2000000 &&
             matches.length < 20
           ) {
+            this.signal.throwIfAborted();
+            if (Date.now() - this.startedAt >= RECALL_LIMITS.softMs) break;
             const source = sources[index++];
             if (!source) break;
             const page = await activities
@@ -367,12 +459,20 @@ class RecallReader implements Extension {
               })
               .catch(() => null);
             scannedBytes += Math.max(source.bytes, page?.scannedBytes ?? 0);
+            this.scannedBytes += Math.max(
+              source.bytes,
+              page?.scannedBytes ?? 0,
+            );
             if (!page || page.truncated) unavailable++;
             if (page?.nextOffset != null)
               incomplete.push({ id: source.id, nextOffset: page.nextOffset });
             const found =
               page?.text.toLowerCase().indexOf(query.toLowerCase()) ?? -1;
-            if (found >= 0 && page)
+            if (
+              found >= 0 &&
+              page &&
+              (!sourceEnv || page.platforms?.includes(sourceEnv))
+            )
               matches.push({
                 id: source.id,
                 snippet: page.text.slice(
@@ -381,36 +481,65 @@ class RecallReader implements Extension {
                 ),
               });
           }
-          return {
-            matches,
-            nextOffset: index < sources.length ? index : null,
-            scannedBytes,
-            unavailable,
-            incomplete,
-            truncated:
-              unavailable > 0 ||
-              incomplete.length > 0 ||
-              index < sources.length,
-            note: 'Search inspects the first 60000 rendered characters per source; use readHistory to paginate a source.',
-          };
+          return [
+            ...matches.map(
+              (match) =>
+                `source ${JSON.stringify(match.id)}\n${match.snippet
+                  .split('\n')
+                  .map((line) => `¦${line}`)
+                  .join('\n')}`,
+            ),
+            ...(!matches.length
+              ? ['No match in scanned evidence. This is not proof of absence.']
+              : []),
+            ...(unavailable || incomplete.length
+              ? [
+                  'Some evidence was unavailable or only partly searched. Search inspects at most the first 60000 rendered characters per source.',
+                ]
+              : []),
+            ...incomplete
+              .slice(0, 5)
+              .map(
+                (item) =>
+                  `Source continuation: readHistory ${JSON.stringify({ id: item.id, offset: item.nextOffset })}`,
+              ),
+            ...(index < sources.length
+              ? [
+                  `Search continuation (same query and filters): ${JSON.stringify({ query, after, before, sourceEnv, offset: index })}`,
+                ]
+              : []),
+          ].join('\n\n');
         },
       },
       readHistory: {
         description:
-          'Read a canonical activity page by exact source ID; follow nextOffset for more.',
+          'Read a canonical evidence page by exact source ID. Continue only if a specific needed fact lies beyond this page.',
         inputSchema: z
           .object({
             id: z.string().min(1),
             offset: z.number().int().min(0).default(0),
           })
           .strict(),
-        execute: async ({ id, offset }) =>
-          activities.readPage(id, {
+        execute: async ({ id, offset }) => {
+          const page = await activities.readPage(id, {
             offset,
-            limit: 12000,
+            limit: Math.max(1, Math.min(11000, this.currentAllowance - 1000)),
             maxBytes: 2000000,
             view: (messages) => recallHistory.fit(messages),
-          }),
+          });
+          this.scannedBytes += page?.scannedBytes ?? 0;
+          if (!page) return 'History unavailable; no evidence read.';
+          return [
+            `source ${JSON.stringify(id)} ${page.startedAt ?? ''}`,
+            page.text,
+            ...(page.nextOffset != null
+              ? [
+                  `Continuation: readHistory ${JSON.stringify({ id, offset: page.nextOffset })}`,
+                ]
+              : []),
+            ...(page.truncated ? ['Evidence incomplete or bounded.'] : []),
+          ].join('\n');
+        },
       },
       listRecentHistory: {
         description:
@@ -432,6 +561,48 @@ class RecallReader implements Extension {
         execute: async ({ id, count }) => activities.listNeighbors(id, count),
       },
     };
+    if (this.finalizing) return { answerRecall: tools.answerRecall! };
+    for (const [name, tool] of Object.entries(tools)) {
+      if (name === 'answerRecall' || !tool.execute) continue;
+      const execute = tool.execute;
+      tool.execute = async (input, context) => {
+        this.signal.throwIfAborted();
+        context.abortSignal?.throwIfAborted();
+        if (this.exhausted) {
+          this.finalizing = true;
+          return 'Exploration budget exhausted. Call answerRecall with partial findings and uncertainty.';
+        }
+        this.calls++;
+        if (name.toLowerCase().includes('history')) this.historyCalls++;
+        const allowance = Math.min(12000, this.remaining);
+        this.remaining -= allowance;
+        this.currentAllowance = allowance;
+        let used = 0;
+        try {
+          const output = await execute(input, context);
+          const text =
+            typeof output === 'string'
+              ? output
+              : stringify(output, {
+                  lineWidth: 0,
+                  aliasDuplicateObjects: false,
+                });
+          const notice = '\n[Result bounded; evidence may be incomplete.]';
+          const bounded =
+            text.length > allowance
+              ? `${text.slice(0, Math.max(0, allowance - notice.length))}${notice}`.slice(
+                  0,
+                  allowance,
+                )
+              : text;
+          used = bounded.length;
+          return bounded;
+        } finally {
+          this.remaining += allowance - used;
+        }
+      };
+    }
+    return tools;
   }
 }
 
@@ -446,7 +617,7 @@ class RecallExtension implements Extension {
   ) {}
 
   getSystemPromptPart(): string {
-    return 'Use recallFromMemory(question) when you need evidence from durable memories, skills, or older activity history. It returns a brief answer and supporting entity and skill IDs, which the memory loader brings into context; do not invent missing memories.';
+    return 'Use recallFromMemory(question) when you need evidence from durable memories, skills, or older activity history. It returns a brief natural-language answer. Supporting memories and skills arrive separately as bounded context records; do not invent missing memories.';
   }
 
   getTools(): ToolSet {
@@ -457,6 +628,12 @@ class RecallExtension implements Extension {
         inputSchema: z
           .object({ question: z.string().trim().min(1).max(12000) })
           .strict(),
+        toModelOutput: ({ output }: { output: JSONValue }) => {
+          const result = parseRecallAnswer(output);
+          return result
+            ? { type: 'text' as const, value: result.answer }
+            : { type: 'json' as const, value: output };
+        },
         execute: ({ question }, { abortSignal }) => {
           const operation = this.recall(question, abortSignal);
           this.operations.add(operation);
@@ -498,12 +675,13 @@ class RecallExtension implements Extension {
       budgetExceeded = true;
       abort.abort();
     };
-    const deadline = setTimeout(exhaust, 300_000);
+    const deadline = setTimeout(exhaust, RECALL_LIMITS.hardMs);
     const cancel = () => abort.abort();
     signal?.addEventListener('abort', cancel, { once: true });
     if (signal?.aborted) abort.abort();
     this.pending.add(abort);
     let answer: RecallAnswer | undefined;
+    let reader: RecallReader | undefined;
     let terminated = false;
     try {
       abort.signal.throwIfAborted();
@@ -521,9 +699,15 @@ class RecallExtension implements Extension {
           {
             identifier: 'io.stagewise/memory-recall-reader',
             create: (deps) =>
-              new RecallReader(this.options, source, deps.inbox, (value) => {
-                answer ??= value;
-              }),
+              (reader = new RecallReader(
+                this.options,
+                source,
+                deps.inbox,
+                (value) => {
+                  answer ??= value;
+                },
+                abort.signal,
+              )),
           },
         ],
         hooks: {
@@ -550,6 +734,8 @@ class RecallExtension implements Extension {
         throw new Error('Recall question delivery failed');
       while (answer === undefined) {
         abort.signal.throwIfAborted();
+        if (reader?.finishedWithoutAnswer)
+          throw new Error('Recall finalization exhausted');
         if (terminated || child.getSessionInfo().status === 'terminated')
           throw new Error('Recall helper terminated without an answer');
         const idle = await child.waitForIdle(250);
@@ -557,22 +743,7 @@ class RecallExtension implements Extension {
           abort.signal.throwIfAborted();
           if (terminated || child.getSessionInfo().status === 'terminated')
             throw new Error('Recall helper terminated without an answer');
-          if (
-            child.inbox.sendMessage(
-              {
-                id: randomUUID(),
-                role: 'user',
-                parts: [
-                  {
-                    type: 'text',
-                    text: 'Continue recall. Finish by calling answerRecall, including when no relevant evidence was found.',
-                  },
-                ],
-              },
-              SessionInboxUrgency.Default,
-            ) === false
-          )
-            throw new Error('Recall continuation delivery failed');
+          reader?.continue();
         }
       }
       return answer;

@@ -64,7 +64,9 @@ export interface GenerationLaneHost {
   /** Clears tool and context state owned by the ending lease. */
   finalizeLease(): void;
   /** Persists realtime activity into canonical history. */
-  commit(event: RealtimeCommitEvent): Promise<void>;
+  commit(
+    event: RealtimeCommitEvent,
+  ): Promise<void | { readonly contextText: string }>;
 }
 
 export class GenerationLaneLeaseManager {

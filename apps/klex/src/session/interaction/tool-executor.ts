@@ -235,7 +235,8 @@ export class ToolExecutor implements SessionToolRuntime {
       toolSpan.end();
       return {
         ...result,
-        ...(request.name === 'readMemorySection'
+        ...(request.name === 'readMemorySection' ||
+        request.name === 'recallFromMemory'
           ? { toolName: request.name }
           : {}),
         ...(invocations.values().length
@@ -306,7 +307,7 @@ export class ToolExecutor implements SessionToolRuntime {
       const timeoutMs =
         this.deps.timeoutMs ??
         (request.name === 'recallFromMemory'
-          ? 310_000
+          ? 130_000
           : DEFAULT_TOOL_TIMEOUT_MS);
       const timeoutController = new AbortController();
       const timeoutTimer = setTimeout(

@@ -3,6 +3,7 @@ import { getEncoding } from 'js-tiktoken';
 import { z } from 'zod';
 
 import { isDataPartOf } from '@/session/chat/extensions/extension-api';
+import { parseRecallAnswer } from '@/session/chat/extensions/memory/recall';
 import type { ExtendedUIMessage } from '@/session/chat/message-types';
 import {
   type BlockField,
@@ -227,6 +228,17 @@ export function materializeMemories(
   const stripped = messages.map((message, index) => ({
     ...message,
     parts: message.parts.flatMap<ExtendedUIMessage['parts'][number]>((part) => {
+      if (
+        isToolUIPart(part) &&
+        part.state === 'output-available' &&
+        (part.type === 'dynamic-tool'
+          ? part.toolName === 'recallFromMemory'
+          : part.type === 'tool-recallFromMemory')
+      ) {
+        const recall = parseRecallAnswer(part.output);
+        for (const { entity, section } of recall?.entitySections ?? [])
+          active.add(detailKey(`${ENTITY_PREFIX}${entity}.md`, section));
+      }
       if (
         isToolUIPart(part) &&
         part.state === 'output-available' &&

@@ -11,6 +11,43 @@ import { toCanonicalMessage } from './commit-messages';
 describe('realtime canonical messages', () => {
   const timestamp = '2026-01-01T00:00:00.000Z';
 
+  it('preserves recall selections as canonical tool evidence rather than escaped context prose', () => {
+    const output = {
+      answer: 'Ada owns deployment.',
+      entities: ['Ada'],
+      skills: [],
+      entitySections: [{ entity: 'Ada', section: 'Work' }],
+      skillReferences: [],
+    };
+    const result = toCanonicalMessage({
+      type: 'tool-result',
+      eventId: 'recall-result',
+      timestamp,
+      result: {
+        status: 'success',
+        executionId: 'recall-1',
+        toolName: 'recallFromMemory',
+        output,
+      },
+    });
+    expect(result).toMatchObject({
+      id: 'recall-result',
+      role: 'assistant',
+      parts: [
+        {
+          type: 'dynamic-tool',
+          toolName: 'recallFromMemory',
+          toolCallId: 'recall-1',
+          state: 'output-available',
+          output,
+        },
+      ],
+    });
+    expect(result.parts.some((part) => part.type === 'data-context')).toBe(
+      false,
+    );
+  });
+
   it.each([
     ['user-transcript' as const, 'user' as const],
     ['assistant-transcript' as const, 'assistant' as const],

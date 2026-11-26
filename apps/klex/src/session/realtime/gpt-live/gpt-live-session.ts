@@ -19,6 +19,7 @@ import {
   type RealtimeEndpointClosure,
 } from '@/media-transport';
 import { BoundedAsyncQueue } from '@/media-transport/async-queue';
+import { recallAnswerText } from '@/session/chat/extensions/memory/recall';
 import {
   type InteractionToolResult,
   type InteractionUpdateEnvelope,
@@ -236,15 +237,19 @@ class GPTLiveSession implements RealtimeModelSession {
       item: {
         type: 'function_call_output',
         call_id: result.executionId,
-        output: safeStringify(
-          result.status === 'success'
-            ? result.output
-            : {
-                error: result.error,
-                code: result.code,
-                retryable: result.retryable,
-              },
-        ),
+        output:
+          (result.status === 'success'
+            ? recallAnswerText(result.toolName, result.output)
+            : null) ??
+          safeStringify(
+            result.status === 'success'
+              ? result.output
+              : {
+                  error: result.error,
+                  code: result.code,
+                  retryable: result.retryable,
+                },
+          ),
       },
     };
     try {

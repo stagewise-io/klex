@@ -101,6 +101,56 @@ afterEach(async () => {
 });
 
 describe('snapshot storage', () => {
+  it('preserves legacy and additive recall payloads through registered startup and restart', async () => {
+    const { history, directory } = await setup();
+    const legacy = {
+      answer: 'Ada owns deployment.',
+      entities: ['Ada'],
+      skills: [],
+    };
+    const additive = {
+      ...legacy,
+      entitySections: [{ entity: 'Ada', section: 'Work' }],
+      skillReferences: [{ skill: 'learning/testing', reference: 'unit' }],
+      futureField: { preserved: true },
+    };
+    const messages = [
+      message('question', 'Who owns deployment?'),
+      ...[legacy, additive].map((output, index) => ({
+        id: `recall-${index}`,
+        role: 'assistant',
+        parts: [
+          {
+            type: 'dynamic-tool',
+            toolName: 'recallFromMemory',
+            toolCallId: `call-${index}`,
+            state: 'output-available',
+            input: {},
+            output,
+          },
+        ],
+      })),
+    ] as ExtendedUIMessage[];
+    history.openRecorder(meta()).scheduleSync(() => messages);
+    await history.flush();
+    await history.close();
+    const restarted = await setup({ directory });
+    expect(
+      (
+        await restarted.history.loadWindow('default', {
+          fallbackMaxBytes: 100000,
+        })
+      ).entries.map((entry) => entry.message),
+    ).toEqual(messages);
+    await restarted.history.close();
+    const again = await setup({ directory });
+    expect(
+      (
+        await again.history.loadWindow('default', { fallbackMaxBytes: 100000 })
+      ).entries.map((entry) => entry.message),
+    ).toEqual(messages);
+  });
+
   it('keeps checkpoint-tail references through restart and evicts by logical bytes', async () => {
     const { history, directory, setMaxBytes } = await setup();
     const annotated = (id: string, body: string) => {

@@ -25,7 +25,8 @@ export interface FieldLimit {
  * - `lines`: strings verbatim, other values as bounded `key: value` lines
  *   with dotted paths.
  */
-export type JsonMode = 'plain' | 'compact' | 'lines';
+/** `readable` preserves structured evidence as multiline YAML without parsing strings. */
+export type JsonMode = 'plain' | 'compact' | 'lines' | 'readable';
 
 export interface ValueLimit extends FieldLimit {
   json: JsonMode;

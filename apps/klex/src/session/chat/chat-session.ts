@@ -78,6 +78,10 @@ import type {
   MakeDecisionArgs,
   MakeDecisionResult,
 } from './extensions/extension-api';
+import {
+  materializeMemories,
+  materializeSkills,
+} from './extensions/memory/loading';
 import { isMemoryResultMessage } from './extensions/memory/retrieval/memory-result';
 import {
   type ChatSessionInbox,
@@ -343,6 +347,9 @@ class ChatSessionModule implements AgentSession {
 
   /** Tool set assembled for the active lease's bootstrap context. */
   private leaseTools: ToolSet | null = null;
+  private leaseModel:
+    | Parameters<ExtensionHandler['prepareHistoryAnnotations']>[1]
+    | null = null;
 
   private leaseToolExecutor: ToolExecutor | null = null;
 
@@ -1335,6 +1342,7 @@ class ChatSessionModule implements AgentSession {
     });
 
     this.leaseTools = assembled.tools;
+    this.leaseModel = model;
 
     return {
       context: {
@@ -1360,6 +1368,7 @@ class ChatSessionModule implements AgentSession {
   }
 
   private finalizeLeaseState(): void {
+    this.leaseModel = null;
     this.leaseToolExecutor?.abort();
     this.leaseTools = null;
     this.leaseToolExecutor = null;
@@ -1394,10 +1403,47 @@ class ChatSessionModule implements AgentSession {
     return context.with(this.sessionContext, () => executor.execute(request));
   }
 
-  private async commitLeaseEvent(event: RealtimeCommitEvent): Promise<void> {
+  private async commitLeaseEvent(
+    event: RealtimeCommitEvent,
+  ): Promise<void | { readonly contextText: string }> {
     if (this._status === 'terminated') return;
-    this.messages.push(toCanonicalMessage(event));
-    this.scheduleTranscriptSync();
+    const message = toCanonicalMessage(event);
+    this.messages.push(message);
+    try {
+      if (
+        this.leaseModel &&
+        event.type === 'tool-result' &&
+        event.result.status === 'success' &&
+        ['recallFromMemory', 'readMemorySection'].includes(
+          event.result.toolName ?? '',
+        )
+      ) {
+        await this.extensionHandler.prepareHistoryAnnotations(
+          this.messages,
+          this.leaseModel,
+        );
+        // Render against the complete history to preserve snapshot diffing and budgets,
+        // then expose only the newly committed context, never tool metadata.
+        const contextText = materializeMemories(
+          materializeSkills(structuredClone(this.messages)),
+        )
+          .filter(
+            (item) =>
+              item.id === `${message.id}/memory-context` ||
+              item.id === `${message.id}:skills` ||
+              item.id === `${message.id}:skills/memory-context`,
+          )
+          .flatMap((item) =>
+            item.parts
+              .filter((part) => part.type === 'text')
+              .map((part) => part.text),
+          )
+          .join('\n\n');
+        if (contextText) return { contextText };
+      }
+    } finally {
+      this.scheduleTranscriptSync();
+    }
   }
 
   private onNewInput = (

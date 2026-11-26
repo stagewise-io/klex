@@ -1,3 +1,5 @@
+import { stringify } from 'yaml';
+
 import type { FieldLimit, ValueLimit } from './types';
 
 const MAX_NODES = 200;
@@ -46,6 +48,16 @@ function serializeJson(
 ): string | null {
   if (value === undefined) return null;
   if (typeof value === 'string') return value;
+  if (json === 'readable') {
+    try {
+      return stringify(value, {
+        lineWidth: 0,
+        aliasDuplicateObjects: false,
+      }).replace(/\n$/, '');
+    } catch {
+      return compactJson(value);
+    }
+  }
   if (json === 'compact') return compactJson(value);
   if (json === 'lines') return keyValueLines(value);
   try {

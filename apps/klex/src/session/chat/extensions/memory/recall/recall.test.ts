@@ -10,7 +10,7 @@ import type { ExtendedUIMessage } from '@/session/chat/message-types';
 import type { ChildSessionHandle, ChildSessionOptions } from '@/session/types';
 import { makeDeps } from '@/shared-utilities/test-utils';
 
-import { createMemoryRecall } from './recall';
+import { createMemoryRecall, RECALL_LIMITS } from './recall';
 
 vi.mock('./system-prompt.md', () => ({
   default: 'Recall until answerRecall.',
@@ -83,7 +83,7 @@ function setup() {
     getSessionInfo: vi.fn(() => ({ status: 'active' })),
     waitForIdle: vi.fn(async () => {
       await call(tools(reader), 'answerRecall', {
-        answer: 'Ada owns deployment. [person/ada]',
+        answer: 'Ada owns deployment.',
       });
       return true;
     }),
@@ -124,6 +124,167 @@ function setup() {
 }
 
 describe('temporary memory recall', () => {
+  it('reserves parallel retrieval allowances and finishes with supported partial findings', async () => {
+    const h = setup();
+    h.activities.readPage.mockImplementation(async () => {
+      await Promise.resolve();
+      return { text: 'x'.repeat(20000), scannedBytes: 100, truncated: false };
+    });
+    h.child.waitForIdle.mockImplementationOnce(async () => {
+      const set = tools(h.reader());
+      const outputs = await Promise.all(
+        Array.from({ length: 10 }, () =>
+          call(set, 'readHistory', { id: 'source-1', offset: 0 }),
+        ),
+      );
+      expect(h.activities.readPage).toHaveBeenCalledTimes(
+        RECALL_LIMITS.historyCalls,
+      );
+      expect(
+        outputs.filter((item) =>
+          String(item).includes('Exploration budget exhausted'),
+        ),
+      ).toHaveLength(6);
+      expect(
+        outputs
+          .slice(0, 4)
+          .reduce<number>((sum, item) => sum + String(item).length, 0),
+      ).toBeLessThanOrEqual(RECALL_LIMITS.characters);
+      expect(Object.keys(tools(h.reader()))).toEqual(['answerRecall']);
+      await call(tools(h.reader()), 'answerRecall', {
+        answer: 'Evidence is incomplete; ownership remains uncertain.',
+      });
+      return true;
+    });
+    await expect(
+      call(tools(h.extension), 'recallFromMemory', { question: 'Owner?' }),
+    ).resolves.toHaveProperty(
+      'answer',
+      'Evidence is incomplete; ownership remains uncertain.',
+    );
+    expect(h.child.close).toHaveBeenCalledOnce();
+  });
+
+  it('enters answer-only finalization after the soft deadline', async () => {
+    vi.useFakeTimers();
+    try {
+      const h = setup();
+      h.child.waitForIdle.mockImplementationOnce(async () => {
+        await vi.advanceTimersByTimeAsync(RECALL_LIMITS.softMs);
+        expect(Object.keys(tools(h.reader()))).toEqual(['answerRecall']);
+        await call(tools(h.reader()), 'answerRecall', {
+          answer: 'No supported answer found.',
+        });
+        return true;
+      });
+      await expect(
+        call(tools(h.extension), 'recallFromMemory', { question: 'Recall' }),
+      ).resolves.toHaveProperty('answer');
+      expect(h.activities.readPage).not.toHaveBeenCalled();
+      expect(h.child.close).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('hard-expires an unanswered helper and cleans it up exactly once', async () => {
+    vi.useFakeTimers();
+    try {
+      const h = setup();
+      h.child.waitForIdle.mockImplementation(async () => {
+        await vi.advanceTimersByTimeAsync(RECALL_LIMITS.hardMs);
+        return false;
+      });
+      await expect(
+        call(tools(h.extension), 'recallFromMemory', { question: 'Recall' }),
+      ).resolves.toEqual({
+        error:
+          'Recall exceeded its time budget; no answer available. Do not retry the same question.',
+      });
+      expect(h.child.close).toHaveBeenCalledOnce();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('filters timestamps before reads and source environments from canonical metadata', async () => {
+    const h = setup();
+    h.activities.manifest.mockResolvedValue([
+      { id: 'old', bytes: 100, persistedAt: '2025-01-01T00:00:00.000Z' },
+      { id: 'matching', bytes: 100, persistedAt: '2026-02-01T00:00:00.000Z' },
+      { id: 'other-env', bytes: 100, persistedAt: '2026-03-01T00:00:00.000Z' },
+    ] as never);
+    h.activities.readPage.mockImplementation(
+      async (...args: unknown[]) =>
+        ({
+          text: 'deployment evidence',
+          scannedBytes: 100,
+          truncated: false,
+          platforms: [args[0] === 'matching' ? 'slack' : 'web'],
+        }) as never,
+    );
+    await call(tools(h.extension), 'recallFromMemory', { question: 'Recall' });
+    const result = await call(tools(h.reader()), 'searchHistory', {
+      query: 'deployment',
+      offset: 0,
+      after: '2026-01-01T00:00:00.000Z',
+      before: '2026-12-01T00:00:00.000Z',
+      sourceEnv: 'slack',
+    });
+    expect(result).toContain('source "matching"');
+    expect(result).not.toContain('other-env');
+    expect(
+      h.activities.readPage.mock.calls.map((args) => (args as unknown[])[0]),
+    ).toEqual(['other-env', 'matching']);
+    console.info('recall scoped history fixture', {
+      retrievalCalls: 1,
+      sourcesRead: 2,
+      scannedBytes: 200,
+      outputCharacters: String(result).length,
+    });
+  });
+
+  it('validates section/reference selections and automatically selects their parents', async () => {
+    const h = setup();
+    h.source.snapshot.mockResolvedValue([
+      { id: 'Ada', sections: { Work: [] } },
+    ] as never);
+    h.skills.snapshot.mockResolvedValue([
+      { id: 'deploy', references: ['flags'] },
+    ] as never);
+    h.skills.readReference.mockReturnValue('Flags' as never);
+    h.child.waitForIdle.mockImplementationOnce(async () => {
+      const set = tools(h.reader());
+      await expect(
+        call(set, 'answerRecall', {
+          answer: 'Owner',
+          entitySections: [{ entity: 'Ada', section: 'invented' }],
+        }),
+      ).resolves.toHaveProperty('error');
+      await expect(
+        call(set, 'answerRecall', {
+          answer: 'Owner',
+          skillReferences: [{ skill: 'deploy', reference: '../secret' }],
+        }),
+      ).resolves.toHaveProperty('error');
+      await call(set, 'answerRecall', {
+        answer: 'Owner',
+        entitySections: [{ entity: 'Ada', section: 'Work' }],
+        skillReferences: [{ skill: 'deploy', reference: 'flags' }],
+      });
+      return true;
+    });
+    await expect(
+      call(tools(h.extension), 'recallFromMemory', { question: 'Owner?' }),
+    ).resolves.toMatchObject({
+      entities: ['Ada'],
+      skills: ['deploy'],
+      entitySections: [{ entity: 'Ada', section: 'Work' }],
+      skillReferences: [{ skill: 'deploy', reference: 'flags' }],
+    });
+  });
+
   it('inherits the same compact facts, identities, catalogue deltas and skill diffs as main context', async () => {
     const h = setup();
     const entity = JSON.stringify({
@@ -223,9 +384,11 @@ describe('temporary memory recall', () => {
         question: 'Who owns deployment?',
       }),
     ).resolves.toEqual({
-      answer: 'Ada owns deployment. [person/ada]',
+      answer: 'Ada owns deployment.',
       entities: [],
       skills: [],
+      entitySections: [],
+      skillReferences: [],
     });
     expect(h.options()).toMatchObject({
       name: 'memory-recall',
@@ -330,10 +493,16 @@ describe('temporary memory recall', () => {
     const general = await call(set, 'readEntity', { id: 'Ada', sections: [] });
     expect(general).toContain('# memory\nentity: Ada\ntags: |\n  - people');
     expect(general).toContain('additionalSections: |\n  - Role');
-    expect(general).toContain(
-      'facts: |\n~ - Leads design [Evidence](history:source-1)',
-    );
-    expect(general).toContain(
+    expect(general).toContain('facts: |\n~ - Leads design');
+    expect(general).not.toContain('source-1');
+    expect(general).not.toContain('Designed icons');
+    const evidence = await call(set, 'readEntity', {
+      id: 'Ada',
+      sections: [],
+      evidence: true,
+    });
+    expect(evidence).toContain('Leads design [Evidence](history:source-1)');
+    expect(evidence).toContain(
       'was: Designed icons [Earlier](history:source-0)',
     );
     expect(general).not.toContain('revision');
@@ -407,6 +576,8 @@ describe('temporary memory recall', () => {
       answer: 'Owns deployment.',
       entities: ['Ada'],
       skills: ['learning/deploy'],
+      entitySections: [],
+      skillReferences: [],
     });
     expect(h.child.close).toHaveBeenCalledOnce();
   });
@@ -427,16 +598,16 @@ describe('temporary memory recall', () => {
         truncated: false,
       };
     });
-    expect(
-      await call(tools(h.reader()), 'searchHistory', {
-        query: 'deployment',
-        offset: 0,
-      }),
-    ).toMatchObject({
-      matches: [{ id: 'first' }, { id: 'last' }],
-      unavailable: 1,
-      truncated: true,
+    const result = await call(tools(h.reader()), 'searchHistory', {
+      query: 'deployment',
+      offset: 0,
     });
+    expect(result).toContain('source "first"');
+    expect(result).toContain('source "last"');
+    expect(result).toContain('unavailable or only partly searched');
+    expect((result as string).indexOf('first')).toBeLessThan(
+      (result as string).indexOf('last'),
+    );
   });
 
   it.each(['caller', 'deadline'] as const)(
@@ -472,7 +643,7 @@ describe('temporary memory recall', () => {
     },
   );
 
-  it('continues beyond 20 steps until answerRecall is accepted', async () => {
+  it('stops after eight exploration and two finalization generations without fabricating an answer', async () => {
     const h = setup();
     h.child.waitForIdle.mockImplementation(async () => {
       await h.reader().onStepComplete?.({
@@ -480,16 +651,18 @@ describe('temporary memory recall', () => {
         shouldContinue: true,
       } as StepCompleteEvent);
       expect(h.child.close).not.toHaveBeenCalled();
-      if (h.child.waitForIdle.mock.calls.length === 25)
-        await call(tools(h.reader()), 'answerRecall', { answer: 'Done' });
+      if (h.child.waitForIdle.mock.calls.length >= RECALL_LIMITS.steps)
+        expect(Object.keys(tools(h.reader()))).toEqual(['answerRecall']);
       return false;
     });
     expect(
       await call(tools(h.extension), 'recallFromMemory', {
         question: 'Recall',
       }),
-    ).toEqual({ answer: 'Done', entities: [], skills: [] });
-    expect(h.child.waitForIdle).toHaveBeenCalledTimes(25);
+    ).toHaveProperty('error');
+    expect(h.child.waitForIdle).toHaveBeenCalledTimes(
+      RECALL_LIMITS.steps + RECALL_LIMITS.finalSteps,
+    );
     expect(h.child.close).toHaveBeenCalledOnce();
   });
 
@@ -512,7 +685,13 @@ describe('temporary memory recall', () => {
     });
     await expect(
       call(tools(h.extension), 'recallFromMemory', { question: 'Recall' }),
-    ).resolves.toEqual({ answer: 'Done', entities: [], skills: [] });
+    ).resolves.toEqual({
+      answer: 'Done',
+      entities: [],
+      skills: [],
+      entitySections: [],
+      skillReferences: [],
+    });
   });
 
   it('keeps oversized text, tool and event evidence available to the history pager', async () => {
@@ -574,8 +753,15 @@ describe('temporary memory recall', () => {
     });
     await expect(
       call(tools(h.extension), 'recallFromMemory', { question: 'Recall' }),
-    ).resolves.toEqual({ answer: 'Done', entities: [], skills: [] });
-    expect(h.child.inbox.sendMessage).toHaveBeenCalledTimes(4);
+    ).resolves.toEqual({
+      answer: 'Done',
+      entities: [],
+      skills: [],
+      entitySections: [],
+      skillReferences: [],
+    });
+    expect(h.child.inbox.sendMessage).toHaveBeenCalledTimes(1);
+    expect(h.readerInbox.sendMessage).toHaveBeenCalledTimes(1);
     expect(h.child.close).toHaveBeenCalledOnce();
   });
 
@@ -649,12 +835,8 @@ describe('temporary memory recall', () => {
       query: 'absent',
       offset: 0,
     });
-    expect(result).toMatchObject({
-      matches: [],
-      incomplete: [{ id: 'source-1', nextOffset: 60000 }],
-      truncated: true,
-      unavailable: 0,
-    });
+    expect(result).toContain('not proof of absence');
+    expect(result).toContain('readHistory {"id":"source-1","offset":60000}');
   });
 
   it('paginates the entire retained history manifest beyond 200 sources', async () => {
@@ -670,7 +852,7 @@ describe('temporary memory recall', () => {
       query: 'absent',
       offset: 200,
     });
-    expect(result).toMatchObject({ matches: [], nextOffset: 300 });
+    expect(result).toContain('"offset":300');
     expect(h.activities.readPage).toHaveBeenCalledTimes(100);
     expect(h.activities.readPage).toHaveBeenCalledWith(
       'source-149',

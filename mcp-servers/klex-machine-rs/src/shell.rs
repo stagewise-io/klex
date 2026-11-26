@@ -136,6 +136,26 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 struct Inner {
     sessions: IndexMap<String, Arc<Session>>,
     closed: bool,
+    /// Creations that passed the capacity check but have not inserted yet.
+    pending: usize,
+    /// Exited sessions that pending creations will replace.
+    evicting: Vec<String>,
+}
+
+/// A capacity reservation for one `create`, released when it is dropped.
+struct Slot<'a> {
+    inner: &'a Mutex<Inner>,
+    exited: Option<String>,
+}
+
+impl Drop for Slot<'_> {
+    fn drop(&mut self) {
+        let mut inner = lock(self.inner);
+        inner.pending -= 1;
+        if let Some(id) = &self.exited {
+            inner.evicting.retain(|evicting| evicting != id);
+        }
+    }
 }
 
 pub struct ShellService {
@@ -225,6 +245,8 @@ impl ShellService {
             inner: Mutex::new(Inner {
                 sessions: IndexMap::new(),
                 closed: false,
+                pending: 0,
+                evicting: Vec::new(),
             }),
             startups: watch::Sender::new(0),
         }
@@ -279,27 +301,39 @@ impl ShellService {
         options: CreateOptions,
         reservation: Option<&Reservation>,
     ) -> Result<ShellInfo, String> {
-        let exited = {
-            let inner = lock(&self.inner);
+        let slot = {
+            let mut inner = lock(&self.inner);
             if inner.closed {
                 return Err("Shell service is closed".into());
             }
-            let exited = if inner.sessions.len() >= self.max_sessions {
-                inner
+            let evicting = inner
+                .evicting
+                .iter()
+                .filter(|id| inner.sessions.contains_key(*id))
+                .count();
+            let exited = if inner.sessions.len() + inner.pending - evicting >= self.max_sessions {
+                let exited = inner
                     .sessions
                     .values()
-                    .find(|session| !lock(&session.info).running)
-                    .map(|session| session.info().id)
+                    .map(|session| session.info())
+                    .find(|info| !info.running && !inner.evicting.contains(&info.id))
+                    .map(|info| info.id);
+                if exited.is_none() {
+                    return Err(format!(
+                        "Shell session limit reached: {}",
+                        self.max_sessions
+                    ));
+                }
+                exited
             } else {
                 None
             };
-            if inner.sessions.len() >= self.max_sessions && exited.is_none() {
-                return Err(format!(
-                    "Shell session limit reached: {}",
-                    self.max_sessions
-                ));
+            inner.pending += 1;
+            inner.evicting.extend(exited.clone());
+            Slot {
+                inner: &self.inner,
+                exited,
             }
-            exited
         };
         let cwd = display(&self.paths.resolve(options.cwd.as_deref().unwrap_or("."))?);
         let shell = options.shell.clone().unwrap_or_else(default_shell);
@@ -357,9 +391,6 @@ impl ShellService {
             .take_writer()
             .map_err(|error| format!("{error:#}"))?;
 
-        if let Some(id) = exited {
-            let _ = self.close(&id);
-        }
         let info = ShellInfo {
             id: reservation
                 .map(|reservation| reservation.id.clone())
@@ -393,8 +424,36 @@ impl ShellService {
         let (drained_tx, drained_rx) = std::sync::mpsc::channel::<()>();
         spawn_reader(session.clone(), reader, drained_tx);
         spawn_exit_watcher(session.clone(), child, drained_rx, self.on_exit.clone());
-        lock(&self.inner).sessions.insert(info.id.clone(), session);
-        Ok(info)
+        let replaced = {
+            let mut inner = lock(&self.inner);
+            if inner.closed {
+                Err(())
+            } else {
+                let evicted = slot
+                    .exited
+                    .as_ref()
+                    .and_then(|id| inner.sessions.shift_remove(id));
+                inner.sessions.insert(info.id.clone(), session.clone());
+                Ok(evicted)
+            }
+        };
+        drop(slot);
+        match replaced {
+            Err(()) => {
+                session.closing.store(true, Ordering::SeqCst);
+                kill(&session);
+                Err("Shell service is closed".into())
+            }
+            Ok(evicted) => {
+                if let Some(evicted) = evicted {
+                    evicted.closing.store(true, Ordering::SeqCst);
+                    if lock(&evicted.info).running {
+                        kill(&evicted);
+                    }
+                }
+                Ok(info)
+            }
+        }
     }
 
     fn get(&self, id: &str) -> Result<Arc<Session>, String> {
@@ -547,17 +606,19 @@ fn spawn_reader(
         let mut decoder = Utf8Decoder::default();
         let mut chunk = vec![0u8; 64 * 1024];
         #[cfg(windows)]
-        let mut cursor_answered = false;
+        let mut cursor_query = CursorQuery::default();
         loop {
             match reader.read(&mut chunk) {
                 Ok(0) => break,
                 Ok(count) => {
                     let text = decoder.write(&chunk[..count]);
                     #[cfg(windows)]
-                    let text = if cursor_answered {
+                    let text = {
+                        let (text, asked) = cursor_query.filter(text);
+                        if asked && let Some(writer) = lock(&session.writer).as_mut() {
+                            let _ = writer.write_all(b"\x1b[1;1R").and_then(|()| writer.flush());
+                        }
                         text
-                    } else {
-                        answer_cursor_query(&session, text, &mut cursor_answered)
                     };
                     session.append(&text);
                 }
@@ -565,25 +626,50 @@ fn spawn_reader(
                 Err(_) => break,
             }
         }
+        #[cfg(windows)]
+        session.append(&cursor_query.end());
         session.append(&decoder.end());
         let _ = drained.send(());
     });
 }
 
 /// portable-pty opens ConPTY with `PSEUDOCONSOLE_INHERIT_CURSOR`, so conhost
-/// asks for the cursor position and holds the shell until it gets an answer.
-/// node-pty does not set that flag, so the query never reaches the output.
-#[cfg(windows)]
-fn answer_cursor_query(session: &Session, text: String, answered: &mut bool) -> String {
-    const QUERY: &str = "\x1b[6n";
-    let Some(index) = text.find(QUERY) else {
-        return text;
-    };
-    *answered = true;
-    if let Some(writer) = lock(&session.writer).as_mut() {
-        let _ = writer.write_all(b"\x1b[1;1R").and_then(|()| writer.flush());
+/// asks for the cursor position once and holds the shell until it gets an
+/// answer. node-pty does not set that flag, so the query never reaches the
+/// output. Output is held back while it ends in a prefix of the query.
+#[cfg(any(windows, test))]
+#[derive(Default)]
+struct CursorQuery {
+    held: String,
+    answered: bool,
+}
+
+#[cfg(any(windows, test))]
+impl CursorQuery {
+    const QUERY: &'static str = "\x1b[6n";
+
+    /// Returns the output to keep, and whether the query arrived in it.
+    fn filter(&mut self, text: String) -> (String, bool) {
+        if self.answered {
+            return (text, false);
+        }
+        let text = std::mem::take(&mut self.held) + &text;
+        if let Some(index) = text.find(Self::QUERY) {
+            self.answered = true;
+            let kept = format!("{}{}", &text[..index], &text[index + Self::QUERY.len()..]);
+            return (kept, true);
+        }
+        let partial = (1..Self::QUERY.len())
+            .rev()
+            .find(|&length| text.ends_with(&Self::QUERY[..length]))
+            .unwrap_or(0);
+        self.held = text[text.len() - partial..].to_owned();
+        (text[..text.len() - partial].to_owned(), false)
     }
-    format!("{}{}", &text[..index], &text[index + QUERY.len()..])
+
+    fn end(&mut self) -> String {
+        std::mem::take(&mut self.held)
+    }
 }
 
 fn spawn_exit_watcher(
@@ -646,6 +732,29 @@ fn spawn_exit_watcher(
             on_exit(info, session.output());
         }
     });
+}
+
+#[cfg(test)]
+mod cursor_query_tests {
+    use super::CursorQuery;
+
+    #[test]
+    fn strips_the_first_query_even_when_split() {
+        let mut query = CursorQuery::default();
+        assert_eq!(query.filter("a\x1b".into()), ("a".into(), false));
+        assert_eq!(query.filter("[".into()), (String::new(), false));
+        assert_eq!(query.filter("6nb".into()), ("b".into(), true));
+        assert_eq!(query.filter("\x1b[6n".into()), ("\x1b[6n".into(), false));
+    }
+
+    #[test]
+    fn releases_held_output_that_is_not_the_query() {
+        let mut query = CursorQuery::default();
+        assert_eq!(query.filter("\x1b[".into()), (String::new(), false));
+        assert_eq!(query.filter("0m".into()), ("\x1b[0m".into(), false));
+        assert_eq!(query.filter("x\x1b[6".into()), ("x".into(), false));
+        assert_eq!(query.end(), "\x1b[6");
+    }
 }
 
 #[cfg(all(test, unix))]
@@ -751,5 +860,36 @@ mod tests {
             service.create(options, None).unwrap_err(),
             "Shell service is closed"
         );
+    }
+
+    #[test]
+    fn concurrent_creates_respect_the_session_limit() {
+        let (_directory, service) = service();
+        let created = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..8)
+                .map(|_| {
+                    scope.spawn(|| {
+                        service.create(
+                            CreateOptions {
+                                shell: Some("/bin/sh".into()),
+                                args: Some(vec!["-c".into(), "sleep 5".into()]),
+                                ..CreateOptions::default()
+                            },
+                            None,
+                        )
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|handle| handle.join().unwrap())
+                .filter(Result::is_ok)
+                .count()
+        });
+        assert_eq!(created, 2);
+        assert_eq!(service.list().len(), 2);
+        for info in service.list() {
+            service.close(&info.id).unwrap();
+        }
     }
 }

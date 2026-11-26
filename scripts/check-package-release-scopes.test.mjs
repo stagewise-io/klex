@@ -54,6 +54,23 @@ test('ignores unrelated and path-prefix lookalike changes', () => {
   );
 });
 
+test('ignores unpublished paths inside a package', () => {
+  assert.deepEqual(
+    scopesForChangedFiles([
+      'mcp-servers/klex-machine/contract/tools/local.json',
+      'mcp-servers/klex-machine/contract/dump.mjs',
+    ]),
+    [],
+  );
+  assert.deepEqual(
+    scopesForChangedFiles([
+      'mcp-servers/klex-machine/contract/tools/local.json',
+      'mcp-servers/klex-machine/src/mcp.ts',
+    ]),
+    ['machine'],
+  );
+});
+
 test('accepts exact scopes across the complete commit range', () => {
   assert.deepEqual(
     missingReleaseScopes(

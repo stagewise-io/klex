@@ -23,6 +23,7 @@ function makeDeps(config: Config): ExtensionDeps {
     config,
     modelResolver: {} as ExtensionDeps['modelResolver'],
     generateText: vi.fn(),
+    makeDecision: vi.fn(),
     logger: {
       info: vi.fn(),
       warn: vi.fn(),

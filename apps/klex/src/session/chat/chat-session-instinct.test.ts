@@ -29,6 +29,7 @@ import {
 } from './chat-session';
 import {
   createDataPart,
+  type ExtensionDeps,
   type ExtensionFactory,
   type InstinctContext,
   isDataPartOf,
@@ -53,6 +54,7 @@ function harness(
     env?: NodeJS.ProcessEnv;
   } = {},
 ) {
+  let extensionDeps: ExtensionDeps;
   const order: string[] = [];
   const contexts: InstinctContext[] = [];
   const completed: StepCompleteEvent[] = [];
@@ -196,46 +198,49 @@ function harness(
   } as unknown as Config;
   const extension: ExtensionFactory = {
     identifier: 'memory',
-    create: (deps) => ({
-      dataPartTransformers: {
-        'instinct-test': () => [{ type: 'text', text: 'persistent memory' }],
-      },
-      getInstinctClassificationRequest: () => ({
-        prompt: 'Memory needed?',
-        keys: {
-          needed: { type: 'boolean', description: 'Memory helps.' },
+    create: (deps) => {
+      extensionDeps = deps;
+      return {
+        dataPartTransformers: {
+          'instinct-test': () => [{ type: 'text', text: 'persistent memory' }],
         },
-      }),
-      onInstinct: async (ctx) => {
-        order.push('reaction');
-        contexts.push(ctx);
-        ctx.prepare.appendPersistent([
-          createDataPart('instinct-test', {}) as never,
-        ]);
-        ctx.prepare.appendProvisional([
-          { type: 'text', text: 'provisional memory' },
-        ]);
-        ctx.prepare.appendEphemeral([
-          { type: 'text', text: 'ephemeral memory' },
-        ]);
-        await Promise.resolve();
-        if (options.interrupt && contexts.length === 1)
-          deps.inbox.sendMessage(
-            {
-              id: 'interrupt',
-              role: 'user',
-              parts: [{ type: 'text', text: 'Critical replacement input' }],
-            },
-            SessionInboxUrgency.Critical,
-          );
-      },
-      onStepStart: () => {
-        order.push('step-start');
-      },
-      onStepComplete: (event) => {
-        completed.push(event);
-      },
-    }),
+        getInstinctClassificationRequest: () => ({
+          prompt: 'Memory needed?',
+          keys: {
+            needed: { type: 'boolean', description: 'Memory helps.' },
+          },
+        }),
+        onInstinct: async (ctx) => {
+          order.push('reaction');
+          contexts.push(ctx);
+          ctx.prepare.appendPersistent([
+            createDataPart('instinct-test', {}) as never,
+          ]);
+          ctx.prepare.appendProvisional([
+            { type: 'text', text: 'provisional memory' },
+          ]);
+          ctx.prepare.appendEphemeral([
+            { type: 'text', text: 'ephemeral memory' },
+          ]);
+          await Promise.resolve();
+          if (options.interrupt && contexts.length === 1)
+            deps.inbox.sendMessage(
+              {
+                id: 'interrupt',
+                role: 'user',
+                parts: [{ type: 'text', text: 'Critical replacement input' }],
+              },
+              SessionInboxUrgency.Critical,
+            );
+        },
+        onStepStart: () => {
+          order.push('step-start');
+        },
+        onStepComplete: (event) => {
+          completed.push(event);
+        },
+      };
+    },
   };
   const session = createChatSession({
     logging,
@@ -265,6 +270,8 @@ function harness(
   };
   return {
     session,
+    decision: (args: Parameters<ExtensionDeps['makeDecision']>[0]) =>
+      extensionDeps.makeDecision(args),
     send,
     order,
     contexts,
@@ -298,7 +305,137 @@ function requiredSpan(
   return span;
 }
 
-describe('ChatSession instinct tracing', () => {
+describe('explicit extension decisions with automatic instincts disabled', () => {
+  const request = {
+    prompt: 'Memory needed?',
+    context: 'Remember the project',
+    keys: {
+      needed: { type: 'boolean' as const, description: 'Memory helps.' },
+    },
+  };
+
+  it('never invokes instinct hooks or resolves decision models during a normal step', async () => {
+    const h = harness();
+    try {
+      h.configValue.instinct.enabled = true;
+      await h.session.start();
+      await h.send('Remember the project');
+      expect(h.order.filter((event) => event !== 'step-start')).toEqual([
+        'generation',
+      ]);
+      expect(h.contexts).toEqual([]);
+      expect(h.resolver.resolveInstinctCandidates).not.toHaveBeenCalled();
+    } finally {
+      await h.session.close();
+    }
+  });
+
+  it.each([
+    { evaluationOnly: false, evaluationFallback: false },
+    { evaluationOnly: true, evaluationFallback: false },
+    { evaluationOnly: false, evaluationFallback: true },
+  ])(
+    'supports explicit decisions and per-extension accounting: %j',
+    async (options) => {
+      const h = harness(options);
+      try {
+        await h.session.start();
+        const result = await h.decision(request);
+        expect(result).toMatchObject({
+          status: 'ok',
+          answers: { needed: true },
+        });
+        expect(h.contexts).toEqual([]);
+        expect(
+          h.session.getSessionInfo().usage.extensions.memory?.total,
+        ).toMatchObject({
+          inputTokens: options.evaluationFallback
+            ? 17
+            : options.evaluationOnly
+              ? 7
+              : 10,
+          outputTokens: options.evaluationFallback
+            ? 8
+            : options.evaluationOnly
+              ? 3
+              : 5,
+        });
+        expect(
+          h.session.getSessionInfo().usage.extensions[
+            'core:instinct-classifier'
+          ],
+        ).toBeUndefined();
+      } finally {
+        await h.session.close();
+      }
+    },
+  );
+
+  it('uses generation fallback without configured decision models', async () => {
+    const h = harness();
+    h.configValue.modelSelection.instincts = [];
+    h.configValue.modelSelection.memory = [];
+    h.configValue.modelSelection.compaction = [];
+    try {
+      await h.session.start();
+      expect(await h.decision(request)).toMatchObject({ status: 'ok' });
+      expect(h.resolver.resolveInstinctCandidates).toHaveBeenCalledWith([
+        expect.objectContaining({ modelId: 'chat', api: 'generation' }),
+      ]);
+    } finally {
+      await h.session.close();
+    }
+  });
+
+  it('bounds a stalled decision by the caller deadline', async () => {
+    const h = harness({ evaluationOnly: true });
+    h.evaluator.doEvaluate = () => new Promise(() => {});
+    try {
+      await h.session.start();
+      expect(await h.decision({ ...request, timeoutMs: 20 })).toMatchObject({
+        status: 'timeout',
+      });
+    } finally {
+      await h.session.close();
+    }
+  });
+
+  it('returns unavailable when no candidate can be used', async () => {
+    const h = harness();
+    vi.mocked(h.resolver.resolveInstinctCandidates).mockReturnValue([]);
+    try {
+      await h.session.start();
+      expect(await h.decision(request)).toMatchObject({
+        status: 'unavailable',
+      });
+    } finally {
+      await h.session.close();
+    }
+  });
+
+  it('rejects invalid requests and cancellation without inference', async () => {
+    const h = harness();
+    try {
+      await h.session.start();
+      expect(await h.decision({ ...request, keys: {} })).toMatchObject({
+        status: 'failed',
+      });
+      expect(await h.decision({ ...request, timeoutMs: 0 })).toMatchObject({
+        status: 'failed',
+      });
+      expect(
+        await h.decision({ ...request, abortSignal: AbortSignal.abort() }),
+      ).toEqual({ status: 'aborted' });
+      expect(h.resolver.resolveInstinctCandidates).not.toHaveBeenCalled();
+    } finally {
+      await h.session.close();
+    }
+    expect(await h.decision(request)).toEqual({ status: 'aborted' });
+  });
+});
+
+// Historical automatic-phase coverage retained while the subsystem is disabled.
+describe.skip('ChatSession instinct tracing', () => {
   const exporter = new InMemorySpanExporter();
   const processor = createTelemetrySpanProcessor('advanced');
   const policy = createTelemetryPolicy('advanced');
@@ -663,7 +800,7 @@ describe('ChatSession instinct tracing', () => {
   );
 });
 
-describe('ChatSession instinct integration', () => {
+describe.skip('ChatSession instinct integration', () => {
   it.each(['generation', 'evaluation'] as const)(
     'interpolates explicit %s selections per run without changing persisted placeholders',
     async (api) => {

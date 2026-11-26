@@ -319,6 +319,23 @@ export type GenerateTextResult =
   | ({ success: true } & GenerateTextSuccess)
   | ({ success: false } & GenerateTextFailure);
 
+/** On-demand decision input. No conversation history is added implicitly. */
+export interface MakeDecisionArgs {
+  /** Trusted instructions describing the decision. */
+  readonly prompt: string;
+  /** Evidence/state to judge, treated as external data rather than instructions. */
+  readonly context: string;
+  /** Boolean, probability, rubric score, or enum questions. */
+  readonly keys: InstinctClassificationKeys;
+  /** Cancels resolution and all remaining fallback attempts. */
+  readonly abortSignal?: AbortSignal;
+  /** Overall deadline in milliseconds; defaults to the configured classifier timeout. */
+  readonly timeoutMs?: number;
+}
+
+/** Validated decision answers, or an explicit non-success outcome. */
+export type MakeDecisionResult = InstinctClassificationOutcome;
+
 // ---------------------------------------------------------------------------
 // Step event types
 // ---------------------------------------------------------------------------
@@ -730,6 +747,7 @@ export interface Extension {
   onStepStart?: () => void | Promise<void>;
 
   /**
+   * @deprecated Disabled: automatic instinct hooks are not invoked. Use `makeDecision`.
    * Synchronously requests classification for an executable step, or returns
    * `null` to opt out. Must be cheap: no I/O or model calls. Throws and
    * invalid requests are treated as `null`. See {@link InstinctClassificationRequest}
@@ -740,6 +758,7 @@ export interface Extension {
   ) => InstinctClassificationRequest | null;
 
   /**
+   * @deprecated Disabled: automatic instinct hooks are not invoked.
    * Runs in parallel whether or not this extension requested classification.
    * Main generation waits for reactions within the remaining shared
    * `instinct.timeoutMs` budget after classification.
@@ -943,6 +962,16 @@ export interface ExtensionDeps {
   generateText: (args: GenerateTextArgs) => Promise<GenerateTextResult>;
 
   /**
+   * Makes an explicit, bounded decision using the configured Quick Decisions
+   * (`modelSelection.instincts`) models, through either generation or evaluation.
+   * With no decision models, uses the first non-empty Memory, Compaction, or
+   * Chat selection through generation. Shares fallback and usage accounting
+   * with core, but never invokes instinct hooks or stages context. Available
+   * even though the automatic instinct phase is disabled.
+   */
+  makeDecision: (args: MakeDecisionArgs) => Promise<MakeDecisionResult>;
+
+  /**
    * Module-scoped logger for the extension.
    */
   logger: ModuleLogger;
@@ -1029,7 +1058,16 @@ export interface ExtensionDeps {
  * The handler augments these with a per-extension `getDataDir` and
  * `skills` handle before passing them to each factory.
  */
-export type BaseExtensionDeps = Omit<ExtensionDeps, 'getDataDir' | 'skills'>;
+export type BaseExtensionDeps = Omit<
+  ExtensionDeps,
+  'getDataDir' | 'skills' | 'makeDecision'
+> & {
+  /** Handler supplies identity explicitly, including outside an active trace. */
+  makeDecision: (
+    args: MakeDecisionArgs,
+    extensionIdentifier: string,
+  ) => Promise<MakeDecisionResult>;
+};
 
 /**
  * The descriptor passed to the extension handler when registering an

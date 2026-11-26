@@ -74,6 +74,8 @@ import type {
   GenerateTextArgs,
   GenerateTextResult,
   InstinctClassificationOutcome,
+  MakeDecisionArgs,
+  MakeDecisionResult,
 } from './extensions/extension-api';
 import { isMemoryResultMessage } from './extensions/memory/retrieval/memory-result';
 import {
@@ -83,11 +85,14 @@ import {
   SessionInboxUrgency,
 } from './inbox';
 import {
+  compileInstinctClassificationBatch,
   createInstinctRunner,
   executeInstinctClassification,
+  frameInstinctEvidence,
   type InstinctClassificationArgs,
   type InstinctRunner,
   instinctFallbackMemory,
+  validateInstinctClassificationRequest,
 } from './instinct';
 import type { ExtendedUIMessage } from './message-types';
 import { createTurn, type Turn, type TurnResult } from './turn';
@@ -583,6 +588,8 @@ class ChatSessionModule implements AgentSession {
       config: this.deps.config,
       modelResolver: this.deps.modelResolver,
       generateText: (args) => this.generateTextForExtension(args),
+      makeDecision: (args, identifier) =>
+        this.makeDecisionForExtension(args, identifier),
       logger: this.deps.logger,
       logging: this.deps.logging,
       mcp: this.deps.mcp,
@@ -617,12 +624,15 @@ class ChatSessionModule implements AgentSession {
     this.instinctRunner = createInstinctRunner({
       logger: this.deps.logger,
       extensionHandler: this.extensionHandler,
-      getConfig: () => this.deps.config.get().instinct,
+      // Automatic instincts are disabled, including for saved enabled configs.
+      // Keep the implementation and hooks for possible future reactivation.
+      getConfig: () => ({ ...this.deps.config.get().instinct, enabled: false }),
       execute: (args) => this.executeInstinctClassification(args),
     });
-    sessionScope
-      .child('instinct')
-      .introspect(() => ({ lastSummary: this.instinctRunner.lastSummary }));
+    sessionScope.child('instinct').introspect(() => ({
+      enabled: false,
+      lastSummary: this.instinctRunner.lastSummary,
+    }));
 
     this.leaseManager = new GenerationLaneLeaseManager({
       logger: this.deps.logger,
@@ -695,6 +705,7 @@ class ChatSessionModule implements AgentSession {
    */
   private async executeInstinctClassification(
     args: InstinctClassificationArgs,
+    identifier = INSTINCT_CLASSIFIER_IDENTIFIER,
   ): Promise<Map<string, InstinctClassificationOutcome>> {
     const configuredEntries =
       this.deps.config.getRuntime().modelSelection.instincts;
@@ -719,26 +730,68 @@ class ChatSessionModule implements AgentSession {
       memoryKey,
       instinctConfig.fallbackResetIdleMs,
     );
-    const ctx = withExtensionIdentifier(
-      context.active(),
-      INSTINCT_CLASSIFIER_IDENTIFIER,
-    );
+    const ctx = withExtensionIdentifier(context.active(), identifier);
     return context.with(ctx, () =>
       executeInstinctClassification(args, {
         candidates,
         sessionId: this.sessionId,
-        functionId: `extension:${INSTINCT_CLASSIFIER_IDENTIFIER}`,
+        functionId: `extension:${identifier}`,
         defaultAttemptTimeoutMs: instinctConfig.attemptTimeoutMs,
         startIndex,
         onSuccess: (index) =>
           instinctFallbackMemory.succeeded(memoryKey, index),
         onUsage: (usage) =>
-          this.recordExtensionUsage(
-            INSTINCT_CLASSIFIER_IDENTIFIER,
-            extractUsage(usage),
-          ),
+          this.recordExtensionUsage(identifier, extractUsage(usage)),
       }),
     );
+  }
+
+  private async makeDecisionForExtension(
+    args: MakeDecisionArgs,
+    identifier: string,
+  ): Promise<MakeDecisionResult> {
+    if (args.abortSignal?.aborted || this._status === 'terminated')
+      return { status: 'aborted' };
+    const timeoutMs =
+      args.timeoutMs ?? this.deps.config.get().instinct.classifierTimeoutMs;
+    if (
+      !Number.isSafeInteger(timeoutMs) ||
+      timeoutMs <= 0 ||
+      timeoutMs > 2_147_483_647
+    )
+      return { status: 'failed', reason: 'invalid decision timeout' };
+    const deadlineAt = performance.now() + timeoutMs;
+    const reason = validateInstinctClassificationRequest(args);
+    if (reason !== null || typeof args.context !== 'string')
+      return {
+        status: 'failed',
+        reason: reason ?? 'decision context must be a string',
+      };
+    try {
+      const entries = [{ extensionIdentifier: identifier, request: args }];
+      const prompt = frameInstinctEvidence('', [
+        { extension: identifier, content: args.context },
+      ]);
+      const outcomes = await this.executeInstinctClassification(
+        {
+          ...compileInstinctClassificationBatch(entries, prompt),
+          signal: args.abortSignal ?? new AbortController().signal,
+          deadlineAt,
+        },
+        identifier,
+      );
+      return (
+        outcomes.get(identifier) ?? {
+          status: 'failed',
+          reason: 'missing decision result',
+        }
+      );
+    } catch {
+      return {
+        status: args.abortSignal?.aborted ? 'aborted' : 'failed',
+        reason: 'decision resolution or inference failed',
+      };
+    }
   }
 
   /**

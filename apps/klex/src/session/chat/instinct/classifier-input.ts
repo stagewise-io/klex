@@ -19,6 +19,7 @@ export interface InstinctClassifierInputLimits {
 export interface InstinctClassifierInputArgs {
   projectContext?: (
     context: import('@/session/inbox').ContextDataUIPart,
+    occurrence?: { messageId: string; partIndex: number },
   ) => import('@/session/inbox').ContextDataUIPart;
   readonly entries: readonly InstinctClassifierEntry[];
   readonly history: readonly ExtendedUIMessage[];

@@ -897,6 +897,7 @@ export interface ExtensionDeps {
   /** Prepared model-facing projection only; internal matching must use getHistory. */
   projectInputContext?: (
     context: import('@/session/inbox').ContextDataUIPart,
+    occurrence?: { messageId: string; partIndex: number },
   ) => import('@/session/inbox').ContextDataUIPart;
 
   /** Delegate detail access to only the references explicitly supplied to a child. */

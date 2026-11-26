@@ -14,6 +14,8 @@ import type { SqliteStoreDefinition } from '@/local-data';
 import { createLocalData } from '@/local-data';
 import { KLEX_VERSION } from '@/release';
 import type { ExtendedUIMessage } from '@/session/chat/message-types';
+import { convertToModelMessagesExtended } from '@/session/chat/utils/convert-to-model-messages';
+import { createTranscriptHistoryView } from '@/session/chat/utils/history-view';
 import type { ContextDataUIPart } from '@/session/inbox';
 
 import { summarizeGenerationFailure } from './generation-health';
@@ -145,6 +147,23 @@ describe('input projection storage', () => {
     expect(typeof a).toBe('string');
     expect(typeof b).toBe('string');
     expect(a).not.toBe(b);
+    const clones = structuredClone(messages);
+    for (const [index, reference] of [a, b].entries()) {
+      expect(
+        projections.present('default', contextOf(clones[index]!), {
+          messageId: clones[index]!.id,
+          partIndex: 0,
+        }).metadata.inputEventRef,
+      ).toBe(reference);
+    }
+    const changed = structuredClone(clones[0]!);
+    changed.parts[0]!.data.metadata.type = 'changed';
+    expect(
+      projections.present('default', contextOf(changed), {
+        messageId: changed.id,
+        partIndex: 0,
+      }).metadata.inputEventRef,
+    ).toBeUndefined();
     messages = messages.slice(1);
     recorder.scheduleSync(() => messages);
     await projections.prepare('default', messages);
@@ -493,6 +512,31 @@ describe('input projection storage', () => {
     const pinned = projections.present('default', first);
     expect(pinned.metadata.data).toEqual({ message: 'Fact first' });
     expect(pinned.metadata.type).toBe('message');
+    const projectContext = (
+      context: ContextDataUIPart,
+      occurrence?: { messageId: string; partIndex: number },
+    ) => projections.present('default', context, occurrence);
+    const clonedHistory = structuredClone(messages);
+    const converted = JSON.stringify(
+      await convertToModelMessagesExtended(
+        clonedHistory,
+        {},
+        undefined,
+        projectContext,
+      ),
+    );
+    const transcript = createTranscriptHistoryView(
+      { keep: 'newest', maxCharacters: 20_000 },
+      undefined,
+      [],
+      projectContext,
+    ).render(clonedHistory).text;
+    for (const rendered of [converted, transcript]) {
+      expect(rendered).toContain('Fact first');
+      expect(rendered).toContain(pinned.metadata.inputEventRef);
+      expect(rendered).not.toContain('traceId');
+    }
+    expect(clonedHistory).toEqual(messages);
     expect(JSON.parse(generate.mock.calls[0]?.[0].prompt).identity).toEqual([
       { path: ['type'], type: 'string', sample: '"message"' },
     ]);

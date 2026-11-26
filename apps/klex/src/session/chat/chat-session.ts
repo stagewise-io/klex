@@ -579,8 +579,12 @@ class ChatSessionModule implements AgentSession {
               references,
             )
         : undefined,
-      projectInputContext: (context) =>
-        this.deps.inputProjections?.present(this.sessionId, context) ?? context,
+      projectInputContext: (context, occurrence) =>
+        this.deps.inputProjections?.present(
+          this.sessionId,
+          context,
+          occurrence,
+        ) ?? context,
       checkpoints: {
         commit: (request) => {
           if (this._status === 'terminated') {
@@ -646,8 +650,12 @@ class ChatSessionModule implements AgentSession {
     }
 
     this.instinctRunner = createInstinctRunner({
-      projectContext: (context) =>
-        this.deps.inputProjections?.present(this.sessionId, context) ?? context,
+      projectContext: (context, occurrence) =>
+        this.deps.inputProjections?.present(
+          this.sessionId,
+          context,
+          occurrence,
+        ) ?? context,
       logger: this.deps.logger,
       extensionHandler: this.extensionHandler,
       // Automatic instincts are disabled, including for saved enabled configs.
@@ -1401,8 +1409,12 @@ class ChatSessionModule implements AgentSession {
     const updateWatermark = this.leaseManager.updateWatermark;
     await this.prepareProjectedInputs(request.signal);
     const assembled = await assembleInferenceContext({
-      projectContext: (context) =>
-        this.deps.inputProjections?.present(this.sessionId, context) ?? context,
+      projectContext: (context, occurrence) =>
+        this.deps.inputProjections?.present(
+          this.sessionId,
+          context,
+          occurrence,
+        ) ?? context,
       history,
       extensionHandler: this.extensionHandler,
       model,
@@ -1745,9 +1757,12 @@ class ChatSessionModule implements AgentSession {
           flushPendingImmediate: this.flushPendingImmediate,
           atStepBoundary: this.atStepBoundary,
           prepareInputs: this.prepareProjectedInputs,
-          projectContext: (context) =>
-            this.deps.inputProjections?.present(this.sessionId, context) ??
-            context,
+          projectContext: (context, occurrence) =>
+            this.deps.inputProjections?.present(
+              this.sessionId,
+              context,
+              occurrence,
+            ) ?? context,
           shouldYieldGenerationLane: () =>
             this.laneSuspended || this._status === 'terminated',
           basePrompt: this.deps.basePrompt,

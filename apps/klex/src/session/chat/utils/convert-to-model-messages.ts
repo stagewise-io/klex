@@ -48,7 +48,10 @@ export const convertToModelMessagesExtended = async (
   messages: ExtendedUIMessage[],
   transformers: DataPartTransformers,
   onMemoryMetrics?: Parameters<typeof materializeMemories>[1],
-  projectContext?: (context: ContextDataUIPart) => ContextDataUIPart,
+  projectContext?: (
+    context: ContextDataUIPart,
+    occurrence?: { messageId: string; partIndex: number },
+  ) => ContextDataUIPart,
 ): ReturnType<typeof convertToModelMessages> => {
   const materialized = materializeContextParts(messages, projectContext);
   // Find the last user message index.
@@ -190,13 +193,19 @@ function materializeExtensionParts(
 
 function materializeContextParts(
   messages: ExtendedUIMessage[],
-  projectContext?: (context: ContextDataUIPart) => ContextDataUIPart,
+  projectContext?: (
+    context: ContextDataUIPart,
+    occurrence?: { messageId: string; partIndex: number },
+  ) => ContextDataUIPart,
 ): ExtendedUIMessage[] {
   return messages.map((message) => ({
     ...message,
-    parts: message.parts.flatMap((part) => {
+    parts: message.parts.flatMap((part, partIndex) => {
       if (part.type !== 'data-context') return [part];
-      return materializeContextPart(projectContext?.(part.data) ?? part.data);
+      return materializeContextPart(
+        projectContext?.(part.data, { messageId: message.id, partIndex }) ??
+          part.data,
+      );
     }),
   }));
 }

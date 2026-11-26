@@ -87,6 +87,7 @@ export interface TurnDependencies {
   prepareInputs?: (signal: AbortSignal) => Promise<void>;
   projectContext?: (
     context: import('@/session/inbox').ContextDataUIPart,
+    occurrence?: { messageId: string; partIndex: number },
   ) => import('@/session/inbox').ContextDataUIPart;
   /** Stops the turn after the current step reaches its commit boundary. */
   shouldYieldGenerationLane?: () => boolean;

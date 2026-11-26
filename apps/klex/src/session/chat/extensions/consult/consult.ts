@@ -314,8 +314,9 @@ class ConsultExtension implements Extension {
         },
         this.deps.getDataPartTransformers?.(),
         ['time', 'timezone', 'todos', CONSULT_REPORT_KEY],
-        (context) => {
-          const projected = this.deps.projectInputContext?.(context) ?? context;
+        (context, occurrence) => {
+          const projected =
+            this.deps.projectInputContext?.(context, occurrence) ?? context;
           const reference = projected.metadata.inputEventRef;
           // Only the trusted projector can mint delegated capabilities. Never
           // extract authorization from payload strings or unchanged raw metadata.

@@ -24,7 +24,11 @@ export interface InputProjections {
     messages: readonly ExtendedUIMessage[],
     generation?: GenerationOptions,
   ): Promise<void>;
-  present(sessionId: string, context: ContextDataUIPart): ContextDataUIPart;
+  present(
+    sessionId: string,
+    context: ContextDataUIPart,
+    occurrence?: { messageId: string; partIndex: number },
+  ): ContextDataUIPart;
   readUnfiltered(
     sessionId: string,
     reference: string,
@@ -320,8 +324,19 @@ class InputProjectionsModule implements InputProjections {
       );
     }
   }
-  present(sessionId: string, context: ContextDataUIPart): ContextDataUIPart {
-    const key = this.occurrences.get(context)?.get(sessionId);
+  present(
+    sessionId: string,
+    context: ContextDataUIPart,
+    occurrence?: { messageId: string; partIndex: number },
+  ): ContextDataUIPart {
+    const key = occurrence
+      ? JSON.stringify([
+          sessionId,
+          occurrence.messageId,
+          occurrence.partIndex,
+          digest(context),
+        ])
+      : this.occurrences.get(context)?.get(sessionId);
     const binding = key ? this.prepared.get(key) : undefined;
     // Never hide data until its canonical source and recovery binding are durable.
     if (!binding) return boundContext(context);

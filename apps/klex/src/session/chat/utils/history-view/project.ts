@@ -69,7 +69,7 @@ export function projectMessage(
   const skipped =
     (filter.roles && !filter.roles.includes(message.role)) ||
     filter.skipMessage?.(message);
-  for (const part of message.parts) {
+  for (const [partIndex, part] of message.parts.entries()) {
     const occurrence = dispatcher.consume(part);
     if (skipped) continue;
     const record = projectPart(
@@ -78,6 +78,7 @@ export function projectMessage(
       filter,
       dispatcher,
       occurrence,
+      { messageId: message.id, partIndex },
     );
     if (record) projected.records.push(record);
   }
@@ -90,6 +91,7 @@ function projectPart(
   filter: HistoryFilterOptions,
   dispatcher: ReturnType<typeof createDataPartDispatcher>,
   occurrence: number,
+  contextOccurrence: { messageId: string; partIndex: number },
 ): HistoryRecord | null {
   if (part.type === 'text') {
     const text = filter.text;
@@ -132,7 +134,8 @@ function projectPart(
 
   if (part.type === 'data-context') {
     if (!filter.context) return null;
-    const projected = filter.projectContext?.(part.data) ?? part.data;
+    const projected =
+      filter.projectContext?.(part.data, contextOccurrence) ?? part.data;
     return projectContext(projected, filter.context, projected !== part.data);
   }
 

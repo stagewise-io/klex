@@ -34,6 +34,7 @@ type Parts = ExtendedUIMessage['parts'];
 export interface InstinctRunnerDeps {
   projectContext?: (
     context: import('@/session/inbox').ContextDataUIPart,
+    occurrence?: { messageId: string; partIndex: number },
   ) => import('@/session/inbox').ContextDataUIPart;
   readonly logger: ModuleLogger;
   readonly extensionHandler: ExtensionHandler;

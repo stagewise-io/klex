@@ -67,6 +67,7 @@ export interface StepDependencies {
   prepareInputs?: (signal: AbortSignal) => Promise<void>;
   projectContext?: (
     context: import('@/session/inbox').ContextDataUIPart,
+    occurrence?: { messageId: string; partIndex: number },
   ) => import('@/session/inbox').ContextDataUIPart;
   logger: ModuleLogger;
   turnContext: Context;

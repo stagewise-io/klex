@@ -1,3 +1,4 @@
+export * from './active-tool-calls';
 export * from './commit-messages';
 export * from './inference-context';
 export * from './interaction-lease';

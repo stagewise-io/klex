@@ -23,6 +23,7 @@ import type {
 import type { ProviderModelResolver } from '@/provider-registry';
 import type { SessionInboxEvent } from '@/session/inbox';
 import {
+  ActiveToolCalls,
   appendExternalInteractionContext,
   assembleInferenceContext,
   describeInteractionTools,
@@ -282,6 +283,7 @@ class ChatSessionModule implements AgentSession {
   // --- Observability tracking ---
 
   private runtimeState: SessionRuntimeState = 'idle';
+  private readonly activeToolCalls = new ActiveToolCalls();
   /**
    * Whether every input since the session was last idle was a memory
    * result; `null` until the first input arrives.
@@ -1319,6 +1321,7 @@ class ChatSessionModule implements AgentSession {
         sessionId: this.sessionId,
         getConversationEpoch: () => this.conversationEpoch?.currentEpochId(),
         validateInput: true,
+        activeToolCalls: this.activeToolCalls,
         recordToolCall: (toolName, success, durationMs, errorType) =>
           this.deps.telemetryMetrics?.recordToolCall(
             this.sessionId,
@@ -1549,6 +1552,7 @@ class ChatSessionModule implements AgentSession {
               }
             : {}),
           telemetryMetrics: this.deps.telemetryMetrics,
+          activeToolCalls: this.activeToolCalls,
           sessionContext: this.sessionContext,
           sessionSpan: this.sessionSpan,
           messages: this.messages,
@@ -1903,6 +1907,7 @@ class ChatSessionModule implements AgentSession {
       },
       turns: this.turnCount,
       steps: this.stepCount,
+      activeTools: this.activeToolCalls.snapshot(),
       messageCount: this.messages.length,
       createdAt: this.createdAt,
       childSessions: this.getChildSessionSummaries(),

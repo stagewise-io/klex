@@ -4,7 +4,11 @@ import { type DynamicToolUIPart, getToolName, isToolUIPart } from 'ai';
 import type { ModuleLogger } from '@stagewise/logger';
 
 import { createDataPart } from '@/session/chat/extensions/extension-api';
-import { normalizeJsonValue, ToolExecutor } from '@/session/interaction';
+import {
+  type ActiveToolCalls,
+  normalizeJsonValue,
+  ToolExecutor,
+} from '@/session/interaction';
 import { createInvocationEvidence } from '@/tool-provider';
 
 import type { ExtendedUIMessage } from '../message-types';
@@ -51,6 +55,8 @@ export class ToolDispatcher {
         durationMs: number,
         errorType?: string,
       ) => void;
+      /** Session-wide record of the calls in flight. */
+      activeToolCalls?: ActiveToolCalls;
     },
   ) {
     this.toolExecutor = new ToolExecutor({
@@ -58,6 +64,9 @@ export class ToolDispatcher {
       tools: deps.tools,
       modelMessages: deps.modelMessages,
       sessionId: deps.sessionId,
+      ...(deps.activeToolCalls !== undefined && {
+        activeToolCalls: deps.activeToolCalls,
+      }),
       ...(deps.getConversationEpoch !== undefined && {
         getConversationEpoch: deps.getConversationEpoch,
       }),

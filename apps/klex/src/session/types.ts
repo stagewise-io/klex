@@ -8,7 +8,7 @@ import type { ExtensionFactory } from './chat/extensions/extension-api';
 import type { ChatSessionInbox } from './chat/inbox';
 import type { ExtendedUIMessage } from './chat/message-types';
 import type { SessionInboxEvent } from './inbox';
-import type { ConversationHost } from './interaction';
+import type { ActiveToolCall, ConversationHost } from './interaction';
 
 /** Stable identifier assigned to the default session. */
 export const DEFAULT_SESSION_ID = 'default';
@@ -97,6 +97,8 @@ export interface SessionInfo {
   turns: number;
   /** Total number of steps executed across all turns. */
   steps: number;
+  /** Tool calls running right now, oldest first. Names only, no inputs. */
+  activeTools?: ActiveToolCall[];
   /** Number of messages in the session history. */
   messageCount: number;
   /** ISO timestamp of session creation. */

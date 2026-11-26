@@ -112,6 +112,31 @@ describe('JavaScriptTool', () => {
     );
   });
 
+  it('reports each MCP call while it runs and once it settles, also on failure', async () => {
+    const settled = vi.fn();
+    const onMcpCall = vi.fn(() => settled);
+    vi.spyOn(provider, 'invoke').mockImplementation(async () => {
+      expect(onMcpCall).toHaveBeenCalledTimes(1);
+      expect(settled).not.toHaveBeenCalled();
+      throw new Error('remote failure');
+    });
+    await expect(
+      javaScriptTool.execute({
+        code: 'await tools.search("same"); return await mcp["git.hub"]["same"]({})',
+        context: {
+          executionId: 'outer-execution',
+          signal: new AbortController().signal,
+          onMcpCall,
+        },
+      }),
+    ).rejects.toThrow('remote failure');
+    expect(onMcpCall).toHaveBeenCalledExactlyOnceWith({
+      namespace: 'git.hub',
+      name: 'same',
+    });
+    expect(settled).toHaveBeenCalledOnce();
+  });
+
   it('retains multiple invocation records when cancellation follows partial output', async () => {
     const records = vi.fn();
     const started = Promise.withResolvers<void>();

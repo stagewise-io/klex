@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { testLogger as logger } from '@/session/chat/test-helpers';
 import type { ToolRequestContext } from '@/tool-provider';
 
+import { ActiveToolCalls } from './active-tool-calls';
 import { ToolExecutor } from './tool-executor';
 
 function createExecutor(
@@ -36,6 +37,60 @@ function createExecutor(
 }
 
 describe('ToolExecutor', () => {
+  it('reports a call in flight, and the MCP call it waits on, until each settles', async () => {
+    const activeToolCalls = new ActiveToolCalls();
+    const mcp = Promise.withResolvers<void>();
+    const tool = Promise.withResolvers<string>();
+    let mcpSettled!: () => void;
+    const executor = new ToolExecutor({
+      logger,
+      tools: {
+        runInSandbox: {
+          inputSchema: jsonSchema({ type: 'object' }),
+          execute: async (_input, options) => {
+            const context = options.context as ToolRequestContext;
+            mcpSettled =
+              context.onMcpCall?.({
+                namespace: 'linear',
+                name: 'useLinearApi',
+              }) ?? (() => undefined);
+            mcp.resolve();
+            return tool.promise;
+          },
+        },
+      },
+      modelMessages: [],
+      sessionId: 'session-1',
+      activeToolCalls,
+    });
+
+    const pending = executor.execute({
+      executionId: 'call-1',
+      name: 'runInSandbox',
+      input: {},
+    });
+    await mcp.promise;
+    expect(activeToolCalls.snapshot()).toEqual([
+      {
+        toolCallId: 'call-1',
+        name: 'runInSandbox',
+        startedAt: expect.any(String),
+        mcpCalls: [
+          {
+            namespace: 'linear',
+            name: 'useLinearApi',
+            startedAt: expect.any(String),
+          },
+        ],
+      },
+    ]);
+    mcpSettled();
+    expect(activeToolCalls.snapshot()[0]?.mcpCalls).toEqual([]);
+    tool.resolve('done');
+    await pending;
+    expect(activeToolCalls.snapshot()).toEqual([]);
+  });
+
   it('allows recall beyond the ordinary tool deadline and makes its deadline non-retryable', async () => {
     vi.useFakeTimers();
     try {

@@ -7,6 +7,7 @@ import type { ModuleLogger } from '@stagewise/logger';
 
 import type { Config } from '@/config';
 import type { ProviderModelResolver } from '@/provider-registry';
+import type { ActiveToolCalls } from '@/session/interaction';
 import type { Usage } from '@/session/types';
 import type { GenerationFailure } from '@/session-history';
 import type { TelemetryMetrics } from '@/telemetry-metrics';
@@ -42,6 +43,8 @@ export interface TurnDependencies {
   /** Advances and returns the bounded conversation epoch for each generation attempt. */
   beginConversationGeneration?: () => string;
   telemetryMetrics?: TelemetryMetrics;
+  /** Session-wide record of the tool calls in flight. */
+  activeToolCalls?: ActiveToolCalls;
   sessionContext: Context;
   sessionSpan: Span;
   messages: ExtendedUIMessage[];
@@ -304,6 +307,9 @@ class TurnModule implements Turn {
                 this.deps.beginConversationGeneration,
             }),
             telemetryMetrics: this.deps.telemetryMetrics,
+            ...(this.deps.activeToolCalls !== undefined && {
+              activeToolCalls: this.deps.activeToolCalls,
+            }),
             basePrompt: this.deps.basePrompt,
             ...(this.deps.instinctRunner !== undefined && {
               instinctRunner: this.deps.instinctRunner,

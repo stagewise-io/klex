@@ -195,6 +195,8 @@ Telemetry: `step.generation_invoked` carries both budgets; `step.first_output_re
 
 At-most-once tool execution via a `dispatchedToolCallIds` set. Owns tool lookup, execution, and in-place state mutation. Decoupled from generation abort. Post-generation sweep catches tool calls that reached `input-available` after the stream ended. Tool execution is bounded by a configurable timeout.
 
+The transcript is written only at step boundaries, so it never shows a call in flight. The session keeps a separate `ActiveToolCalls` record that step and realtime-lease tool execution both feed. Each running call lists the MCP calls it waits on: the sandbox reports them through the `onMcpCall` request-context hook. `getSessionInfo().activeTools` exposes it to introspection (`/v1/introspect/sessions/default`) for live UIs. It holds names and start times only, never inputs or results, and it is not persisted.
+
 ## Extensions
 
 Extensions can transform UI history and model context, register custom data-part transformers, expose tools, and contribute system prompts. `onStepComplete` receives `requestRejected`; extensions that injected request content (for example `readAttachment` remote media) use it to replace that content with an error text in later model context. This degrade state is in memory and does not change persisted history. After a restart, at most one more rejected attempt happens before the content is degraded again. `getProvisionalStepContext` prepares dynamic context after model resolution, immediately before inference. Providers receive isolated history snapshots and run sequentially in factory order; they do not mutate canonical history directly.

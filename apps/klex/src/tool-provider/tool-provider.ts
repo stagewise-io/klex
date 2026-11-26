@@ -167,6 +167,11 @@ export interface ToolRequestContext {
   /** Synchronous host-only observer; never exposed to the guest. */
   onMcpInvocation?: (invocation: McpInvocation) => void;
   /**
+   * Synchronous host-only observer of an MCP call that is starting; call the
+   * returned callback once it settles. Never exposed to the guest.
+   */
+  onMcpCall?: (reference: { namespace: string; name: string }) => () => void;
+  /**
    * UUID of the session that initiated the tool request, when available.
    * Used for associating MCP tool calls with sessions in observability.
    */

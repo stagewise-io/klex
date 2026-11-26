@@ -350,6 +350,7 @@ class JavaScriptToolModule implements JavaScriptTool {
           ...contextFrom(executionId, abort, this.sessionId),
           executionId: outerContext?.executionId ?? executionId,
           onMcpInvocation: outerContext?.onMcpInvocation,
+          onMcpCall: outerContext?.onMcpCall,
         })
           .then((result) => {
             if (settled) return;
@@ -430,11 +431,18 @@ class JavaScriptToolModule implements JavaScriptTool {
           name: request.reference.name,
           input: withoutCredentials(request.input) as typeof request.input,
         });
-        result = await this.deps.provider.invoke(
-          request.reference,
-          request.input,
-          context,
-        );
+        {
+          const settled = context.onMcpCall?.(request.reference);
+          try {
+            result = await this.deps.provider.invoke(
+              request.reference,
+              request.input,
+              context,
+            );
+          } finally {
+            settled?.();
+          }
+        }
         break;
     }
     assertJsonValue(result);

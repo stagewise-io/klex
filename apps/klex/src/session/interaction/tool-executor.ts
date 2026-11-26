@@ -11,6 +11,7 @@ import {
   type ToolRequestContext,
 } from '@/tool-provider';
 
+import type { ActiveToolCalls } from './active-tool-calls';
 import {
   DEFAULT_TOOL_RESULT_MAX_BYTES,
   exceedsToolResultLimit,
@@ -139,6 +140,8 @@ export class ToolExecutor implements SessionToolRuntime {
         durationMs: number,
         errorType?: string,
       ) => void;
+      /** Session-wide record of the calls in flight. */
+      activeToolCalls?: ActiveToolCalls;
     },
   ) {}
 
@@ -167,6 +170,10 @@ export class ToolExecutor implements SessionToolRuntime {
     request: InteractionToolRequest,
   ): Promise<InteractionToolResult> {
     const invocations = createInvocationEvidence();
+    const active = this.deps.activeToolCalls?.start(
+      request.executionId,
+      request.name,
+    );
     let finished = false;
     const startedAt = performance.now();
     const conversationEpoch = this.deps.getConversationEpoch?.();
@@ -237,7 +244,7 @@ export class ToolExecutor implements SessionToolRuntime {
       };
     };
 
-    return context.with(toolContext, async () => {
+    const running = context.with(toolContext, async () => {
       const tool = (this.deps.tools as Record<string, Tool | undefined>)[
         request.name
       ];
@@ -338,6 +345,7 @@ export class ToolExecutor implements SessionToolRuntime {
             if (!finished && invocation.executionId === request.executionId)
               invocations.add(invocation);
           },
+          ...(active && { onMcpCall: active.startMcp }),
         };
         const execution = Promise.resolve(
           tool.execute(validation.value, {
@@ -449,5 +457,6 @@ export class ToolExecutor implements SessionToolRuntime {
         signal.removeEventListener('abort', resolveCancellation);
       }
     });
+    return running.finally(() => active?.end());
   }
 }

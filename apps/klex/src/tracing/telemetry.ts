@@ -7,6 +7,7 @@ import {
 } from '@opentelemetry/api';
 import type { Span, SpanProcessor } from '@opentelemetry/sdk-trace-base';
 import {
+  APICallError,
   type GenerateTextAbortEvent,
   type GenerateTextEndEvent,
   type GenerateTextStartEvent,
@@ -14,6 +15,7 @@ import {
   type LanguageModelCallEndEvent,
   type LanguageModelUsage,
   NoObjectGeneratedError,
+  RetryError,
   type Telemetry,
 } from 'ai';
 
@@ -202,6 +204,7 @@ interface CallSpanContext {
  * agent name instead of the AI SDK `functionId`.
  */
 export class KlexOpenTelemetry extends OpenTelemetry {
+  private readonly rejections: Map<string, Attributes>;
   private readonly callContexts: Map<string, CallSpanContext>;
   private readonly evaluationTracer: Tracer;
   private readonly evaluationSpans = new Map<
@@ -215,8 +218,35 @@ export class KlexOpenTelemetry extends OpenTelemetry {
 
   constructor(tracer: Tracer, options: KlexOpenTelemetryOptions = {}) {
     const callContexts = new Map<string, CallSpanContext>();
+    const rejections = new Map<string, Attributes>();
+    const callIdAttribute = 'klex.internal.call_id';
     super({
-      tracer,
+      tracer: {
+        startActiveSpan: tracer.startActiveSpan.bind(tracer),
+        startSpan: (name, options, context) => {
+          const { [callIdAttribute]: callId, ...attributes } =
+            options?.attributes ?? {};
+          // Consume the correlation marker before it reaches any processor,
+          // including debug exporters and onStart callbacks.
+          const span = tracer.startSpan(
+            name,
+            { ...options, attributes },
+            context,
+          );
+          const end = span.end.bind(span);
+          // The SDK owns its spans privately. Its synchronous onError closes
+          // them here, allowing diagnostics to be attached before export
+          // without duplicating its lifecycle or retaining span references.
+          // Key by call ID so reentrant callbacks cannot affect other calls.
+          span.end = (time) => {
+            const rejection =
+              typeof callId === 'string' ? rejections.get(callId) : undefined;
+            if (rejection) span.setAttributes(rejection);
+            end(time);
+          };
+          return span;
+        },
+      },
       enrichSpan: ({ spanType, callId }) => {
         const call = callContexts.get(callId);
         if (!call) return undefined;
@@ -225,18 +255,21 @@ export class KlexOpenTelemetry extends OpenTelemetry {
           call.recordInAgentO11y
         ) {
           return {
+            [callIdAttribute]: callId,
             ...call.base,
             ...call.recordIdentity,
             'agento11y.record': true,
           };
         }
         return {
+          [callIdAttribute]: callId,
           ...call.base,
           'agento11y.record': false,
         };
       },
     });
     this.callContexts = callContexts;
+    this.rejections = rejections;
     this.evaluationTracer = tracer;
     this.agentName = normalizeAgentName(options.agentName ?? '');
     this.contentAllowed = options.contentAllowed ?? (() => false);
@@ -399,13 +432,62 @@ export class KlexOpenTelemetry extends OpenTelemetry {
       evaluation.span.end();
       return;
     }
-    super.onError(error);
-    const callId =
+    const callId = evaluationCallId;
+    const previous =
+      typeof callId === 'string' ? this.rejections.get(callId) : undefined;
+    const attributes = providerRejectionAttributes(
       typeof error === 'object' && error !== null
-        ? eventField(error, 'callId')
-        : undefined;
-    if (typeof callId === 'string') this.callContexts.delete(callId);
+        ? (eventField(error, 'error') ?? error)
+        : error,
+    );
+    if (typeof callId === 'string') this.rejections.set(callId, attributes);
+    try {
+      super.onError(error);
+    } finally {
+      if (typeof callId === 'string') {
+        if (previous) this.rejections.set(callId, previous);
+        else this.rejections.delete(callId);
+        this.callContexts.delete(callId);
+      }
+    }
   }
+}
+
+function providerRejectionAttributes(error: unknown): Attributes {
+  const actual = RetryError.isInstance(error) ? error.lastError : error;
+  const attributes: Attributes = { 'error.type': safeErrorType(actual) };
+  if (!APICallError.isInstance(actual)) return attributes;
+  attributes['error.type'] = 'AI_APICallError';
+  if (
+    typeof actual.statusCode === 'number' &&
+    Number.isInteger(actual.statusCode) &&
+    actual.statusCode >= 100 &&
+    actual.statusCode <= 599
+  ) {
+    attributes['http.response.status_code'] = actual.statusCode;
+  }
+  // Only parsed error envelopes used by OpenAI, Anthropic and Google.
+  // Never parse responseBody or traverse causes, details, headers or messages.
+  const data = actual.data;
+  const envelope =
+    typeof data === 'object' && data !== null
+      ? eventField(data, 'error')
+      : undefined;
+  if (typeof envelope !== 'object' || envelope === null) return attributes;
+  for (const field of ['code', 'type', 'status'] as const) {
+    const value = eventField(envelope, field);
+    if (
+      typeof value === 'string' &&
+      value.length <= 64 &&
+      /^(?:[a-z][a-z0-9]*(?:_[a-z0-9]+)*|[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*)$/.test(
+        value,
+      ) &&
+      !/[^A-Za-z0-9_]/.test(value)
+    ) {
+      attributes[`klex.provider.error.${field}`] = value;
+    }
+  }
+  return attributes;
 }
 
 function safeErrorType(error: unknown): string {

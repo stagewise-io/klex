@@ -1,10 +1,12 @@
 import {
   type ChildProcessWithoutNullStreams,
+  execFile,
   spawn as spawnProcess,
 } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 
 import { describe, expect, it, vi } from 'vitest';
 
@@ -719,5 +721,46 @@ describe.runIf(process.platform === 'win32')(
         provider.close();
       }
     });
+
+    it.runIf(requireDesktop)(
+      'moves the real cursor from stream input',
+      async () => {
+        const provider = new WindowsDesktopProvider();
+        try {
+          const client = new TestRfbClient(await provider.openStream());
+          await client.handshake();
+          client.setEncodings([ENC.raw]);
+          client.request(false);
+          await client.nextUpdate();
+          for (const { x, y } of [
+            { x: 37, y: 41 },
+            { x: 53, y: 29 },
+          ]) {
+            client.pointer(0, x, y);
+            await vi.waitFor(
+              async () => expect(await cursorPosition()).toEqual({ x, y }),
+              {
+                timeout: 10_000,
+                interval: 250,
+              },
+            );
+          }
+          client.socket.destroy();
+        } finally {
+          provider.close();
+        }
+      },
+    );
   },
 );
+
+async function cursorPosition(): Promise<{ x: number; y: number }> {
+  const { stdout } = await promisify(execFile)('powershell.exe', [
+    '-NoProfile',
+    '-NonInteractive',
+    '-Command',
+    'Add-Type -AssemblyName System.Windows.Forms; $p = [System.Windows.Forms.Cursor]::Position; "$($p.X) $($p.Y)"',
+  ]);
+  const [x = Number.NaN, y = Number.NaN] = stdout.trim().split(' ').map(Number);
+  return { x, y };
+}

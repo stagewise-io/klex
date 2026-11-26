@@ -78,6 +78,14 @@ namespace KlexMachine
         [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
         [DllImport("kernel32.dll")] static extern uint GetCurrentProcessId();
         [DllImport("kernel32.dll")] static extern bool ProcessIdToSessionId(uint processId, out uint sessionId);
+        [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr OpenProcess(uint access, bool inherit, uint processId);
+        [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
+        [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
+        [DllImport("advapi32.dll", SetLastError = true)] static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
+        [DllImport("advapi32.dll", SetLastError = true)] static extern bool GetTokenInformation(IntPtr token, int infoClass, IntPtr info, int length, out int needed);
+        [DllImport("advapi32.dll")] static extern IntPtr GetSidSubAuthorityCount(IntPtr sid);
+        [DllImport("advapi32.dll")] static extern IntPtr GetSidSubAuthority(IntPtr sid, uint index);
+        [DllImport("user32.dll", EntryPoint = "GetWindowThreadProcessId")] static extern uint GetWindowProcessId(IntPtr hWnd, out uint processId);
 
         const uint INPUT_MOUSE = 0;
         const uint INPUT_KEYBOARD = 1;
@@ -103,6 +111,95 @@ namespace KlexMachine
         const ushort VK_UNASSIGNED = 0xE8;
         const int MAX_WINDOWS = 50;
         const string READY = "klex-desktop-ready";
+
+        const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+        const uint TOKEN_QUERY = 0x0008;
+        const int TOKEN_INTEGRITY_LEVEL = 25;
+        const int ERROR_ACCESS_DENIED = 5;
+        const int INTEGRITY_UNKNOWN = -1;
+        const int INTEGRITY_DENIED = int.MaxValue;
+
+        static int ownIntegrity = -2;
+        static uint elevatedPid;
+        static string elevatedName;
+
+        // The integrity RID of a process (0x2000 medium, 0x3000 high, 0x4000 system).
+        static int IntegrityOf(IntPtr process)
+        {
+            IntPtr token;
+            if (!OpenProcessToken(process, TOKEN_QUERY, out token))
+                return Marshal.GetLastWin32Error() == ERROR_ACCESS_DENIED ? INTEGRITY_DENIED : INTEGRITY_UNKNOWN;
+            try
+            {
+                int needed;
+                GetTokenInformation(token, TOKEN_INTEGRITY_LEVEL, IntPtr.Zero, 0, out needed);
+                if (needed <= 0) return INTEGRITY_UNKNOWN;
+                IntPtr label = Marshal.AllocHGlobal(needed);
+                try
+                {
+                    if (!GetTokenInformation(token, TOKEN_INTEGRITY_LEVEL, label, needed, out needed)) return INTEGRITY_UNKNOWN;
+                    IntPtr sid = Marshal.ReadIntPtr(label);
+                    int count = Marshal.ReadByte(GetSidSubAuthorityCount(sid));
+                    if (count == 0) return INTEGRITY_UNKNOWN;
+                    return Marshal.ReadInt32(GetSidSubAuthority(sid, (uint)(count - 1)));
+                }
+                finally
+                {
+                    Marshal.FreeHGlobal(label);
+                }
+            }
+            finally
+            {
+                CloseHandle(token);
+            }
+        }
+
+        // Windows discards all injected input, anywhere on the screen, while
+        // the foreground window belongs to a process of higher integrity
+        // (UIPI), and SendInput still reports success. Returns that process's
+        // name, or null when input can reach the desktop.
+        static string ElevatedForeground()
+        {
+            if (ownIntegrity == -2) ownIntegrity = IntegrityOf(GetCurrentProcess());
+            if (ownIntegrity == INTEGRITY_UNKNOWN || ownIntegrity == INTEGRITY_DENIED) return null;
+            IntPtr window = GetForegroundWindow();
+            if (window == IntPtr.Zero) return null;
+            uint pid;
+            GetWindowProcessId(window, out pid);
+            if (pid == 0 || pid == GetCurrentProcessId()) return null;
+            int level;
+            IntPtr process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+            if (process == IntPtr.Zero)
+            {
+                level = Marshal.GetLastWin32Error() == ERROR_ACCESS_DENIED ? INTEGRITY_DENIED : INTEGRITY_UNKNOWN;
+            }
+            else
+            {
+                try { level = IntegrityOf(process); }
+                finally { CloseHandle(process); }
+            }
+            if (level == INTEGRITY_UNKNOWN || level <= ownIntegrity) return null;
+            if (pid != elevatedPid || elevatedName == null)
+            {
+                elevatedPid = pid;
+                try
+                {
+                    using (System.Diagnostics.Process owner = System.Diagnostics.Process.GetProcessById((int)pid)) elevatedName = owner.ProcessName;
+                }
+                catch (Exception)
+                {
+                    elevatedName = "process " + pid.ToString(CultureInfo.InvariantCulture);
+                }
+            }
+            return elevatedName;
+        }
+
+        static void RequireInput()
+        {
+            string elevated = ElevatedForeground();
+            if (elevated == null) return;
+            throw new InvalidOperationException("An administrator window (" + elevated + ") has focus, so Windows discards all input from klex-machine, anywhere on the screen, until that window is closed or loses focus. Ask the user to close it or click another window, or run klex-machine elevated.");
+        }
 
         static string dpiAwareness = "unaware";
 
@@ -166,12 +263,12 @@ namespace KlexMachine
                 case "probe": return Probe();
                 case "size": return Text(ScreenWidth()) + " " + Text(ScreenHeight());
                 case "capture": return Capture(request);
-                case "move": MoveTo(Int(request, 1), Int(request, 2)); return "";
-                case "click": Click(request); return "";
-                case "drag": Drag(request); return "";
-                case "scroll": Scroll(request); return "";
-                case "type": TypeText(FromBase64(Arg(request, 1))); return "";
-                case "key": Keys(request); return "";
+                case "move": RequireInput(); MoveTo(Int(request, 1), Int(request, 2)); return "";
+                case "click": RequireInput(); Click(request); return "";
+                case "drag": RequireInput(); Drag(request); return "";
+                case "scroll": RequireInput(); Scroll(request); return "";
+                case "type": RequireInput(); TypeText(FromBase64(Arg(request, 1))); return "";
+                case "key": RequireInput(); Keys(request); return "";
                 case "windows": return Windows();
                 case "focus": Focus(Arg(request, 1)); return "";
                 case "release": Release(request); return "";
@@ -329,7 +426,7 @@ namespace KlexMachine
             uint sent = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(INPUT)));
             if (sent != inputs.Length)
             {
-                throw new InvalidOperationException("Windows blocked the input (error " + Text(Marshal.GetLastWin32Error()) + "). Input cannot reach windows of elevated apps, the lock screen or a UAC prompt.");
+                throw new InvalidOperationException("Windows blocked the input (error " + Text(Marshal.GetLastWin32Error()) + "). Input cannot reach the lock screen or a UAC prompt, and no input works while a window of an elevated app has focus.");
             }
         }
 

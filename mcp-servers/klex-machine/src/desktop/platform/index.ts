@@ -12,6 +12,11 @@ export {
   X11DesktopProvider,
 } from './x11.js';
 
+export interface DesktopProviderOptions {
+  /** Receives desktop hints and helper logs. Defaults to plain stderr. */
+  warn?: (message: string) => void;
+}
+
 /**
  * The desktop provider for a platform, or none where klex-machine has no
  * desktop support. Linux uses X11 from `DISPLAY` and the VNC socket at
@@ -21,11 +26,12 @@ export {
 export function createDesktopProvider(
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
+  { warn }: DesktopProviderOptions = {},
 ): DesktopProvider | undefined {
   if (env.KLEX_MACHINE_DESKTOP?.toLowerCase() === 'off') return undefined;
   switch (platform) {
     case 'darwin':
-      return new MacosDesktopProvider({ env });
+      return new MacosDesktopProvider({ env, ...(warn ? { warn } : {}) });
     case 'linux':
       return new X11DesktopProvider({
         env,
@@ -35,7 +41,7 @@ export function createDesktopProvider(
           : {}),
       });
     case 'win32':
-      return new WindowsDesktopProvider({ env });
+      return new WindowsDesktopProvider({ env, ...(warn ? { warn } : {}) });
     default:
       return undefined;
   }
@@ -50,7 +56,7 @@ const shared = new Map<string, DesktopService>();
  */
 export function desktopFromEnvironment(
   env: NodeJS.ProcessEnv = process.env,
-  options: DesktopServiceOptions = {},
+  { warn, ...options }: DesktopServiceOptions & DesktopProviderOptions = {},
   platform: NodeJS.Platform = process.platform,
 ): DesktopService | undefined {
   const key = [
@@ -60,7 +66,9 @@ export function desktopFromEnvironment(
   ].join('\0');
   let service = shared.get(key);
   if (!service) {
-    const provider = createDesktopProvider(env, platform);
+    const provider = createDesktopProvider(env, platform, {
+      ...(warn ? { warn } : {}),
+    });
     if (!provider) return undefined;
     service = new DesktopService(provider, options);
     shared.set(key, service);

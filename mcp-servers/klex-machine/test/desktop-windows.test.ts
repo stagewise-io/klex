@@ -146,6 +146,23 @@ describe('createDesktopProvider on Windows', () => {
       createDesktopProvider({ KLEX_MACHINE_DESKTOP: 'off' }, 'win32'),
     ).toBeUndefined();
   });
+
+  it.runIf(process.platform !== 'win32')(
+    'sends hints to the given warning sink',
+    async () => {
+      const warnings: string[] = [];
+      const provider = createDesktopProvider({}, 'win32', {
+        warn: (message) => warnings.push(message),
+      });
+      try {
+        const { hint } = (await provider?.probe()) ?? {};
+        expect(hint).toEqual(expect.any(String));
+        expect(warnings).toEqual([hint]);
+      } finally {
+        (provider as WindowsDesktopProvider | undefined)?.close();
+      }
+    },
+  );
 });
 
 describe('WindowsDesktopProvider', () => {
@@ -759,7 +776,8 @@ async function cursorPosition(): Promise<{ x: number; y: number }> {
     '-NoProfile',
     '-NonInteractive',
     '-Command',
-    'Add-Type -AssemblyName System.Windows.Forms; $p = [System.Windows.Forms.Cursor]::Position; "$($p.X) $($p.Y)"',
+    // Physical pixels, like the per-monitor DPI-aware stream host.
+    'Add-Type -Name Dpi -Namespace Klex -MemberDefinition \'[DllImport("user32.dll")] public static extern bool SetProcessDPIAware();\'; [Klex.Dpi]::SetProcessDPIAware() | Out-Null; Add-Type -AssemblyName System.Windows.Forms; $p = [System.Windows.Forms.Cursor]::Position; "$($p.X) $($p.Y)"',
   ]);
   const [x = Number.NaN, y = Number.NaN] = stdout.trim().split(' ').map(Number);
   return { x, y };

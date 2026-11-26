@@ -1066,16 +1066,13 @@ class McpModule implements Mcp {
 
   /**
    * Returns `undefined` while only retained tools of a reconnecting server
-   * exist. A retry whose tool disappeared reports why the server is gone.
+   * exist. A retry whose server left the registry reports why it is gone.
    */
   private getLiveTool(
     reference: ToolReference,
     retrying: boolean,
   ): ({ connection: McpConnection } & RegisteredMcpTool) | undefined {
-    if (
-      retrying &&
-      !this.registry.get(reference.namespace)?.tools.has(reference.name)
-    ) {
+    if (retrying && !this.registry.get(reference.namespace)) {
       const runtime = this.servers.get(reference.namespace);
       if (runtime) {
         const detail =

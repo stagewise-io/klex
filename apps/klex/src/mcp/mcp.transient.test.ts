@@ -353,6 +353,29 @@ describe('MCP transient reconnects', () => {
     expect(first.invoke).not.toHaveBeenCalled();
   });
 
+  it('reports an unknown tool when a reconnected server no longer lists it', async () => {
+    vi.useFakeTimers();
+    const first = connection();
+    const second = { ...connection(), tools: [] };
+    let options: ConnectMcpServerOptions | undefined;
+    const connect = vi
+      .fn<McpConnectionFactory>()
+      .mockImplementationOnce(async (next) => {
+        options = next;
+        return first;
+      })
+      .mockResolvedValueOnce(second);
+    const mcp = setup(connect);
+    await mcp.start();
+    await vi.advanceTimersByTimeAsync(0);
+    options?.onDisconnect(first);
+
+    const call = settle(mcp.invoke(reference, {}, toolContext));
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(call.done).toBe(true);
+    expect(call.error).toEqual(new Error('Unknown MCP tool: computer.run'));
+  });
+
   it('does not wake a waiting retry when another server republishes the registry', async () => {
     vi.useFakeTimers();
     const live = connection(

@@ -110,6 +110,28 @@ pub mod fs {
         }
     }
 
+    /// Total size of the volume holding `path`.
+    pub fn volume_total_bytes(path: &Path) -> Option<u64> {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+        let path: Vec<u16> = path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let mut total = 0u64;
+        // SAFETY: `path` is NUL-terminated; unused outputs may be null.
+        let ok = unsafe {
+            GetDiskFreeSpaceExW(
+                path.as_ptr(),
+                std::ptr::null_mut(),
+                &mut total,
+                std::ptr::null_mut(),
+            )
+        };
+        (ok != 0).then_some(total)
+    }
+
     /// The Node error code for an OS error, as libuv's
     /// `uv_translate_sys_error` maps the codes filesystem calls produce.
     pub fn error_code(error: &io::Error) -> Option<&'static str> {
@@ -149,6 +171,106 @@ pub mod host {
     /// `os.hostname()`.
     pub fn hostname() -> String {
         std::env::var("COMPUTERNAME").unwrap_or_default()
+    }
+
+    /// The hostname reported in machine facts.
+    pub fn dns_hostname() -> Option<String> {
+        use windows_sys::Win32::System::SystemInformation::{
+            ComputerNameDnsHostname, GetComputerNameExW,
+        };
+        let mut buffer = [0u16; 256];
+        let mut size = buffer.len() as u32;
+        // SAFETY: the buffer is writable for `size` characters.
+        if unsafe { GetComputerNameExW(ComputerNameDnsHostname, buffer.as_mut_ptr(), &mut size) }
+            == 0
+        {
+            return None;
+        }
+        Some(String::from_utf16_lossy(&buffer[..size as usize]))
+    }
+
+    const CURRENT_VERSION: &str = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion";
+
+    /// `os.release()`.
+    pub fn kernel_release() -> Option<String> {
+        let major = registry_dword(CURRENT_VERSION, "CurrentMajorVersionNumber")?;
+        let minor = registry_dword(CURRENT_VERSION, "CurrentMinorVersionNumber")?;
+        let build = registry_string(CURRENT_VERSION, "CurrentBuildNumber")?;
+        Some(format!("{major}.{minor}.{build}"))
+    }
+
+    pub fn cpu_model() -> Option<String> {
+        registry_string(
+            r"HARDWARE\DESCRIPTION\System\CentralProcessor\0",
+            "ProcessorNameString",
+        )
+    }
+
+    pub fn total_memory() -> Option<u64> {
+        use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+        let mut status: MEMORYSTATUSEX = unsafe { std::mem::zeroed() };
+        status.dwLength = size_of::<MEMORYSTATUSEX>() as u32;
+        // SAFETY: `status` is writable and its length is set.
+        (unsafe { GlobalMemoryStatusEx(&mut status) } != 0).then_some(status.ullTotalPhys)
+    }
+
+    fn wide(text: &str) -> Vec<u16> {
+        text.encode_utf16().chain(std::iter::once(0)).collect()
+    }
+
+    fn registry_string(key: &str, value: &str) -> Option<String> {
+        use windows_sys::Win32::Foundation::ERROR_SUCCESS;
+        use windows_sys::Win32::System::Registry::{
+            HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ, RegGetValueW,
+        };
+        let (key, value) = (wide(key), wide(value));
+        let mut buffer = [0u16; 512];
+        let mut size = (buffer.len() * 2) as u32;
+        // SAFETY: the key and value names are NUL-terminated and the buffer
+        // is writable for `size` bytes.
+        let status = unsafe {
+            RegGetValueW(
+                HKEY_LOCAL_MACHINE,
+                key.as_ptr(),
+                value.as_ptr(),
+                RRF_RT_REG_SZ,
+                std::ptr::null_mut(),
+                buffer.as_mut_ptr().cast(),
+                &mut size,
+            )
+        };
+        if status != ERROR_SUCCESS {
+            return None;
+        }
+        let units = (size as usize / 2).min(buffer.len());
+        let end = buffer[..units]
+            .iter()
+            .position(|unit| *unit == 0)
+            .unwrap_or(units);
+        Some(String::from_utf16_lossy(&buffer[..end]))
+    }
+
+    fn registry_dword(key: &str, value: &str) -> Option<u32> {
+        use windows_sys::Win32::Foundation::ERROR_SUCCESS;
+        use windows_sys::Win32::System::Registry::{
+            HKEY_LOCAL_MACHINE, RRF_RT_REG_DWORD, RegGetValueW,
+        };
+        let (key, value) = (wide(key), wide(value));
+        let mut data = 0u32;
+        let mut size = 4u32;
+        // SAFETY: as above, with a four-byte buffer.
+        let status = unsafe {
+            RegGetValueW(
+                HKEY_LOCAL_MACHINE,
+                key.as_ptr(),
+                value.as_ptr(),
+                RRF_RT_REG_DWORD,
+                std::ptr::null_mut(),
+                (&mut data as *mut u32).cast(),
+                &mut size,
+            )
+        };
+        (status == ERROR_SUCCESS).then_some(data)
     }
 
     pub async fn detect_device_type() -> Option<DeviceType> {

@@ -149,14 +149,7 @@ pub fn temporary_path(path: &Path) -> PathBuf {
 
 /// Opens a new file with mode 0600, failing if it exists (`'wx'`).
 pub fn create_private_file(path: &Path) -> std::io::Result<fs::File> {
-    let mut options = fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    options.open(path)
+    crate::platform::fs::create_new_file(path, 0o600)
 }
 
 pub fn save_machine_enrollment(

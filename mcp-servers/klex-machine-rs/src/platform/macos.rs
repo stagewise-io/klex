@@ -1,9 +1,41 @@
 //! macOS-only implementations.
 
+use std::ffi::CStr;
+
 use regex::Regex;
 use serde_json::Value;
 
 use crate::device_type::{DeviceType, virtual_model};
+
+fn sysctl(name: &CStr, buffer: &mut [u8]) -> Option<usize> {
+    let mut length = buffer.len();
+    // SAFETY: `buffer` is writable for `length` bytes.
+    let result = unsafe {
+        libc::sysctlbyname(
+            name.as_ptr(),
+            buffer.as_mut_ptr().cast(),
+            &mut length,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    (result == 0).then_some(length)
+}
+
+pub fn cpu_model() -> Option<String> {
+    let mut buffer = [0u8; 256];
+    let length = sysctl(c"machdep.cpu.brand_string", &mut buffer)?;
+    let end = buffer[..length]
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(length);
+    Some(String::from_utf8_lossy(&buffer[..end]).into_owned())
+}
+
+pub fn total_memory() -> Option<u64> {
+    let mut buffer = [0u8; 8];
+    (sysctl(c"hw.memsize", &mut buffer)? == 8).then(|| u64::from_ne_bytes(buffer))
+}
 
 pub async fn detect_device_type() -> Option<DeviceType> {
     let output = super::probe(

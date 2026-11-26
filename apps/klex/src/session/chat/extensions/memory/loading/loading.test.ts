@@ -108,6 +108,50 @@ function base(id: string, body: string): ExtendedUIMessage {
 }
 
 describe('memory loading snapshots', () => {
+  it('loads recalled detail selections separately and refreshes their immutable snapshots', async () => {
+    const current = entity();
+    const instance = loader(async () => [current]);
+    const recall = message(
+      'recall',
+      [
+        {
+          type: 'dynamic-tool',
+          toolName: 'recallFromMemory',
+          toolCallId: 'recall-1',
+          state: 'output-available',
+          input: {},
+          output: {
+            answer: 'Ownership is recorded.',
+            entities: [],
+            skills: [],
+            entitySections: [{ entity: 'Ada', section: 'Work' }],
+          },
+        },
+      ],
+      'assistant',
+    );
+    const parts = await instance.prepare([recall], model);
+    const rendered = texts(
+      materializeMemories([{ ...recall, parts: [...recall.parts, ...parts] }]),
+    );
+    expect(rendered).toContain('Current fact');
+    expect(rendered).toContain('Private detail');
+    expect(rendered).not.toContain('private-source');
+    expect(rendered).not.toContain('superseded secret');
+    const frozen = JSON.stringify(parts);
+    current.sections.Work = [fact('Updated detail')];
+    const refreshed = await instance.prepare(
+      [{ ...recall, parts: [...recall.parts, ...parts] }],
+      model,
+    );
+    expect(JSON.stringify(refreshed)).toContain('Updated detail');
+    expect(JSON.stringify(parts)).toBe(frozen);
+    delete current.sections.Work;
+    expect(JSON.stringify(await instance.prepare([recall], model))).toContain(
+      'removed',
+    );
+  });
+
   it('drops checkpoint witnesses and expires failed reads without carrying generated state', async () => {
     const instance = loader(async () => [entity()]);
     const old = base('old', 'Ada');

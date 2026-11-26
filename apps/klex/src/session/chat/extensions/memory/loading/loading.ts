@@ -10,6 +10,7 @@ import {
   isDataPartOf,
   type ResolvedModel,
 } from '@/session/chat/extensions/extension-api';
+import { parseRecallAnswer } from '@/session/chat/extensions/memory/recall';
 import type { MemoryEntity } from '@/session/chat/extensions/memory/writer/entities';
 import type { ExtendedUIMessage } from '@/session/chat/message-types';
 import { dataBlock, joinDataBlocks } from '@/session/chat/utils/history-view';
@@ -327,6 +328,10 @@ class MemoryLoaderModule implements MemoryLoader {
     // Recall is excluded from literal matching. Only its explicit, validated
     // entity/skill references opt content in; answer prose cannot trigger loading.
     const recalled = new Map<string, number>();
+    const recalledSections = new Map<
+      string,
+      { filename: string; section: string }
+    >();
     for (const [index, message] of history.entries())
       for (const part of message.parts) {
         if (
@@ -337,24 +342,34 @@ class MemoryLoaderModule implements MemoryLoader {
             : part.type !== 'tool-recallFromMemory')
         )
           continue;
-        const result = z
-          .object({
-            answer: z.string(),
-            entities: z.array(z.string().min(1).max(1000)).max(20),
-            skills: z.array(z.string().min(1).max(1000)).max(20).default([]),
-          })
-          .safeParse(part.output);
-        if (result.success) {
-          for (const id of result.data.entities)
+        const result = parseRecallAnswer(part.output);
+        if (result) {
+          for (const { entity, section } of result.entitySections) {
+            const filename = `${ENTITY_PREFIX}${entity}.md`;
+            recalledSections.set(detailKey(filename, section), {
+              filename,
+              section,
+            });
+          }
+          for (const id of result.entities)
             recalled.set(`${ENTITY_PREFIX}${id}.md`, index);
           if (
             !message.parts.some((part) =>
               isDataPartOf('context-summary', part),
             ) &&
             skillContext.eligible(message.id, evidence[index]!.projection)
-          )
-            for (const id of result.data.skills)
+          ) {
+            for (const id of result.skills)
               recalled.set(`skills/${id}/SKILL.md`, index);
+            for (const { skill, reference } of result.skillReferences)
+              if (
+                skills?.some(
+                  (item) =>
+                    item.id === skill && item.references?.includes(reference),
+                )
+              )
+                skillContext.match(skill, reference);
+          }
         }
       }
     const candidates: {
@@ -458,7 +473,7 @@ class MemoryLoaderModule implements MemoryLoader {
     const subscriptions = new Map<
       string,
       { filename: string; section: string }
-    >();
+    >(recalledSections);
     const previous = new Set<string>();
     for (const message of history)
       for (const part of message.parts) {

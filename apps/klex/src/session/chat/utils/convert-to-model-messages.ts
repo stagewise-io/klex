@@ -3,6 +3,7 @@ import {
   type DataUIPart,
   type FilePart,
   isToolUIPart,
+  type ModelMessage,
   type TextPart,
 } from 'ai';
 
@@ -10,6 +11,7 @@ import {
   materializeMemories,
   materializeSkills,
 } from '@/session/chat/extensions/memory/loading';
+import { recallAnswerText } from '@/session/chat/extensions/memory/recall';
 import type { ContextDataUIPart } from '@/session/inbox';
 
 import type { DataPartTransformers } from '../extensions/extension-api';
@@ -58,15 +60,20 @@ export const convertToModelMessagesExtended = async (
   }
 
   if (lastUserMsgIdx === -1) {
-    return projectSandboxToolMedia(
-      await convertToModelMessages<ExtendedUIMessage>(
-        materializeExtensionParts(
-          materializeMemories(materializeSkills(materialized), onMemoryMetrics),
-          transformers,
+    return projectRecallResults(
+      projectSandboxToolMedia(
+        await convertToModelMessages<ExtendedUIMessage>(
+          materializeExtensionParts(
+            materializeMemories(
+              materializeSkills(materialized),
+              onMemoryMetrics,
+            ),
+            transformers,
+          ),
+          {
+            convertDataPart: convertCoreDataPart,
+          },
         ),
-        {
-          convertDataPart: convertCoreDataPart,
-        },
       ),
     );
   }
@@ -103,18 +110,38 @@ export const convertToModelMessagesExtended = async (
     return [msg];
   });
 
-  return projectSandboxToolMedia(
-    await convertToModelMessages<ExtendedUIMessage>(
-      materializeExtensionParts(
-        materializeMemories(materializeSkills(filtered), onMemoryMetrics),
-        transformers,
+  return projectRecallResults(
+    projectSandboxToolMedia(
+      await convertToModelMessages<ExtendedUIMessage>(
+        materializeExtensionParts(
+          materializeMemories(materializeSkills(filtered), onMemoryMetrics),
+          transformers,
+        ),
+        {
+          convertDataPart: convertCoreDataPart,
+        },
       ),
-      {
-        convertDataPart: convertCoreDataPart,
-      },
     ),
   );
 };
+
+function projectRecallResults(messages: ModelMessage[]): ModelMessage[] {
+  return messages.map((message) =>
+    message.role !== 'tool'
+      ? message
+      : {
+          ...message,
+          content: message.content.map((part) => {
+            if (part.type !== 'tool-result' || part.output.type !== 'json')
+              return part;
+            const text = recallAnswerText(part.toolName, part.output.value);
+            return text === null
+              ? part
+              : { ...part, output: { type: 'text' as const, value: text } };
+          }),
+        },
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Built-in core data part transformers

@@ -130,7 +130,9 @@ export interface InteractionLease {
   bootstrap(): Promise<PreparedInferenceContextHandle>;
   acknowledgeUpdate(sequence: number): void;
   executeTool(request: InteractionToolRequest): Promise<InteractionToolResult>;
-  commit(event: RealtimeCommitEvent): Promise<void>;
+  commit(
+    event: RealtimeCommitEvent,
+  ): Promise<void | { readonly contextText: string }>;
   release(reason?: string, finalEvent?: RealtimeCommitEvent): Promise<void>;
 }
 

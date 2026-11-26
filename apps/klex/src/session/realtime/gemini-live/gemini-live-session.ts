@@ -25,6 +25,7 @@ import {
 import { createPcmAudioMixer } from '@/media-transport/pcm-audio-mixer';
 import { createPcmResampler } from '@/media-transport/pcm-resampler';
 import { googleInputSchema } from '@/provider-registry/google-input-schema';
+import { recallAnswerText } from '@/session/chat/extensions/memory/recall';
 import { field, renderDataBlock } from '@/session/chat/utils/history-view';
 import {
   type InteractionToolResult,
@@ -433,7 +434,12 @@ export class GeminiLiveSession implements RealtimeModelSession {
       this.functionNames.get(result.executionId) ?? result.executionId;
     const responsePayload =
       result.status === 'success'
-        ? { result: result.output ?? {} }
+        ? {
+            result:
+              recallAnswerText(result.toolName, result.output) ??
+              result.output ??
+              {},
+          }
         : { error: result.error ?? 'Tool execution failed', code: result.code };
     const text = toolResultText(result.executionId, name, responsePayload);
     this.appendCallLog('user', 'context', text);

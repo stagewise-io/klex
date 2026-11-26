@@ -425,6 +425,35 @@ describe('Gemini live processor', () => {
     await processor.close();
   });
 
+  it('keeps Gemini protocol envelopes but sends only the recall answer payload', async () => {
+    const { socket, processor } = await activate();
+    socket.message({
+      toolCall: {
+        functionCalls: [
+          {
+            id: 'recall-1',
+            name: 'recallFromMemory',
+            args: { question: 'Owner?' },
+          },
+        ],
+      },
+    });
+    await processor.events[Symbol.asyncIterator]().next();
+    await processor.sendToolResult({
+      executionId: 'recall-1',
+      status: 'success',
+      toolName: 'recallFromMemory',
+      output: { answer: 'Ada owns deployment.', entities: ['Ada'], skills: [] },
+    });
+    expect(
+      JSON.parse(socket.sent.at(-1) ?? '{}').toolResponse.functionResponses[0],
+    ).toMatchObject({
+      id: 'recall-1',
+      response: { result: 'Ada owns deployment.' },
+    });
+    await processor.close();
+  });
+
   it('handles tool calls and sends tool responses back to session', async () => {
     const { socket, processor } = await activate();
     const eventsIterator = processor.events[Symbol.asyncIterator]();

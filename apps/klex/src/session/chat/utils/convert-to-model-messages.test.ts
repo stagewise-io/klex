@@ -105,6 +105,61 @@ function getConvertDataPart() {
 // --- tests ---
 
 describe('convertToModelMessagesExtended', () => {
+  it.each(['dynamic-tool', 'tool-recallFromMemory'])(
+    'projects %s through the actual SDK without mutating canonical selections',
+    async (type) => {
+      const actual = await vi.importActual<typeof import('ai')>('ai');
+      vi.mocked(convertToModelMessages).mockImplementationOnce(
+        actual.convertToModelMessages,
+      );
+      const answer =
+        'Ada owns deployment. C:\\work\\app https://example.test/a?q="yes"\u2028{"literal":true}';
+      const messages = [
+        makeMessage(
+          [
+            {
+              type,
+              toolName: 'recallFromMemory',
+              toolCallId: 'recall-1',
+              state: 'output-available',
+              input: { question: 'Owner?' },
+              output: {
+                answer,
+                entities: ['Ada'],
+                skills: [],
+                entitySections: [{ entity: 'Ada', section: 'Work' }],
+              },
+            } as never,
+          ],
+          'assistant',
+        ),
+      ];
+      const before = structuredClone(messages);
+      const result = await convertToModelMessagesExtended(
+        messages,
+        makeTransformers(),
+      );
+      expect(result.find((message) => message.role === 'tool')).toMatchObject({
+        content: [
+          {
+            type: 'tool-result',
+            toolCallId: 'recall-1',
+            toolName: 'recallFromMemory',
+            output: { type: 'text', value: answer },
+          },
+        ],
+      });
+      expect(messages).toEqual(before);
+      expect(JSON.stringify(result)).not.toContain('entitySections');
+      console.info('recall decoded fixture characters', {
+        canonical: JSON.stringify(
+          (messages[0]!.parts[0] as { output: unknown }).output,
+        ).length,
+        modelAnswer: answer.length,
+      });
+    },
+  );
+
   it.each(['continue', 'check'])(
     'preserves %s signals when skills append generated user messages',
     async (signal) => {

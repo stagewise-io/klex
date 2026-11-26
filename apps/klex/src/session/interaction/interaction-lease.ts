@@ -28,7 +28,9 @@ export interface SessionInteractionLeaseDependencies {
   mode: InteractionMode;
   bootstrap(): Promise<PreparedInferenceContextHandle>;
   executeTool(request: InteractionToolRequest): Promise<InteractionToolResult>;
-  commit(event: RealtimeCommitEvent): Promise<void>;
+  commit(
+    event: RealtimeCommitEvent,
+  ): Promise<void | { readonly contextText: string }>;
   onRelease(reason?: string): Promise<void> | void;
   maxPendingUpdates?: number;
 }
@@ -105,14 +107,19 @@ export class SessionInteractionLease implements InteractionLease {
     return this.deps.executeTool(request);
   }
 
-  commit(event: RealtimeCommitEvent): Promise<void> {
+  commit(
+    event: RealtimeCommitEvent,
+  ): Promise<void | { readonly contextText: string }> {
     if (!this.acceptingCommits || this.committedEventIds.has(event.eventId))
       return Promise.resolve();
     this.committedEventIds.add(event.eventId);
     const run = this.commitWork.then(() => this.deps.commit(event));
-    this.commitWork = run.catch(() => {
-      this.committedEventIds.delete(event.eventId);
-    });
+    this.commitWork = run.then(
+      () => undefined,
+      () => {
+        this.committedEventIds.delete(event.eventId);
+      },
+    );
     return run;
   }
 

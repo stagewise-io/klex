@@ -882,6 +882,65 @@ describe('realtime session coordinator', () => {
     },
   );
 
+  it('delivers separately rendered memory context before the recall answer', async () => {
+    const { coordinator, mcpHarness, processorFactory, host } = setup();
+    host.setToolHandler((request) => ({
+      executionId: request.executionId,
+      status: 'success',
+      toolName: 'recallFromMemory',
+      output: { answer: 'Ada owns deployment.', entities: ['Ada'], skills: [] },
+    }));
+    await coordinator.start();
+    await mcpHarness.notify(offered());
+    const lease = await host.nextLease();
+    const processor = await processorFactory.nextProcessor();
+    await vi.waitFor(() =>
+      expect(processor.receivedUpdates.length).toBeGreaterThan(0),
+    );
+    const commit = lease.commit.bind(lease);
+    vi.spyOn(lease, 'commit').mockImplementation(async (event) => {
+      await commit(event);
+      return event.type === 'tool-result'
+        ? { contextText: 'memory Ada\nfacts\n¦Owner' }
+        : undefined;
+    });
+    const order: string[] = [];
+    const sendUpdate = processor.sendUpdate.bind(processor);
+    vi.spyOn(processor, 'sendUpdate').mockImplementation(async (update) => {
+      order.push('context');
+      await sendUpdate(update);
+    });
+    const sendResult = processor.sendToolResult.bind(processor);
+    vi.spyOn(processor, 'sendToolResult').mockImplementation(async (result) => {
+      order.push('answer');
+      await sendResult(result);
+    });
+    await processor.emit({
+      type: 'tool-call',
+      eventId: 'recall-call',
+      request: {
+        executionId: 'recall-1',
+        name: 'recallFromMemory',
+        input: { question: 'Owner?' },
+      },
+    });
+    await vi.waitFor(() => expect(order).toEqual(['context', 'answer']));
+    expect(processor.receivedUpdates.at(-1)).toMatchObject({
+      requestResponse: false,
+      event: {
+        context: {
+          content: [{ type: 'text', text: 'memory Ada\nfacts\n¦Owner' }],
+        },
+      },
+    });
+    expect(lease.commits.at(-1)).toMatchObject({
+      type: 'tool-result',
+      result: { output: { entities: ['Ada'] } },
+    });
+    await mcpHarness.notify(ended());
+    await coordinator.close();
+  });
+
   it('runs model tool calls through the lease and returns the result', async () => {
     const { coordinator, mcpHarness, processorFactory, host } = setup();
     host.setToolHandler((request) => ({

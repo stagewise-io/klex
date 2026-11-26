@@ -12,6 +12,7 @@ import {
   type RealtimeEndpointClosure,
 } from '@/media-transport';
 import { BoundedAsyncQueue } from '@/media-transport/async-queue';
+import { recallAnswerText } from '@/session/chat/extensions/memory/recall';
 import { field, renderDataBlock } from '@/session/chat/utils/history-view';
 import {
   type InteractionToolResult,
@@ -274,7 +275,8 @@ class OpenAIRealtimeSession implements RealtimeModelSession {
     this.deliveredToolResults.add(result.executionId);
     const output =
       result.status === 'success'
-        ? safeStringify(result.output)
+        ? (recallAnswerText(result.toolName, result.output) ??
+          safeStringify(result.output))
         : JSON.stringify({
             error: result.error,
             code: result.code,

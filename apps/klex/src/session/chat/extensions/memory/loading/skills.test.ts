@@ -51,6 +51,36 @@ function fixture() {
   return { loader, skills, load, recordRead, prepare };
 }
 describe('skill context lifecycle', () => {
+  it('selects recalled references transactionally and does not resurrect them after idle', async () => {
+    const { loader, prepare } = fixture();
+    const recall = message('recall-ref', [
+      {
+        type: 'dynamic-tool',
+        toolName: 'recallFromMemory',
+        toolCallId: 'ref-1',
+        state: 'output-available',
+        input: {},
+        output: {
+          answer: 'Use unit guidance.',
+          skillReferences: [{ skill: 'learning/testing', reference: 'unit' }],
+        },
+      },
+    ]);
+    const tentative = await prepare([recall], model);
+    expect(text([message('tentative', tentative)])).toContain(
+      'Unit test guidance.',
+    );
+    expect(
+      text([message('rolled-back', await prepare([], model))]),
+    ).not.toContain('Unit test guidance.');
+    loader.commit(tentative);
+    const accepted = message('accepted', tentative);
+    const idle = message('idle', loader.idle([recall, accepted]));
+    expect(
+      text([message('after', await prepare([recall, accepted, idle], model))]),
+    ).not.toContain('Unit test guidance.');
+  });
+
   it.each(['dynamic-tool', 'tool-recallFromMemory'])(
     'auto-loads supporting skills from %s once and consumes the recall at idle',
     async (type) => {

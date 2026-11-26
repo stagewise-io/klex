@@ -23,7 +23,7 @@ export interface SkillContext {
   initialize(history: readonly ExtendedUIMessage[]): void;
   fork(): SkillContext;
   load(skill: string, reference?: string): Promise<Record<string, unknown>>;
-  match(id: string): void;
+  match(id: string, reference?: string): void;
   eligible(messageId: string, projection: string): boolean;
   observe(evidence: readonly { id: string; projection: string }[]): void;
   idle(): void;
@@ -117,8 +117,9 @@ class SkillContextModule implements SkillContext {
     }
     return { loaded: id, ...(reference === undefined ? {} : { reference }) };
   }
-  match(id: string): void {
+  match(id: string, reference?: string): void {
     if (!this.active.has(id)) this.active.set(id, new Set());
+    if (reference !== undefined) this.active.get(id)!.add(reference);
   }
   eligible(messageId: string, projection: string): boolean {
     return this.consumed.get(messageId) !== projection;

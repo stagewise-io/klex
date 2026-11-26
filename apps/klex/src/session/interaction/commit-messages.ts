@@ -1,5 +1,6 @@
 import { createDataPart } from '@/session/chat/extensions/extension-api';
 import { detailResultSchema } from '@/session/chat/extensions/memory/loading';
+import { parseRecallAnswer } from '@/session/chat/extensions/memory/recall';
 import type { ExtendedUIMessage } from '@/session/chat/message-types';
 import type { ContextDataUIPart } from '@/session/inbox';
 
@@ -98,6 +99,26 @@ export function toCanonicalMessage(
         `Tool ${event.request.name} was called during the call with input ${JSON.stringify(event.request.input)}.`,
       );
     case 'tool-result': {
+      const recall =
+        event.result.status === 'success' &&
+        event.result.toolName === 'recallFromMemory'
+          ? parseRecallAnswer(event.result.output)
+          : null;
+      if (recall)
+        return {
+          id: event.eventId,
+          role: 'assistant',
+          parts: [
+            {
+              type: 'dynamic-tool',
+              toolName: 'recallFromMemory',
+              toolCallId: event.result.executionId,
+              state: 'output-available',
+              input: {},
+              output: recall,
+            },
+          ],
+        };
       // Section reads must remain structured so the next context assembly can
       // refresh the subscription and apply the same bounded detail renderer.
       const detail =

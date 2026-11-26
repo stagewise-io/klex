@@ -401,6 +401,58 @@ describe('GPT-Live model session', () => {
     await expect(session.closed).resolves.toMatchObject({ type: 'closed' });
   });
 
+  it('sends recall answer text without canonical selections', async () => {
+    const harness = setup();
+    harness.socket.open();
+    harness.socket.message({
+      type: 'session.started',
+      session: { id: 'live-1' },
+    });
+    const session = await harness.creating;
+    harness.socket.message({
+      type: 'session.delegation.created',
+      offset_ms: 1,
+      delegation: {
+        id: 'delegation-1',
+        target: 'responses',
+        response_id: 'response-1',
+      },
+    });
+    harness.socket.message({
+      type: 'response.event',
+      delegation_id: 'delegation-1',
+      event: {
+        type: 'response.output_item.done',
+        item: {
+          type: 'function_call',
+          call_id: 'recall-1',
+          name: 'recallFromMemory',
+          arguments: '{}',
+        },
+      },
+    });
+    harness.socket.message({
+      type: 'response.event',
+      delegation_id: 'delegation-1',
+      event: { type: 'response.completed', response: { id: 'response-1' } },
+    });
+    await session.events[Symbol.asyncIterator]().next();
+    await session.sendToolResult({
+      executionId: 'recall-1',
+      status: 'success',
+      toolName: 'recallFromMemory',
+      output: { answer: 'Ada owns deployment.', entities: ['Ada'], skills: [] },
+    });
+    expect(
+      harness.socket.sent.map((entry) => JSON.parse(entry)),
+    ).toContainEqual(
+      expect.objectContaining({
+        item: expect.objectContaining({ output: 'Ada owns deployment.' }),
+      }),
+    );
+    await session.close();
+  });
+
   it('correlates tool results and continues only after every call settles', async () => {
     const setupResult = setup();
     setupResult.socket.open();

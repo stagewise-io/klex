@@ -525,12 +525,28 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
       'Executing realtime tool call through canonical session',
     );
     const result = await lease.executeTool(event.request);
-    await lease.commit({
+    const committed = await lease.commit({
       type: 'tool-result',
       eventId: `${event.eventId}:result`,
       timestamp: this.timestamp(),
       result,
     });
+    if (committed?.contextText)
+      await processor.sendUpdate({
+        sequence: 0,
+        eventId: `${event.eventId}:memory-context`,
+        requestResponse: false,
+        event: {
+          eventId: `${event.eventId}:memory-context`,
+          sourceEnv: REALTIME_SOURCE_ENV,
+          urgency: SessionInboxUrgency.Default,
+          context: {
+            sourceEnv: REALTIME_SOURCE_ENV,
+            metadata: { kind: 'memory-context' },
+            content: [{ type: 'text', text: committed.contextText }],
+          },
+        },
+      });
     await processor.sendToolResult(result);
   }
 

@@ -504,6 +504,42 @@ describe('OpenAI realtime processor', () => {
     }
   });
 
+  it('sends recall answer text without canonical selections', async () => {
+    const { socket, processor } = await activate(preparedContext);
+    socket.message({
+      type: 'response.output_item.added',
+      item: {
+        type: 'function_call',
+        call_id: 'recall-1',
+        name: 'recallFromMemory',
+      },
+    });
+    socket.message({
+      type: 'response.function_call_arguments.done',
+      call_id: 'recall-1',
+      arguments: '{"question":"Owner?"}',
+    });
+    await processor.events[Symbol.asyncIterator]().next();
+    await processor.sendToolResult({
+      executionId: 'recall-1',
+      status: 'success',
+      toolName: 'recallFromMemory',
+      output: { answer: 'Ada owns deployment.', entities: ['Ada'], skills: [] },
+    });
+    expect(sent(socket).slice(-2)).toEqual([
+      {
+        type: 'conversation.item.create',
+        item: {
+          type: 'function_call_output',
+          call_id: 'recall-1',
+          output: 'Ada owns deployment.',
+        },
+      },
+      { type: 'response.create' },
+    ]);
+    await processor.close();
+  });
+
   it('surfaces tool calls and returns tool results to the conversation', async () => {
     const { socket, processor } = await activate(preparedContext);
     const events = processor.events[Symbol.asyncIterator]();

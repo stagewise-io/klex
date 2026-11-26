@@ -44,7 +44,7 @@ klex-machine-rs cloud enroll <code>   # enrolls, then keeps serving
 klex-machine-rs                       # enrolled mode with the saved identity
 ```
 
-Enrollment state lives under `identity/` in the data directory, in the same format as `@klex/machine`, so either server can serve an enrollment the other created. As in Node.js, TLS trusts the bundled Mozilla roots plus any certificates in `NODE_EXTRA_CA_CERTS`, not the operating-system store.
+Enrollment state lives under `identity/` in the data directory, in the same format as `@klex/machine`, so either server can serve an enrollment the other created. As in Node.js, TLS trusts the bundled Mozilla roots plus any certificates in `NODE_EXTRA_CA_CERTS`, and adds the operating-system store when `NODE_USE_SYSTEM_CA=1` or `NODE_OPTIONS` contains `--use-system-ca`. `NODE_USE_ENV_PROXY=1` or `--use-env-proxy` sends Cloud HTTP requests through `HTTP_PROXY`/`HTTPS_PROXY`, honouring `NO_PROXY`, as Node.js `fetch` does. The Cloud WebSocket connects directly either way, matching `@klex/machine`.
 
 In local mode, the MCP endpoint is `http://127.0.0.1:3123/mcp` and the health endpoint is `http://127.0.0.1:3123/health`. Run `klex-machine-rs --help` for every flag. Flags and `KLEX_MACHINE_*` environment variables match `@klex/machine`, except that the default data directory is `~/.klex-machine-rs`. Both servers can therefore run side by side without sharing notification state. Pointing `--data-dir` at an existing `~/.klex-machine` directory takes over its notification state.
 

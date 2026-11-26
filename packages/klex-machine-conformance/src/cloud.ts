@@ -190,6 +190,12 @@ export interface RecordedFrame {
   frame: ProxyFrame;
 }
 
+export interface CloudPeer {
+  path: string;
+  upgrade: boolean;
+  remotePort: number | undefined;
+}
+
 export interface FakeCloud {
   readonly baseUrl: string;
   readonly caFile: string;
@@ -198,6 +204,8 @@ export interface FakeCloud {
   readonly connections: MachineConnection[];
   readonly frames: RecordedFrame[];
   readonly enrollRequests: unknown[];
+  /** Every HTTPS request and upgrade, with the client's port. */
+  readonly peers: CloudPeer[];
   issueCode(): string;
   /** Plain-HTTP proxy URL for a machine's MCP endpoint. */
   mcpUrl(machineId: string): string;
@@ -445,9 +453,11 @@ export async function startFakeCloud(directory: string): Promise<FakeCloud> {
     });
   };
 
+  const peers: CloudPeer[] = [];
   httpsServer.on('request', (request, response) => {
     const url = new URL(request.url ?? '/', baseUrl);
     const path = url.pathname;
+    peers.push({ path, upgrade: false, remotePort: request.socket.remotePort });
     const route =
       request.method === 'POST' && path === '/api/machines/enroll'
         ? 'enroll'
@@ -475,6 +485,11 @@ export async function startFakeCloud(directory: string): Promise<FakeCloud> {
   });
   const sockets = new Set<Duplex>();
   httpsServer.on('upgrade', (request, socket, head) => {
+    peers.push({
+      path: new URL(request.url ?? '/', baseUrl).pathname,
+      upgrade: true,
+      remotePort: request.socket.remotePort,
+    });
     sockets.add(socket);
     socket.once('close', () => sockets.delete(socket));
     const accept = intercept;
@@ -511,6 +526,7 @@ export async function startFakeCloud(directory: string): Promise<FakeCloud> {
     connections,
     frames,
     enrollRequests,
+    peers,
     issueCode() {
       const code = `code-${randomBytes(8).toString('hex')}`;
       codes.add(code);

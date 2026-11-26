@@ -428,12 +428,16 @@ class RecallReader implements Extension {
           })
           .strict(),
         execute: async ({ query, offset, after, before, sourceEnv }) => {
+          const afterTime = after ? Date.parse(after) : -Infinity;
+          const beforeTime = before ? Date.parse(before) : Infinity;
           const sources = (await activities.manifest())
-            .filter(
-              (source) =>
-                (!after || source.persistedAt >= after) &&
-                (!before || source.persistedAt <= before),
-            )
+            .filter((source) => {
+              const persistedTime = Date.parse(source.persistedAt);
+              return (
+                (!after || persistedTime >= afterTime) &&
+                (!before || persistedTime <= beforeTime)
+              );
+            })
             .reverse();
           const matches: { id: string; snippet: string }[] = [];
           let index = offset;

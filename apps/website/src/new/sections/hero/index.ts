@@ -12,7 +12,7 @@ import { mountHeroTeam } from './team';
 export const heroMarkup = `
       <section class="new-hero" aria-labelledby="new-hero-title">
         <p class="new-eyebrow"><span class="new-eyebrow-word">${html('Meet')}</span> <span class="new-eyebrow-word">Klex Bots</span></p>
-        <h1 id="new-hero-title">${html('Your own team of digital coworkers.')}</h1>
+        <h1 id="new-hero-title">${html('AI teammates for your business.')}</h1>
         <p class="new-description">${html('Klex Bots work with their own identities and computers in the tools your team already uses.')}</p>
         <a class="new-hero-cta ${buttonVariants({ size: 'lg' })}" data-slot="button" href="https://cloud.klex.bot">${html('Create a Klex Bot')}</a>
         <div class="new-hero-mount"></div>

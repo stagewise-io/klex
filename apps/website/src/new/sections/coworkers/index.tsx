@@ -265,7 +265,7 @@ export function Coworkers() {
     <>
       <h2 id="coworkers-title" className="coworkers-title">
         <span>{t('Personal AI Assistants don’t work for your business.')}</span>{' '}
-        <span>{t('Klex Bots are digital coworkers that do.')}</span>
+        <span>{t('Klex Bots are AI teammates that do.')}</span>
       </h2>
       <Card className="coworkers-card ring-0">
         <CardContent className="px-0">

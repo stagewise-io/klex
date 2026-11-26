@@ -7,7 +7,7 @@ import { createFooterMarkup, footerMarkup } from './footer.ts';
 describe('shared website footer', () => {
   it('can omit the CTA without changing the shared footer navigation or the default footer', () => {
     const compact = createFooterMarkup({ showCta: false });
-    expect(compact).not.toContain('Make room for a new coworker.');
+    expect(compact).not.toContain('Make room for a new AI teammate.');
     expect(compact).not.toContain('new-footer-main');
     expect(compact).not.toContain('new-footer-cta');
     expect(
@@ -27,7 +27,7 @@ describe('shared website footer', () => {
 
   it('keeps the complete site footer navigation, branding, and attribution', () => {
     expect(footerMarkup.match(/<footer\b/g)).toHaveLength(1);
-    expect(footerMarkup).toContain('Make room for a new coworker.');
+    expect(footerMarkup).toContain('Make room for a new AI teammate.');
     expect(footerMarkup).toContain('https://cloud.klex.bot');
     expect(footerMarkup).toContain('aria-label="Resources"');
     expect(footerMarkup).toContain('aria-label="Company"');

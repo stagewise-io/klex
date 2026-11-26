@@ -18,11 +18,9 @@ export function ProductCard({ playing }: CardProps) {
       ref={card}
       className="bento-cell bento-product"
       data-playing={active}
-      aria-label={`Klex Bots, ${t('Your team of digital coworkers')}`}
+      aria-label={`Klex Bots, ${t('Your AI teammates')}`}
     >
-      <span className="bento-product-label">
-        {t('Your team of digital coworkers')}
-      </span>
+      <span className="bento-product-label">{t('Your AI teammates')}</span>
       <h2 id="features-title" className="bento-product-title">
         Klex Bots
       </h2>

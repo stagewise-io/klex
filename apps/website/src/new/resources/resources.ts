@@ -7,7 +7,7 @@ import { pngWidths } from './png-downloads';
 const downloadIcon = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5"/></svg>`;
 
 const shortDescription =
-  'Klex is an open-source platform for autonomous digital coworkers. Klex Bots have their own identities, lasting memory, and connected work environments, and collaborate through the tools teams already use. Run them locally or use Klex Cloud for integrations, hosted agents, and computers.';
+  'Klex is an open-source platform for autonomous AI teammates. Klex Bots have their own identities, lasting memory, and connected work environments, and collaborate through the tools teams already use. Run them locally or use Klex Cloud for integrations, hosted agents, and computers.';
 
 function assetPreview(
   title: Message,
@@ -40,8 +40,8 @@ export const brandMarkup = `
     <div class="resource-section-body">
       <p class="resource-lead">${html('Always Klex. A capital K, followed by lowercase lex.')}</p>
       <dl class="resource-definitions">
-        <div><dt>Klex</dt><dd>${html('The brand behind the full digital coworker experience.')}</dd></div>
-        <div><dt>Klex Bots</dt><dd>${html('The individual digital coworkers. Write Klex Bot in the singular and Klex Bots in the plural, with a space and a capital B. Use lowercase bots when referring to them generically.')}</dd></div>
+        <div><dt>Klex</dt><dd>${html('The brand behind the full AI teammate experience.')}</dd></div>
+        <div><dt>Klex Bots</dt><dd>${html('The individual AI teammates. Write Klex Bot in the singular and Klex Bots in the plural, with a space and a capital B. Use lowercase bots when referring to them generically.')}</dd></div>
         <div><dt>Klex Cloud</dt><dd>${html('Our cloud offering for integrations, hosted agents, and computers. Always two words, with a capital C.')}</dd></div>
       </dl>
     </div>
@@ -81,11 +81,11 @@ export const pressMarkup = `
   <section class="resource-section" aria-labelledby="press-product-title">
     <h2 id="press-product-title">${html('About our Bots')}</h2>
     <div class="resource-section-body">
-      <p class="resource-lead">${html('Klex is an open-source platform for autonomous digital coworkers, built by stagewise. We build bots, not agents. Klex Bots are designed to participate in a team’s work rather than sit alongside it as a separate chat tool.')}</p>
+      <p class="resource-lead">${html('Klex is an open-source platform for autonomous AI teammates, built by stagewise. We build bots, not agents. Klex Bots are designed to participate in a team’s work rather than sit alongside it as a separate chat tool.')}</p>
       <p>${html('We see bots as the next evolution of agents: less constrained by individual tasks or chat sessions, and able to act autonomously and proactively. Rather than waiting for every instruction, a Klex Bot can recognize what needs attention, take initiative, and keep work moving across connected environments, within the permissions its team sets.')}</p>
-      <p>${html('Each Klex Bot maintains a durable identity and memory across conversations and work environments. Teams communicate with their bots through connected channels and give them access to tools and computers through the Model Context Protocol (MCP). The aim is one coherent coworker, without asking users to manage model sessions or the orchestration behind them.')}</p>
-      <p>${html('Klex separates a bot’s durable state from the environments where work happens. Its brain, memory, and configuration remain with the bot; external tools and computers are connected environments. This lets the coworker retain its context as its work moves between systems. It also makes hosting Klex Bots significantly safer and less compute-intense.')}</p>
-      <p>${html('Klex supports multiple model providers and can run locally or be self-hosted. Klex Cloud is the hosted offering, bringing together integrations, hosted bots, and computers. The brand is Klex; the individual coworkers are Klex Bots; the cloud offering is Klex Cloud.')}</p>
+      <p>${html('Each Klex Bot maintains a durable identity and memory across conversations and work environments. Teams communicate with their bots through connected channels and give them access to tools and computers through the Model Context Protocol (MCP). The aim is one coherent AI teammate, without asking users to manage model sessions or the orchestration behind them.')}</p>
+      <p>${html('Klex separates a bot’s durable state from the environments where work happens. Its brain, memory, and configuration remain with the bot; external tools and computers are connected environments. This lets the bot retain its context as its work moves between systems. It also makes hosting Klex Bots significantly safer and less compute-intense.')}</p>
+      <p>${html('Klex supports multiple model providers and can run locally or be self-hosted. Klex Cloud is the hosted offering, bringing together integrations, hosted bots, and computers. The brand is Klex; the individual AI teammates are Klex Bots; the cloud offering is Klex Cloud.')}</p>
       <div class="resource-inline-links"><a href="https://docs.klex.bot">${html('Product documentation')}</a><a href="https://github.com/stagewise-io/klex">${html('Open-source repository')}</a></div>
     </div>
   </section>
@@ -94,7 +94,7 @@ export const pressMarkup = `
     <div class="resource-section-body">
       <p class="resource-lead">${html('stagewise builds applied AI with a simple premise: bots should be partners that tackle work autonomously, not tools people talk to on the side.')}</p>
       <p>${html('The team started in software development, working on a gap between increasingly capable models and the limited context they could access. Its early work connected agents to the live state of an application: the running interface, selected elements, and surrounding code.')}</p>
-      <p>${html('That experience shaped the team’s approach to bots. Capability depends not only on a model, but also on context, lasting memory, access to surrounding systems, and clear permissions. Klex brings this thinking to digital coworkers that can work across the environments a team already uses.')}</p>
+      <p>${html('That experience shaped the team’s approach to bots. Capability depends not only on a model, but also on context, lasting memory, access to surrounding systems, and clear permissions. Klex brings this thinking to AI teammates that can work across the environments a team already uses.')}</p>
       <figure class="resource-founder-photo">
         <img src="/press/stagewise-klex-founders-1600.webp" srcset="/press/stagewise-klex-founders-800.webp 800w, /press/stagewise-klex-founders-1600.webp 1600w" sizes="(max-width: 800px) 100vw, 800px" alt="${html('The two stagewise co-founders, Glenn Töws and Julian Götze')}" width="3754" height="2816" loading="lazy" decoding="async" />
         <figcaption><span>${html('stagewise co-founders')} · 3754 × 2816 px</span><a class="resource-download" href="/press/stagewise-klex-founders.jpeg" download="stagewise-klex-founders.jpeg" aria-label="${html('Download the stagewise founders photo at full resolution')}">${downloadIcon}<span>${html('Download full resolution')}</span></a></figcaption>

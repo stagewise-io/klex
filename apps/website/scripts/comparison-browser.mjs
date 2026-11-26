@@ -101,17 +101,14 @@ try {
       );
     }
     assert.equal(await page.locator('.comparison-at-a-glance h2').count(), 2);
-    if (width === 1440) {
-      const hero = await page.locator('.comparison-heading').boundingBox();
-      const card = await page.locator('.comparison-at-a-glance').boundingBox();
-      assert(
-        hero &&
-          card &&
-          hero.width > width * 0.8 &&
-          card.x > hero.x + hero.width / 2,
-        'desktop hero uses the available width',
-      );
-    }
+    const artwork = page.locator('.comparison-hero-art');
+    assert(await artwork.isVisible(), 'hero illustration is visible');
+    assert(
+      await artwork.evaluate(
+        (image) => image.complete && image.naturalWidth > 0,
+      ),
+      'hero illustration loads',
+    );
     assert.equal(
       await page
         .locator('main a[href="https://www.klex.bot/"]')
@@ -179,6 +176,12 @@ try {
     await staticPage.locator('main h1').count(),
     1,
     'comparison is readable without JavaScript',
+  );
+  assert(
+    await staticPage
+      .locator('.comparison-hero-art')
+      .evaluate((image) => image.complete && image.naturalWidth > 0),
+    'hero illustration loads without JavaScript',
   );
   await noJs.close();
   console.log('Comparison browser checks passed');

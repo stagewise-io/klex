@@ -11,12 +11,13 @@ export const comparisonMarkup =
     <p>Say your team needs a weekly update: gather what shipped, draft the announcement and bring it to a person for review. Both Klex and Rerun offer AI coworkers that can help. The choice starts with where you want to work with them, how you want to provide their AI model, and how you will review actions.</p>
     <p>Klex puts digital coworkers alongside your team in connected tools. Rerun offers ready-made and custom coworkers with a shared board for their work. Both describe cloud and self-hosted options.</p>
     </div>
-    <aside class="comparison-at-a-glance" aria-labelledby="comparison-at-a-glance-title">
+    <img class="comparison-hero-art" src="/rerun-comparison-hero.svg" alt="" width="760" height="700" />
+  </header>
+  <aside class="comparison-at-a-glance" aria-labelledby="comparison-at-a-glance-title">
       <p class="comparison-card-label" id="comparison-at-a-glance-title">At a glance</p>
       <div><h2>Klex</h2><p>A digital coworker in your team’s connected tools, using the model access you provide.</p></div>
       <div><h2>Rerun</h2><p>AI coworkers with a shared board and a choice of Rerun-hosted or your own models.</p></div>
-    </aside>
-  </header>
+  </aside>
   <section class="resource-section" id="getting-started">
     <h2>One job, two ways to get started</h2>
     <div class="resource-section-body">

@@ -29,7 +29,14 @@
 .resource-heading.comparison-heading h1 {
   font-size: clamp(2.75rem, 5vw, 4.5rem);
 }
+.comparison-hero-art {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 1.5rem;
+}
 .comparison-at-a-glance {
+  margin-block: 2rem;
   padding: clamp(1.5rem, 3vw, 2.5rem);
   border: 1px solid var(--border);
   border-radius: 1rem;
@@ -87,6 +94,22 @@
 @media (max-width: 800px) {
   .resource-heading.comparison-heading {
     grid-template-columns: minmax(0, 1fr);
-    gap: 2.5rem;
+    gap: 0;
+  }
+  .comparison-heading-copy {
+    display: contents;
+  }
+  .comparison-heading-copy > .comparison-eyebrow {
+    order: 0;
+  }
+  .comparison-heading-copy > h1 {
+    order: 1;
+  }
+  .comparison-hero-art {
+    order: 2;
+    margin-block: 1.5rem;
+  }
+  .comparison-heading-copy > p:not(.comparison-eyebrow) {
+    order: 3;
   }
 }

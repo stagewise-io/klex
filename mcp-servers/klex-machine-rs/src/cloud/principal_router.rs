@@ -97,18 +97,23 @@ impl PrincipalRouter {
         endpoint.handle(request).await
     }
 
-    pub async fn close(&self) {
+    pub async fn close(&self) -> Result<(), String> {
         let endpoints: Vec<MachineEndpoint> = {
             let mut principals = self
                 .principals
                 .lock()
                 .unwrap_or_else(|error| error.into_inner());
             if self.closed.swap(true, Ordering::SeqCst) {
-                return;
+                return Ok(());
             }
             principals.drain().map(|(_, endpoint)| endpoint).collect()
         };
-        futures::future::join_all(endpoints.iter().map(|endpoint| endpoint.machine().close()))
-            .await;
+        let results =
+            futures::future::join_all(endpoints.iter().map(|endpoint| endpoint.machine().close()))
+                .await;
+        if results.iter().any(Result::is_err) {
+            return Err("Failed to close principal modules".into());
+        }
+        Ok(())
     }
 }

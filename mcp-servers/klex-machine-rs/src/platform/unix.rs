@@ -488,4 +488,20 @@ pub mod signals {
             _ = terminate.recv() => "SIGTERM",
         }
     }
+
+    /// Node's default action once no listener remains: die by the signal.
+    pub fn terminate_by(signal: &str) -> ! {
+        let number = if signal == "SIGTERM" {
+            libc::SIGTERM
+        } else {
+            libc::SIGINT
+        };
+        // SAFETY: restoring the default disposition and signalling ourselves
+        // touches no Rust-managed state.
+        unsafe {
+            libc::signal(number, libc::SIG_DFL);
+            libc::kill(libc::getpid(), number);
+        }
+        std::process::exit(128 + number)
+    }
 }

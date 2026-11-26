@@ -582,16 +582,25 @@ impl NotificationStore {
         }
     }
 
-    pub async fn close(&self) {
+    /// Fails like `rm(lockPath, { force: true })` when the lock cannot be removed.
+    pub async fn close(&self) -> Result<(), String> {
         let mut inner = self.inner.lock().await;
         if inner.closed {
-            return;
+            return Ok(());
         }
         inner.closed = true;
         self.listeners.lock().unwrap().clear();
         inner.transient.clear();
-        if let Some(lock_path) = inner.lock_path.take() {
-            let _ = fs::remove_file(lock_path);
+        let Some(lock_path) = inner.lock_path.take() else {
+            return Ok(());
+        };
+        match fs::remove_file(&lock_path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(format!(
+                "Failed to remove {}: {error}",
+                crate::paths::display(&lock_path)
+            )),
         }
     }
 

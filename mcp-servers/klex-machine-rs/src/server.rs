@@ -2,6 +2,7 @@
 //! MCP Hono app's JSON and DNS-rebinding checks, and signal shutdown.
 
 use std::path::PathBuf;
+use std::process::ExitCode;
 use std::sync::Arc;
 
 use axum::Router;
@@ -21,6 +22,7 @@ use crate::config::RuntimeConfig;
 use crate::logger::Logger;
 use crate::mcp::{Machine, MachineHandler, MachineOptions};
 use crate::notifications::NotificationStore;
+use crate::platform::signals;
 use crate::push::is_push_listen;
 
 pub struct ServeOptions {
@@ -94,7 +96,8 @@ struct AppState {
 
 const LOCAL_HOSTNAMES: [&str; 3] = ["localhost", "127.0.0.1", "[::1]"];
 
-pub async fn serve(options: ServeOptions, logger: Logger) -> Result<(), String> {
+/// Startup failures are errors; a failed shutdown is logged and exits 1.
+pub async fn serve(options: ServeOptions, logger: Logger) -> Result<ExitCode, String> {
     let ServeOptions {
         config,
         data_dir,
@@ -114,8 +117,8 @@ pub async fn serve(options: ServeOptions, logger: Logger) -> Result<(), String> 
     let listener = match tokio::net::TcpListener::bind((config.host.as_str(), config.port)).await {
         Ok(listener) => listener,
         Err(error) => {
-            machine.close().await;
-            store.close().await;
+            let _ = machine.close().await;
+            let _ = store.close().await;
             return Err(listen_error(&error, &config.host, config.port));
         }
     };
@@ -148,36 +151,42 @@ pub async fn serve(options: ServeOptions, logger: Logger) -> Result<(), String> 
 
     let shutdown_machine = machine.clone();
     let shutdown_logger = logger.clone();
-    let (closed_tx, closed_rx) = tokio::sync::oneshot::channel::<()>();
+    let (closed_tx, closed_rx) =
+        tokio::sync::oneshot::channel::<(&'static str, Result<(), String>)>();
     let shutdown = async move {
-        let signal = crate::platform::signals::shutdown().await;
+        let signal = signals::shutdown().await;
         shutdown_logger.info(
             json!({ "signal": signal }),
             "Shutting down klex-machine MCP server",
         );
+        // The TS server removes its one-shot listeners when closing starts.
         tokio::spawn(async move {
-            let second = crate::platform::signals::shutdown().await;
-            std::process::exit(if second == "SIGTERM" { 143 } else { 130 });
+            signals::terminate_by(signals::shutdown().await);
         });
         // Close SSE streams before waiting for the listener; open subscription
         // responses would otherwise block graceful shutdown.
         tokio::spawn(async move {
-            shutdown_machine.close().await;
-            let _ = closed_tx.send(());
+            let closed = shutdown_machine.close().await;
+            let _ = closed_tx.send((signal, closed));
         });
     };
     let served = axum::serve(listener, app)
         .with_graceful_shutdown(shutdown)
-        .await;
-    let _ = closed_rx.await;
-    store.close().await;
-    served.map_err(|error| {
-        logger.error(
-            json!({ "error": error.to_string() }),
-            "Failed to shut down klex-machine",
-        );
-        error.to_string()
-    })
+        .await
+        .map_err(|error| error.to_string());
+    let (signal, machine_closed) = match closed_rx.await {
+        Ok((signal, closed)) => (Some(signal), closed),
+        Err(_) => (None, Ok(())),
+    };
+    let store_closed = store.close().await;
+    let Some(error) = store_closed.err().or(served.err()).or(machine_closed.err()) else {
+        return Ok(ExitCode::SUCCESS);
+    };
+    logger.error(
+        json!({ "error": error, "signal": signal }),
+        "Failed to shut down klex-machine",
+    );
+    Ok(ExitCode::FAILURE)
 }
 
 fn listen_error(error: &std::io::Error, host: &str, port: u16) -> String {

@@ -31,7 +31,7 @@ import {
 } from './failure';
 import { getSoulGenerationSystemPrompt } from './generation-system-prompt';
 import { formatSoulGenerationUserMessage } from './generation-user-message';
-import { readSoulState, writeSoulFailure } from './state';
+import { readSoulState, readSoulVersion, writeSoulFailure } from './state';
 import { getSystemPromptPart as systemPromptPartSoul } from './system-prompt-part/with-soul';
 
 /**
@@ -113,12 +113,18 @@ class SoulModule implements Soul {
   }
 
   async getStatus(): Promise<{ failure: SoulFailure | null }> {
-    if (this.get() !== null) return { failure: null };
     const state = await readSoulState(this.deps.soulDirectory);
+    const failure = state?.payload.failure;
+    // Legacy failures have no version evidence: retain them until cleared.
+    // Parse the store first, even if its failure has since been resolved.
+    if (
+      failure?.soulVersion !== undefined &&
+      failure.soulVersion !== readSoulVersion(this.deps.soulDirectory)
+    ) {
+      return { failure: null };
+    }
     return {
-      failure: state?.payload.failure
-        ? soulFailureSchema.parse(state.payload.failure)
-        : null,
+      failure: failure ? soulFailureSchema.parse(failure) : null,
     };
   }
 

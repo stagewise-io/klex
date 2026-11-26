@@ -30,6 +30,19 @@ write. The store is absent from released baseline `v0.38.3-nightly20261125c001`;
 existing stores and historical contracts are unchanged. `SOUL.md` remains a plain
 document. No migration fixtures or manual recovery are required.
 
+Failure status optionally records `failure.soulVersion`, a local file token made
+from device, inode, and nanosecond modification/change timestamps (null for a
+missing file). Status retains a failure only while that version matches; atomic
+soul saves replace the inode even for identical content. The token is omitted
+from the API. Legacy failures without a token remain visible until cleared.
+This is a compatible additive change: schema/compatibility remain 1/1 and the
+minimum version remains `KLEX_VERSION`. Prior readers preserve unknown fields;
+prior writers replace the entire failure, removing its token on a new failure.
+Local release tags contain no release of the introducing commit `1694cc64`, and
+the latest local baseline above has no soul state store. Remote release history
+could not be verified (GitHub returned 401), so the original shape is treated as
+released and remains accepted. No migration or manual recovery is needed.
+
 Initialization creates missing parent directories for nested stores. SQLite definitions may declare `initPragmas`, which run one by one before `initSql` only when the database is created. Settings such as `auto_vacuum` take effect only on an empty file and are never re-applied to existing stores.
 
 `identity/private-key.pem`, `SOUL.md`, inactive legacy episode JSONL files under `episodic/`, skill `SKILL.md` folders under `skills/{namespace}/` (and legacy learned folders under `extensions/io.stagewise/learning/skills/` awaiting import), locks, logs, downloaded assets, and reconstructable caches are not migration stores. Private identity keys are opaque and must never be transformed by a migration. Soul and skill files are plain documents, not versioned migration stores; skill files use Agent Skills frontmatter and readers skip skills they cannot parse. Legacy episode files are untouched inactive artifacts: runtime never opens, scans or writes them.

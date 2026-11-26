@@ -41,6 +41,9 @@ it('passes registered startup, preserves unknown fields, and rejects newer state
     } as const;
     await writeSoulFailure(dirname(path), failure);
     const raw = JSON.parse(await readFile(path, 'utf8'));
+    expect(raw.failure.soulVersion).toBeNull();
+    // The original schema-1 shape remains valid through registered startup.
+    delete raw.failure.soulVersion;
     raw.future = { keep: true };
     raw.failure.future = true;
     await writeFile(path, JSON.stringify(raw));
@@ -51,6 +54,18 @@ it('passes registered startup, preserves unknown fields, and rejects newer state
     expect((await readSoulState(dirname(path)))?.payload.failure).toMatchObject(
       { ...failure, future: true },
     );
+    await writeSoulFailure(dirname(path), failure);
+    const current = await readFile(path, 'utf8');
+    await start();
+    await start();
+    expect(await readFile(path, 'utf8')).toBe(current);
+    const invalid = JSON.parse(current);
+    invalid.failure.soulVersion = 'invalid';
+    await writeFile(path, JSON.stringify(invalid));
+    await expect(start()).rejects.toThrow();
+    await expect(readSoulState(dirname(path))).rejects.toThrow();
+    expect(await readFile(path, 'utf8')).toBe(JSON.stringify(invalid));
+    await writeFile(path, current);
     await writeSoulFailure(dirname(path), null);
     expect((await readSoulState(dirname(path)))?.payload).toEqual({
       failure: null,

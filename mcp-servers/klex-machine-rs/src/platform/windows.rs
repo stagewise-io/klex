@@ -1,0 +1,440 @@
+//! Windows implementations.
+
+pub mod fs {
+    use std::fs::{self, File, Metadata};
+    use std::io;
+    use std::os::windows::fs::FileTypeExt;
+    use std::path::Path;
+
+    /// Node's replace path backs up the destination on win32 instead of
+    /// renaming over it.
+    pub const REPLACE_NEEDS_BACKUP: bool = true;
+
+    /// `stat.mode` as Node synthesizes it from the read-only attribute.
+    pub fn mode(metadata: &Metadata) -> u32 {
+        let base = if metadata.permissions().readonly() {
+            0o444
+        } else {
+            0o666
+        };
+        if metadata.is_dir() {
+            base | 0o111
+        } else {
+            base
+        }
+    }
+
+    /// `fs.chmod`. Only the owner-write bit maps to read-only.
+    pub fn chmod(path: &Path, mode: u32) -> io::Result<()> {
+        let mut permissions = fs::metadata(path)?.permissions();
+        permissions.set_readonly(mode & 0o200 == 0);
+        fs::set_permissions(path, permissions)
+    }
+
+    /// Volume serial and file index of a path without following a final
+    /// symlink.
+    pub fn identity(path: &Path) -> Option<(u64, u64)> {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+        use windows_sys::Win32::Storage::FileSystem::{
+            BY_HANDLE_FILE_INFORMATION, CreateFileW, FILE_FLAG_BACKUP_SEMANTICS,
+            FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+            GetFileInformationByHandle, OPEN_EXISTING,
+        };
+        let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+        // SAFETY: `wide` is NUL-terminated and outlives the call; the handle is
+        // closed before returning.
+        unsafe {
+            let handle = CreateFileW(
+                wide.as_ptr(),
+                0,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                std::ptr::null(),
+                OPEN_EXISTING,
+                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+                std::ptr::null_mut(),
+            );
+            if handle == INVALID_HANDLE_VALUE {
+                return None;
+            }
+            let mut info: BY_HANDLE_FILE_INFORMATION = std::mem::zeroed();
+            let ok = GetFileInformationByHandle(handle, &mut info);
+            CloseHandle(handle);
+            if ok == 0 {
+                return None;
+            }
+            Some((
+                u64::from(info.dwVolumeSerialNumber),
+                (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow),
+            ))
+        }
+    }
+
+    /// Opens a new file for writing, failing if it exists. Windows has no
+    /// mode bits, so `mode` is ignored.
+    pub fn create_new_file(path: &Path, _mode: u32) -> io::Result<File> {
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+    }
+
+    pub fn create_dir(path: &Path, _mode: u32) -> io::Result<()> {
+        fs::DirBuilder::new().create(path)
+    }
+
+    pub fn create_dir_all(path: &Path, _mode: u32) -> io::Result<()> {
+        fs::DirBuilder::new().recursive(true).create(path)
+    }
+
+    /// Directory symlinks must be removed as directories.
+    pub fn remove_file_or_link(path: &Path, metadata: &Metadata) -> io::Result<()> {
+        if metadata.file_type().is_symlink_dir() {
+            fs::remove_dir(path)
+        } else {
+            fs::remove_file(path)
+        }
+    }
+
+    /// Creates `link` pointing at `target`, of the same kind as the symlink
+    /// at `source`.
+    pub fn symlink_like(source: &Path, target: &Path, link: &Path) -> io::Result<()> {
+        use std::os::windows::fs::{symlink_dir, symlink_file};
+        let directory = fs::symlink_metadata(source)
+            .map(|metadata| metadata.file_type().is_symlink_dir())
+            .unwrap_or(false);
+        if directory {
+            symlink_dir(target, link)
+        } else {
+            symlink_file(target, link)
+        }
+    }
+
+    /// The Node error code for an OS error, as libuv's
+    /// `uv_translate_sys_error` maps the codes filesystem calls produce.
+    pub fn error_code(error: &io::Error) -> Option<&'static str> {
+        Some(match error.raw_os_error()? {
+            2 | 3 | 15 | 53 | 67 | 123 | 161 | 1392 => "ENOENT",
+            5 | 19 | 1314 => "EPERM",
+            17 => "EXDEV",
+            32 | 33 | 170 => "EBUSY",
+            80 | 183 => "EEXIST",
+            87 => "EINVAL",
+            112 | 39 => "ENOSPC",
+            145 => "ENOTEMPTY",
+            206 => "ENAMETOOLONG",
+            267 => "ENOTDIR",
+            1921 => "ELOOP",
+            4 => "EMFILE",
+            _ => return None,
+        })
+    }
+}
+
+pub mod host {
+    use serde_json::Value;
+
+    use crate::device_type::{DeviceType, chassis_type, virtual_model};
+
+    /// Node's `process.platform`.
+    pub const PLATFORM: &str = "win32";
+
+    /// `os.homedir()`.
+    pub fn home_dir() -> Option<std::path::PathBuf> {
+        std::env::var_os("USERPROFILE")
+            .filter(|value| !value.is_empty())
+            .map(Into::into)
+    }
+
+    /// `os.hostname()`.
+    pub fn hostname() -> String {
+        std::env::var("COMPUTERNAME").unwrap_or_default()
+    }
+
+    pub async fn detect_device_type() -> Option<DeviceType> {
+        let output = super::super::probe(
+            "powershell.exe",
+            &[
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "$s = Get-CimInstance Win32_ComputerSystem; $c = Get-CimInstance Win32_SystemEnclosure; @{model=$s.Model; chassis=@($c.ChassisTypes)} | ConvertTo-Json -Compress",
+            ],
+        )
+        .await?;
+        let parsed: Value = serde_json::from_str(&output).ok()?;
+        let model = parsed.get("model")?.as_str()?;
+        let chassis = parsed.get("chassis")?.as_array()?;
+        if virtual_model(model) {
+            return Some(DeviceType::Vm);
+        }
+        chassis
+            .iter()
+            .filter_map(Value::as_i64)
+            .find_map(chassis_type)
+    }
+}
+
+pub mod path {
+    /// Whether absolute paths start with a drive letter instead of `/`.
+    pub const DRIVE_ROOTS: bool = true;
+}
+
+pub mod process {
+    use std::io;
+    use std::process::Stdio;
+
+    use tokio::process::Command;
+
+    /// `process.kill(pid, 0)` succeeding or failing with EPERM.
+    pub fn process_alive(pid: u32) -> bool {
+        use windows_sys::Win32::Foundation::{
+            CloseHandle, ERROR_ACCESS_DENIED, GetLastError, STILL_ACTIVE,
+        };
+        use windows_sys::Win32::System::Threading::{
+            GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+        if pid == std::process::id() {
+            return true;
+        }
+        // SAFETY: the handle is checked and closed before returning.
+        unsafe {
+            let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if handle.is_null() {
+                return GetLastError() == ERROR_ACCESS_DENIED;
+            }
+            let mut code = 0u32;
+            let ok = GetExitCodeProcess(handle, &mut code);
+            CloseHandle(handle);
+            ok != 0 && code == STILL_ACTIVE as u32
+        }
+    }
+
+    /// `child_process.spawn(command, { shell: true, detached: true })`.
+    pub fn shell_command(script: &str) -> (String, Command) {
+        let file = std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".into());
+        let mut command = Command::new(&file);
+        command.raw_arg(format!("/d /s /c \"{script}\""));
+        (file, command)
+    }
+
+    /// Ends a detached command and its descendants with `taskkill /T /F`.
+    pub fn terminate_tree(pid: u32) -> io::Result<()> {
+        let mut child = std::process::Command::new("taskkill")
+            .args(["/pid", &pid.to_string(), "/T", "/F"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()?;
+        std::thread::spawn(move || child.wait());
+        Ok(())
+    }
+
+    /// Node's `code` and `signal` for an exited child.
+    pub fn exit_details(status: std::process::ExitStatus) -> (Option<i32>, Option<String>) {
+        (status.code(), None)
+    }
+}
+
+pub mod pty {
+    use std::io::{self, Read, Write};
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
+
+    use crate::platform::pty::{Child, CursorQuery, Pty, SpawnOptions, Spawned};
+
+    /// node-pty waits this long for the PTY to drain after the child exits.
+    pub const EXIT_DRAIN: Duration = Duration::from_millis(1000);
+
+    pub fn default_shell() -> String {
+        std::env::var("ComSpec").unwrap_or_else(|_| "powershell.exe".into())
+    }
+
+    pub fn default_shell_args() -> Vec<String> {
+        Vec::new()
+    }
+
+    pub fn spawn(options: &SpawnOptions<'_>) -> Result<Spawned, String> {
+        let pair = native_pty_system()
+            .openpty(PtySize {
+                rows: options.rows,
+                cols: options.cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .map_err(|error| format!("{error:#}"))?;
+        let mut command = CommandBuilder::new(options.shell);
+        command.args(options.args);
+        command.cwd(options.cwd);
+        if let Some(env) = options.env {
+            for (key, value) in env {
+                command.env(key, value);
+            }
+        }
+        let child = pair
+            .slave
+            .spawn_command(command)
+            .map_err(|error| format!("{error:#}"))?;
+        drop(pair.slave);
+        let reader = pair
+            .master
+            .try_clone_reader()
+            .map_err(|error| format!("{error:#}"))?;
+        let writer = pair
+            .master
+            .take_writer()
+            .map_err(|error| format!("{error:#}"))?;
+        let console = Arc::new(Console {
+            writer: Mutex::new(Some(writer)),
+            master: Mutex::new(Some(pair.master)),
+        });
+        Ok(Spawned {
+            pid: child.process_id().unwrap_or_default(),
+            pty: Box::new(ConPty {
+                console: console.clone(),
+                killer: Mutex::new(child.clone_killer()),
+            }),
+            output: Box::new(Output {
+                reader,
+                console: console.clone(),
+                query: CursorQuery::default(),
+                chunk: vec![0u8; 64 * 1024],
+                pending: Vec::new(),
+                offset: 0,
+                done: false,
+            }),
+            child: Box::new(ConPtyChild { child, console }),
+            exec_failure: None,
+        })
+    }
+
+    /// Both halves are dropped when the shell exits.
+    struct Console {
+        writer: Mutex<Option<Box<dyn Write + Send>>>,
+        master: Mutex<Option<Box<dyn MasterPty + Send>>>,
+    }
+
+    impl Console {
+        fn write(&self, data: &[u8]) -> io::Result<()> {
+            match lock(&self.writer).as_mut() {
+                Some(writer) => writer.write_all(data).and_then(|()| writer.flush()),
+                None => Ok(()),
+            }
+        }
+    }
+
+    struct ConPty {
+        console: Arc<Console>,
+        killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
+    }
+
+    impl Pty for ConPty {
+        fn write(&self, data: &[u8]) -> io::Result<()> {
+            self.console.write(data)
+        }
+
+        fn resize(&self, cols: u16, rows: u16) -> Result<(), String> {
+            match lock(&self.console.master).as_ref() {
+                Some(master) => master
+                    .resize(PtySize {
+                        rows,
+                        cols,
+                        pixel_width: 0,
+                        pixel_height: 0,
+                    })
+                    .map_err(|error| format!("{error:#}")),
+                None => Ok(()),
+            }
+        }
+
+        fn hangup(&self) {
+            let _ = lock(&self.killer).kill();
+        }
+    }
+
+    struct ConPtyChild {
+        child: Box<dyn portable_pty::Child + Send + Sync>,
+        console: Arc<Console>,
+    }
+
+    impl Child for ConPtyChild {
+        fn wait(&mut self) -> (Option<i64>, Option<i64>) {
+            let code = self
+                .child
+                .wait()
+                .map(|status| i64::from(status.exit_code()))
+                .ok();
+            // ConPTY only flushes and closes its output pipe when released.
+            drop(lock(&self.console.writer).take());
+            drop(lock(&self.console.master).take());
+            (code, None)
+        }
+    }
+
+    /// ConPTY output with the cursor query answered and removed.
+    struct Output {
+        reader: Box<dyn Read + Send>,
+        console: Arc<Console>,
+        query: CursorQuery,
+        chunk: Vec<u8>,
+        pending: Vec<u8>,
+        offset: usize,
+        done: bool,
+    }
+
+    impl Read for Output {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            loop {
+                if self.offset < self.pending.len() {
+                    let count = buffer.len().min(self.pending.len() - self.offset);
+                    buffer[..count]
+                        .copy_from_slice(&self.pending[self.offset..self.offset + count]);
+                    self.offset += count;
+                    return Ok(count);
+                }
+                if self.done {
+                    return Ok(0);
+                }
+                self.pending = match self.reader.read(&mut self.chunk) {
+                    Ok(0) => {
+                        self.done = true;
+                        self.query.end()
+                    }
+                    Ok(count) => {
+                        let (kept, asked) = self.query.filter(&self.chunk[..count]);
+                        if asked {
+                            let _ = self.console.write(b"\x1b[1;1R");
+                        }
+                        kept
+                    }
+                    Err(error) if error.kind() == io::ErrorKind::Interrupted => {
+                        return Err(error);
+                    }
+                    Err(_) => {
+                        self.done = true;
+                        self.query.end()
+                    }
+                };
+                self.offset = 0;
+            }
+        }
+    }
+
+    fn lock<T: ?Sized>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+        mutex
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+pub mod signals {
+    /// Waits for Ctrl+C and reports it as SIGINT, like Node.
+    pub async fn shutdown() -> &'static str {
+        if tokio::signal::ctrl_c().await.is_err() {
+            return std::future::pending().await;
+        }
+        "SIGINT"
+    }
+}

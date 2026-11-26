@@ -1,4 +1,4 @@
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
@@ -392,27 +392,12 @@ fn remove_all(path: &Path) -> Result<()> {
     let result = if metadata.is_dir() {
         fs::remove_dir_all(path)
     } else {
-        remove_file_or_link(path, &metadata)
+        platform::fs::remove_file_or_link(path, &metadata)
     };
     match result {
         Err(error) if !fs_error::is(&error, "ENOENT") => Err(message(&error, "rm", path)),
         _ => Ok(()),
     }
-}
-
-#[cfg(windows)]
-fn remove_file_or_link(path: &Path, metadata: &fs::Metadata) -> io::Result<()> {
-    use std::os::windows::fs::FileTypeExt;
-    if metadata.file_type().is_symlink_dir() {
-        fs::remove_dir(path)
-    } else {
-        fs::remove_file(path)
-    }
-}
-
-#[cfg(not(windows))]
-fn remove_file_or_link(path: &Path, _metadata: &fs::Metadata) -> io::Result<()> {
-    fs::remove_file(path)
 }
 
 /// An I/O error with its Node-style message, kept for code checks like EXDEV.
@@ -451,10 +436,10 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
         let existing_mode = existing
             .as_ref()
             .filter(|metadata| metadata.is_file())
-            .map(platform::mode);
+            .map(platform::fs::mode);
         let mut file = create_exclusive(&temporary_path, existing_mode.unwrap_or(0o666))?;
         if let Some(mode) = existing_mode {
-            platform::chmod(&temporary_path, mode)
+            platform::fs::chmod(&temporary_path, mode)
                 .map_err(|error| message(&error, "fchmod", &temporary_path))?;
         }
         file.write_all(bytes)
@@ -469,18 +454,7 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
 }
 
 fn create_exclusive(path: &Path, mode: u32) -> Result<File> {
-    let mut options = OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(mode);
-    }
-    #[cfg(not(unix))]
-    let _ = mode;
-    options
-        .open(path)
-        .map_err(|error| message(&error, "open", path))
+    platform::fs::create_new_file(path, mode).map_err(|error| message(&error, "open", path))
 }
 
 /// `fs.mkdtemp(join(parent, '.klex-machine-'))`.
@@ -520,7 +494,7 @@ fn replace_path(source: &Path, destination: &Path) -> std::result::Result<(), Fs
     let source_metadata = fs::symlink_metadata(source)
         .map_err(|error| FsFailure::io(error, "lstat", source, None))?;
     let destination_metadata = lstat_optional(destination)?;
-    let requires_backup = cfg!(windows)
+    let requires_backup = platform::fs::REPLACE_NEEDS_BACKUP
         || destination_metadata
             .as_ref()
             .is_some_and(|metadata| source_metadata.is_dir() || metadata.is_dir());
@@ -581,8 +555,8 @@ fn publish_exclusive_entry(
         record_published_path(destination, published, None)?;
         return Ok(());
     }
-    let mode = platform::mode(&metadata);
-    platform::chmod(source, mode | 0o700).map_err(|error| message(&error, "chmod", source))?;
+    let mode = platform::fs::mode(&metadata);
+    platform::fs::chmod(source, mode | 0o700).map_err(|error| message(&error, "chmod", source))?;
     create_dir_with_mode(destination, mode | 0o700)?;
     record_published_path(destination, published, Some(mode))?;
     let mut names: Vec<_> = fs::read_dir(source)
@@ -593,7 +567,7 @@ fn publish_exclusive_entry(
     for name in names {
         publish_exclusive_entry(&source.join(&name), &destination.join(&name), published)?;
     }
-    platform::chmod(destination, mode).map_err(|error| message(&error, "chmod", destination))
+    platform::fs::chmod(destination, mode).map_err(|error| message(&error, "chmod", destination))
 }
 
 fn record_published_path(
@@ -604,9 +578,9 @@ fn record_published_path(
     let metadata = fs::symlink_metadata(path).map_err(|error| message(&error, "lstat", path))?;
     published.push(PublishedPath {
         path: path.to_path_buf(),
-        identity: platform::identity(path),
+        identity: platform::fs::identity(path),
         directory: metadata.is_dir(),
-        mode: final_mode.unwrap_or_else(|| platform::mode(&metadata)),
+        mode: final_mode.unwrap_or_else(|| platform::fs::mode(&metadata)),
     });
     Ok(())
 }
@@ -617,7 +591,7 @@ fn rollback_published_paths(mut published: Vec<PublishedPath>) {
             continue;
         }
         if let Some(current) = matching_published_path(entry) {
-            let _ = platform::chmod(&entry.path, platform::mode(&current) | 0o700);
+            let _ = platform::fs::chmod(&entry.path, platform::fs::mode(&current) | 0o700);
         }
     }
     published.reverse();
@@ -630,14 +604,14 @@ fn rollback_published_paths(mut published: Vec<PublishedPath>) {
             continue;
         }
         if fs::remove_dir(&entry.path).is_err() {
-            let _ = platform::chmod(&entry.path, entry.mode);
+            let _ = platform::fs::chmod(&entry.path, entry.mode);
         }
     }
 }
 
 fn matching_published_path(entry: &PublishedPath) -> Option<fs::Metadata> {
     let current = fs::symlink_metadata(&entry.path).ok()?;
-    if entry.identity.is_none() || platform::identity(&entry.path) != entry.identity {
+    if entry.identity.is_none() || platform::fs::identity(&entry.path) != entry.identity {
         return None;
     }
     Some(current)
@@ -648,7 +622,7 @@ fn make_directories_owner_writable(path: &Path) -> Result<()> {
     if !metadata.is_dir() || metadata.file_type().is_symlink() {
         return Ok(());
     }
-    platform::chmod(path, platform::mode(&metadata) | 0o700)
+    platform::fs::chmod(path, platform::fs::mode(&metadata) | 0o700)
         .map_err(|error| message(&error, "chmod", path))?;
     for entry in fs::read_dir(path).map_err(|error| message(&error, "scandir", path))? {
         let entry = entry.map_err(|error| message(&error, "scandir", path))?;
@@ -658,37 +632,12 @@ fn make_directories_owner_writable(path: &Path) -> Result<()> {
 }
 
 fn create_dir_with_mode(path: &Path, mode: u32) -> Result<()> {
-    #[cfg(unix)]
-    let result = {
-        use std::os::unix::fs::DirBuilderExt;
-        fs::DirBuilder::new().mode(mode).create(path)
-    };
-    #[cfg(not(unix))]
-    let result = {
-        let _ = mode;
-        fs::DirBuilder::new().create(path)
-    };
-    result.map_err(|error| message(&error, "mkdir", path))
+    platform::fs::create_dir(path, mode).map_err(|error| message(&error, "mkdir", path))
 }
 
-#[cfg(unix)]
-fn create_symlink(target: &Path, link: &Path, _source: &Path) -> Result<()> {
-    std::os::unix::fs::symlink(target, link)
-        .map_err(|error| message2(&error, "symlink", target, link))
-}
-
-#[cfg(windows)]
 fn create_symlink(target: &Path, link: &Path, source: &Path) -> Result<()> {
-    use std::os::windows::fs::{FileTypeExt, symlink_dir, symlink_file};
-    let directory = fs::symlink_metadata(source)
-        .map(|metadata| metadata.file_type().is_symlink_dir())
-        .unwrap_or(false);
-    let result = if directory {
-        symlink_dir(target, link)
-    } else {
-        symlink_file(target, link)
-    };
-    result.map_err(|error| message2(&error, "symlink", target, link))
+    platform::fs::symlink_like(source, target, link)
+        .map_err(|error| message2(&error, "symlink", target, link))
 }
 
 /// `fs.cp(source, destination, { recursive: true, dereference: false })`
@@ -739,7 +688,7 @@ fn copy_tree(source: &Path, destination: &Path, force: bool, error_on_exist: boo
             )?;
         }
         if created {
-            platform::chmod(destination, platform::mode(&metadata))
+            platform::fs::chmod(destination, platform::fs::mode(&metadata))
                 .map_err(|error| message(&error, "chmod", destination))?;
         }
         return Ok(());

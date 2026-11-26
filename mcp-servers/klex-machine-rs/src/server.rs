@@ -108,13 +108,13 @@ pub async fn serve(options: ServeOptions, logger: Logger) -> Result<(), String> 
     let shutdown_logger = logger.clone();
     let (closed_tx, closed_rx) = tokio::sync::oneshot::channel::<()>();
     let shutdown = async move {
-        let signal = shutdown_signal().await;
+        let signal = crate::platform::signals::shutdown().await;
         shutdown_logger.info(
             json!({ "signal": signal }),
             "Shutting down klex-machine MCP server",
         );
         tokio::spawn(async move {
-            let second = shutdown_signal().await;
+            let second = crate::platform::signals::shutdown().await;
             std::process::exit(if second == "SIGTERM" { 143 } else { 130 });
         });
         // Close SSE streams before waiting for the listener; open subscription
@@ -136,30 +136,6 @@ pub async fn serve(options: ServeOptions, logger: Logger) -> Result<(), String> 
         );
         error.to_string()
     })
-}
-
-async fn shutdown_signal() -> &'static str {
-    #[cfg(unix)]
-    {
-        use tokio::signal::unix::{SignalKind, signal};
-        let (Ok(mut interrupt), Ok(mut terminate)) = (
-            signal(SignalKind::interrupt()),
-            signal(SignalKind::terminate()),
-        ) else {
-            return std::future::pending().await;
-        };
-        tokio::select! {
-            _ = interrupt.recv() => "SIGINT",
-            _ = terminate.recv() => "SIGTERM",
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        if tokio::signal::ctrl_c().await.is_err() {
-            return std::future::pending().await;
-        }
-        "SIGINT"
-    }
 }
 
 fn listen_error(error: &std::io::Error, host: &str, port: u16) -> String {

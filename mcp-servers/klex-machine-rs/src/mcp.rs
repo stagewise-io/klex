@@ -229,7 +229,7 @@ impl Machine {
         let template = SERVER_CONTRACT["instructions"].as_str().unwrap_or_default();
         let mut instructions = template
             .replace("${cwd}", &self.default_cwd)
-            .replace("${platform}", crate::platform::PLATFORM);
+            .replace("${platform}", crate::platform::host::PLATFORM);
         if push {
             instructions.push_str(
                 SERVER_CONTRACT["pushInstructionsSuffix"]

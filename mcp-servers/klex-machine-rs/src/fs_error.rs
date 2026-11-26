@@ -64,51 +64,8 @@ fn entry(code: &str) -> Option<(&'static str, &'static str)> {
         .find(|(candidate, _)| *candidate == code)
 }
 
-#[cfg(unix)]
 fn errno_entry(error: &io::Error) -> Option<(&'static str, &'static str)> {
-    let code = match error.raw_os_error()? {
-        libc::EACCES => "EACCES",
-        libc::EBUSY => "EBUSY",
-        libc::EEXIST => "EEXIST",
-        libc::EINVAL => "EINVAL",
-        libc::EIO => "EIO",
-        libc::EISDIR => "EISDIR",
-        libc::ELOOP => "ELOOP",
-        libc::EMFILE => "EMFILE",
-        libc::ENAMETOOLONG => "ENAMETOOLONG",
-        libc::ENOENT => "ENOENT",
-        libc::ENOSPC => "ENOSPC",
-        libc::ENOTDIR => "ENOTDIR",
-        libc::ENOTEMPTY => "ENOTEMPTY",
-        libc::EPERM => "EPERM",
-        libc::EROFS => "EROFS",
-        libc::EXDEV => "EXDEV",
-        libc::ETXTBSY => "ETXTBSY",
-        libc::EFBIG => "EFBIG",
-        _ => return None,
-    };
-    entry(code)
-}
-
-#[cfg(windows)]
-fn errno_entry(error: &io::Error) -> Option<(&'static str, &'static str)> {
-    // libuv's uv_translate_sys_error for the codes filesystem calls produce.
-    let code = match error.raw_os_error()? {
-        2 | 3 | 15 | 53 | 67 | 123 | 161 | 1392 => "ENOENT",
-        5 | 19 | 1314 => "EPERM",
-        17 => "EXDEV",
-        32 | 33 | 170 => "EBUSY",
-        80 | 183 => "EEXIST",
-        87 => "EINVAL",
-        112 | 39 => "ENOSPC",
-        145 => "ENOTEMPTY",
-        206 => "ENAMETOOLONG",
-        267 => "ENOTDIR",
-        1921 => "ELOOP",
-        4 => "EMFILE",
-        _ => return None,
-    };
-    entry(code)
+    entry(crate::platform::fs::error_code(error)?)
 }
 
 #[cfg(all(test, unix))]

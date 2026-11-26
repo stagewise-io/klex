@@ -101,6 +101,8 @@ namespace KlexMachine
         static string pendingClipboard;
         static readonly AutoResetEvent clipboardWake = new AutoResetEvent(false);
         static readonly List<string> heldKeys = new List<string>();
+        // Characters pressed as virtual keys for a shortcut go up the same way.
+        static readonly Dictionary<string, int> heldCharacterKeys = new Dictionary<string, int>();
         static readonly List<string> heldButtons = new List<string>();
         static int pointerX = -1, pointerY = -1;
 
@@ -652,10 +654,23 @@ namespace KlexMachine
                     break;
                 case 'u':
                     string text = char.ConvertFromUtf32(code);
-                    short scan = text.Length == 1 ? VkKeyScanW(text[0]) : (short)-1;
-                    if (scan != -1 && ShortcutHeld())
+                    int vk;
+                    if (down)
                     {
-                        int vk = scan & 0xFF;
+                        short scan = text.Length == 1 ? VkKeyScanW(text[0]) : (short)-1;
+                        vk = scan != -1 && ShortcutHeld() ? scan & 0xFF : -1;
+                        if (vk != -1) heldCharacterKeys[token] = vk;
+                    }
+                    else if (heldCharacterKeys.TryGetValue(token, out vk))
+                    {
+                        heldCharacterKeys.Remove(token);
+                    }
+                    else
+                    {
+                        vk = -1;
+                    }
+                    if (vk != -1)
+                    {
                         TrySend(Keyboard((ushort)vk, (ushort)MapVirtualKeyW((uint)vk, 0), up));
                     }
                     else

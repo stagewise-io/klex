@@ -208,6 +208,37 @@ describe('temporary memory recall', () => {
     }
   });
 
+  it.each([
+    ['2026-02-01T00:00:00Z', '2026-02-01T00:00:00Z'],
+    ['2026-02-01T00:00:00.0Z', '2026-02-01T00:00:00.0000Z'],
+    ['2026-02-01T00:00:00.0000Z', '2026-02-01T00:00:00.0Z'],
+  ])(
+    'filters by timestamp instants with bounds %s to %s',
+    async (after, before) => {
+      const h = setup();
+      h.activities.manifest.mockResolvedValue([
+        { id: 'earlier', bytes: 100, persistedAt: '2026-01-31T23:59:59.999Z' },
+        { id: 'boundary', bytes: 100, persistedAt: '2026-02-01T00:00:00.000Z' },
+        { id: 'later', bytes: 100, persistedAt: '2026-02-01T00:00:00.001Z' },
+      ] as never);
+      await call(tools(h.extension), 'recallFromMemory', {
+        question: 'Recall',
+      });
+      const search = tools(h.reader()).searchHistory;
+      if (!search) throw new Error('Expected searchHistory tool');
+      const input = { query: 'deployment', offset: 0, after, before };
+      expect(
+        (search.inputSchema as { parse: (value: unknown) => unknown }).parse(
+          input,
+        ),
+      ).toEqual(input);
+      await call(tools(h.reader()), 'searchHistory', input);
+      expect(
+        h.activities.readPage.mock.calls.map((args) => (args as unknown[])[0]),
+      ).toEqual(['boundary']);
+    },
+  );
+
   it('filters timestamps before reads and source environments from canonical metadata', async () => {
     const h = setup();
     h.activities.manifest.mockResolvedValue([

@@ -726,15 +726,102 @@ describe('memory materialization', () => {
       ),
     );
     expect(output).toContain('uses: |\n  - learning/deploy\n');
-    expect(output).toContain('uses: |\n  - Klex\n');
+    expect(output).toContain('relationshipsAdded: |\n  uses:\n    - Klex');
+    expect(output).toContain(
+      'relationshipsRemoved: |\n  uses:\n    - learning/deploy',
+    );
     expect(output).not.toContain('.md');
     expect(output).toContain(
       'loadOn: |\n  - type: contentPattern\n    pattern: release',
     );
-    expect(output).toContain('uses: []');
+    expect(output).toContain('relationshipsRemoved: |\n  uses:\n    - Klex');
     expect(output).toContain('loadOn: []');
     expect(output).not.toContain('Private detail');
     expect(output).not.toContain('linkedIdentities: []');
+  });
+
+  it('diffs individual relationship targets across additions, removals, and reverts', () => {
+    const snapshot = (
+      relationships: Record<string, string[]>,
+      body = 'Current fact',
+    ) =>
+      JSON.stringify({
+        ...JSON.parse(entitySnapshot(entity())),
+        relationships,
+        body,
+      });
+    const initial = { uses: ['A.md', 'B.md'], knows: ['C.md'] };
+    const changed = {
+      uses: ['B.md', 'learning/deploy/SKILL.md'],
+      owns: ['D.md'],
+    };
+    const history = [initial, changed, initial].map((relationships, index) =>
+      message(String(index), [
+        createDataPart('loadedMemories', {
+          [filename]: snapshot(relationships),
+        }),
+      ]),
+    );
+    const updates = materializeMemories(history)
+      .map((message) => texts([message]))
+      .filter((text) => text.startsWith('# memory-update\n'));
+    expect(updates).toHaveLength(2);
+    expect(updates[0]).toBe(
+      '# memory-update\nentity: Ada\nsection: General\nrelationshipsRemoved: |\n  knows:\n    - C\n  uses:\n    - A\nrelationshipsAdded: |\n  owns:\n    - D\n  uses:\n    - learning/deploy',
+    );
+    expect(updates[1]).toBe(
+      '# memory-update\nentity: Ada\nsection: General\nrelationshipsRemoved: |\n  owns:\n    - D\n  uses:\n    - learning/deploy\nrelationshipsAdded: |\n  knows:\n    - C\n  uses:\n    - A',
+    );
+    // The unchanged target is present only in the initial full memory.
+    expect(texts(materializeMemories(history)).match(/- B\b/g)).toHaveLength(1);
+  });
+
+  it('ignores relationship ordering, duplicates, and empty groups without mutating snapshots', () => {
+    const first = {
+      ...JSON.parse(entitySnapshot(entity())),
+      relationships: { uses: ['A.md', 'B.md'], knows: ['C.md'] },
+    };
+    const second = {
+      ...first,
+      relationships: {
+        knows: ['C.md'],
+        uses: ['B.md', 'A.md', 'A.md'],
+        owns: [],
+      },
+    };
+    const history = [first, second, { ...second, tags: ['updated'] }].map(
+      (snapshot, index) =>
+        message(String(index), [
+          createDataPart('loadedMemories', {
+            [filename]: JSON.stringify(snapshot),
+          }),
+        ]),
+    );
+    const before = structuredClone(history);
+    const output = texts(materializeMemories(history));
+    expect(output.match(/^# memory-update$/gm)).toHaveLength(1);
+    expect(output.split('# memory-update\n')[1]).toBe(
+      'entity: Ada\nsection: General\ntags: |\n  - updated',
+    );
+    expect(history).toEqual(before);
+  });
+
+  it('emits only relationship additions or removals when a group appears or disappears', () => {
+    const original = JSON.parse(entitySnapshot(entity()));
+    const history = [{}, { uses: ['A.md'] }, {}].map((relationships, index) =>
+      message(String(index), [
+        createDataPart('loadedMemories', {
+          [filename]: JSON.stringify({ ...original, relationships }),
+        }),
+      ]),
+    );
+    const updates = materializeMemories(history)
+      .map((message) => texts([message]))
+      .filter((text) => text.startsWith('# memory-update\n'));
+    expect(updates).toEqual([
+      '# memory-update\nentity: Ada\nsection: General\nrelationshipsAdded: |\n  uses:\n    - A',
+      '# memory-update\nentity: Ada\nsection: General\nrelationshipsRemoved: |\n  uses:\n    - A',
+    ]);
   });
 
   it('does not emit updates for absent versus empty metadata in historical snapshots', () => {

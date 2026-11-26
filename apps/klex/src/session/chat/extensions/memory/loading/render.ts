@@ -76,7 +76,15 @@ function normalizeSnapshot(snapshot: MemorySnapshot) {
     tags: tags ?? [],
     linkedIdentities: linkedIdentities ?? [],
     loadOn: loadOn ?? [],
-    relationships: relationships ?? {},
+    relationships: Object.fromEntries(
+      Object.entries(relationships ?? {})
+        .map(
+          ([key, targets]) =>
+            [key, [...new Set(targets)].sort(lexical)] as const,
+        )
+        .filter(([, targets]) => targets.length)
+        .sort(([a], [b]) => lexical(a, b)),
+    ),
   };
 }
 function emptyMetadata(key: string): unknown {
@@ -98,7 +106,6 @@ function metadataDiff(
     'linkedIdentities',
     'sections',
     'loadOn',
-    'relationships',
   ] as const) {
     if (
       JSON.stringify(previous[key] ?? emptyMetadata(key)) !==
@@ -110,33 +117,31 @@ function metadataDiff(
     changes.additionalSections = changes.sections;
     delete changes.sections;
   }
-  const relationships = changes.relationships;
-  delete changes.relationships;
+  const added: Record<string, string[]> = {};
+  const removed: Record<string, string[]> = {};
+  const keys = new Set([
+    ...Object.keys(previous.relationships ?? {}),
+    ...Object.keys(snapshot.relationships ?? {}),
+  ]);
+  for (const key of [...keys].sort(lexical)) {
+    const before = new Set(previous.relationships?.[key] ?? []);
+    const after = new Set(snapshot.relationships?.[key] ?? []);
+    const additions = [...after].filter((target) => !before.has(target));
+    const removals = [...before].filter((target) => !after.has(target));
+    const display = (targets: string[]) =>
+      targets
+        .sort(lexical)
+        .map((target) => target.replace(/(?:\/SKILL)?\.md$/, ''));
+    if (additions.length) added[key] = display(additions);
+    if (removals.length) removed[key] = display(removals);
+  }
   return [
     ...dataFields(changes, MEMORY_FIELD_POLICY),
-    ...(relationships !== undefined
-      ? dataFields(
-          Object.fromEntries(
-            [
-              ...new Set([
-                ...Object.keys(previous.relationships ?? {}),
-                ...Object.keys(snapshot.relationships ?? {}),
-              ]),
-            ]
-              .filter(
-                (key) =>
-                  JSON.stringify(previous.relationships?.[key] ?? []) !==
-                  JSON.stringify(snapshot.relationships?.[key] ?? []),
-              )
-              .map((key) => [
-                key,
-                (snapshot.relationships?.[key] ?? []).map((target) =>
-                  target.replace(/(?:\/SKILL)?\.md$/, ''),
-                ),
-              ]),
-          ),
-          'trusted',
-        )
+    ...(Object.keys(removed).length
+      ? [field('relationshipsRemoved', removed, 'trusted')]
+      : []),
+    ...(Object.keys(added).length
+      ? [field('relationshipsAdded', added, 'trusted')]
       : []),
   ];
 }

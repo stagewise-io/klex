@@ -113,6 +113,7 @@ class SoulModule implements Soul {
   }
 
   async getStatus(): Promise<{ failure: SoulFailure | null }> {
+    if (this.get() !== null) return { failure: null };
     const state = await readSoulState(this.deps.soulDirectory);
     return {
       failure: state?.payload.failure
@@ -175,7 +176,14 @@ class SoulModule implements Soul {
       }
       // A failed generation or write never truncates the existing document.
       saveSoul(this.deps.soulDirectory, content);
-      await writeSoulFailure(this.deps.soulDirectory, null);
+      try {
+        await writeSoulFailure(this.deps.soulDirectory, null);
+      } catch (error) {
+        this.deps.logger.warn(
+          { error },
+          'Soul saved but failed to clear generation failure status',
+        );
+      }
       return content;
     } catch (error) {
       if (signal?.aborted) {

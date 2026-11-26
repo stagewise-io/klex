@@ -2,11 +2,24 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { generateText } from 'ai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ExtendedUIMessage } from '../../message-types';
 import type { ExtensionDeps } from '../extension-api';
-import { createSoulExt, readSoul } from './soul';
+import { soulFailureMessages } from './failure';
+import {
+  createSoul,
+  createSoulExt,
+  readSoul,
+  type SoulDependencies,
+} from './soul';
+import * as state from './state';
+
+vi.mock('ai', async (original) => ({
+  ...(await original<typeof import('ai')>()),
+  generateText: vi.fn(),
+}));
 
 vi.mock('./generation-prompt.md', () => ({
   default: 'Soul generation instructions',
@@ -23,8 +36,75 @@ function fixture(history: ExtendedUIMessage[] = []) {
   return { directory, ext, path: join(directory, 'SOUL.md') };
 }
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const directory of directories.splice(0))
     rmSync(directory, { recursive: true, force: true });
+});
+
+describe('Soul failure status', () => {
+  async function setup() {
+    const { directory, path } = fixture();
+    const logger = { warn: vi.fn() };
+    const soul = createSoul({
+      soulDirectory: directory,
+      logging: {
+        child: () => logger,
+      } as unknown as SoulDependencies['logging'],
+      config: {
+        getModelSelection: () => [{ providerId: 'provider', modelId: 'model' }],
+      } as unknown as SoulDependencies['config'],
+      modelResolver: {
+        resolveModel: () => ({ providerType: 'openai' }),
+        getLanguageModel: () => ({}),
+      } as unknown as SoulDependencies['modelResolver'],
+    });
+    await state.writeSoulFailure(directory, {
+      kind: 'soul_generation_failed',
+      category: 'auth',
+      reason: 'provider_error',
+      providerId: 'provider',
+      providerType: 'openai',
+      modelId: 'model',
+      statusCode: 401,
+      message: soulFailureMessages.auth,
+    });
+    vi.mocked(generateText).mockResolvedValue({
+      text: 'Saved soul',
+      finishReason: 'stop',
+    } as Awaited<ReturnType<typeof generateText>>);
+    return { soul, directory, path, logger };
+  }
+
+  it('clears persisted failure status after saving a soul', async () => {
+    const { soul, directory } = await setup();
+    expect((await soul.getStatus()).failure?.category).toBe('auth');
+    await expect(soul.create('Create a soul')).resolves.toBe('Saved soul');
+    expect(soul.get()).toBe('Saved soul');
+    expect((await state.readSoulState(directory))?.payload.failure).toBeNull();
+    expect(await soul.getStatus()).toEqual({ failure: null });
+  });
+
+  it('returns the saved soul and warns when clearing failure status fails', async () => {
+    const { soul, directory, logger } = await setup();
+    const error = new Error('State write failed');
+    vi.spyOn(state, 'writeSoulFailure').mockRejectedValueOnce(error);
+    await expect(soul.create('Create a soul')).resolves.toBe('Saved soul');
+    expect(soul.get()).toBe('Saved soul');
+    expect(
+      (await state.readSoulState(directory))?.payload.failure?.category,
+    ).toBe('auth');
+    expect(await soul.getStatus()).toEqual({ failure: null });
+    expect(logger.warn).toHaveBeenCalledWith(
+      { error },
+      'Soul saved but failed to clear generation failure status',
+    );
+  });
+
+  it('ignores stale failure status when a soul already exists', async () => {
+    const { soul, path } = await setup();
+    writeFileSync(path, 'Existing soul');
+    expect(await soul.getStatus()).toEqual({ failure: null });
+  });
 });
 
 describe('readSoul', () => {

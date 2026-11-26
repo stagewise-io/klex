@@ -40,11 +40,24 @@ async function completedWatcher(machine: Machine): Promise<PushEvent> {
   return waitFor(async () => (await events(machine))[0]);
 }
 
+/** Waits until `text` is on disk; events are readable before they are persisted. */
+async function persisted(dataDir: string, text: string): Promise<void> {
+  await waitFor(async () => {
+    const state = await readFile(
+      join(dataDir, 'notifications/state.json'),
+      'utf8',
+    ).catch(() => '');
+    return state.includes(text) ? true : undefined;
+  });
+}
+
 describe('notification state', () => {
   it('restores pending events after a restart', async () => {
     const dataDir = await temporaryDirectory();
     const first = await startMachine({ dataDir });
     const event = await completedWatcher(first);
+    // Windows has no SIGTERM handler, so stop() kills the process outright.
+    await persisted(dataDir, event.eventId);
     await first.stop();
     const second = await startMachine({ dataDir });
     expect(await events(second)).toEqual([event]);
@@ -74,6 +87,7 @@ describe('notification state', () => {
       const dataDir = await temporaryDirectory();
       const typescript = await startMachine({ dataDir, implementation: 'ts' });
       const event = await completedWatcher(typescript);
+      await persisted(dataDir, event.eventId);
       await typescript.stop();
       const rust = await startMachine({ dataDir });
       expect(await events(rust)).toEqual([event]);
@@ -111,13 +125,7 @@ describe('notification state', () => {
         expect.stringMatching(/^state\.json\.corrupt-/),
       );
       await completedWatcher(second);
-      await waitFor(async () => {
-        const state = await readFile(
-          join(dataDir, 'notifications/state.json'),
-          'utf8',
-        );
-        return state.includes('watcher.completed') ? true : undefined;
-      });
+      await persisted(dataDir, 'watcher.completed');
     },
   );
 });

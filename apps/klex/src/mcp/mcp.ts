@@ -91,10 +91,28 @@ import {
   canonicalConfigSignature,
   type McpRegistry,
   normalizeCallToolResult,
+  type RegisteredMcpTool,
 } from './registry';
+import {
+  classifyTransientMcpError,
+  McpServerStartingError,
+  type TransientMcpError,
+  transientRetryDelayMs,
+} from './transient-errors';
 
 const RETRY_INITIAL_MS = 1_000;
 const RETRY_MAX_MS = 30_000;
+/**
+ * A tool call retries transient server failures (a managed computer waking or
+ * waiting for capacity) within these bounds before reporting them.
+ */
+const TOOL_CALL_MAX_ATTEMPTS = 4;
+const TOOL_CALL_RETRY_BUDGET_MS = 20_000;
+/**
+ * How long a disconnected server's tools stay published while its reconnects
+ * keep failing transiently. Capacity waits can outlast a single lease.
+ */
+const RETAINED_TOOLS_MAX_MS = 5 * 60_000;
 /**
  * Post-connect 401 reconnects allowed within the window before the server is
  * marked `authorization_required`. A successful connect resets the regular
@@ -445,6 +463,12 @@ interface McpServerRuntime {
   lastUnauthorizedAt?: number;
   lastError?: McpServerErrorInfo;
   nextRetryAt?: string;
+  /**
+   * The closed connection whose tools stay published after an unexpected
+   * disconnect, until a reconnect succeeds or fails for a non-transient reason.
+   * Never invoked; tool calls wait for the live connection instead.
+   */
+  retained?: { connection: McpConnection; since: number };
   /** Cached combined count of resources + resource templates, refreshed after connect. */
   resourceCount: number;
 }
@@ -482,6 +506,8 @@ class McpModule implements Mcp {
     Map<string, ResourceSubscriptionEntry>
   >();
   private readonly realtimeAvailableNamespaces = new Set<string>();
+  /** Tool calls waiting to retry; woken when a namespace connects. */
+  private readonly connectionWaiters = new Set<(namespace: string) => void>();
   private registry: McpRegistry = new Map();
   private started = false;
   private readonly authorizationRequests = new Map<
@@ -919,7 +945,7 @@ class McpModule implements Mcp {
     input: JsonObject,
     context: ToolRequestContext,
   ): Promise<JsonValue> {
-    const { connection, tool } = this.getTool(reference);
+    this.getTool(reference);
     const record: McpToolCallRecord = {
       id: randomUUID(),
       namespace: reference.namespace,
@@ -933,7 +959,11 @@ class McpModule implements Mcp {
     };
     this.addToolCallRecord(record);
     try {
-      const result = await connection.invoke(tool, input, context.signal);
+      const result = await this.invokeWithRetry(
+        reference,
+        input,
+        context.signal,
+      );
       const normalized = normalizeCallToolResult(result);
       record.result = normalized;
       record.isError = Boolean(result.isError);
@@ -947,6 +977,106 @@ class McpModule implements Mcp {
       record.finishedAt = new Date().toISOString();
       throw error;
     }
+  }
+
+  /**
+   * Retries a tool call while the server reports a transient failure or is
+   * reconnecting with its tools retained. A 503 or lifecycle retry hint means
+   * the server did not run the tool, so repeating the call is safe.
+   */
+  private async invokeWithRetry(
+    reference: ToolReference,
+    input: JsonObject,
+    signal: AbortSignal,
+  ) {
+    const startedAt = Date.now();
+    for (let attempt = 1; ; attempt++) {
+      let transient: TransientMcpError = {};
+      let failure: unknown;
+      const live = this.getLiveTool(reference);
+      if (live) {
+        try {
+          return await live.connection.invoke(live.tool, input, signal);
+        } catch (error) {
+          const classified = signal.aborted
+            ? undefined
+            : classifyTransientMcpError(error);
+          if (!classified) throw error;
+          transient = classified;
+          failure = error;
+        }
+      }
+      const waitedMs = Date.now() - startedAt;
+      const delayMs = transientRetryDelayMs(transient, attempt);
+      if (
+        attempt >= TOOL_CALL_MAX_ATTEMPTS ||
+        waitedMs + delayMs > TOOL_CALL_RETRY_BUDGET_MS
+      ) {
+        throw new McpServerStartingError(
+          reference.namespace,
+          {
+            ...(transient.code ? { code: transient.code } : {}),
+            retryAfterMs: delayMs,
+            waitedMs,
+          },
+          failure,
+        );
+      }
+      this.deps.logger.info(
+        {
+          namespace: reference.namespace,
+          toolName: reference.name,
+          attempt,
+          delayMs,
+          reason: live ? (transient.code ?? 'unavailable') : 'reconnecting',
+        },
+        'MCP tool call is waiting for a temporarily unavailable server',
+      );
+      await this.waitForRetry(reference.namespace, delayMs, signal);
+    }
+  }
+
+  /** Returns `undefined` while only retained tools of a reconnecting server exist. */
+  private getLiveTool(
+    reference: ToolReference,
+  ): ({ connection: McpConnection } & RegisteredMcpTool) | undefined {
+    const tool = this.getTool(reference);
+    const live = this.servers.get(reference.namespace)?.connection;
+    return live === tool.connection ? tool : undefined;
+  }
+
+  private waitForRetry(
+    namespace: string,
+    delayMs: number,
+    signal: AbortSignal,
+  ): Promise<void> {
+    return new Promise((resolve, reject) => {
+      if (signal.aborted) {
+        reject(signal.reason);
+        return;
+      }
+      const finish = () => {
+        clearTimeout(timer);
+        signal.removeEventListener('abort', onAbort);
+        this.connectionWaiters.delete(onConnected);
+      };
+      const onConnected = (connected: string) => {
+        if (connected !== namespace) return;
+        finish();
+        resolve();
+      };
+      const onAbort = () => {
+        finish();
+        reject(signal.reason);
+      };
+      const timer = setTimeout(() => {
+        finish();
+        resolve();
+      }, delayMs);
+      timer.unref?.();
+      this.connectionWaiters.add(onConnected);
+      signal.addEventListener('abort', onAbort, { once: true });
+    });
   }
 
   private getTool(reference: ToolReference) {
@@ -1284,8 +1414,11 @@ class McpModule implements Mcp {
         onDisconnect: (disconnected, reason) => {
           if (!this.isCurrentConnection(runtime, disconnected)) return;
           runtime.connection = undefined;
-          if (reason === 'unauthorized' && this.exhaustUnauthorized(runtime))
-            return;
+          if (reason === 'unauthorized') {
+            if (this.exhaustUnauthorized(runtime)) return;
+          } else {
+            runtime.retained = { connection: disconnected, since: Date.now() };
+          }
           runtime.status = 'error';
           runtime.lastError = {
             name: 'McpDisconnectedError',
@@ -1309,10 +1442,13 @@ class McpModule implements Mcp {
         }
         runtime.attempt = undefined;
         runtime.connection = connection;
+        runtime.retained = undefined;
         runtime.status = 'connected';
         runtime.lastError = undefined;
         this.clearRetry(runtime);
         this.publishRegistry();
+        for (const waiter of [...this.connectionWaiters])
+          waiter(runtime.namespace);
         if (connection.supportsPushNotifications)
           this.startEventWorker(connection);
         if (connection.supportsEvents) {
@@ -1388,12 +1524,42 @@ class McpModule implements Mcp {
         if (authorizationRequired) {
           runtime.lastError = undefined;
           runtime.nextRetryAt = undefined;
+          this.dropRetainedTools(runtime);
           this.deps.logger.info(
             { namespace: runtime.namespace },
             'MCP server requires authorization',
           );
           return;
         }
+        const transient = classifyTransientMcpError(error);
+        if (transient) {
+          runtime.lastError = {
+            name: 'McpServerStartingError',
+            message:
+              'The computer is starting or temporarily unavailable; retrying',
+            at: new Date().toISOString(),
+          };
+          if (
+            runtime.retained &&
+            Date.now() - runtime.retained.since > RETAINED_TOOLS_MAX_MS
+          )
+            this.dropRetainedTools(runtime);
+          this.deps.logger.info(
+            {
+              namespace: runtime.namespace,
+              code: transient.code,
+              retryAttempt: runtime.retryAttempt,
+              retainedTools: runtime.retained !== undefined,
+            },
+            'MCP server is temporarily unavailable; reconnecting',
+          );
+          this.scheduleReconnect(
+            runtime,
+            transientRetryDelayMs(transient, runtime.retryAttempt + 1),
+          );
+          return;
+        }
+        this.dropRetainedTools(runtime);
         const diagnostic = safeDiagnosticError(error);
         runtime.lastError = { ...diagnostic, at: new Date().toISOString() };
         const isRetry = runtime.retryAttempt > 0;
@@ -1432,6 +1598,7 @@ class McpModule implements Mcp {
     this.stopRealtimeWorker(runtime.namespace);
     const connection = runtime.connection;
     runtime.connection = undefined;
+    runtime.retained = undefined;
     return connection;
   }
 
@@ -1902,13 +2069,15 @@ class McpModule implements Mcp {
     );
   }
 
-  private scheduleReconnect(runtime: McpServerRuntime): void {
+  private scheduleReconnect(runtime: McpServerRuntime, delayMs?: number): void {
     if (!this.isCurrentRuntime(runtime) || runtime.retryTimer) return;
     runtime.retryAttempt += 1;
-    const delay = Math.min(
-      RETRY_INITIAL_MS * 2 ** (runtime.retryAttempt - 1),
-      RETRY_MAX_MS,
-    );
+    const delay =
+      delayMs ??
+      Math.min(
+        RETRY_INITIAL_MS * 2 ** (runtime.retryAttempt - 1),
+        RETRY_MAX_MS,
+      );
     const timer = setTimeout(() => {
       if (!this.isCurrentRuntime(runtime) || runtime.retryTimer !== timer)
         return;
@@ -1961,11 +2130,17 @@ class McpModule implements Mcp {
     runtime.nextRetryAt = undefined;
   }
 
+  private dropRetainedTools(runtime: McpServerRuntime): void {
+    if (!runtime.retained) return;
+    runtime.retained = undefined;
+    this.publishRegistry();
+  }
+
   private publishRegistry(): void {
     const connections = new Map<string, McpConnection>();
     for (const runtime of this.servers.values()) {
-      if (runtime.connection)
-        connections.set(runtime.namespace, runtime.connection);
+      const connection = runtime.connection ?? runtime.retained?.connection;
+      if (connection) connections.set(runtime.namespace, connection);
     }
     this.registry = buildMcpRegistry(connections);
   }
@@ -2099,6 +2274,7 @@ class McpModule implements Mcp {
     }
 
     this.clearRetry(runtime);
+    this.dropRetainedTools(runtime);
     // New authorization means new credentials; earlier 401s no longer count.
     runtime.unauthorizedReconnects = 0;
     runtime.attempt?.controller.abort();

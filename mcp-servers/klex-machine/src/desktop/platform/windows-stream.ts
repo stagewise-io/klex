@@ -65,6 +65,16 @@ namespace KlexMachine
         [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
         [DllImport("shcore.dll")] static extern int SetProcessDpiAwareness(int value);
         [DllImport("gdi32.dll")] static extern bool DeleteObject(IntPtr handle);
+        [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+        [DllImport("kernel32.dll")] static extern uint GetCurrentProcessId();
+        [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr OpenProcess(uint access, bool inherit, uint processId);
+        [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
+        [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
+        [DllImport("advapi32.dll", SetLastError = true)] static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
+        [DllImport("advapi32.dll", SetLastError = true)] static extern bool GetTokenInformation(IntPtr token, int infoClass, IntPtr info, int length, out int needed);
+        [DllImport("advapi32.dll")] static extern IntPtr GetSidSubAuthorityCount(IntPtr sid);
+        [DllImport("advapi32.dll")] static extern IntPtr GetSidSubAuthority(IntPtr sid, uint index);
+        [DllImport("user32.dll", EntryPoint = "GetWindowThreadProcessId")] static extern uint GetWindowProcessId(IntPtr hWnd, out uint processId);
 
         const uint INPUT_MOUSE = 0;
         const uint INPUT_KEYBOARD = 1;
@@ -92,6 +102,8 @@ namespace KlexMachine
         const byte SIZE = 1, RAW = 2, JPEG = 3, FRAME = 4, CLIPBOARD = 5, LOG = 6;
         const string READY = "klex-stream-ready 1\n";
         const string PLACEHOLDER = "Windows is locked or showing a UAC prompt";
+        const string INPUT_BLOCKED = "An administrator window has focus; remote input is blocked until it is closed or loses focus";
+        const int BLOCKED_CHECK_MS = 250;
 
         static readonly object writeLock = new object();
         static Stream output;
@@ -105,6 +117,114 @@ namespace KlexMachine
         static readonly Dictionary<string, int> heldCharacterKeys = new Dictionary<string, int>();
         static readonly List<string> heldButtons = new List<string>();
         static int pointerX = -1, pointerY = -1;
+        static readonly object blockedLock = new object();
+        static volatile string blockedBy;
+        static int blockedCheckedAt;
+        static bool blockedChecked;
+
+        const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+        const uint TOKEN_QUERY = 0x0008;
+        const int TOKEN_INTEGRITY_LEVEL = 25;
+        const int ERROR_ACCESS_DENIED = 5;
+        const int INTEGRITY_UNKNOWN = -1;
+        const int INTEGRITY_DENIED = int.MaxValue;
+
+        static int ownIntegrity = -2;
+        static uint elevatedPid;
+        static string elevatedName;
+
+        // The integrity RID of a process (0x2000 medium, 0x3000 high, 0x4000 system).
+        static int IntegrityOf(IntPtr process)
+        {
+            IntPtr token;
+            if (!OpenProcessToken(process, TOKEN_QUERY, out token))
+                return Marshal.GetLastWin32Error() == ERROR_ACCESS_DENIED ? INTEGRITY_DENIED : INTEGRITY_UNKNOWN;
+            try
+            {
+                int needed;
+                GetTokenInformation(token, TOKEN_INTEGRITY_LEVEL, IntPtr.Zero, 0, out needed);
+                if (needed <= 0) return INTEGRITY_UNKNOWN;
+                IntPtr label = Marshal.AllocHGlobal(needed);
+                try
+                {
+                    if (!GetTokenInformation(token, TOKEN_INTEGRITY_LEVEL, label, needed, out needed)) return INTEGRITY_UNKNOWN;
+                    IntPtr sid = Marshal.ReadIntPtr(label);
+                    int count = Marshal.ReadByte(GetSidSubAuthorityCount(sid));
+                    if (count == 0) return INTEGRITY_UNKNOWN;
+                    return Marshal.ReadInt32(GetSidSubAuthority(sid, (uint)(count - 1)));
+                }
+                finally
+                {
+                    Marshal.FreeHGlobal(label);
+                }
+            }
+            finally
+            {
+                CloseHandle(token);
+            }
+        }
+
+        // Windows discards all injected input, anywhere on the screen, while
+        // the foreground window belongs to a process of higher integrity
+        // (UIPI), and SendInput still reports success. Returns that process's
+        // name, or null when input can reach the desktop.
+        static string ElevatedForeground()
+        {
+            if (ownIntegrity == -2) ownIntegrity = IntegrityOf(GetCurrentProcess());
+            if (ownIntegrity == INTEGRITY_UNKNOWN || ownIntegrity == INTEGRITY_DENIED) return null;
+            IntPtr window = GetForegroundWindow();
+            if (window == IntPtr.Zero) return null;
+            uint pid;
+            GetWindowProcessId(window, out pid);
+            if (pid == 0 || pid == GetCurrentProcessId()) return null;
+            int level;
+            IntPtr process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+            if (process == IntPtr.Zero)
+            {
+                level = Marshal.GetLastWin32Error() == ERROR_ACCESS_DENIED ? INTEGRITY_DENIED : INTEGRITY_UNKNOWN;
+            }
+            else
+            {
+                try { level = IntegrityOf(process); }
+                finally { CloseHandle(process); }
+            }
+            if (level == INTEGRITY_UNKNOWN || level <= ownIntegrity) return null;
+            if (pid != elevatedPid || elevatedName == null)
+            {
+                elevatedPid = pid;
+                try
+                {
+                    using (System.Diagnostics.Process owner = System.Diagnostics.Process.GetProcessById((int)pid)) elevatedName = owner.ProcessName;
+                }
+                catch (Exception)
+                {
+                    elevatedName = "process " + pid.ToString(CultureInfo.InvariantCulture);
+                }
+            }
+            return elevatedName;
+        }
+
+        // Rechecks at most every BLOCKED_CHECK_MS and logs each change.
+        static string InputBlockedBy()
+        {
+            lock (blockedLock)
+            {
+                int now = Environment.TickCount;
+                if (blockedChecked && unchecked(now - blockedCheckedAt) < BLOCKED_CHECK_MS) return blockedBy;
+                blockedChecked = true;
+                blockedCheckedAt = now;
+                string current;
+                try { current = ElevatedForeground(); }
+                catch (Exception) { current = null; }
+                if (current != blockedBy)
+                {
+                    if (current != null) Log("An administrator window (" + current + ") has focus. Windows discards all remote input, anywhere on the screen, until it is closed or loses focus.");
+                    else Log("Remote input reaches the desktop again.");
+                    blockedBy = current;
+                }
+                return current;
+            }
+        }
 
         public static void Run()
         {
@@ -249,6 +369,7 @@ namespace KlexMachine
                     bool secure = !string.Equals(InputDesktopName(), "Default", StringComparison.OrdinalIgnoreCase);
                     if (!secure && !Grab(bitmap)) secure = true;
                     if (secure) DrawPlaceholder(bitmap);
+                    else if (InputBlockedBy() != null) DrawInputBlocked(bitmap);
                     if (secure != wasSecure) full = true;
                     wasSecure = secure;
                     Read(bitmap, width, height, current);
@@ -341,6 +462,23 @@ namespace KlexMachine
                 format.Alignment = StringAlignment.Center;
                 format.LineAlignment = StringAlignment.Center;
                 graphics.DrawString(PLACEHOLDER, font, Brushes.White, new RectangleF(0, 0, bitmap.Width, bitmap.Height), format);
+            }
+        }
+
+        static void DrawInputBlocked(Bitmap bitmap)
+        {
+            using (Graphics graphics = Graphics.FromImage(bitmap))
+            using (Font font = new Font("Segoe UI", Math.Max(12, bitmap.Height / 50), FontStyle.Regular, GraphicsUnit.Pixel))
+            using (StringFormat format = new StringFormat())
+            using (SolidBrush banner = new SolidBrush(Color.FromArgb(178, 96, 16)))
+            {
+                float height = font.Height * 2.2f;
+                RectangleF area = new RectangleF(0, 0, bitmap.Width, height);
+                graphics.FillRectangle(banner, area);
+                graphics.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
+                format.Alignment = StringAlignment.Center;
+                format.LineAlignment = StringAlignment.Center;
+                graphics.DrawString(INPUT_BLOCKED, font, Brushes.White, area, format);
             }
         }
 
@@ -518,15 +656,19 @@ namespace KlexMachine
                     refreshRequested = true;
                     break;
                 case "move":
+                    InputBlockedBy();
                     if (command.Length == 3) MoveTo(Int(command[1]), Int(command[2]));
                     break;
                 case "button":
+                    InputBlockedBy();
                     if (command.Length == 5) Button(command[1], command[2] == "1", Int(command[3]), Int(command[4]));
                     break;
                 case "wheel":
+                    InputBlockedBy();
                     if (command.Length == 4) Wheel(command[1], Int(command[2]), Int(command[3]));
                     break;
                 case "key":
+                    InputBlockedBy();
                     if (command.Length == 3) Key(command[1] == "1", command[2]);
                     break;
                 case "clipboard":

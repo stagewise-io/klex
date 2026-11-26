@@ -1,20 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  events,
   type Machine,
   PUSH,
   startMachine,
+  subscribe,
   waitFor,
   windows,
 } from '../src/harness.js';
-
-interface PushEvent {
-  eventId: string;
-  type: string;
-  createdAt: string;
-  expiresAt?: string;
-  data: Record<string, unknown>;
-}
 
 interface WatcherInfo {
   id: string;
@@ -31,53 +25,8 @@ interface WatcherInfo {
 const push = { push: true };
 const longCommand = `"${process.execPath}" -e "setInterval(()=>{},1000)"`;
 
-async function events(machine: Machine): Promise<PushEvent[]> {
-  const { result, error } = await machine.rpc<{ events: PushEvent[] }>(
-    `${PUSH}/get`,
-    {},
-    push,
-  );
-  if (error) throw new Error(JSON.stringify(error));
-  return result?.events ?? [];
-}
-
 const firstEvent = (machine: Machine) =>
   waitFor(async () => (await events(machine))[0]);
-
-/** Reads SSE frames from a subscriptions/listen stream. */
-async function subscribe(machine: Machine, meta: Record<string, unknown> = {}) {
-  const abort = new AbortController();
-  const response = await machine.post(
-    'subscriptions/listen',
-    { notifications: { [PUSH]: {} }, ...meta },
-    { push: true, signal: abort.signal },
-  );
-  const reader = response.body!.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  const next = async (): Promise<Record<string, unknown>> => {
-    for (;;) {
-      const end = buffer.indexOf('\n\n');
-      if (end >= 0) {
-        const frame = buffer.slice(0, end);
-        buffer = buffer.slice(end + 2);
-        const data = frame
-          .split('\n')
-          .find((line) => line.startsWith('data: '));
-        if (data) return JSON.parse(data.slice(6));
-        continue;
-      }
-      const chunk = await reader.read();
-      if (chunk.done) throw new Error('subscription closed');
-      buffer += decoder.decode(chunk.value, { stream: true });
-    }
-  };
-  const close = async () => {
-    abort.abort();
-    await reader.cancel().catch(() => undefined);
-  };
-  return { response, next, close };
-}
 
 describe('watchers and push notifications', () => {
   it.each([0, 3])(

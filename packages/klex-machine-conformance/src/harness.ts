@@ -229,37 +229,14 @@ export interface RequestOptions {
   signal?: AbortSignal;
 }
 
-export class Machine {
-  readonly logs: Record<string, unknown>[] = [];
-  private exit: Promise<{ code: number | null; signal: string | null }>;
+/** Stateless MCP requests against one endpoint. */
+export class McpClient {
   private nextId = 1;
 
   constructor(
-    readonly child: ChildProcess,
-    readonly port: number,
-    readonly cwd: string,
-    readonly dataDir: string,
-    logs: Record<string, unknown>[],
-    exit: Promise<{ code: number | null; signal: string | null }>,
-    private readonly owned: string[] = [],
-  ) {
-    this.logs = logs;
-    this.exit = exit;
-  }
-
-  /** Stops a manual machine and removes the directories it created. */
-  async dispose(): Promise<void> {
-    await this.stop('SIGKILL');
-    for (const directory of this.owned) await removeDirectory(directory);
-  }
-
-  get origin(): string {
-    return `http://127.0.0.1:${this.port}`;
-  }
-
-  get url(): string {
-    return `${this.origin}/mcp`;
-  }
+    readonly url: string,
+    private readonly headers: Record<string, string> = {},
+  ) {}
 
   meta(push: boolean): Record<string, unknown> {
     return {
@@ -275,19 +252,20 @@ export class Machine {
   }
 
   /** Sends a stateless JSON-RPC request and returns the raw HTTP response. */
-  post(
+  /** The headers and body of a POST to the MCP endpoint. */
+  request(
     method: string,
     params: Record<string, unknown> = {},
     options: RequestOptions = {},
-  ): Promise<Response> {
-    return fetch(this.url, {
-      method: 'POST',
+  ): { headers: Record<string, string>; body: string } {
+    return {
       headers: {
         accept: 'application/json, text/event-stream',
         'content-type': 'application/json',
         'mcp-method': method,
         'mcp-protocol-version': PROTOCOL,
         ...(typeof params.name === 'string' ? { 'mcp-name': params.name } : {}),
+        ...this.headers,
         ...options.headers,
       },
       body: JSON.stringify({
@@ -296,6 +274,17 @@ export class Machine {
         method,
         params: { ...params, _meta: this.meta(options.push ?? false) },
       }),
+    };
+  }
+
+  post(
+    method: string,
+    params: Record<string, unknown> = {},
+    options: RequestOptions = {},
+  ): Promise<Response> {
+    return fetch(this.url, {
+      method: 'POST',
+      ...this.request(method, params, options),
       signal: options.signal,
     });
   }
@@ -352,6 +341,35 @@ export class Machine {
         `${name} unexpectedly succeeded: ${JSON.stringify(result)}`,
       );
     return result.content[0]?.text ?? '';
+  }
+}
+
+export class Machine extends McpClient {
+  readonly logs: Record<string, unknown>[] = [];
+  private exit: Promise<{ code: number | null; signal: string | null }>;
+
+  constructor(
+    readonly child: ChildProcess,
+    readonly port: number,
+    readonly cwd: string,
+    readonly dataDir: string,
+    logs: Record<string, unknown>[],
+    exit: Promise<{ code: number | null; signal: string | null }>,
+    private readonly owned: string[] = [],
+  ) {
+    super(`http://127.0.0.1:${port}/mcp`);
+    this.logs = logs;
+    this.exit = exit;
+  }
+
+  /** Stops a manual machine and removes the directories it created. */
+  async dispose(): Promise<void> {
+    await this.stop('SIGKILL');
+    for (const directory of this.owned) await removeDirectory(directory);
+  }
+
+  get origin(): string {
+    return `http://127.0.0.1:${this.port}`;
   }
 
   async stop(
@@ -451,6 +469,62 @@ export async function startMachine(
       await machine.stop('SIGKILL');
     });
   return machine;
+}
+
+export interface PushEvent {
+  eventId: string;
+  type: string;
+  createdAt: string;
+  expiresAt?: string;
+  data: Record<string, unknown>;
+}
+
+export async function events(client: McpClient): Promise<PushEvent[]> {
+  const { result, error } = await client.rpc<{ events: PushEvent[] }>(
+    `${PUSH}/get`,
+    {},
+    { push: true },
+  );
+  if (error) throw new Error(JSON.stringify(error));
+  return result?.events ?? [];
+}
+
+/** Reads SSE frames from a subscriptions/listen stream. */
+export async function subscribe(
+  client: McpClient,
+  meta: Record<string, unknown> = {},
+) {
+  const abort = new AbortController();
+  const response = await client.post(
+    'subscriptions/listen',
+    { notifications: { [PUSH]: {} }, ...meta },
+    { push: true, signal: abort.signal },
+  );
+  const reader = response.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  const next = async (): Promise<Record<string, unknown>> => {
+    for (;;) {
+      const end = buffer.indexOf('\n\n');
+      if (end >= 0) {
+        const frame = buffer.slice(0, end);
+        buffer = buffer.slice(end + 2);
+        const data = frame
+          .split('\n')
+          .find((line) => line.startsWith('data: '));
+        if (data) return JSON.parse(data.slice(6));
+        continue;
+      }
+      const chunk = await reader.read();
+      if (chunk.done) throw new Error('subscription closed');
+      buffer += decoder.decode(chunk.value, { stream: true });
+    }
+  };
+  const close = async () => {
+    abort.abort();
+    await reader.cancel().catch(() => undefined);
+  };
+  return { response, next, close };
 }
 
 /** Polls until `check` returns a value other than undefined. */

@@ -3,6 +3,8 @@ import { randomUUID } from 'node:crypto';
 import type { DynamicToolUIPart, Tool } from 'ai';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { ActiveToolCalls } from '@/session/interaction';
+
 import type { ExtendedUIMessage } from '../message-types';
 import { testLogger as logger } from '../test-helpers';
 import type { AgentTools } from '../tools';
@@ -84,6 +86,29 @@ function asToolPart(
 }
 
 // --- tests ---
+
+describe('ToolDispatcher — active tool calls', () => {
+  it('lists a dispatched call in the session record until it settles', async () => {
+    const activeToolCalls = new ActiveToolCalls();
+    const result = Promise.withResolvers<string>();
+    const dispatcher = new ToolDispatcher({
+      logger,
+      tools: makeTools(() => result.promise),
+      modelMessages: [],
+      sessionId: 'test-session-id',
+      activeToolCalls,
+    });
+    dispatcher.onUpdate(makeAssistantMessage([makeToolPart('call-1')]));
+    await vi.waitFor(() =>
+      expect(activeToolCalls.snapshot()).toMatchObject([
+        { toolCallId: 'call-1', name: 'testTool', mcpCalls: [] },
+      ]),
+    );
+    result.resolve('done');
+    await dispatcher.settle();
+    expect(activeToolCalls.snapshot()).toEqual([]);
+  });
+});
 
 describe('ToolDispatcher — at-most-once execution', () => {
   beforeEach(() => {

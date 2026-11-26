@@ -11,6 +11,7 @@ import {
 
 import type { ModuleLogger } from '@stagewise/logger';
 
+import type { ActiveToolCalls } from '@/session/interaction';
 import {
   type GenerationFailure,
   summarizeGenerationFailure,
@@ -51,6 +52,8 @@ export interface GenerationRunnerDependencies {
   /** Advances and returns the bounded conversation epoch for each generation attempt. */
   beginConversationGeneration?: () => string;
   telemetryMetrics?: TelemetryMetrics;
+  /** Session-wide record of the tool calls in flight. */
+  activeToolCalls?: ActiveToolCalls;
   stepSpan: Span;
   modelMessages: ModelMessage[];
   messages: ExtendedUIMessage[];
@@ -162,6 +165,9 @@ export class GenerationRunner {
           durationMs,
           errorType,
         ),
+      ...(this.deps.activeToolCalls !== undefined && {
+        activeToolCalls: this.deps.activeToolCalls,
+      }),
     });
     this.toolDispatcher = toolDispatcher;
 

@@ -9,6 +9,7 @@ import type { ModuleLogger } from '@stagewise/logger';
 import type { Config } from '@/config';
 import type { EffortIntent, ProviderModelResolver } from '@/provider-registry';
 import {
+  type ActiveToolCalls,
   convertInferenceHistory,
   runInferenceContextTransformers,
   runInferenceHistoryTransformers,
@@ -81,6 +82,8 @@ export interface StepDependencies {
   /** Advances and returns the bounded conversation epoch for each generation attempt. */
   beginConversationGeneration?: () => string;
   telemetryMetrics?: TelemetryMetrics;
+  /** Session-wide record of the tool calls in flight. */
+  activeToolCalls?: ActiveToolCalls;
   /**
    * Base system prompt forwarded to the generation runner.
    */
@@ -752,6 +755,9 @@ class StepModule implements Step {
             modelContext: telemetryModelContext,
             streamDeadlines,
             telemetryMetrics: this.deps.telemetryMetrics,
+            ...(this.deps.activeToolCalls !== undefined && {
+              activeToolCalls: this.deps.activeToolCalls,
+            }),
             ...(providerOptions !== undefined && { providerOptions }),
             ...(effortReasoning !== undefined && {
               reasoning: effortReasoning,

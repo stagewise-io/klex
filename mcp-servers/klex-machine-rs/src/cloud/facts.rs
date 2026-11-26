@@ -183,7 +183,19 @@ pub struct MachineFactsCollector {
     device_pending: Arc<AtomicBool>,
 }
 
-/// Runs `probe` unless its previous run is still in flight.
+/// Clears a probe's in-flight flag when the probe finishes, fails or panics.
+struct InFlight(Arc<AtomicBool>);
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
+/// Runs `probe` unless its previous run is still in flight. Like the
+/// TypeScript collector, a probe that outlives the budget keeps running and
+/// holds the flag until it settles; every probe is bounded or a single
+/// filesystem call.
 fn single_flight<T, F>(
     pending: &Arc<AtomicBool>,
     probe: F,
@@ -195,11 +207,10 @@ where
     if pending.swap(true, Ordering::SeqCst) {
         return None;
     }
-    let pending = pending.clone();
+    let in_flight = InFlight(pending.clone());
     Some(tokio::spawn(async move {
-        let value = probe.await;
-        pending.store(false, Ordering::SeqCst);
-        value
+        let _in_flight = in_flight;
+        probe.await
     }))
 }
 
@@ -521,6 +532,14 @@ mod probes {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_panicking_probe_releases_its_flag() {
+        let pending = Arc::new(AtomicBool::new(false));
+        let handle = single_flight(&pending, async { panic!("probe") as Option<()> }).unwrap();
+        assert!(handle.await.is_err());
+        assert!(!pending.load(Ordering::SeqCst));
+    }
 
     #[test]
     fn parses_os_release_like_ts() {

@@ -1,28 +1,23 @@
 //! Persistent PTY sessions with node-pty's observable behaviour.
 
 use std::future::Future;
-use std::io::{Read, Write};
+use std::io::Read;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use indexmap::IndexMap;
-use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use serde_json::{Map, Value, json};
 use tokio::sync::{Notify, watch};
 
 use crate::paths::{MachinePathResolver, display};
+use crate::platform::pty::{self, Pty, SpawnOptions};
 use crate::time::iso_now;
 use crate::utf16::Utf8Decoder;
 
 const MAX_BUFFER_UNITS: usize = 1024 * 1024;
 const MAX_READ_UNITS: usize = 256 * 1024;
 pub const MAX_SHELL_SESSIONS: usize = 32;
-/// node-pty waits this long for the PTY to drain after the child exits.
-#[cfg(unix)]
-const EXIT_DRAIN: Duration = Duration::from_millis(200);
-#[cfg(windows)]
-const EXIT_DRAIN: Duration = Duration::from_millis(1000);
 
 #[derive(Clone, Debug)]
 pub struct ShellInfo {
@@ -92,10 +87,7 @@ struct Session {
     info: Mutex<ShellInfo>,
     buffer: Mutex<Buffer>,
     changed: Notify,
-    writer: Mutex<Option<Box<dyn Write + Send>>>,
-    master: Mutex<Option<Box<dyn MasterPty + Send>>>,
-    #[cfg_attr(unix, allow(dead_code))]
-    killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
+    pty: Box<dyn Pty>,
     closing: AtomicBool,
 }
 
@@ -166,68 +158,6 @@ pub struct ShellService {
     startups: watch::Sender<usize>,
 }
 
-pub fn default_shell() -> String {
-    #[cfg(windows)]
-    {
-        std::env::var("ComSpec").unwrap_or_else(|_| "powershell.exe".into())
-    }
-    #[cfg(not(windows))]
-    {
-        std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into())
-    }
-}
-
-fn default_shell_args() -> Vec<String> {
-    if cfg!(windows) {
-        Vec::new()
-    } else {
-        vec!["-i".into()]
-    }
-}
-
-/// The strerror text execvp(3) would fail with for `shell`, if any.
-#[cfg(unix)]
-fn exec_failure(shell: &str, env: Option<&IndexMap<String, String>>) -> Option<&'static str> {
-    use std::ffi::CString;
-    use std::path::{Path, PathBuf};
-
-    const ENOENT: &str = "No such file or directory";
-    const EACCES: &str = "Permission denied";
-    let check = |path: &Path| -> Result<(), &'static str> {
-        let metadata = std::fs::metadata(path).map_err(|_| ENOENT)?;
-        if metadata.is_dir() {
-            return Err(EACCES);
-        }
-        let path = CString::new(path.as_os_str().as_encoded_bytes()).map_err(|_| ENOENT)?;
-        // SAFETY: `path` is a valid NUL-terminated string for the call's duration.
-        if unsafe { libc::access(path.as_ptr(), libc::X_OK) } == 0 {
-            Ok(())
-        } else {
-            Err(EACCES)
-        }
-    };
-    if shell.is_empty() {
-        return Some(ENOENT);
-    }
-    if shell.contains('/') {
-        return check(Path::new(shell)).err();
-    }
-    let search = env
-        .and_then(|env| env.get("PATH").cloned())
-        .or_else(|| std::env::var("PATH").ok())
-        .unwrap_or_else(|| "/bin:/usr/bin".into());
-    let mut failure = ENOENT;
-    for directory in search.split(':') {
-        let directory = if directory.is_empty() { "." } else { directory };
-        match check(&PathBuf::from(directory).join(shell)) {
-            Ok(()) => return None,
-            Err(EACCES) => failure = EACCES,
-            Err(_) => {}
-        }
-    }
-    Some(failure)
-}
-
 fn valid_dimension(value: f64, name: &str) -> Result<u16, String> {
     if value.fract() != 0.0 || !(1.0..=1000.0).contains(&value) {
         return Err(format!("{name} must be an integer from 1 to 1000"));
@@ -267,7 +197,7 @@ impl ShellService {
         }
         let reservation = Reservation {
             id: uuid::Uuid::new_v4().to_string(),
-            shell: options.shell.clone().unwrap_or_else(default_shell),
+            shell: options.shell.clone().unwrap_or_else(pty::default_shell),
             cwd: display(&self.paths.resolve(options.cwd.as_deref().unwrap_or("."))?),
             created_at: iso_now(),
         };
@@ -336,60 +266,19 @@ impl ShellService {
             }
         };
         let cwd = display(&self.paths.resolve(options.cwd.as_deref().unwrap_or("."))?);
-        let shell = options.shell.clone().unwrap_or_else(default_shell);
-        let args = options.args.clone().unwrap_or_else(default_shell_args);
+        let shell = options.shell.clone().unwrap_or_else(pty::default_shell);
+        let args = options.args.clone().unwrap_or_else(pty::default_shell_args);
         let cols = valid_dimension(options.cols.unwrap_or(120.0), "cols")?;
         let rows = valid_dimension(options.rows.unwrap_or(30.0), "rows")?;
 
-        let pair = native_pty_system()
-            .openpty(PtySize {
-                rows,
-                cols,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .map_err(|error| format!("{error:#}"))?;
-        #[cfg(unix)]
-        let exec_failure = exec_failure(&shell, options.env.as_ref());
-        #[cfg(not(unix))]
-        let exec_failure: Option<&str> = None;
-        let mut command = match exec_failure {
-            // node-pty forks before exec, so a shell that cannot be executed
-            // still yields a session whose child reports the error and exits 1.
-            // The message is buffered directly: output written just before a
-            // PTY hangup can be lost.
-            Some(_) => {
-                let mut command = CommandBuilder::new("/bin/sh");
-                command.args(["-c", "exit 1"]);
-                command
-            }
-            None => {
-                let mut command = CommandBuilder::new(&shell);
-                command.args(&args);
-                command
-            }
-        };
-        command.cwd(&cwd);
-        if let Some(env) = &options.env {
-            for (key, value) in env {
-                command.env(key, value);
-            }
-        }
-        #[cfg(unix)]
-        command.env("TERM", "xterm-256color");
-        let child = pair
-            .slave
-            .spawn_command(command)
-            .map_err(|error| format!("{error:#}"))?;
-        drop(pair.slave);
-        let reader = pair
-            .master
-            .try_clone_reader()
-            .map_err(|error| format!("{error:#}"))?;
-        let writer = pair
-            .master
-            .take_writer()
-            .map_err(|error| format!("{error:#}"))?;
+        let spawned = pty::spawn(&SpawnOptions {
+            shell: &shell,
+            args: &args,
+            cwd: &cwd,
+            env: options.env.as_ref(),
+            cols,
+            rows,
+        })?;
 
         let info = ShellInfo {
             id: reservation
@@ -397,7 +286,7 @@ impl ShellService {
                 .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
             shell,
             cwd,
-            pid: child.process_id().unwrap_or_default(),
+            pid: spawned.pid,
             running: true,
             exit_code: None,
             signal: None,
@@ -413,17 +302,22 @@ impl ShellService {
                 end: 0,
             }),
             changed: Notify::new(),
-            writer: Mutex::new(Some(writer)),
-            master: Mutex::new(Some(pair.master)),
-            killer: Mutex::new(child.clone_killer()),
+            pty: spawned.pty,
             closing: AtomicBool::new(false),
         });
-        if let Some(reason) = exec_failure {
+        if let Some(reason) = spawned.exec_failure {
+            // Buffered directly: output written just before a PTY hangup can
+            // be lost.
             session.append(&format!("execvp(3) failed.: {reason}\r\n"));
         }
         let (drained_tx, drained_rx) = std::sync::mpsc::channel::<()>();
-        spawn_reader(session.clone(), reader, drained_tx);
-        spawn_exit_watcher(session.clone(), child, drained_rx, self.on_exit.clone());
+        spawn_reader(session.clone(), spawned.output, drained_tx);
+        spawn_exit_watcher(
+            session.clone(),
+            spawned.child,
+            drained_rx,
+            self.on_exit.clone(),
+        );
         let replaced = {
             let mut inner = lock(&self.inner);
             if inner.closed {
@@ -469,30 +363,17 @@ impl ShellService {
         if !lock(&session.info).running {
             return Err(format!("Shell session has exited: {id}"));
         }
-        if let Some(writer) = lock(&session.writer).as_mut() {
-            writer
-                .write_all(data.as_bytes())
-                .and_then(|()| writer.flush())
-                .map_err(|error| error.to_string())?;
-        }
-        Ok(())
+        session
+            .pty
+            .write(data.as_bytes())
+            .map_err(|error| error.to_string())
     }
 
     pub fn resize(&self, id: &str, cols: f64, rows: f64) -> Result<(), String> {
         let session = self.get(id)?;
         let cols = valid_dimension(cols, "cols")?;
         let rows = valid_dimension(rows, "rows")?;
-        if let Some(master) = lock(&session.master).as_ref() {
-            master
-                .resize(PtySize {
-                    rows,
-                    cols,
-                    pixel_width: 0,
-                    pixel_height: 0,
-                })
-                .map_err(|error| format!("{error:#}"))?;
-        }
-        Ok(())
+        session.pty.resize(cols, rows)
     }
 
     pub async fn read(&self, options: ReadOptions) -> Result<Value, String> {
@@ -581,20 +462,8 @@ impl ShellService {
     }
 }
 
-/// node-pty's default `kill()` sends SIGHUP to the shell process only.
 fn kill(session: &Session) {
-    #[cfg(unix)]
-    {
-        let pid = lock(&session.info).pid;
-        if let Ok(pid) = libc::pid_t::try_from(pid) {
-            // SAFETY: plain signal delivery to the child's pid.
-            unsafe { libc::kill(pid, libc::SIGHUP) };
-        }
-    }
-    #[cfg(windows)]
-    {
-        let _ = lock(&session.killer).kill();
-    }
+    session.pty.hangup();
 }
 
 fn spawn_reader(
@@ -605,118 +474,28 @@ fn spawn_reader(
     std::thread::spawn(move || {
         let mut decoder = Utf8Decoder::default();
         let mut chunk = vec![0u8; 64 * 1024];
-        #[cfg(windows)]
-        let mut cursor_query = CursorQuery::default();
         loop {
             match reader.read(&mut chunk) {
                 Ok(0) => break,
-                Ok(count) => {
-                    let text = decoder.write(&chunk[..count]);
-                    #[cfg(windows)]
-                    let text = {
-                        let (text, asked) = cursor_query.filter(text);
-                        if asked && let Some(writer) = lock(&session.writer).as_mut() {
-                            let _ = writer.write_all(b"\x1b[1;1R").and_then(|()| writer.flush());
-                        }
-                        text
-                    };
-                    session.append(&text);
-                }
+                Ok(count) => session.append(&decoder.write(&chunk[..count])),
                 Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
                 Err(_) => break,
             }
         }
-        #[cfg(windows)]
-        session.append(&cursor_query.end());
         session.append(&decoder.end());
         let _ = drained.send(());
     });
 }
 
-/// portable-pty opens ConPTY with `PSEUDOCONSOLE_INHERIT_CURSOR`, so conhost
-/// asks for the cursor position once and holds the shell until it gets an
-/// answer. node-pty does not set that flag, so the query never reaches the
-/// output. Output is held back while it ends in a prefix of the query.
-#[cfg(any(windows, test))]
-#[derive(Default)]
-struct CursorQuery {
-    held: String,
-    answered: bool,
-}
-
-#[cfg(any(windows, test))]
-impl CursorQuery {
-    const QUERY: &'static str = "\x1b[6n";
-
-    /// Returns the output to keep, and whether the query arrived in it.
-    fn filter(&mut self, text: String) -> (String, bool) {
-        if self.answered {
-            return (text, false);
-        }
-        let text = std::mem::take(&mut self.held) + &text;
-        if let Some(index) = text.find(Self::QUERY) {
-            self.answered = true;
-            let kept = format!("{}{}", &text[..index], &text[index + Self::QUERY.len()..]);
-            return (kept, true);
-        }
-        let partial = (1..Self::QUERY.len())
-            .rev()
-            .find(|&length| text.ends_with(&Self::QUERY[..length]))
-            .unwrap_or(0);
-        self.held = text[text.len() - partial..].to_owned();
-        (text[..text.len() - partial].to_owned(), false)
-    }
-
-    fn end(&mut self) -> String {
-        std::mem::take(&mut self.held)
-    }
-}
-
 fn spawn_exit_watcher(
     session: Arc<Session>,
-    #[allow(unused_mut)] mut child: Box<dyn portable_pty::Child + Send + Sync>,
+    mut child: Box<dyn pty::Child>,
     drained: std::sync::mpsc::Receiver<()>,
     on_exit: Option<ExitHook>,
 ) {
     std::thread::spawn(move || {
-        #[cfg(unix)]
-        let (exit_code, signal) = {
-            let pid = child.process_id().unwrap_or_default() as libc::pid_t;
-            let mut status = 0;
-            loop {
-                // SAFETY: waits for our own child; the status pointer is valid.
-                let result = unsafe { libc::waitpid(pid, &mut status, 0) };
-                if result == -1
-                    && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted
-                {
-                    continue;
-                }
-                break;
-            }
-            let exit_code = if libc::WIFEXITED(status) {
-                libc::WEXITSTATUS(status)
-            } else {
-                0
-            };
-            let signal = if libc::WIFSIGNALED(status) {
-                libc::WTERMSIG(status)
-            } else {
-                0
-            };
-            (Some(i64::from(exit_code)), Some(i64::from(signal)))
-        };
-        #[cfg(windows)]
-        let (exit_code, signal) = {
-            let code = child
-                .wait()
-                .map(|status| i64::from(status.exit_code()))
-                .ok();
-            // ConPTY only flushes and closes its output pipe when released.
-            drop(lock(&session.writer).take());
-            drop(lock(&session.master).take());
-            (code, None::<i64>)
-        };
-        let _ = drained.recv_timeout(EXIT_DRAIN);
+        let (exit_code, signal) = child.wait();
+        let _ = drained.recv_timeout(pty::EXIT_DRAIN);
         drop(child);
         let info = {
             let mut info = lock(&session.info);
@@ -732,29 +511,6 @@ fn spawn_exit_watcher(
             on_exit(info, session.output());
         }
     });
-}
-
-#[cfg(test)]
-mod cursor_query_tests {
-    use super::CursorQuery;
-
-    #[test]
-    fn strips_the_first_query_even_when_split() {
-        let mut query = CursorQuery::default();
-        assert_eq!(query.filter("a\x1b".into()), ("a".into(), false));
-        assert_eq!(query.filter("[".into()), (String::new(), false));
-        assert_eq!(query.filter("6nb".into()), ("b".into(), true));
-        assert_eq!(query.filter("\x1b[6n".into()), ("\x1b[6n".into(), false));
-    }
-
-    #[test]
-    fn releases_held_output_that_is_not_the_query() {
-        let mut query = CursorQuery::default();
-        assert_eq!(query.filter("\x1b[".into()), (String::new(), false));
-        assert_eq!(query.filter("0m".into()), ("\x1b[0m".into(), false));
-        assert_eq!(query.filter("x\x1b[6".into()), ("x".into(), false));
-        assert_eq!(query.end(), "\x1b[6");
-    }
 }
 
 #[cfg(all(test, unix))]

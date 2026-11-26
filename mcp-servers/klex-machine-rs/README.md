@@ -52,6 +52,8 @@ pnpm --filter @klex/machine-conformance test   # both implementations
 KLEX_MACHINE_IMPL=rust pnpm --filter @klex/machine-conformance test
 ```
 
+OS-specific code lives only in `src/platform/`: `unix.rs` and `windows.rs` provide the same modules with the same signatures, `macos.rs` and `linux.rs` hold what differs between Unixes, and `pty.rs` defines the PTY traits. `tests/platform_boundary.rs` fails on OS `cfg`s, `libc`, `windows_sys`, `std::os` or `portable_pty` anywhere else in `src/` outside test modules.
+
 The conformance suite runs the built binaries. Build `@klex/machine` and `@klex/machine-rs` first, or let turbo do it with `pnpm turbo run test --filter @klex/machine-conformance`. Set `KLEX_MACHINE_BIN` together with `KLEX_MACHINE_IMPL` to test another binary.
 
 ## Known differences from @klex/machine

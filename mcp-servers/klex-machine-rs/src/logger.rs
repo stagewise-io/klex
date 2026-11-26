@@ -101,7 +101,7 @@ impl Logger {
                 "v": 5,
                 "runtime": "rust",
                 "runtimeVersion": crate::VERSION,
-                "hostname": hostname(),
+                "hostname": crate::platform::host::hostname(),
                 "date": time,
                 "logLevelId": level as u8,
                 "logLevelName": level.name(),
@@ -141,27 +141,6 @@ fn mask(value: Value) -> Value {
         ),
         Value::Array(items) => Value::Array(items.into_iter().map(mask).collect()),
         other => other,
-    }
-}
-
-fn hostname() -> String {
-    #[cfg(unix)]
-    {
-        let mut buffer = [0u8; 256];
-        // SAFETY: the buffer is valid for its length and NUL-terminated on success.
-        let result = unsafe { libc::gethostname(buffer.as_mut_ptr().cast(), buffer.len()) };
-        if result == 0 {
-            let end = buffer
-                .iter()
-                .position(|byte| *byte == 0)
-                .unwrap_or(buffer.len());
-            return String::from_utf8_lossy(&buffer[..end]).into_owned();
-        }
-        String::new()
-    }
-    #[cfg(not(unix))]
-    {
-        std::env::var("COMPUTERNAME").unwrap_or_default()
     }
 }
 

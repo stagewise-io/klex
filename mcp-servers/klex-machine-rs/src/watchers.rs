@@ -9,11 +9,11 @@ use futures::future::BoxFuture;
 use indexmap::IndexMap;
 use serde_json::{Map, Value, json};
 use tokio::io::{AsyncRead, AsyncReadExt};
-use tokio::process::Command;
 use tokio::sync::watch;
 
 use crate::notifications::WatcherCompletion;
 use crate::paths::{MachinePathResolver, display};
+use crate::platform;
 use crate::time::{iso, now_ms, parse_iso};
 use crate::utf16::Utf8Decoder;
 
@@ -197,7 +197,7 @@ impl WatcherService {
             self.finish(watcher, "timed_out", None, None).await;
             return Ok(());
         }
-        let (file, mut command) = shell_command(&options.command);
+        let (file, mut command) = platform::process::shell_command(&options.command);
         command
             .current_dir(&info.cwd)
             .stdin(Stdio::null())
@@ -255,7 +255,7 @@ impl WatcherService {
             };
             let _ = tokio::time::timeout(service.drain, drained).await;
             let (code, signal) = match status {
-                Ok(status) => exit_details(status),
+                Ok(status) => platform::process::exit_details(status),
                 Err(_) => (None, None),
             };
             let outcome = if code == Some(0) && signal.is_none() {
@@ -346,70 +346,9 @@ impl WatcherService {
         if watcher.killed.swap(true, Ordering::SeqCst) {
             return;
         }
-        #[cfg(windows)]
-        {
-            let spawned = std::process::Command::new("taskkill")
-                .args(["/pid", &pid.to_string(), "/T", "/F"])
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn();
-            match spawned {
-                Ok(mut child) => {
-                    std::thread::spawn(move || child.wait());
-                }
-                Err(error) => (self.hooks.on_error)(error.to_string()),
-            }
+        if let Err(error) = platform::process::terminate_tree(pid) {
+            (self.hooks.on_error)(error.to_string());
         }
-        #[cfg(unix)]
-        {
-            if !crate::platform::kill_group(pid, libc::SIGTERM) {
-                return;
-            }
-            tokio::spawn(async move {
-                tokio::time::sleep(Duration::from_secs(5)).await;
-                crate::platform::kill_group(pid, libc::SIGKILL);
-            });
-        }
-    }
-}
-
-/// `child_process.spawn(command, { shell: true, detached })`.
-fn shell_command(script: &str) -> (String, Command) {
-    #[cfg(unix)]
-    {
-        let mut command = Command::new("/bin/sh");
-        command.arg("-c").arg(script);
-        // SAFETY: setsid is async-signal-safe; Node's `detached` does the same.
-        unsafe {
-            command.pre_exec(|| {
-                libc::setsid();
-                Ok(())
-            });
-        }
-        ("/bin/sh".into(), command)
-    }
-    #[cfg(windows)]
-    {
-        let file = std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".into());
-        let mut command = Command::new(&file);
-        command.raw_arg(format!("/d /s /c \"{script}\""));
-        (file, command)
-    }
-}
-
-fn exit_details(status: std::process::ExitStatus) -> (Option<i32>, Option<String>) {
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::ExitStatusExt;
-        (
-            status.code(),
-            status.signal().map(crate::platform::signal_name),
-        )
-    }
-    #[cfg(windows)]
-    {
-        (status.code(), None)
     }
 }
 

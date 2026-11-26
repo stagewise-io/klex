@@ -160,7 +160,7 @@ impl Pattern {
 }
 
 fn is_drive(segment: &str) -> bool {
-    cfg!(windows)
+    crate::platform::path::DRIVE_ROOTS
         && segment.len() == 2
         && segment.as_bytes()[1] == b':'
         && segment.as_bytes()[0].is_ascii_alphabetic()
@@ -594,7 +594,7 @@ impl Walker<'_> {
     }
 
     fn pattern_view(&self, segments: &[String], absolute: bool) -> Vec<String> {
-        if absolute && cfg!(not(windows)) {
+        if absolute && !crate::platform::path::DRIVE_ROOTS {
             let mut view = vec![String::new()];
             view.extend(segments.iter().cloned());
             return view;

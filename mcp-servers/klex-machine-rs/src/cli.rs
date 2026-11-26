@@ -130,7 +130,7 @@ fn parse_args(argv: &[String]) -> Result<Parsed, String> {
 }
 
 pub fn default_data_dir() -> PathBuf {
-    let home = crate::platform::home_dir().unwrap_or_else(|| PathBuf::from("."));
+    let home = crate::platform::host::home_dir().unwrap_or_else(|| PathBuf::from("."));
     home.join(".klex-machine-rs")
 }
 

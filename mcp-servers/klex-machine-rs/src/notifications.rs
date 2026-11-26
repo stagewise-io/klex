@@ -634,7 +634,7 @@ impl NotificationStore {
             Err(error) => return Err(StoreError(fs_error::message(&error, "open", &lock_path))),
         };
         let holder = parse_pid(&lock);
-        if holder.is_none_or(platform::process_alive) {
+        if holder.is_none_or(platform::process::process_alive) {
             self.logger.warn(
                 json!({ "lockPath": lock_path.to_string_lossy(), "pid": holder }),
                 "Notification state is locked or its owner is unknown; notifications are memory-only",
@@ -665,7 +665,7 @@ impl NotificationStore {
                     return Err(StoreError(fs_error::message(&error, "open", &lock_path)));
                 }
             };
-            if current == lock && !platform::process_alive(holder) {
+            if current == lock && !platform::process::process_alive(holder) {
                 let _ = fs::remove_file(&lock_path);
                 match write_lock(&lock_path) {
                     Ok(()) => return Ok(Some(lock_path.clone())),
@@ -844,7 +844,7 @@ fn write_state(path: &Path, snapshot: &str) -> Result<(), String> {
         file.write_all(snapshot.as_bytes())
             .map_err(|error| fs_error::message(&error, "write", &temporary))?;
         drop(file);
-        platform::chmod(&temporary, 0o600)
+        platform::fs::chmod(&temporary, 0o600)
             .map_err(|error| fs_error::message(&error, "chmod", &temporary))?;
         fs::rename(&temporary, path)
             .map_err(|error| fs_error::message2(&error, "rename", &temporary, path))
@@ -854,35 +854,15 @@ fn write_state(path: &Path, snapshot: &str) -> Result<(), String> {
 }
 
 fn private_file(path: &Path) -> std::io::Result<fs::File> {
-    let mut options = fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    options.open(path)
+    platform::fs::create_new_file(path, 0o600)
 }
 
 fn create_private_dir(path: &Path) -> std::io::Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::DirBuilderExt;
-        fs::DirBuilder::new().mode(0o700).create(path)
-    }
-    #[cfg(not(unix))]
-    fs::DirBuilder::new().create(path)
+    platform::fs::create_dir(path, 0o700)
 }
 
 fn create_private_dir_all(path: &Path) -> std::io::Result<()> {
-    let mut builder = fs::DirBuilder::new();
-    builder.recursive(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::DirBuilderExt;
-        builder.mode(0o700);
-    }
-    builder.create(path)
+    platform::fs::create_dir_all(path, 0o700)
 }
 
 #[cfg(test)]

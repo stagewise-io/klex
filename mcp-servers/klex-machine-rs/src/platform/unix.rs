@@ -56,6 +56,19 @@ pub mod fs {
         std::os::unix::fs::symlink(target, link)
     }
 
+    /// Total size of the volume holding `path`.
+    pub fn volume_total_bytes(path: &Path) -> Option<u64> {
+        use std::os::unix::ffi::OsStrExt;
+        let path = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
+        let mut volume: libc::statfs = unsafe { std::mem::zeroed() };
+        // SAFETY: `path` is NUL-terminated and `volume` is writable.
+        if unsafe { libc::statfs(path.as_ptr(), &mut volume) } != 0 {
+            return None;
+        }
+        #[allow(clippy::unnecessary_cast)]
+        (volume.f_bsize as u64).checked_mul(volume.f_blocks as u64)
+    }
+
     /// The Node error code for an OS error.
     pub fn error_code(error: &io::Error) -> Option<&'static str> {
         Some(match error.raw_os_error()? {
@@ -105,17 +118,48 @@ pub mod host {
 
     /// `os.hostname()`.
     pub fn hostname() -> String {
+        dns_hostname().unwrap_or_default()
+    }
+
+    /// The hostname reported in machine facts.
+    pub fn dns_hostname() -> Option<String> {
         let mut buffer = [0u8; 256];
         // SAFETY: the buffer is valid for its length and NUL-terminated on success.
-        let result = unsafe { libc::gethostname(buffer.as_mut_ptr().cast(), buffer.len()) };
-        if result == 0 {
-            let end = buffer
-                .iter()
-                .position(|byte| *byte == 0)
-                .unwrap_or(buffer.len());
-            return String::from_utf8_lossy(&buffer[..end]).into_owned();
+        if unsafe { libc::gethostname(buffer.as_mut_ptr().cast(), buffer.len()) } != 0 {
+            return None;
         }
-        String::new()
+        let end = buffer
+            .iter()
+            .position(|byte| *byte == 0)
+            .unwrap_or(buffer.len());
+        Some(String::from_utf8_lossy(&buffer[..end]).into_owned())
+    }
+
+    /// `os.release()`.
+    pub fn kernel_release() -> Option<String> {
+        let mut name: libc::utsname = unsafe { std::mem::zeroed() };
+        // SAFETY: `name` is a valid, writable utsname.
+        if unsafe { libc::uname(&mut name) } != 0 {
+            return None;
+        }
+        // SAFETY: uname NUL-terminates each field.
+        let release = unsafe { std::ffi::CStr::from_ptr(name.release.as_ptr()) };
+        Some(release.to_string_lossy().into_owned())
+    }
+
+    #[cfg(target_os = "linux")]
+    pub use super::super::linux::{cpu_model, total_memory};
+    #[cfg(target_os = "macos")]
+    pub use super::super::macos::{cpu_model, total_memory};
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    pub fn cpu_model() -> Option<String> {
+        None
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    pub fn total_memory() -> Option<u64> {
+        None
     }
 
     #[cfg(target_os = "linux")]

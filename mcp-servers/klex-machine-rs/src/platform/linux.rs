@@ -2,6 +2,25 @@
 
 use crate::device_type::{DeviceType, chassis_type, virtual_model};
 
+/// The first `model name` in `/proc/cpuinfo`.
+pub fn cpu_model() -> Option<String> {
+    let cpuinfo = std::fs::read_to_string("/proc/cpuinfo").ok()?;
+    cpuinfo.lines().find_map(|line| {
+        let (key, value) = line.split_once(':')?;
+        (key.trim() == "model name" && !value.trim().is_empty()).then(|| value.trim().to_string())
+    })
+}
+
+pub fn total_memory() -> Option<u64> {
+    let mut info: libc::sysinfo = unsafe { std::mem::zeroed() };
+    // SAFETY: `info` is writable.
+    if unsafe { libc::sysinfo(&mut info) } != 0 {
+        return None;
+    }
+    #[allow(clippy::unnecessary_cast)]
+    (info.totalram as u64).checked_mul(info.mem_unit as u64)
+}
+
 pub async fn detect_device_type() -> Option<DeviceType> {
     // Containers can expose their host's DMI data. Detect them before chassis.
     for marker in [

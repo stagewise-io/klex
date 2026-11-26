@@ -16,6 +16,7 @@ import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
 import type { Config } from '@/config';
 import type { ProviderModelResolver } from '@/provider-registry';
+import { summarizeGenerationFailure } from '@/session-history/generation-health';
 
 import type { ExtendedUIMessage } from '../../message-types';
 import type {
@@ -23,8 +24,14 @@ import type {
   ExtensionDeps,
   ExtensionFactory,
 } from '../extension-api';
+import {
+  type SoulFailure,
+  soulFailureMessages,
+  soulFailureSchema,
+} from './failure';
 import { getSoulGenerationSystemPrompt } from './generation-system-prompt';
 import { formatSoulGenerationUserMessage } from './generation-user-message';
+import { readSoulState, writeSoulFailure } from './state';
 import { getSystemPromptPart as systemPromptPartSoul } from './system-prompt-part/with-soul';
 
 /**
@@ -67,6 +74,7 @@ export class SoulError extends Error {
   constructor(
     readonly code: SoulErrorCode,
     message: string,
+    readonly failure?: SoulFailure,
   ) {
     super(message);
     this.name = 'SoulError';
@@ -76,6 +84,7 @@ export class SoulError extends Error {
 /** Request-scoped generation; no session, tools, or background retries. */
 export interface Soul {
   get(): string | null;
+  getStatus(): Promise<{ failure: SoulFailure | null }>;
   create(instructions: string, signal?: AbortSignal): Promise<string>;
   update(instructions: string, signal?: AbortSignal): Promise<string>;
 }
@@ -101,6 +110,15 @@ class SoulModule implements Soul {
 
   get(): string | null {
     return readSoul(this.deps.soulDirectory);
+  }
+
+  async getStatus(): Promise<{ failure: SoulFailure | null }> {
+    const state = await readSoulState(this.deps.soulDirectory);
+    return {
+      failure: state?.payload.failure
+        ? soulFailureSchema.parse(state.payload.failure)
+        : null,
+    };
   }
 
   create(instructions: string, signal?: AbortSignal): Promise<string> {
@@ -157,6 +175,7 @@ class SoulModule implements Soul {
       }
       // A failed generation or write never truncates the existing document.
       saveSoul(this.deps.soulDirectory, content);
+      await writeSoulFailure(this.deps.soulDirectory, null);
       return content;
     } catch (error) {
       if (signal?.aborted) {
@@ -179,9 +198,21 @@ class SoulModule implements Soul {
   ): Promise<string> {
     const models = this.deps.config.getModelSelection('chat');
     if (models.length === 0) {
+      const failure: SoulFailure = {
+        kind: 'soul_generation_failed',
+        category: 'configuration',
+        reason: 'no_chat_models',
+        providerId: null,
+        providerType: null,
+        modelId: null,
+        statusCode: null,
+        message: soulFailureMessages.configuration,
+      };
+      await writeSoulFailure(this.deps.soulDirectory, failure);
       throw new SoulError(
         'no_chat_models',
         'Configure a chat model before generating a soul',
+        failure,
       );
     }
     const operation = mode === 'update' && !instructions ? 'optimize' : mode;
@@ -191,6 +222,7 @@ class SoulModule implements Soul {
       instructions,
       existingSoul: previous,
     });
+    let failure: SoulFailure | undefined;
     for (let attempt = 0; attempt < 3; attempt++) {
       signal?.throwIfAborted();
       const entry = models[attempt % models.length]!;
@@ -203,9 +235,14 @@ class SoulModule implements Soul {
         timeout.signal,
         ...(signal ? [signal] : []),
       ]);
+      let providerType: string | undefined;
+      let invalidReason: SoulFailure['reason'] | undefined;
+      let resolving = true;
       try {
-        const model = this.deps.modelResolver.getLanguageModel(entry);
         const resolved = this.deps.modelResolver.resolveModel(entry);
+        providerType = resolved.providerType;
+        const model = this.deps.modelResolver.getLanguageModel(entry);
+        resolving = false;
         const result = await abortable(
           () =>
             generateText({
@@ -229,17 +266,42 @@ class SoulModule implements Soul {
           content.length > MAX_SOUL_LENGTH ||
           /^```/u.test(content)
         ) {
+          invalidReason =
+            result.finishReason === 'length' || content.length > MAX_SOUL_LENGTH
+              ? 'length'
+              : !content
+                ? 'empty_output'
+                : 'rejected_format';
           throw new Error('Soul model returned incomplete or invalid content');
         }
         return content;
-      } catch {
+      } catch (error) {
         signal?.throwIfAborted();
+        const summary = summarizeGenerationFailure(
+          error,
+          { ...entry, providerType },
+          timeout.signal.aborted ? 'timeout' : resolving ? 'configuration' : '',
+        );
+        const category = invalidReason ? 'invalid_output' : summary.category;
+        failure = {
+          ...summary,
+          kind: 'soul_generation_failed',
+          category,
+          reason: invalidReason ?? 'provider_error',
+          message: soulFailureMessages[category],
+          statusCode:
+            summary.statusCode !== null &&
+            Number.isInteger(summary.statusCode) &&
+            summary.statusCode >= 100 &&
+            summary.statusCode <= 599
+              ? summary.statusCode
+              : null,
+        };
         // Never log prompts, responses, or provider errors containing either.
         this.deps.logger.warn(
           {
             attempt: attempt + 1,
-            providerId: entry.providerId,
-            modelId: entry.modelId,
+            ...failure,
           },
           'Soul generation attempt failed',
         );
@@ -247,9 +309,11 @@ class SoulModule implements Soul {
         clearTimeout(timer);
       }
     }
+    await writeSoulFailure(this.deps.soulDirectory, failure!);
     throw new SoulError(
       'generation_failed',
       'Soul generation failed after 3 attempts',
+      failure,
     );
   }
 }

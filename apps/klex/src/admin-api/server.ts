@@ -143,6 +143,8 @@ import {
   createSoulRoute,
   getSoul,
   getSoulRoute,
+  getSoulStatus,
+  getSoulStatusRoute,
   patchSoul,
   patchSoulRoute,
 } from './routes/v1/soul';
@@ -199,6 +201,7 @@ export function createAdminApp(deps: AdminAppDependencies) {
   const routedApp = app
     .openapi(healthRoute, getHealth())
     .openapi(getSoulRoute, getSoul(deps))
+    .openapi(getSoulStatusRoute, getSoulStatus(deps))
     .openapi(createSoulRoute, createSoul(deps))
     .openapi(patchSoulRoute, patchSoul(deps))
     .openapi(getCloudStatusRoute, getCloudStatus(deps))

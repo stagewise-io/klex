@@ -55,6 +55,7 @@ const cloudConnectivity = {
   getTunnelState: () => 'disconnected',
 } as unknown as CloudConnectivity;
 const soul: Soul = {
+  getStatus: async () => ({ failure: null }),
   get: () => null,
   create: async () => 'Created soul',
   update: async () => 'Updated soul',

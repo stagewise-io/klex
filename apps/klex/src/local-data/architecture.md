@@ -21,6 +21,14 @@ The composition root in `local-data-registry` contains every structured Klex-own
 | `sessions` | `sessions.sqlite` | SQLite | Created when missing |
 | `skill-registry` | `skills/registry.json` | JSON | Optional |
 | `memory-writer-state` | `extensions/io.stagewise/memory/writer-state.json` | JSON | Optional |
+| `soul-extension-state` | `extensions/io.stagewise/soul/state.json` | JSON | Optional |
+
+Soul generation stores only the latest safe provider/model failure in the optional
+`soul-extension-state` JSON store. It starts at schema/compatibility 1/1 with no
+migrations, preserves unknown fields, and clears failure after a successful soul
+write. The store is absent from released baseline `v0.38.3-nightly20261125c001`;
+existing stores and historical contracts are unchanged. `SOUL.md` remains a plain
+document. No migration fixtures or manual recovery are required.
 
 Initialization creates missing parent directories for nested stores. SQLite definitions may declare `initPragmas`, which run one by one before `initSql` only when the database is created. Settings such as `auto_vacuum` take effect only on an empty file and are never re-applied to existing stores.
 

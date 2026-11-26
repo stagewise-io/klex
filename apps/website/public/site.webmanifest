@@ -1,7 +1,7 @@
 {
   "name": "Klex",
   "short_name": "Klex",
-  "description": "An open-source autonomous digital coworker that runs locally with any model.",
+  "description": "An open-source autonomous AI teammate that runs locally with any model.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#FDFDFC",

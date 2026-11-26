@@ -12,7 +12,7 @@ export function createFooterMarkup({
     ${
       showCta
         ? `<div class="new-footer-main">
-      <h2>${html('Make room for a new coworker.')}</h2>
+      <h2>${html('Make room for a new AI teammate.')}</h2>
       <a class="new-footer-cta ${buttonClass}" data-slot="button" href="https://cloud.klex.bot">${html('Create a Klex Bot')}</a>
     </div>`
         : ''

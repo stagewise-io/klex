@@ -8,17 +8,17 @@ web
 
 ## Users
 
-The primary users are teams at Series B-stage startups. They need digital coworkers to handle repeatable, time-consuming processes across software development and back-office work.
+The primary users are teams at Series B-stage startups. They need AI teammates to handle repeatable, time-consuming processes across software development and back-office work.
 
 ## Product Purpose
 
-Klex is a fully autonomous digital coworker that performs repeatable work for startup teams. It is designed to run locally, remain easy to self-host, and give users an agent that works across their existing communication tools without requiring them to manage model sessions or orchestration machinery.
+Klex is a fully autonomous AI teammate that performs repeatable work for startup teams. It is designed to run locally, remain easy to self-host, and give users an agent that works across their existing communication tools without requiring them to manage model sessions or orchestration machinery.
 
-Success means teams can delegate recurring development and operational processes to Klex through familiar communication apps and experience it as one coherent coworker.
+Success means teams can delegate recurring development and operational processes to Klex through familiar communication apps and experience it as one coherent AI teammate.
 
 ## Positioning
 
-Klex is an open-source, locally running digital coworker whose environment boundary and communication model are built exclusively on MCP.
+Klex is an open-source, locally running AI teammate whose environment boundary and communication model are built exclusively on MCP.
 
 Its intended position is the first autonomous agent users can describe as “it just works”: one coherent actor that can operate across channels, machines, other agents, and model providers without exposing the underlying orchestration.
 
@@ -42,7 +42,7 @@ Klex runs its durable brain, memory, configuration, and orchestration state loca
 
 - The product and agent are named **Klex**.
 - The agent may also be called the **Klex Bot** or a **Bot**.
-- Prefer the concrete category **digital coworker** over generic AI-assistant language.
+- Prefer the concrete category **AI teammate** over generic AI-assistant language.
 - Open-source, local operation, self-hosting, autonomy, MCP, and model-provider independence are durable product commitments.
 - The public website includes an attribution and link to stagewise.
 

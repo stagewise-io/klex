@@ -748,7 +748,7 @@ function HeroTeam({ entrance }: { entrance: Promise<void> }) {
       <ul
         ref={team}
         className="new-team"
-        aria-label={t('Meet your digital coworkers')}
+        aria-label={t('Meet your AI teammates')}
       >
         {dimensions.width > 0 &&
           bots.map((bot, index) => (

@@ -1,6 +1,6 @@
 ---
 name: Klex
-description: A warm, precise, and approachable system for an intelligent digital coworker.
+description: A warm, precise, and approachable system for an AI teammate.
 colors:
   signal-blue: "oklch(0.5455 0.25 265)"
   warm-paper: "oklch(0.992 0.001 85)"
@@ -197,9 +197,9 @@ The hero is constrained to roughly 62.5rem, while its supporting copy stays near
 
 ## Marketing page composition
 
-The extended page retains this identity and leads with the supplied hero copy: “Meet Klex Bots,” “Your own Team of Digital Coworkers,” and “Klex Bots are digital co-workers with their own machines and identities - that work with the tools your company already uses.” The primary action is “Create a Klex Bot,” linking to `https://cloud.klex.bot` in the header, hero, and closing section. Source exploration and local installation remain secondary paths.
+The extended page retains this identity and leads with the supplied hero copy: “Meet Klex Bots,” “AI teammates for your business.” and “Klex Bots work with their own identities and computers in the tools your team already uses.” The primary action is “Create a Klex Bot,” linking to `https://cloud.klex.bot` in the header, hero, and closing section. Source exploration and local installation remain secondary paths.
 
-Native illustrative connector tabs demonstrate familiar tools. The following sections explain shared digital coworkers, then five capabilities: data and model choice, intentional permissions, persistent identity across machines, team participation, and lasting context. Company tabs for Marcel, Tobi, and Jeff explicitly show pending interviews; they contain no fabricated quotations. Kristine, Jonathan, and Nat illustrate product management, engineering, and quality review workflows, with examples labeled as illustrations. Guides use native `details` disclosures for handbook, identity, and shared-board advice.
+Native illustrative connector tabs demonstrate familiar tools. The following sections explain shared AI teammates, then five capabilities: data and model choice, intentional permissions, persistent identity across machines, team participation, and lasting context. Company tabs for Marcel, Tobi, and Jeff explicitly show pending interviews; they contain no fabricated quotations. Kristine, Jonathan, and Nat illustrate product management, engineering, and quality review workflows, with examples labeled as illustrations. Guides use native `details` disclosures for handbook, identity, and shared-board advice.
 
 Quiet dividers and generous spacing structure the page. At 680px and below, capability and coworker columns stack, section spacing contracts, and company tabs remain available. Reduced-motion preferences suppress transitions; the mascot also exposes a motion pause control. This composition has no screenshot or Figma pixel-verification claim.
 

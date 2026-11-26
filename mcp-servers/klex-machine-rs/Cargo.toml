@@ -1,0 +1,51 @@
+[package]
+name = "klex-machine"
+version = "0.1.0"
+description = "Unrestricted filesystem and persistent shell MCP server"
+publish = false
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "klex-machine-rs"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+axum = "0.8.9"
+base64 = "0.23.1"
+bytes = "1.12.2"
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
+futures = "0.3.34"
+http-body-util = "0.1.5"
+icu_collator = "2.4.0"
+ignore = "0.4.35"
+indexmap = "2.14.2"
+portable-pty = "0.9.0"
+regex = "1.13.2"
+regress = "0.12.0"
+rmcp = { version = "3.11.0", features = ["server", "transport-streamable-http-server"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.154", features = ["preserve_order"] }
+tokio = { version = "1.54.1", features = ["full"] }
+tower = { version = "0.5.3", features = ["util"] }
+uuid = { version = "1.26.1", features = ["v4"] }
+
+[target."cfg(unix)".dependencies]
+libc = "0.2.191"
+
+[target."cfg(windows)".dependencies]
+windows-sys = { version = "0.61.2", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Threading",
+] }
+
+[dev-dependencies]
+tempfile = "3.27.0"
+tokio = { version = "1.54.1", features = ["full", "test-util"] }

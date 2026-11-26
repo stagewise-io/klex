@@ -1,0 +1,65 @@
+# klex-machine-rs
+
+A Rust port of [`@klex/machine`](../klex-machine/README.md). It is a single executable with no Node.js runtime, and it serves the same MCP tools, Push Notifications and notification store as the TypeScript server. The shared conformance suite in [`packages/klex-machine-conformance`](../../packages/klex-machine-conformance) checks both implementations against the contract in [`../klex-machine/contract`](../klex-machine/contract).
+
+This package is private and not released. Only `serve --mode local` works so far; enrolled and managed (Klex Cloud) modes exit with an error.
+
+## Security
+
+The same warning as `@klex/machine` applies. The server has the filesystem, process and network permissions of its operating-system user, and local mode is unauthenticated. Keep the default `127.0.0.1` listener.
+
+## Build
+
+Install Rust with [rustup](https://rustup.rs). The toolchain version, components and targets come from `rust-toolchain.toml`, and rustup installs them on the first build.
+
+- **macOS:** install the Xcode Command Line Tools with `xcode-select --install`.
+- **Windows:** install the [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with the "Desktop development with C++" workload. On Windows on Arm, also select the ARM64 build tools.
+- **Linux:** a C toolchain (`build-essential`) is enough. Release builds for musl targets are fully static.
+
+From the repository root, either command produces a release build:
+
+```sh
+pnpm --filter @klex/machine-rs build   # copies the binary to mcp-servers/klex-machine-rs/dist
+cargo build --release -p klex-machine  # leaves it in target/release
+```
+
+`build.mjs` reads `KLEX_MACHINE_RS_PROFILE` (default `release`) and `KLEX_MACHINE_RS_TARGET` (for example `x86_64-unknown-linux-musl`). CI also uploads a binary for every supported platform as a `klex-machine-rs-<platform>` workflow artifact.
+
+## Run
+
+```sh
+# macOS and Linux
+mcp-servers/klex-machine-rs/dist/klex-machine-rs serve --mode local --cwd /path/to/project
+```
+
+```powershell
+# Windows
+mcp-servers\klex-machine-rs\dist\klex-machine-rs.exe serve --mode local --cwd C:\path\to\project
+```
+
+The MCP endpoint is `http://127.0.0.1:3123/mcp` and the health endpoint is `http://127.0.0.1:3123/health`. Run `klex-machine-rs --help` for every flag. Flags and `KLEX_MACHINE_*` environment variables match `@klex/machine`, except that the default data directory is `~/.klex-machine-rs`. Both servers can therefore run side by side without sharing notification state. Pointing `--data-dir` at an existing `~/.klex-machine` directory takes over its notification state.
+
+Clients must speak MCP protocol `2026-07-28`, for example `@modelcontextprotocol/client` 2.4.0 or newer. Older clients fall back to the legacy `initialize` handshake and get no Push Notifications.
+
+## Development
+
+```sh
+cargo fmt-check    # formatting
+cargo lint         # clippy with warnings denied
+cargo test -p klex-machine
+cargo deny check   # advisories, licenses and sources (needs cargo-deny)
+pnpm --filter @klex/machine-conformance test   # both implementations
+KLEX_MACHINE_IMPL=rust pnpm --filter @klex/machine-conformance test
+```
+
+The conformance suite runs the built binaries. Build `@klex/machine` and `@klex/machine-rs` first, or let turbo do it with `pnpm turbo run test --filter @klex/machine-conformance`. Set `KLEX_MACHINE_BIN` together with `KLEX_MACHINE_IMPL` to test another binary.
+
+## Known differences from @klex/machine
+
+- Klex Cloud modes (`enrolled`, `managed`, `cloud enroll`, `cloud bootstrap`) are not implemented yet.
+- The 405, 406 and 415 HTTP errors have plain-text bodies.
+- Legacy `initialize` responses are JSON rather than a single-event SSE stream, and JSON-RPC batches are rejected.
+- `server/discover` reports `serverInfo` in `_meta`, and the wording of the `-32020` error differs.
+- A `tools/call` whose `arguments` is not an object fails JSON-RPC deserialization instead of tool validation.
+- Windows shells run in ConPTY instead of winpty.
+- Log records have no `path` field in `_logMeta`.

@@ -1,0 +1,22 @@
+{
+  "name": "@klex/machine-rs",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Rust port of the klex-machine MCP server",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/stagewise-io/klex.git",
+    "directory": "mcp-servers/klex-machine-rs"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "cargo test --locked --package klex-machine",
+    "lint": "cargo clippy --locked --package klex-machine --all-targets -- -D warnings",
+    "typecheck": "cargo check --locked --package klex-machine --all-targets",
+    "format": "cargo fmt --package klex-machine",
+    "format:check": "cargo fmt --package klex-machine -- --check"
+  },
+  "packageManager": "pnpm@11.22.0"
+}

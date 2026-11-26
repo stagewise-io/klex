@@ -1,0 +1,10 @@
+[target.'cfg(all(windows, target_env = "msvc"))']
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.'cfg(target_env = "musl")']
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[alias]
+lint = "clippy --workspace --all-targets --locked -- -D warnings"
+fmt-check = "fmt --all -- --check"
+machine = "run --package klex-machine --bin klex-machine-rs --"

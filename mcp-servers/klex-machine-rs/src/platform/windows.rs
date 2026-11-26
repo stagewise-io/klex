@@ -361,6 +361,7 @@ pub mod process {
 
 pub mod pty {
     use std::io::{self, Read, Write};
+    use std::path::Path;
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
@@ -379,7 +380,47 @@ pub mod pty {
         Vec::new()
     }
 
+    fn file_exists(path: &Path) -> bool {
+        std::fs::metadata(path).is_ok_and(|metadata| !metadata.is_dir())
+    }
+
+    /// node-pty's winpty shell lookup, quirks included: a relative name that
+    /// exists in the process directory resolves to nothing, and the `Path`
+    /// entry after the last `;` is never searched.
+    fn shell_path(
+        shell: &str,
+        path_var: Option<&str>,
+        exists: impl Fn(&Path) -> bool,
+    ) -> Result<String, String> {
+        let bytes = shell.as_bytes();
+        let relative = !(shell.starts_with('\\')
+            || (bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'));
+        let resolved = if !relative {
+            shell.to_string()
+        } else if exists(Path::new(shell)) {
+            String::new()
+        } else {
+            let mut entries: Vec<&str> = path_var.unwrap_or_default().split(';').collect();
+            entries.pop();
+            entries
+                .into_iter()
+                .map(|entry| Path::new(entry).join(shell))
+                .find(|candidate| exists(candidate))
+                .map(|candidate| candidate.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        };
+        if resolved.is_empty() || !exists(Path::new(&resolved)) {
+            return Err(format!("File not found: {resolved}"));
+        }
+        Ok(resolved)
+    }
+
     pub fn spawn(options: &SpawnOptions<'_>) -> Result<Spawned, String> {
+        let shell = shell_path(
+            options.shell,
+            std::env::var("Path").ok().as_deref(),
+            file_exists,
+        )?;
         let pair = native_pty_system()
             .openpty(PtySize {
                 rows: options.rows,
@@ -388,7 +429,7 @@ pub mod pty {
                 pixel_height: 0,
             })
             .map_err(|error| format!("{error:#}"))?;
-        let mut command = CommandBuilder::new(options.shell);
+        let mut command = CommandBuilder::new(shell);
         command.args(options.args);
         command.cwd(options.cwd);
         if let Some(env) = options.env {
@@ -549,6 +590,48 @@ pub mod pty {
         mutex
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use std::path::Path;
+
+        use super::shell_path;
+
+        #[test]
+        fn resolves_shells_like_node_pty() {
+            let exists = |path: &Path| {
+                matches!(
+                    path.to_str(),
+                    Some("C:\\Windows\\cmd.exe" | "C:\\Tools\\pwsh.exe" | "here.exe")
+                )
+            };
+            let path_var = Some("C:\\Windows;C:\\Tools");
+            assert_eq!(
+                shell_path("C:\\Windows\\cmd.exe", path_var, exists),
+                Ok("C:\\Windows\\cmd.exe".into())
+            );
+            assert_eq!(
+                shell_path("C:\\missing\\shell.exe", path_var, exists),
+                Err("File not found: C:\\missing\\shell.exe".into())
+            );
+            assert_eq!(
+                shell_path("cmd.exe", path_var, exists),
+                Ok("C:\\Windows\\cmd.exe".into())
+            );
+            assert_eq!(
+                shell_path("pwsh.exe", path_var, exists),
+                Err("File not found: ".into())
+            );
+            assert_eq!(
+                shell_path("pwsh.exe", Some("C:\\Windows;C:\\Tools;"), exists),
+                Ok("C:\\Tools\\pwsh.exe".into())
+            );
+            assert_eq!(
+                shell_path("here.exe", path_var, exists),
+                Err("File not found: ".into())
+            );
+        }
     }
 }
 

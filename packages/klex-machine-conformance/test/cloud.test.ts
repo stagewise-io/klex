@@ -27,7 +27,6 @@ afterEach(async () => {
   await cloud.close();
 });
 
-const other = implementation === 'ts' ? 'rust' : 'ts';
 const normalize = (text: string) =>
   text.replace(/klex-machine(?:-rs)?/g, 'klex-machine');
 const errorLine = (stderr: string) =>
@@ -226,20 +225,33 @@ describe('cloud enrollment', () => {
     expect(errorLine(untrusted.stderr)).toBe('fetch failed');
   });
 
-  it('shares enrollment state with the other implementation', async () => {
-    const dataDir = await temporaryDirectory();
-    const enrolled = await enroll(cloud.issueCode(), dataDir, {
-      implementation: other,
-    });
-    expect(enrolled.code).toBe(0);
-    const machine = spawnCli(
-      ['serve', '--mode', 'enrolled', '--data-dir', dataDir],
-      { env },
-    );
-    await machine.stdoutContains('is live');
-    expect(normalize(machine.output.stdout)).toBe(live('machine-1'));
-    expect(cloud.tokenRequests).toHaveLength(1);
-  });
+  // Needs both binaries; the TypeScript-only CI jobs do not build Rust.
+  it.runIf(implementation === 'rust')(
+    'shares enrollment state between implementations',
+    async () => {
+      const directions = [
+        ['ts', 'rust'],
+        ['rust', 'ts'],
+      ] as const;
+      for (const [index, [enroller, server]] of directions.entries()) {
+        const dataDir = await temporaryDirectory();
+        const enrolled = await enroll(cloud.issueCode(), dataDir, {
+          implementation: enroller,
+        });
+        expect(enrolled).toMatchObject({ code: 0, stderr: '' });
+        const machine = spawnCli(
+          ['serve', '--mode', 'enrolled', '--data-dir', dataDir],
+          { env, implementation: server },
+        );
+        await machine.stdoutContains('is live');
+        expect(normalize(machine.output.stdout)).toBe(
+          live(`machine-${index + 1}`),
+        );
+        expect(cloud.tokenRequests).toHaveLength(index + 1);
+        await machine.stop();
+      }
+    },
+  );
 });
 
 describe('cloud serving', () => {

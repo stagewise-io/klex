@@ -77,7 +77,8 @@ function certificate(
   extensions: Buffer[],
 ): string {
   const serial = randomBytes(16);
-  serial[0]! &= 0x7f;
+  // Positive and minimally encoded: OpenSSL rejects a padded DER INTEGER.
+  serial[0] = (serial[0]! & 0x3f) | 0x40;
   const now = Date.now();
   const tbs = sequence(
     explicit(0, tlv(0x02, Buffer.from([2]))),

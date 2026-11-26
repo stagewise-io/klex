@@ -230,10 +230,13 @@ impl Authenticator {
                 return found;
             }
         }
-        if let Some(keys) = self.fetch_jwks().await {
-            cache.keys = keys;
-            cache.fetched_at = Some(Instant::now());
-        }
+        // Like jose, a failed refresh fails closed instead of reusing old keys,
+        // and only a successful one starts the cooldown.
+        let Some(keys) = self.fetch_jwks().await else {
+            return Vec::new();
+        };
+        cache.keys = keys;
+        cache.fetched_at = Some(Instant::now());
         select(&cache)
     }
 
@@ -398,5 +401,10 @@ mod tests {
         let forged = sign(&other, header, claims);
         assert_eq!(authenticator.authenticate(&headers(&forged)).await, None);
         assert_eq!(authenticator.authenticate(&HeaderMap::new()).await, None);
+
+        // The JWKS endpoint is unreachable, so expired keys must not be reused.
+        authenticator.cache.lock().await.fetched_at =
+            Instant::now().checked_sub(JWKS_MAX_AGE + Duration::from_secs(1));
+        assert_eq!(authenticator.authenticate(&headers(&token)).await, None);
     }
 }

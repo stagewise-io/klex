@@ -506,8 +506,8 @@ class McpModule implements Mcp {
     Map<string, ResourceSubscriptionEntry>
   >();
   private readonly realtimeAvailableNamespaces = new Set<string>();
-  /** Tool calls waiting to retry; woken when a namespace connects. */
-  private readonly connectionWaiters = new Set<(namespace: string) => void>();
+  /** Tool calls waiting to retry; checked whenever the registry is republished. */
+  private readonly connectionWaiters = new Set<() => void>();
   private registry: McpRegistry = new Map();
   private started = false;
   private readonly authorizationRequests = new Map<
@@ -992,8 +992,8 @@ class McpModule implements Mcp {
     const startedAt = Date.now();
     let attempt = 0;
     let reconnectLogged = false;
-    for (;;) {
-      const live = this.getLiveTool(reference);
+    for (let retrying = false; ; retrying = true) {
+      const live = this.getLiveTool(reference, retrying);
       if (!live) {
         // Only issued calls count as attempts; a reconnect may take several
         // transient connect retries before the new connection is live.
@@ -1064,20 +1064,41 @@ class McpModule implements Mcp {
     return Number.isFinite(untilRetry) ? Math.max(untilRetry, 1_000) : 5_000;
   }
 
-  /** Returns `undefined` while only retained tools of a reconnecting server exist. */
+  /**
+   * Returns `undefined` while only retained tools of a reconnecting server
+   * exist. A retry whose tool disappeared reports why the server is gone.
+   */
   private getLiveTool(
     reference: ToolReference,
+    retrying: boolean,
   ): ({ connection: McpConnection } & RegisteredMcpTool) | undefined {
+    if (
+      retrying &&
+      !this.registry.get(reference.namespace)?.tools.has(reference.name)
+    ) {
+      const runtime = this.servers.get(reference.namespace);
+      if (runtime) {
+        const detail =
+          runtime.status === 'authorization_required'
+            ? 'authorization is required'
+            : runtime.lastError?.message;
+        throw new Error(
+          `MCP server is unavailable: ${reference.namespace}${detail ? ` (${detail})` : ''}`,
+        );
+      }
+    }
     const tool = this.getTool(reference);
     const live = this.servers.get(reference.namespace)?.connection;
     return live === tool.connection ? tool : undefined;
   }
 
+  /** Waits for the delay, or until the namespace's registered connection changes. */
   private waitForRetry(
     namespace: string,
     delayMs: number,
     signal: AbortSignal,
   ): Promise<void> {
+    const registered = this.registry.get(namespace)?.connection;
     return new Promise((resolve, reject) => {
       if (signal.aborted) {
         reject(signal.reason);
@@ -1086,10 +1107,10 @@ class McpModule implements Mcp {
       const finish = () => {
         clearTimeout(timer);
         signal.removeEventListener('abort', onAbort);
-        this.connectionWaiters.delete(onConnected);
+        this.connectionWaiters.delete(onChanged);
       };
-      const onConnected = (connected: string) => {
-        if (connected !== namespace) return;
+      const onChanged = () => {
+        if (this.registry.get(namespace)?.connection === registered) return;
         finish();
         resolve();
       };
@@ -1102,7 +1123,7 @@ class McpModule implements Mcp {
         resolve();
       }, delayMs);
       timer.unref?.();
-      this.connectionWaiters.add(onConnected);
+      this.connectionWaiters.add(onChanged);
       signal.addEventListener('abort', onAbort, { once: true });
     });
   }
@@ -1475,8 +1496,6 @@ class McpModule implements Mcp {
         runtime.lastError = undefined;
         this.clearRetry(runtime);
         this.publishRegistry();
-        for (const waiter of [...this.connectionWaiters])
-          waiter(runtime.namespace);
         if (connection.supportsPushNotifications)
           this.startEventWorker(connection);
         if (connection.supportsEvents) {
@@ -1587,9 +1606,9 @@ class McpModule implements Mcp {
           );
           return;
         }
-        this.dropRetainedTools(runtime);
         const diagnostic = safeDiagnosticError(error);
         runtime.lastError = { ...diagnostic, at: new Date().toISOString() };
+        this.dropRetainedTools(runtime);
         const isRetry = runtime.retryAttempt > 0;
         if (isRetry) {
           this.deps.logger.debug(
@@ -2171,6 +2190,7 @@ class McpModule implements Mcp {
       if (connection) connections.set(runtime.namespace, connection);
     }
     this.registry = buildMcpRegistry(connections);
+    for (const waiter of [...this.connectionWaiters]) waiter();
   }
 
   getServerStatuses(): McpServerInfo[] {

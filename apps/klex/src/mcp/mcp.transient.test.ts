@@ -328,6 +328,54 @@ describe('MCP transient reconnects', () => {
     );
   });
 
+  it('ends a waiting call with the reconnect failure as soon as retained tools are dropped', async () => {
+    vi.useFakeTimers();
+    const first = connection();
+    let options: ConnectMcpServerOptions | undefined;
+    const connect = vi
+      .fn<McpConnectionFactory>()
+      .mockImplementationOnce(async (next) => {
+        options = next;
+        return first;
+      })
+      .mockRejectedValue(new Error('certificate rejected'));
+    const mcp = setup(connect);
+    await mcp.start();
+    await vi.advanceTimersByTimeAsync(0);
+    options?.onDisconnect(first);
+
+    const call = settle(mcp.invoke(reference, {}, toolContext));
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(call.done).toBe(true);
+    expect(call.error).toEqual(
+      new Error('MCP server is unavailable: computer (certificate rejected)'),
+    );
+    expect(first.invoke).not.toHaveBeenCalled();
+  });
+
+  it('does not wake a waiting retry when another server republishes the registry', async () => {
+    vi.useFakeTimers();
+    const live = connection(
+      vi.fn().mockRejectedValueOnce(starting()).mockResolvedValueOnce(ok),
+    );
+    let options: ConnectMcpServerOptions | undefined;
+    const mcp = setup(async (next) => {
+      options = next;
+      return live;
+    });
+    await mcp.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    const call = settle(mcp.invoke(reference, {}, toolContext));
+    await vi.advanceTimersByTimeAsync(1_000);
+    // A tools/list_changed republish keeps the same connection registered.
+    options?.onToolsChanged(live);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(live.invoke).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(call).toMatchObject({ done: true, value: ok });
+  });
+
   it('does not retain tools after a post-connect authorization failure', async () => {
     vi.useFakeTimers();
     const first = connection();

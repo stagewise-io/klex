@@ -57,18 +57,13 @@ export interface SessionHistoryDependencies {
 
 export interface InputProjectionReview {
   revision: string;
-  section: string;
   batch: number;
   reasons: string[];
   plan?: InputProjectionPlanRecord;
 }
 
 export interface SessionHistory {
-  recordInputProjectionFetch(
-    revision: string,
-    section: string,
-    reason: string,
-  ): Promise<void>;
+  recordInputProjectionFetch(revision: string, reason: string): Promise<void>;
   pendingInputProjectionReviews(): Promise<InputProjectionReview[]>;
   deferInputProjectionReview(review: InputProjectionReview): Promise<void>;
   completeInputProjectionReview(
@@ -1400,17 +1395,13 @@ class SessionHistoryModule implements SessionHistory {
     });
   }
 
-  recordInputProjectionFetch(
-    revision: string,
-    section: string,
-    reason: string,
-  ): Promise<void> {
+  recordInputProjectionFetch(revision: string, reason: string): Promise<void> {
     return this.enqueueResult(async () => {
       const tx = await this.requireClient().transaction('write');
       try {
         const result = await tx.execute({
-          sql: 'SELECT count, reasons FROM input_projection_feedback WHERE revision = ? AND section = ?',
-          args: [revision, section],
+          sql: 'SELECT count, reasons FROM input_projection_feedback WHERE revision = ?',
+          args: [revision],
         });
         const row = result.rows[0];
         const count = (row ? toNumber(row.count) : 0) + 1;
@@ -1419,18 +1410,17 @@ class SessionHistoryModule implements SessionHistory {
           reason,
         ];
         await tx.execute({
-          sql: 'INSERT INTO input_projection_feedback(revision, section, count, reasons) VALUES (?, ?, ?, ?) ON CONFLICT(revision, section) DO UPDATE SET count = excluded.count, reasons = excluded.reasons',
+          sql: 'INSERT INTO input_projection_feedback(revision, count, reasons) VALUES (?, ?, ?) ON CONFLICT(revision) DO UPDATE SET count = excluded.count, reasons = excluded.reasons',
           args: [
             revision,
-            section,
             count,
             JSON.stringify(count % 10 === 0 ? [] : reasons),
           ],
         });
         if (count % 10 === 0)
           await tx.execute({
-            sql: 'INSERT INTO input_projection_reviews(revision, section, batch, reasons) VALUES (?, ?, ?, ?)',
-            args: [revision, section, count / 10, JSON.stringify(reasons)],
+            sql: 'INSERT INTO input_projection_reviews(revision, batch, reasons) VALUES (?, ?, ?)',
+            args: [revision, count / 10, JSON.stringify(reasons)],
           });
         // Bound queued feedback even when no helper/inference boundary runs.
         await tx.execute(
@@ -1459,12 +1449,11 @@ class SessionHistoryModule implements SessionHistory {
         `DELETE FROM input_projection_feedback WHERE revision NOT IN (SELECT revision FROM input_projection_bindings) AND revision NOT IN (SELECT revision FROM input_projection_reviews WHERE completed = 0)`,
       );
       const result = await client.execute({
-        sql: 'SELECT r.revision, r.section, r.batch, r.reasons, p.family, p.shape, p.body FROM input_projection_reviews r LEFT JOIN input_projection_plans p ON p.revision = r.revision WHERE r.completed = 0 AND r.retry_after <= ? ORDER BY r.rowid LIMIT 2',
+        sql: 'SELECT r.revision, r.batch, r.reasons, p.family, p.shape, p.body FROM input_projection_reviews r LEFT JOIN input_projection_plans p ON p.revision = r.revision WHERE r.completed = 0 AND r.retry_after <= ? ORDER BY r.rowid LIMIT 2',
         args: [this.nowIso()],
       });
       return result.rows.map((row) => ({
         revision: toText(row.revision),
-        section: toText(row.section),
         batch: toNumber(row.batch),
         reasons: JSON.parse(toText(row.reasons)) as string[],
         plan: row.body
@@ -1481,11 +1470,10 @@ class SessionHistoryModule implements SessionHistory {
   deferInputProjectionReview(review: InputProjectionReview): Promise<void> {
     return this.enqueueResult(async () => {
       await this.requireClient().execute({
-        sql: `UPDATE input_projection_reviews SET attempts = attempts + 1, retry_after = ?, completed = CASE WHEN attempts >= 4 THEN 1 ELSE 0 END, reasons = CASE WHEN attempts >= 4 THEN '[]' ELSE reasons END WHERE revision = ? AND section = ? AND batch = ?`,
+        sql: `UPDATE input_projection_reviews SET attempts = attempts + 1, retry_after = ?, completed = CASE WHEN attempts >= 4 THEN 1 ELSE 0 END, reasons = CASE WHEN attempts >= 4 THEN '[]' ELSE reasons END WHERE revision = ? AND batch = ?`,
         args: [
           new Date(this.deps.now().getTime() + 60_000).toISOString(),
           review.revision,
-          review.section,
           review.batch,
         ],
       });
@@ -1514,8 +1502,8 @@ class SessionHistoryModule implements SessionHistory {
             ],
           });
         await tx.execute({
-          sql: 'UPDATE input_projection_reviews SET completed = 1, reasons = ? WHERE revision = ? AND section = ? AND batch = ?',
-          args: ['[]', review.revision, review.section, review.batch],
+          sql: 'UPDATE input_projection_reviews SET completed = 1, reasons = ? WHERE revision = ? AND batch = ?',
+          args: ['[]', review.revision, review.batch],
         });
         await tx.commit();
       } finally {

@@ -66,8 +66,8 @@ CREATE INDEX IF NOT EXISTS idx_sessions_ended ON sessions (ended_at, updated_at)
 CREATE INDEX IF NOT EXISTS idx_messages_instance_ord ON messages (instance_id, ord);
 CREATE INDEX IF NOT EXISTS idx_messages_session_checkpoint ON messages (session_id, is_checkpoint, ord);
 CREATE TABLE input_projection_plans (revision TEXT PRIMARY KEY, family TEXT NOT NULL, shape TEXT NOT NULL, body TEXT NOT NULL, created_at TEXT NOT NULL);
-CREATE TABLE input_projection_feedback (revision TEXT NOT NULL, section TEXT NOT NULL, count INTEGER NOT NULL, reasons TEXT NOT NULL, PRIMARY KEY(revision, section));
-CREATE TABLE input_projection_reviews (revision TEXT NOT NULL, section TEXT NOT NULL, batch INTEGER NOT NULL, reasons TEXT NOT NULL, completed INTEGER NOT NULL DEFAULT 0, retry_after TEXT NOT NULL DEFAULT '', attempts INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(revision, section, batch));
+CREATE TABLE input_projection_feedback (revision TEXT NOT NULL, count INTEGER NOT NULL, reasons TEXT NOT NULL, PRIMARY KEY(revision));
+CREATE TABLE input_projection_reviews (revision TEXT NOT NULL, batch INTEGER NOT NULL, reasons TEXT NOT NULL, completed INTEGER NOT NULL DEFAULT 0, retry_after TEXT NOT NULL DEFAULT '', attempts INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(revision, batch));
 CREATE TABLE input_projection_bindings (reference TEXT PRIMARY KEY CHECK(length(reference) = 8), session_id TEXT NOT NULL, ord INTEGER NOT NULL, part INTEGER NOT NULL, context_hash TEXT NOT NULL, revision TEXT NOT NULL, created_at TEXT NOT NULL, UNIQUE(session_id, ord, part));
 CREATE INDEX idx_input_projection_family ON input_projection_plans(family, shape, created_at);
 CREATE INDEX idx_input_projection_revision ON input_projection_bindings(revision);
@@ -132,10 +132,10 @@ export const SESSION_HISTORY_STORE_DEFINITION: SqliteStoreDefinition = {
   migrations: SESSION_HISTORY_MIGRATIONS,
   validate: async (client) => {
     await client.execute(
-      'SELECT revision, section, count, reasons FROM input_projection_feedback LIMIT 1',
+      'SELECT revision, count, reasons FROM input_projection_feedback LIMIT 1',
     );
     await client.execute(
-      'SELECT revision, section, batch, reasons, completed, retry_after, attempts FROM input_projection_reviews LIMIT 1',
+      'SELECT revision, batch, reasons, completed, retry_after, attempts FROM input_projection_reviews LIMIT 1',
     );
     await client.execute(
       'SELECT revision, family, shape, body FROM input_projection_plans LIMIT 1',

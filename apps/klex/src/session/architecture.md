@@ -103,7 +103,7 @@ model-call-logger → session-history → input-projections → skill-registry
   → session-host → realtime → mcp → telemetry-manager
 ```
 
-The application owns one shared input-projection service and injects it into sessions and activity readers. It starts after history and closes after session consumers but before history. Default sessions expose scoped `getMoreInputInfo`; consult children receive only delegated references and no MCP access. The shared realtime coordinator awaits projection preparation before provider dispatch.
+The application owns one shared input-projection service and injects it into sessions and activity readers. It starts after history and closes after session consumers but before history. Default sessions expose scoped `getUnfilteredInput`; consult children receive only delegated references and no MCP access. The shared realtime coordinator awaits projection preparation before provider dispatch.
 
 ### Soul administration
 

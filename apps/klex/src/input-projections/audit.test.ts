@@ -1,9 +1,8 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { createTranscriptHistoryView } from '@/session/chat/utils/history-view';
 
-import { catalog, compile, isComplex } from './catalog';
-import { generatePlan } from './generator';
+import { catalog, compile } from './catalog';
 import { createInputProjections } from './input-projections';
 import { select } from './projection';
 
@@ -25,7 +24,7 @@ describe('input projection audit reproductions', () => {
     expect(result.context.metadata.data).toMatchObject({
       messages: data.messages,
     });
-    expect(result.context.metadata.moreInfoSections).toContain('other');
+    expect(result.context.metadata.inputFiltered).toBe(true);
   });
 
   it('fallback retains a bounded preview beyond 128 leaves', () => {
@@ -46,32 +45,13 @@ describe('input projection audit reproductions', () => {
     ).toMatchObject({ message: data.message });
   });
 
-  it('the 64-leaf complexity trigger can invoke the helper', async () => {
-    const input = catalog(
-      Object.fromEntries(
-        Array.from({ length: 64 }, (_, i) => [`field${i}`, 'x'.repeat(20)]),
-      ),
-    );
-    expect(isComplex(input)).toBe(true);
-    const generate = vi.fn().mockResolvedValue({ success: false });
-    expect(
-      await generatePlan(input, {
-        generate,
-        modelIds: [{ providerId: 'audit', modelId: 'chat' }],
-      }),
-    ).toBeUndefined();
-    expect(generate).toHaveBeenCalled();
-  });
-
-  it('a long URL alone skips generation but remains size bounded', () => {
-    const data = { url: `https://example.test/${'x'.repeat(5_000)}` };
-    expect(isComplex(catalog(data))).toBe(false);
-    const service = createInputProjections();
-    expect(select(service.fallbackPlan(data)!, data, 'default')).toEqual({});
-  });
-
   it('transcript truncation preserves the recovery header', () => {
-    const text = createTranscriptHistoryView().render([
+    const text = createTranscriptHistoryView(
+      undefined,
+      undefined,
+      undefined,
+      (context) => ({ ...context }),
+    ).render([
       {
         id: 'audit',
         role: 'user',
@@ -86,7 +66,6 @@ describe('input projection audit reproductions', () => {
                 data: { message: 'Important conversational text '.repeat(30) },
                 projectionStatus: 'projected',
                 inputEventRef: 'abcdefgh',
-                moreInfoSections: ['other', 'raw'],
               },
               content: [],
             },
@@ -95,20 +74,18 @@ describe('input projection audit reproductions', () => {
       },
     ]).text;
     expect(text).toContain('Important conversational text');
+    expect(text).not.toContain('Important conversational text '.repeat(30));
     expect(text).toContain('abcdefgh');
-    expect(text).toContain('moreInfoSections');
+    expect(text).toContain('getUnfilteredInput');
   });
 
-  it('helper assignments cannot omit recognized conversational fields', () => {
+  it('helper selections cannot omit recognized conversational fields', () => {
     const input = catalog({ message: 'Please help', traceId: 'opaque' });
     const plan = compile(input, {
-      assignments: input.fields.map(({ fieldId }) => ({
-        fieldId,
-        section: 'other',
-      })),
+      keep: [],
     });
-    expect(
-      select(plan, { message: 'Please help', traceId: 'opaque' }, 'default'),
-    ).toEqual({ message: 'Please help' });
+    expect(select(plan, { message: 'Please help', traceId: 'opaque' })).toEqual(
+      { message: 'Please help' },
+    );
   });
 });

@@ -5,35 +5,10 @@ import type { ContextDataUIPart, ContextMetadataValue } from '@/session/inbox';
 import type { SessionHistory } from '@/session-history';
 
 import { boundContext, limits } from './bounds';
-import {
-  catalog,
-  compile,
-  digest,
-  isComplex,
-  type Plan,
-  planSchema,
-  sections,
-} from './catalog';
+import { catalog, compile, digest, type Plan, planSchema } from './catalog';
 import { type GenerationOptions, generatePlan } from './generator';
 import { compatible, page, select } from './projection';
 
-export {
-  assignmentSchema,
-  catalog,
-  compile,
-  type Plan,
-  planSchema,
-} from './catalog';
-export { page } from './projection';
-
-export const sectionDescriptions = {
-  routing: 'Reply and action routing context',
-  objectIds: 'Object and internal identifiers',
-  links: 'Additional links',
-  other: 'Additional structured fields',
-  raw: 'Original metadata as lossless JSON text chunks',
-  content: 'Original ordered MCP content blocks',
-} as const;
 export interface ProjectionResult {
   context: ContextDataUIPart;
   status: 'unchanged' | 'projected' | 'fallback';
@@ -50,21 +25,23 @@ export interface InputProjections {
     generation?: GenerationOptions,
   ): Promise<void>;
   present(sessionId: string, context: ContextDataUIPart): ContextDataUIPart;
-  readSection(
+  readUnfiltered(
     sessionId: string,
     reference: string,
-    section: string,
     cursor?: string,
     reason?: string,
   ): Promise<unknown>;
   project(context: ContextDataUIPart, plan?: Plan): ProjectionResult;
-  fallbackPlan(value: ContextMetadataValue): Plan | undefined;
 }
 
 class InputProjectionsModule implements InputProjections {
   private readonly prepared = new Map<
     string,
     { reference: string; plan?: Plan; revision: string }
+  >();
+  private readonly occurrences = new WeakMap<
+    ContextDataUIPart,
+    Map<string, string | null>
   >();
   private readonly flights = new Map<string, Promise<Plan | undefined>>();
   private readonly shutdown = new AbortController();
@@ -117,10 +94,8 @@ class InputProjectionsModule implements InputProjections {
           ]),
         }
       : undefined;
-    if (generation && !this.reviewFlight) {
-      this.reviewFlight = this.reviewFeedback(
-        boundedGeneration ?? generation,
-      ).finally(() => {
+    if (boundedGeneration && !this.reviewFlight) {
+      this.reviewFlight = this.reviewFeedback(boundedGeneration).finally(() => {
         this.reviewFlight = undefined;
       });
     }
@@ -132,135 +107,149 @@ class InputProjectionsModule implements InputProjections {
         const { origin, data, type } = context.metadata;
         if (origin !== 'events' && origin !== 'push-notifications') continue;
         const hash = digest(context);
-        const key = `${sessionId}:${hash}`;
-        const cached = this.prepared.get(key);
-        if (
-          cached &&
-          (await this.history.readInputProjection(sessionId, cached.reference))
-        ) {
-          // Keep the occurrence pinned, but allow a later awaited boundary to
-          // learn a reusable plan after realtime had to use immediate fallback.
-          if (
-            !generation ||
-            (cached.revision !== 'fallback-v1' &&
-              cached.plan?.fallbackUntil === undefined)
-          )
-            continue;
-        }
-        this.prepared.delete(key);
-        if (generation?.signal?.aborted || this.shutdown.signal.aborted) return;
-        const input = catalog(data === undefined ? {} : data);
-        const family = JSON.stringify([2, context.sourceEnv, origin, type]);
-        const saved = await this.history.findInputProjectionPlan(
-          family,
-          input.shape,
+        const key = JSON.stringify([sessionId, message.id, partIndex, hash]);
+        const occurrences =
+          this.occurrences.get(part.data) ?? new Map<string, string | null>();
+        const previous = occurrences.get(sessionId);
+        occurrences.set(
+          sessionId,
+          previous === undefined || previous === key ? key : null,
         );
-        this.counts[saved ? 'shapeHits' : 'shapeMisses']++;
-        let plan = saved ? planSchema.parse(JSON.parse(saved.body)) : undefined;
-        if (
-          (!saved ||
-            (plan?.fallbackUntil !== undefined &&
-              plan.fallbackUntil <= Date.now())) &&
-          isComplex(input) &&
-          generation
-        ) {
-          const flightKey = digest([family, input.shape]);
-          let flight = this.flights.get(flightKey);
+        this.occurrences.set(part.data, occurrences);
+        try {
+          const cached = this.prepared.get(key);
           if (
-            !flight &&
-            this.flights.size < 2 &&
-            generationCount < limits.generationsPerPreparation &&
-            Date.now() < deadlineAt
+            cached &&
+            (await this.history.readInputProjection(
+              sessionId,
+              cached.reference,
+            ))
           ) {
-            generationCount++;
-            this.counts.generations++;
-            flight = generatePlan(input, {
-              ...boundedGeneration,
-              generate: generation.generate,
-              modelIds: generation.modelIds,
-              deadlineMs: Math.max(1, deadlineAt - Date.now()),
-              signal: AbortSignal.any([
-                this.shutdown.signal,
-                ...(generation.signal ? [generation.signal] : []),
-              ]),
-            });
-            this.flights.set(flightKey, flight);
-            void flight.finally(() => this.flights.delete(flightKey));
+            // Keep the occurrence pinned, but allow a later awaited boundary to
+            // learn a reusable plan after realtime had to use immediate fallback.
+            if (
+              !generation ||
+              (cached.revision !== 'fallback-v1' &&
+                cached.plan?.fallbackUntil === undefined)
+            )
+              continue;
           }
-          plan = await flight;
-        }
-        if (!plan && data !== undefined) {
-          plan = this.fallbackPlan(data);
-          if (plan) plan.fallbackUntil = Date.now() + (generation ? 60_000 : 0);
-        }
-        if (
-          !saved &&
-          plan &&
-          plan.fallbackUntil === undefined &&
-          input.bytes > 0 &&
-          Buffer.byteLength(JSON.stringify(select(plan, data, 'default'))) /
-            input.bytes >
-            0.8
-        ) {
-          plan = {
-            ...compile(input, {
-              assignments: input.fields.map(({ fieldId }) => ({
-                fieldId,
-                section: 'default',
-              })),
-            }),
-            identity: true,
-          };
-        }
-        const smallUnseen = !saved && !isComplex(input);
-        if (smallUnseen) plan = undefined;
-        let revision = smallUnseen ? 'identity-v1' : 'fallback-v1';
-        // Small first occurrences must not suppress learning when later values grow.
-        if (plan && input.complete) {
-          const body = JSON.stringify(plan);
-          const stored = await this.history.saveInputProjectionPlan({
-            revision: digest([family, input.shape, body]),
+          this.prepared.delete(key);
+          if (generation?.signal?.aborted || this.shutdown.signal.aborted)
+            return;
+          const input = catalog(data === undefined ? {} : data);
+          const family = JSON.stringify([2, context.sourceEnv, origin, type]);
+          const saved = await this.history.findInputProjectionPlan(
             family,
-            shape: input.shape,
-            body,
-          });
-          plan = planSchema.parse(JSON.parse(stored.body));
-          revision = stored.revision;
-        }
-        for (let attempt = 0; attempt < 8; attempt++) {
-          const binding = await this.history.bindInputProjection({
-            reference: randomBytes(6).toString('hex').slice(0, 8),
-            sessionId,
-            messageId: message.id,
-            part: partIndex,
-            contextHash: hash,
-            revision,
-          });
-          if (!binding) continue;
-          if (this.prepared.size >= 2_048)
-            this.prepared.delete(this.prepared.keys().next().value ?? '');
-          const pinned = await this.history.readInputProjection(
-            sessionId,
-            binding.reference,
+            input.shape,
           );
-          if (!pinned) break;
-          const pinnedPlan = pinned.plan
-            ? planSchema.parse(JSON.parse(pinned.plan.body))
-            : pinned.binding.revision === 'identity-v1'
-              ? { version: 1 as const, identity: true, fields: [] }
-              : undefined;
-          if (this.shutdown.signal.aborted) return;
-          this.counts.prepared++;
-          const result = this.project(context, pinnedPlan);
-          this.counts.originalBytes += result.originalBytes;
-          this.counts.projectedBytes += result.projectedBytes;
-          if (result.status === 'fallback') this.counts.fallbacks++;
-          this.prepared.set(key, {
-            reference: binding.reference,
-            plan: pinnedPlan,
-            revision: binding.revision,
-          });
-          break;
+          this.counts[saved ? 'shapeHits' : 'shapeMisses']++;
+          let plan = saved
+            ? planSchema.parse(JSON.parse(saved.body))
+            : undefined;
+          if (
+            (!saved ||
+              (plan?.fallbackUntil !== undefined &&
+                plan.fallbackUntil <= Date.now())) &&
+            generation
+          ) {
+            const flightKey = digest([family, input.shape]);
+            let flight = this.flights.get(flightKey);
+            if (
+              !flight &&
+              this.flights.size < 2 &&
+              generationCount < limits.generationsPerPreparation &&
+              Date.now() < deadlineAt
+            ) {
+              generationCount++;
+              this.counts.generations++;
+              flight = generatePlan(input, {
+                ...generation,
+                identity: catalog(
+                  Object.fromEntries(
+                    Object.entries(context.metadata).filter(
+                      ([key]) =>
+                        key !== 'origin' &&
+                        key !== 'data' &&
+                        key !== 'eventId' &&
+                        !(origin === 'events' && key === '_meta'),
+                    ),
+                  ),
+                ).fields,
+                deadlineMs: Math.max(1, deadlineAt - Date.now()),
+                signal: AbortSignal.any([
+                  this.shutdown.signal,
+                  ...(generation.signal ? [generation.signal] : []),
+                ]),
+              });
+              this.flights.set(flightKey, flight);
+              void flight.finally(() => this.flights.delete(flightKey));
+            }
+            plan = await flight;
+          }
+          if (!plan && data !== undefined) {
+            plan = this.fallbackPlan(data);
+            if (plan)
+              plan.fallbackUntil = Date.now() + (generation ? 60_000 : 0);
+          }
+          if (
+            !saved &&
+            plan &&
+            plan.fallbackUntil === undefined &&
+            plan.fields.every((field) => field.keep)
+          ) {
+            plan = { ...plan, identity: true };
+          }
+          let revision = 'fallback-v1';
+          if (plan && input.complete) {
+            const body = JSON.stringify(plan);
+            const stored = await this.history.saveInputProjectionPlan({
+              revision: digest([family, input.shape, body]),
+              family,
+              shape: input.shape,
+              body,
+            });
+            plan = planSchema.parse(JSON.parse(stored.body));
+            revision = stored.revision;
+          }
+          for (let attempt = 0; attempt < 8; attempt++) {
+            const binding = await this.history.bindInputProjection({
+              reference: randomBytes(6).toString('hex').slice(0, 8),
+              sessionId,
+              messageId: message.id,
+              part: partIndex,
+              contextHash: hash,
+              revision,
+            });
+            if (!binding) continue;
+            if (this.prepared.size >= 2_048)
+              this.prepared.delete(this.prepared.keys().next().value ?? '');
+            const pinned = await this.history.readInputProjection(
+              sessionId,
+              binding.reference,
+            );
+            if (!pinned) break;
+            const pinnedPlan = pinned.plan
+              ? planSchema.parse(JSON.parse(pinned.plan.body))
+              : pinned.binding.revision === 'identity-v1'
+                ? { version: 1 as const, identity: true, fields: [] }
+                : undefined;
+            if (this.shutdown.signal.aborted) return;
+            this.counts.prepared++;
+            const result = this.project(context, pinnedPlan);
+            this.counts.originalBytes += result.originalBytes;
+            this.counts.projectedBytes += result.projectedBytes;
+            if (result.status === 'fallback') this.counts.fallbacks++;
+            this.prepared.set(key, {
+              reference: binding.reference,
+              plan: pinnedPlan,
+              revision: binding.revision,
+            });
+            break;
+          }
+        } catch {
+          // Isolate corrupt/stale rows and transient storage failures to this occurrence.
+          this.prepared.delete(key);
         }
       }
     }
@@ -283,14 +272,13 @@ class InputProjectionsModule implements InputProjections {
       }
       const current = planSchema.parse(JSON.parse(review.plan.body));
       const input = {
-        fields: current.fields.map((field, index) => ({
-          ...field,
-          fieldId: `f${index}`,
+        fields: current.fields.map(({ path, type }) => ({
+          path,
+          type,
           sample: '',
         })),
         complete: true,
         shape: review.plan.shape,
-        bytes: 0,
       };
       this.counts.feedbackReviews++;
       const revised = await generatePlan(
@@ -302,7 +290,7 @@ class InputProjectionsModule implements InputProjections {
             ...(generation.signal ? [generation.signal] : []),
           ]),
         },
-        { current, section: review.section, reasons: review.reasons },
+        { current, reasons: review.reasons },
       );
       // Failed/timed-out reviews remain queued for a later safe inference boundary.
       if (!revised) {
@@ -312,12 +300,10 @@ class InputProjectionsModule implements InputProjections {
       for (const field of revised.fields) {
         if (
           current.fields.some(
-            (old) =>
-              old.section === 'default' &&
-              digest(old.path) === digest(field.path),
+            (old) => old.keep && digest(old.path) === digest(field.path),
           )
         )
-          field.section = 'default';
+          field.keep = true;
       }
       const changed = digest(current.fields) !== digest(revised.fields);
       if (changed) this.counts.feedbackUpdates++;
@@ -335,44 +321,28 @@ class InputProjectionsModule implements InputProjections {
     }
   }
   present(sessionId: string, context: ContextDataUIPart): ContextDataUIPart {
-    const binding = this.prepared.get(`${sessionId}:${digest(context)}`);
+    const key = this.occurrences.get(context)?.get(sessionId);
+    const binding = key ? this.prepared.get(key) : undefined;
     // Never hide data until its canonical source and recovery binding are durable.
     if (!binding) return boundContext(context);
     const result = this.project(context, binding.plan);
     return {
-      ...boundContext(result.context),
+      ...result.context,
       metadata: {
-        ...boundContext(result.context).metadata,
+        ...result.context.metadata,
         inputEventRef: binding.reference,
-        moreInfoSections:
-          result.status === 'unchanged'
-            ? ['raw', 'content']
-            : [
-                ...sections.filter(
-                  (section) =>
-                    section !== 'default' &&
-                    binding.plan?.fields.some(
-                      (field) => field.section === section,
-                    ),
-                ),
-                'raw',
-                'content',
-              ],
       },
     };
   }
-  async readSection(
+  async readUnfiltered(
     sessionId: string,
     reference: string,
-    section: string,
     cursor?: string,
     reason?: string,
   ): Promise<unknown> {
     this.counts.detailReads++;
     if (!/^[a-z0-9]{8}$/.test(reference))
       return { status: 'invalid-reference' };
-    if (!Object.hasOwn(sectionDescriptions, section))
-      return { status: 'unknown-section' };
     let stored: Awaited<ReturnType<SessionHistory['readInputProjection']>>;
     try {
       stored = await this.history?.readInputProjection(sessionId, reference);
@@ -383,43 +353,10 @@ class InputProjectionsModule implements InputProjections {
       this.counts.unavailableReads++;
       return { status: 'unavailable' };
     }
-    let plan: Plan | undefined;
-    try {
-      plan = stored.plan
-        ? planSchema.parse(JSON.parse(stored.plan.body))
-        : undefined;
-    } catch {
-      // Original metadata remains recoverable even if a future plan language
-      // cannot be executed by this binary.
-      if (section !== 'raw') return { status: 'unavailable' };
-    }
-    if (
-      section !== 'raw' &&
-      section !== 'content' &&
-      plan &&
-      !plan.fields.some((field) => field.section === section)
-    )
-      return { status: 'unknown-section' };
-    if (
-      section !== 'raw' &&
-      section !== 'content' &&
-      !plan &&
-      (section !== 'other' || stored.binding.revision === 'identity-v1')
-    )
-      return { status: 'unknown-section' };
-    const value =
-      section === 'content'
-        ? stored.context.content
-        : section === 'raw'
-          ? stored.context.metadata
-          : plan
-            ? select(plan, stored.context.metadata.data, section as 'other')
-            : stored.context.metadata.data;
     try {
       const result = page(
-        value,
+        stored.context,
         reference,
-        section,
         stored.binding.revision,
         cursor,
       );
@@ -431,11 +368,7 @@ class InputProjectionsModule implements InputProjections {
       ) {
         // Feedback failure must never hide an otherwise valid detail response.
         await this.history
-          ?.recordInputProjectionFetch(
-            stored.binding.revision,
-            section,
-            reason.trim(),
-          )
+          ?.recordInputProjectionFetch(stored.binding.revision, reason.trim())
           .catch(() => {});
       }
       return result;
@@ -443,80 +376,79 @@ class InputProjectionsModule implements InputProjections {
       return { status: 'invalid-cursor' };
     }
   }
-  fallbackPlan(value: ContextMetadataValue): Plan | undefined {
+  private fallbackPlan(value: ContextMetadataValue): Plan | undefined {
     const input = catalog(value);
     if (!input.complete) return undefined;
     return compile(input, {
-      assignments: input.fields.map((field) => ({
-        fieldId: field.fieldId,
-        // Conservative fallback: preserve short facts; omit opaque IDs and incidental links.
-        section:
-          /(?:trace|tracking|avatar|internal|token|uuid|url|^id$)/i.test(
-            field.path.at(-1) ?? '',
-          ) || /(?:trace|tracking|debug|internal)/i.test(field.path.join('/'))
-            ? 'other'
-            : 'default',
-      })),
+      // Conservative fallback: preserve short facts; omit opaque IDs and incidental links.
+      keep: input.fields
+        .filter(
+          ({ path }) =>
+            !(
+              /(?:trace|tracking|avatar|internal|token|uuid|url|^id$)/i.test(
+                path.at(-1) ?? '',
+              ) || /(?:trace|tracking|debug|internal)/i.test(path.join('/'))
+            ),
+        )
+        .map(({ path }) => path),
     });
   }
   project(context: ContextDataUIPart, plan?: Plan): ProjectionResult {
     const originalBytes = Buffer.byteLength(JSON.stringify(context.metadata));
-    const unchanged: ProjectionResult = {
-      context: boundContext(context),
-      status: 'unchanged',
-      originalBytes,
-      projectedBytes: Buffer.byteLength(
-        JSON.stringify(boundContext(context).metadata),
-      ),
+    const finish = (
+      source: ContextDataUIPart,
+      status: ProjectionResult['status'],
+    ): ProjectionResult => {
+      const bounded = boundContext(source);
+      const filtered =
+        status !== 'unchanged' || bounded.metadata.inputPreviewLimited === true;
+      const metadata = {
+        ...bounded.metadata,
+        ...(filtered
+          ? {
+              inputFiltered: true,
+              inputFilterNote:
+                'Filtered event: keys or full values may be omitted. Use getUnfilteredInput with inputEventRef to retrieve the complete original event.',
+            }
+          : {}),
+      };
+      return {
+        context: { ...bounded, metadata },
+        status,
+        originalBytes,
+        projectedBytes: Buffer.byteLength(JSON.stringify(metadata)),
+      };
     };
     const { origin, data } = context.metadata;
     if (
       (origin !== 'events' && origin !== 'push-notifications') ||
       data === undefined
     )
-      return unchanged;
-    if (plan?.identity) return unchanged;
-    const input = catalog(data);
+      return finish(context, 'unchanged');
+    if (plan?.identity) return finish(context, 'unchanged');
     const invalid = plan !== undefined && !compatible(plan, data);
-    if (!plan && !isComplex(input)) return unchanged;
     const selected = invalid || !plan ? this.fallbackPlan(data) : plan;
-    // A filter without durable retrieval is not allowed to hide information.
-    // Preparation supplies references later; this pure layer reports omission explicitly.
     const payload = selected
-      ? (select(selected, data, 'default') as ContextMetadataValue)
+      ? (select(selected, data) as ContextMetadataValue)
       : data;
+    if (JSON.stringify(payload) === JSON.stringify(data))
+      return finish(context, 'unchanged');
     // Every selected field is still bounded, including routing and conversational names.
-    const detailSections = selected
-      ? sections.filter(
-          (section) =>
-            section !== 'default' &&
-            selected.fields.some((field) => field.section === section),
-        )
-      : ['other'];
     const status =
       invalid || !plan || !selected || plan.fallbackUntil !== undefined
         ? 'fallback'
         : 'projected';
-    const metadata = {
-      ...context.metadata,
-      data: payload as ContextMetadataValue,
-      projectionStatus: status,
-      moreInfoSections: [...detailSections, 'raw'],
-    };
-    const bounded = boundContext({ ...context, metadata });
-    return {
-      context: {
-        ...bounded,
+    return finish(
+      {
+        ...context,
         metadata: {
-          ...bounded.metadata,
+          ...context.metadata,
+          data: payload,
           projectionStatus: status,
-          moreInfoSections: [...detailSections, 'raw'],
         },
       },
       status,
-      originalBytes,
-      projectedBytes: Buffer.byteLength(JSON.stringify(bounded.metadata)),
-    };
+    );
   }
 }
 export function createInputProjections(

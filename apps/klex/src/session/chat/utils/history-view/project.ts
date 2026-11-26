@@ -131,12 +131,9 @@ function projectPart(
   }
 
   if (part.type === 'data-context') {
-    return filter.context
-      ? projectContext(
-          filter.projectContext?.(part.data) ?? part.data,
-          filter.context,
-        )
-      : null;
+    if (!filter.context) return null;
+    const projected = filter.projectContext?.(part.data) ?? part.data;
+    return projectContext(projected, filter.context, projected !== part.data);
   }
 
   if (part.type.startsWith('data-')) {
@@ -208,6 +205,7 @@ function toolStatus(state: string): ToolStatus {
 function projectContext(
   data: ContextDataUIPart,
   options: ContextOptions,
+  prepared: boolean,
 ): HistoryRecord | null {
   const record: Extract<HistoryRecord, { kind: 'context' }> = {
     kind: 'context',
@@ -222,13 +220,16 @@ function projectContext(
       : data.sourceEnv,
     items: [],
   };
-  if (
+  const reference =
+    prepared &&
     typeof data.metadata?.inputEventRef === 'string' &&
     /^[a-z0-9]{8}$/.test(data.metadata.inputEventRef)
-  ) {
+      ? data.metadata.inputEventRef
+      : undefined;
+  if (reference) {
     record.items.push({
       kind: 'text',
-      text: `inputEventRef: ${data.metadata.inputEventRef}; moreInfoSections: ${JSON.stringify(data.metadata.moreInfoSections ?? []).slice(0, 100)}`,
+      text: `inputEventRef: ${reference}; ${data.metadata.inputFiltered === true ? 'filtered view may omit keys or limit values; ' : ''}use getUnfilteredInput for the original event`,
     });
   }
   if (options.metadata) {
@@ -238,10 +239,7 @@ function projectContext(
   // Events carry their semantic body in metadata rather than MCP content
   // blocks. Transcript presets omit general metadata, but must retain Events
   // for compaction, consult and the classifier under the context text budget.
-  if (
-    !options.metadata &&
-    (data.metadata?.origin === 'events' || data.metadata?.inputEventRef)
-  ) {
+  if (!options.metadata && (data.metadata?.origin === 'events' || reference)) {
     // Occurrences are size/depth bounded at ingress. Serialize their JSON body
     // directly before applying the text budget: compactJson's node cap would
     // replace wide but valid payloads wholesale with [unserializable]. Keep
@@ -254,10 +252,10 @@ function projectContext(
         ...(data.metadata.projectionStatus
           ? { projectionStatus: data.metadata.projectionStatus }
           : {}),
-        ...(data.metadata.inputEventRef
+        ...(reference
           ? {
-              inputEventRef: data.metadata.inputEventRef,
-              moreInfoSections: data.metadata.moreInfoSections,
+              inputEventRef: reference,
+              inputFiltered: data.metadata.inputFiltered,
             }
           : {}),
       },

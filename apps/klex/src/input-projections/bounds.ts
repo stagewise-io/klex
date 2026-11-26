@@ -6,7 +6,7 @@ export const limits = {
   valueBytes: 1_024,
   textBytes: 4_096,
   contentItems: 16,
-  preparationMs: 8_000,
+  preparationMs: 60_000,
   generationsPerPreparation: 2,
 } as const;
 const omitted = '[omitted; use raw details]';
@@ -58,10 +58,12 @@ export function preview(
           Number(/^(message|messages|text|body|content)$/i.test(a)),
       )) {
         if (nodes >= 128 || remaining < 256 || Buffer.byteLength(key) > 128) {
-          Object.defineProperty(result, '_omitted', {
-            value: omitted,
-            enumerable: true,
-          });
+          if (!Object.hasOwn(result, '_omitted')) {
+            Object.defineProperty(result, '_omitted', {
+              value: omitted,
+              enumerable: true,
+            });
+          }
           break;
         }
         remaining -= Buffer.byteLength(JSON.stringify(key)) + 4;
@@ -85,7 +87,8 @@ export function preview(
 export function boundContext(context: ContextDataUIPart): ContextDataUIPart {
   const {
     inputEventRef: _ref,
-    moreInfoSections: _sections,
+    inputFiltered: _filtered,
+    inputFilterNote: _note,
     ...fields
   } = context.metadata;
   const metadata = preview(fields) as ContextMetadataValue;

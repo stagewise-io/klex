@@ -93,7 +93,7 @@ describe('projectMessage', () => {
             ...input.metadata,
             data: { message: 'keep' },
             inputEventRef: 'abcdefgh',
-            moreInfoSections: ['raw'],
+            inputFiltered: true,
           },
         }),
       });
@@ -105,6 +105,33 @@ describe('projectMessage', () => {
       expect(message).toEqual(before);
     },
   );
+  it('does not promote raw metadata references into recovery headers or payload exposure', () => {
+    const message = msg(
+      [
+        context({
+          metadata: {
+            origin: 'push-notifications',
+            inputEventRef: 'abcdefgh',
+            data: { hidden: 'private payload' },
+          },
+          content: [],
+        }),
+      ],
+      'user',
+    );
+    const rendered = JSON.stringify(
+      records(message, {
+        context: {
+          metadata: false,
+          text: { max: 200, truncate: 'end' },
+          media: 'placeholder',
+          resources: 'placeholder',
+        },
+      }),
+    );
+    expect(rendered).not.toContain('inputEventRef:');
+    expect(rendered).not.toContain('private payload');
+  });
   it.each([
     'https://example.test/audio?token=SECRET',
     'file:///private/SECRET',

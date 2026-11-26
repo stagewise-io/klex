@@ -50,6 +50,33 @@ function toolExecute<T>(tool: unknown): (input: T) => Promise<unknown> {
 }
 
 describe('consult extension', () => {
+  it('releases capacity when context preparation throws', async () => {
+    const getHistory = vi.fn((): ExtendedUIMessage[] => {
+      throw new Error('projection failed');
+    });
+    const deps = makeDeps({
+      getHistory,
+      createChildSession: vi.fn(async () => child()),
+      config: {
+        getModelSelection: () => [{ providerId: 'provider', modelId: 'model' }],
+      } as never,
+    });
+    const extension = createConsultExt({
+      ...DEEP_THINK_CONFIG,
+      maxActiveSessions: 1,
+    }).create(deps);
+    const start = toolExecute<{ task: string }>(
+      getTools(extension).startConsult,
+    );
+    for (let i = 0; i < 3; i++)
+      expect(await start({ task: 'review' })).toEqual({
+        reason: 'child-start-failed',
+        status: 'failed',
+      });
+    getHistory.mockReturnValue([]);
+    expect(await start({ task: 'review' })).toHaveProperty('status', 'running');
+    await extension.onClose?.();
+  });
   it.each([4, 4_000])(
     'delegates only trusted projected references with %i payload characters',
     async (length) => {
@@ -72,7 +99,7 @@ describe('consult extension', () => {
                   origin: 'events',
                   data: { message },
                   inputEventRef: 'abcdefgh',
-                  moreInfoSections: ['raw'],
+                  inputFiltered: true,
                 },
               }
             : context,
@@ -122,9 +149,7 @@ describe('consult extension', () => {
         vi.mocked(spawned.inbox.sendMessage).mock.calls,
       );
       expect(childContext).not.toContain('hidden');
-      expect(childContext).toContain(
-        'inputEventRef: abcdefgh; moreInfoSections:',
-      );
+      expect(childContext).toContain('inputEventRef: abcdefgh; filtered view');
       if (message.length > 200)
         expect(childContext).not.toContain(
           '\\"inputEventRef\\":\\"abcdefgh\\"',

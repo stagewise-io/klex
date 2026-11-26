@@ -1,4 +1,4 @@
-import { catalog, digest, type Plan, type Section, valueType } from './catalog';
+import { catalog, digest, type Plan } from './catalog';
 
 function read(value: unknown, path: string[]): unknown {
   let current = value;
@@ -41,24 +41,18 @@ function assign(
 export function compatible(plan: Plan, value: unknown): boolean {
   const input = catalog(value);
   if (!input.complete) return false;
-  return (
-    input.fields.every((field) =>
-      plan.fields.some(
-        (known) =>
-          JSON.stringify(known.path) === JSON.stringify(field.path) &&
-          known.type === field.type,
-      ),
-    ) &&
-    plan.fields.every((field) => {
-      const item = read(value, field.path);
-      return item === undefined || valueType(item) === field.type;
-    })
+  return input.fields.every((field) =>
+    plan.fields.some(
+      (known) =>
+        JSON.stringify(known.path) === JSON.stringify(field.path) &&
+        known.type === field.type,
+    ),
   );
 }
-export function select(plan: Plan, value: unknown, section: Section): unknown {
+export function select(plan: Plan, value: unknown): unknown {
   const result: Record<string, unknown> = {};
   for (const field of plan.fields) {
-    if (field.section !== section) continue;
+    if (!field.keep) continue;
     const item = read(value, field.path);
     if (item === undefined) continue;
     if (!field.path.length) return structuredClone(item);
@@ -76,13 +70,12 @@ export interface DetailPage {
 export function page(
   value: unknown,
   reference: string,
-  section: string,
   revision: string,
   cursor?: string,
   maxBytes = 12 * 1_024,
 ): DetailPage {
   if (maxBytes < 512) throw new Error('Page budget too small');
-  const binding = digest([reference, section, revision]);
+  const binding = digest([reference, revision]);
   let offset = 0;
   if (cursor) {
     if (cursor.length > 256) throw new Error('Invalid cursor');
@@ -105,6 +98,14 @@ export function page(
     (offset > 0 && /[\uDC00-\uDFFF]/.test(text[offset] ?? ''))
   )
     throw new Error('Invalid cursor offset');
+  // A complete event that fits must not require artificial continuation pages.
+  const complete: DetailPage = {
+    status: 'ok',
+    encoding: 'json-text-chunks',
+    chunk: text.slice(offset),
+    nextCursor: null,
+  };
+  if (Buffer.byteLength(JSON.stringify(complete)) <= maxBytes) return complete;
   let length = Math.min(text.length - offset, Math.floor((maxBytes - 384) / 6));
   if (/[\uD800-\uDBFF]/.test(text[offset + length - 1] ?? '')) length--;
   const end = offset + length;

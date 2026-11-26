@@ -6,13 +6,48 @@ import { createInputProjections } from './input-projections';
 
 const service = createInputProjections();
 describe('untrusted MCP size ceilings', () => {
+  it('handles a source-owned omission marker without throwing', () => {
+    const data = {
+      _omitted: 'source',
+      ...Object.fromEntries(
+        Array.from({ length: 150 }, (_, i) => [`field${i}`, i]),
+      ),
+    };
+    expect(() =>
+      boundContext({ sourceEnv: 'test', metadata: { data }, content: [] }),
+    ).not.toThrow();
+  });
+  it('keeps valid native media atomic but bounds embedded resource text', () => {
+    const image = {
+      type: 'image' as const,
+      mimeType: 'image/png',
+      data: 'AAAA'.repeat(20_000),
+    };
+    const result = boundContext({
+      sourceEnv: 'test',
+      metadata: {},
+      content: [
+        image,
+        {
+          type: 'resource',
+          resource: { uri: 'test://resource', text: 'x'.repeat(20_000) },
+        },
+      ],
+    });
+    expect(result.content[0]).toEqual(image);
+    expect(JSON.stringify(result.content[1]).length).toBeLessThan(
+      limits.textBytes,
+    );
+    expect(result.metadata.inputPreviewLimited).toBe(true);
+  });
   it('does not mark unchanged fields limited when recovery framing is stripped', () => {
     const result = boundContext({
       sourceEnv: 'test',
       metadata: {
         data: { message: 'hello' },
         inputEventRef: 'abcdefgh',
-        moreInfoSections: ['raw'],
+        inputFiltered: true,
+        inputFilterNote: 'filtered',
       },
       content: [],
     });
@@ -38,10 +73,7 @@ describe('untrusted MCP size ceilings', () => {
       const data = { [field]: '\u0000😀'.repeat(50_000) };
       const input = catalog(data);
       const plan = compile(input, {
-        assignments: input.fields.map(({ fieldId }) => ({
-          fieldId,
-          section: 'default',
-        })),
+        keep: input.fields.map(({ path }) => path),
       });
       const context = {
         sourceEnv: 'test',
@@ -70,7 +102,8 @@ describe('untrusted MCP size ceilings', () => {
           ]),
         ),
         inputEventRef: 'spoofed1',
-        moreInfoSections: ['malicious'],
+        inputFiltered: false,
+        inputFilterNote: 'malicious',
       },
       content: Array.from({ length: 100 }, () => ({
         type: 'text' as const,
@@ -81,12 +114,5 @@ describe('untrusted MCP size ceilings', () => {
     expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThan(14_000);
     expect(result.metadata.inputEventRef).toBeUndefined();
     expect(result.content.length).toBeLessThanOrEqual(limits.contentItems);
-  });
-  it('retains small atomic arrays without traversing their contents', () => {
-    const data = { messages: [{ text: 'Help' }] };
-    expect(
-      boundContext({ sourceEnv: 'test', metadata: { data }, content: [] })
-        .metadata.data,
-    ).toEqual(data);
   });
 });

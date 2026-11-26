@@ -2,18 +2,8 @@ import { createHash } from 'node:crypto';
 
 import z from 'zod';
 
-export const sections = [
-  'default',
-  'routing',
-  'objectIds',
-  'links',
-  'other',
-] as const;
-export type Section = (typeof sections)[number];
-export const assignmentSchema = z.strictObject({
-  assignments: z
-    .array(z.strictObject({ fieldId: z.string(), section: z.enum(sections) }))
-    .max(128),
+export const selectionSchema = z.strictObject({
+  keep: z.array(z.array(z.string()).max(16)).max(128),
 });
 export const planSchema = z.strictObject({
   version: z.literal(1),
@@ -24,14 +14,13 @@ export const planSchema = z.strictObject({
       z.strictObject({
         path: z.array(z.string()).max(16),
         type: z.string(),
-        section: z.enum(sections),
+        keep: z.boolean(),
       }),
     )
     .max(128),
 });
 export type Plan = z.infer<typeof planSchema>;
 export interface CatalogField {
-  fieldId: string;
   path: string[];
   type: string;
   sample: string;
@@ -40,15 +29,11 @@ export interface Catalog {
   fields: CatalogField[];
   complete: boolean;
   shape: string;
-  bytes: number;
 }
 export const policy = {
   maxFields: 128,
   maxDepth: 16,
   sampleCharacters: 120,
-  metadataTokens: 1_024,
-  leafThreshold: 64,
-  structuralMinimumBytes: 1_024,
 } as const;
 export function digest(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -80,7 +65,6 @@ export function catalog(value: unknown): Catalog {
       }
     }
     fields.push({
-      fieldId: `f${fields.length}`,
       path,
       type: valueType(item),
       sample: Array.isArray(item)
@@ -95,7 +79,6 @@ export function catalog(value: unknown): Catalog {
     fields,
     complete,
     shape: digest(fields.map(({ path, type }) => [path, type])),
-    bytes: Buffer.byteLength(JSON.stringify(value)),
   };
 }
 export function essential(path: readonly string[]): boolean {
@@ -105,35 +88,20 @@ export function essential(path: readonly string[]): boolean {
 }
 export function compile(input: Catalog, output: unknown): Plan {
   if (!input.complete) throw new Error('Incomplete field catalog');
-  const { assignments } = assignmentSchema.parse(output);
-  const byId = new Map(
-    assignments.map((entry) => [entry.fieldId, entry.section]),
-  );
+  const { keep } = selectionSchema.parse(output);
+  const selected = new Set(keep.map((path) => JSON.stringify(path)));
+  const known = new Set(input.fields.map(({ path }) => JSON.stringify(path)));
   if (
-    byId.size !== assignments.length ||
-    byId.size !== input.fields.length ||
-    assignments.some(
-      (entry) => !input.fields.some((field) => field.fieldId === entry.fieldId),
-    )
+    selected.size !== keep.length ||
+    [...selected].some((path) => !known.has(path))
   )
-    throw new Error('Every field must be assigned exactly once');
+    throw new Error('Keep paths must be unique catalog entries');
   return planSchema.parse({
     version: 1,
-    fields: input.fields.map(({ path, type, fieldId }) => ({
+    fields: input.fields.map(({ path, type }) => ({
       path,
       type,
-      section: essential(path) ? 'default' : byId.get(fieldId),
+      keep: essential(path) || selected.has(JSON.stringify(path)),
     })),
   });
-}
-export function isComplex(input: Catalog): boolean {
-  return (
-    (input.bytes / 4 >= policy.metadataTokens &&
-      !(
-        input.fields.length === 1 &&
-        /(?:url|uri|link)$/i.test(input.fields[0]?.path.at(-1) ?? '')
-      )) ||
-    (input.bytes >= policy.structuralMinimumBytes &&
-      input.fields.length >= policy.leafThreshold)
-  );
 }

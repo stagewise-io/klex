@@ -182,7 +182,12 @@ class ActivityHistoryModule implements ActivityHistory {
   ): Promise<ActivityMessage[]> {
     if (!this.projections) return rows;
     const messages = rows.flatMap((row) => (row.message ? [row.message] : []));
-    await this.projections.prepare('default', messages);
+    try {
+      await this.projections.prepare('default', messages);
+    } catch {
+      // Projection storage is optional; canonical activity must remain available.
+      return rows;
+    }
     return rows.map((row) => ({
       ...row,
       message: row.message

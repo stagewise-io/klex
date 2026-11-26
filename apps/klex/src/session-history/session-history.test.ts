@@ -14,6 +14,7 @@ import type { SqliteStoreDefinition } from '@/local-data';
 import { createLocalData } from '@/local-data';
 import { KLEX_VERSION } from '@/release';
 import type { ExtendedUIMessage } from '@/session/chat/message-types';
+import type { ContextDataUIPart } from '@/session/inbox';
 
 import { summarizeGenerationFailure } from './generation-health';
 import {
@@ -105,85 +106,151 @@ afterEach(async () => {
 });
 
 describe('input projection storage', () => {
-  // Recovery and review fairness regression contracts.
-  it('audit: realtime fallback stays pinned while a later helper can learn for future events', async () => {
+  function event(
+    id: string,
+    context: ContextDataUIPart = {
+      sourceEnv: 'fixture',
+      metadata: {
+        origin: 'events',
+        type: 'message',
+        data: { message: id, traceId: 'x'.repeat(8_000) },
+      },
+      content: [],
+    },
+  ) {
+    return {
+      id,
+      role: 'user' as const,
+      parts: [{ type: 'data-context' as const, data: context }],
+    };
+  }
+  const contextOf = (source: ReturnType<typeof event>) => source.parts[0]!.data;
+  const generation = (
+    generate = vi.fn().mockResolvedValue({ success: false }),
+  ) => ({
+    generate,
+    modelIds: [{ providerId: 'test', modelId: 'chat' }],
+  });
+  it('binds identical payload occurrences independently across retention', async () => {
     const { history } = await setup();
     const recorder = history.openRecorder(meta());
-    const messages: ExtendedUIMessage[] = [
-      {
-        id: 'realtime-first',
-        role: 'user',
-        parts: [
-          {
-            type: 'data-context',
-            data: {
-              sourceEnv: 'audit',
-              metadata: {
-                origin: 'events',
-                type: 'message',
-                data: {
-                  message: 'hello',
-                  traceId: 'x'.repeat(8_000),
-                },
-              },
-              content: [],
-            },
-          },
-        ],
-      },
-    ];
+    const first = contextOf(event('same'));
+    const second = structuredClone(first);
+    let messages = [event('first', first), event('second', second)];
     recorder.scheduleSync(() => messages);
     const projections = createInputProjections(history);
     await projections.prepare('default', messages);
-    const part = messages[0]!.parts[0];
-    if (part?.type !== 'data-context') throw new Error('Missing context');
-    const before = projections.present('default', part.data);
+    const a = projections.present('default', first).metadata.inputEventRef;
+    const b = projections.present('default', second).metadata.inputEventRef;
+    expect(typeof a).toBe('string');
+    expect(typeof b).toBe('string');
+    expect(a).not.toBe(b);
+    messages = messages.slice(1);
+    recorder.scheduleSync(() => messages);
+    await projections.prepare('default', messages);
+    expect(projections.present('default', second).metadata.inputEventRef).toBe(
+      b,
+    );
+    expect(
+      await projections.readUnfiltered('default', b as string),
+    ).toHaveProperty('chunk');
+    await projections.close();
+  });
+  it.each(['plan', 'binding'])(
+    'isolates a corrupt %s from later occurrences',
+    async (failure) => {
+      const { history } = await setup();
+      const recorder = history.openRecorder(meta());
+      const messages = [event('bad'), event('good')];
+      recorder.scheduleSync(() => messages);
+      await history.flush();
+      const projections = createInputProjections(history);
+      if (failure === 'plan') {
+        vi.spyOn(history, 'findInputProjectionPlan').mockResolvedValueOnce({
+          body: 'invalid',
+        } as never);
+      } else {
+        vi.spyOn(history, 'readInputProjection').mockRejectedValueOnce(
+          new Error('Source hash mismatch'),
+        );
+      }
+      await projections.prepare('default', messages);
+      expect(
+        projections.present('default', contextOf(messages[0]!)).metadata
+          .inputEventRef,
+      ).toBeUndefined();
+      expect(
+        projections.present('default', contextOf(messages[1]!)).metadata
+          .inputEventRef,
+      ).toMatch(/^[a-z0-9]{8}$/);
+      await projections.close();
+    },
+  );
+  it('advertises fallback details for an incomplete catalog', async () => {
+    const { history } = await setup();
+    const recorder = history.openRecorder(meta());
+    const context = {
+      sourceEnv: 'audit',
+      metadata: {
+        origin: 'events',
+        data: Object.fromEntries(
+          Array.from({ length: 150 }, (_, i) => [`field${i}`, i]),
+        ),
+      },
+      content: [],
+    };
+    const messages = [event('wide', context)];
+    recorder.scheduleSync(() => messages);
+    const projections = createInputProjections(history);
+    await projections.prepare('default', messages);
+    const presented = projections.present('default', context);
+    expect(presented.metadata.inputFiltered).toBe(true);
+    expect(presented.metadata.moreInfoSections).toBeUndefined();
+    expect(
+      await projections.readUnfiltered(
+        'default',
+        presented.metadata.inputEventRef as string,
+      ),
+    ).toHaveProperty('chunk');
+    await projections.close();
+  });
+  it('audit: realtime fallback stays pinned while a later helper can learn for future events', async () => {
+    const { history } = await setup();
+    const recorder = history.openRecorder(meta());
+    const messages = [event('realtime-first')];
+    recorder.scheduleSync(() => messages);
+    const projections = createInputProjections(history);
+    await projections.prepare('default', messages);
+    const context = contextOf(messages[0]!);
+    const before = projections.present('default', context);
     expect(before.metadata.projectionStatus).toBe('fallback');
     const generate = vi.fn().mockResolvedValue({ success: false });
-    await projections.prepare('default', messages, {
-      generate,
-      modelIds: [{ providerId: 'audit', modelId: 'chat' }],
-    });
+    await projections.prepare('default', messages, generation(generate));
     expect(generate).toHaveBeenCalledTimes(1);
-    expect(projections.present('default', part.data)).toEqual(before);
+    expect(projections.present('default', context)).toEqual(before);
     await projections.close();
   });
 
   it('caps helper calls across a flood of new shapes', async () => {
     const { history } = await setup();
     const recorder = history.openRecorder(meta());
-    const messages: ExtendedUIMessage[] = Array.from(
-      { length: 12 },
-      (_, i) => ({
-        id: `shape-${i}`,
-        role: 'user',
-        parts: [
-          {
-            type: 'data-context',
-            data: {
-              sourceEnv: 'flood',
-              metadata: {
-                origin: 'events',
-                data: { message: 'hello', [`trace${i}`]: 'x'.repeat(8_000) },
-              },
-              content: [],
-            },
-          },
-        ],
+    const messages = Array.from({ length: 12 }, (_, i) =>
+      event(`shape-${i}`, {
+        sourceEnv: 'flood',
+        metadata: {
+          origin: 'events',
+          data: { message: 'hello', [`trace${i}`]: 'x'.repeat(8_000) },
+        },
+        content: [],
       }),
     );
     recorder.scheduleSync(() => messages);
     const projections = createInputProjections(history);
     const generate = vi.fn().mockResolvedValue({ success: false });
-    await projections.prepare('default', messages, {
-      generate,
-      modelIds: [{ providerId: 'test', modelId: 'chat' }],
-    });
+    await projections.prepare('default', messages, generation(generate));
     expect(generate).toHaveBeenCalledTimes(2);
     for (const message of messages) {
-      const part = message.parts[0];
-      if (part?.type !== 'data-context') throw new Error('Missing context');
-      const ref = projections.present('default', part.data).metadata
+      const ref = projections.present('default', contextOf(message)).metadata
         .inputEventRef as string;
       expect(await history.readInputProjection('default', ref)).toBeDefined();
     }
@@ -193,34 +260,14 @@ describe('input projection storage', () => {
   it('audit: reordering an unchanged source message preserves its durable reference', async () => {
     const { history } = await setup();
     const recorder = history.openRecorder(meta());
-    const source: ExtendedUIMessage = {
-      id: 'source',
-      role: 'user',
-      parts: [
-        {
-          type: 'data-context',
-          data: {
-            sourceEnv: 'audit',
-            metadata: {
-              origin: 'events',
-              data: {
-                message: 'hello',
-                traceId: 'x'.repeat(8_000),
-              },
-            },
-            content: [],
-          },
-        },
-      ],
-    };
+    const source = event('source');
     const later = message('later');
     let messages = [source, later];
     recorder.scheduleSync(() => messages);
     const projections = createInputProjections(history);
     await projections.prepare('default', messages);
-    const part = source.parts[0];
-    if (part?.type !== 'data-context') throw new Error('Missing context');
-    const reference = projections.present('default', part.data).metadata
+    const context = contextOf(source);
+    const reference = projections.present('default', context).metadata
       .inputEventRef as string;
     expect(
       await history.readInputProjection('default', reference),
@@ -231,30 +278,30 @@ describe('input projection storage', () => {
     expect(
       await history.readInputProjection('default', reference),
     ).toBeDefined();
-    expect(
-      projections.present('default', part.data).metadata.inputEventRef,
-    ).toBe(reference);
+    expect(projections.present('default', context).metadata.inputEventRef).toBe(
+      reference,
+    );
     await projections.close();
   });
 
-  it('audit: a failed review backs off without blocking other sections', async () => {
+  it('audit: a failed review backs off without blocking other revisions', async () => {
     const { history } = await setup();
-    await history.saveInputProjectionPlan({
-      revision: 'review-audit',
-      family: 'audit',
-      shape: 'shape',
-      body: JSON.stringify({
-        version: 1,
-        fields: [{ path: ['message'], type: 'string', section: 'other' }],
-      }),
-    });
-    for (const section of ['other', 'raw'])
+    for (const revision of ['review-audit', 'review-second']) {
+      await history.saveInputProjectionPlan({
+        revision,
+        family: revision,
+        shape: 'shape',
+        body: JSON.stringify({
+          version: 1,
+          fields: [{ path: ['message'], type: 'string', keep: false }],
+        }),
+      });
       for (let i = 0; i < 10; i++)
         await history.recordInputProjectionFetch(
-          'review-audit',
-          section,
-          `Need ${section} ${i}`,
+          revision,
+          `Need original ${i}`,
         );
+    }
     const generate = vi.fn().mockResolvedValue({ success: false });
     const projections = createInputProjections(history);
     const generation = {
@@ -264,53 +311,36 @@ describe('input projection storage', () => {
     await projections.prepare('default', [], generation);
     await projections.prepare('default', [], generation);
     expect(generate).toHaveBeenCalledTimes(2);
-    expect(
-      generate.mock.calls.map(
-        (call) => JSON.parse(call[0].prompt).review.section,
-      ),
-    ).toEqual(['other', 'raw']);
+
     expect(await history.pendingInputProjectionReviews()).toEqual([]);
     await projections.close();
   });
   it('persists ten-fetch batches, reviews at a safe boundary, and pins old events', async () => {
     const first = await setup();
     const recorder = first.history.openRecorder(meta());
-    const make = (id: string): ExtendedUIMessage => ({
-      id,
-      role: 'user',
-      parts: [
-        {
-          type: 'data-context',
-          data: {
-            sourceEnv: 'feedback',
-            metadata: {
-              origin: 'events',
-              type: 'message',
-              eventId: id,
-              data: { message: id, traceId: 'x'.repeat(8_000) },
-            },
-            content: [],
-          },
+    const make = (id: string) =>
+      event(id, {
+        sourceEnv: 'feedback',
+        metadata: {
+          origin: 'push-notifications',
+          data: { message: id, traceId: 'x'.repeat(20_000) },
         },
-      ],
-    });
+        content: [{ type: 'text', text: 'original content' }],
+      });
     const messages = [make('before')];
     const generate = vi.fn().mockImplementation(async (args) => {
       const parsed = JSON.parse(args.prompt);
-      const fields = Array.isArray(parsed) ? parsed : parsed.fields;
+      const fields = parsed.fields;
       return {
         success: true,
         finishReason: 'stop',
         output: {
-          assignments: fields.map(
-            (field: { fieldId: string; path: string[] }) => ({
-              fieldId: field.fieldId,
-              section:
-                !Array.isArray(parsed) || field.path[0] === 'message'
-                  ? 'default'
-                  : 'objectIds',
-            }),
-          ),
+          keep: fields
+            .filter(
+              (field: { path: string[] }) =>
+                parsed.review || field.path[0] === 'message',
+            )
+            .map(({ path }: { path: string[] }) => path),
         },
       };
     });
@@ -321,45 +351,37 @@ describe('input projection storage', () => {
     const projections = createInputProjections(first.history);
     recorder.scheduleSync(() => messages);
     await projections.prepare('default', messages, generation);
-    const context = messages[0]!.parts[0];
-    if (context?.type !== 'data-context') throw new Error('Missing context');
-    const before = projections.present('default', context.data);
+    const context = contextOf(messages[0]!);
+    const before = projections.present('default', context);
+    expect(before.metadata.inputFiltered).toBe(true);
+    expect(before.metadata.moreInfoSections).toBeUndefined();
     const ref = before.metadata.inputEventRef as string;
     for (let i = 0; i < 9; i++)
-      await projections.readSection(
+      await projections.readUnfiltered(
         'default',
         ref,
-        'objectIds',
         undefined,
         `Need trace ${i}`,
       );
     expect(await first.history.pendingInputProjectionReviews()).toEqual([]);
-    const page = (await projections.readSection(
+    const page = (await projections.readUnfiltered('default', ref)) as {
+      nextCursor: string;
+    };
+    await projections.readUnfiltered(
       'default',
       ref,
-      'objectIds',
-    )) as { nextCursor: string };
-    await projections.readSection(
-      'default',
-      ref,
-      'objectIds',
       page.nextCursor,
       'Continuation must not count',
     );
-    await projections.readSection(
-      'wrong',
-      ref,
-      'objectIds',
-      undefined,
-      'Denied must not count',
-    );
-    await projections.readSection(
-      'default',
-      ref,
-      'links',
-      undefined,
-      'Unknown must not count',
-    );
+    expect(
+      await projections.readUnfiltered(
+        'wrong',
+        ref,
+        undefined,
+        'Denied must not count',
+      ),
+    ).toEqual({ status: 'unavailable' });
+
     await projections.close();
     await first.history.close();
     let now = Date.now();
@@ -368,13 +390,22 @@ describe('input projection storage', () => {
       now: () => new Date(now),
     });
     const restored = createInputProjections(second.history);
-    await restored.readSection(
-      'default',
-      ref,
-      'objectIds',
-      undefined,
-      'Need trace 9',
-    );
+    let cursor: string | undefined;
+    let text = '';
+    do {
+      const result = (await restored.readUnfiltered(
+        'default',
+        ref,
+        cursor,
+        'Need trace 9',
+      )) as { chunk: string; nextCursor: string | null };
+      expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(
+        12 * 1_024,
+      );
+      text += result.chunk;
+      cursor = result.nextCursor ?? undefined;
+    } while (cursor);
+    expect(JSON.parse(text)).toEqual(context);
     const pending = await second.history.pendingInputProjectionReviews();
     expect(pending).toHaveLength(1);
     expect(pending[0]?.reasons).toEqual(
@@ -397,26 +428,18 @@ describe('input projection storage', () => {
     expect(generate).toHaveBeenCalledTimes(2);
     const reviewPrompt = JSON.parse(generate.mock.calls[1]![0].prompt);
     expect(reviewPrompt.review.reasons).toEqual(pending[0]?.reasons);
-    expect(restored.present('default', context.data)).toEqual(before);
+    expect(restored.present('default', context)).toEqual(before);
     const nextRecorder = second.history.openRecorder(meta());
     messages.push(make('after'));
     nextRecorder.scheduleSync(() => messages);
     await restored.prepare('default', messages, generation);
-    const next = messages[1]!.parts[0];
-    if (next?.type !== 'data-context') throw new Error('Missing context');
-    expect(restored.present('default', next.data).metadata.data).toHaveProperty(
-      'traceId',
-    );
+    expect(
+      restored.present('default', contextOf(messages[1]!)).metadata.data,
+    ).toHaveProperty('traceId');
     // Requests pinned to the old revision still produce the next disjoint ten-reason batch.
     await Promise.all(
       Array.from({ length: 10 }, (_, i) =>
-        restored.readSection(
-          'default',
-          ref,
-          'objectIds',
-          undefined,
-          `Again ${i}`,
-        ),
+        restored.readUnfiltered('default', ref, undefined, `Again ${i}`),
       ),
     );
     const batch2 = await second.history.pendingInputProjectionReviews();
@@ -427,50 +450,33 @@ describe('input projection storage', () => {
     await restored.prepare('default', messages, generation);
     expect(generate).toHaveBeenCalledTimes(2);
     expect(await second.history.pendingInputProjectionReviews()).toEqual([]);
-    expect(restored.present('default', context.data)).toEqual(before);
+    expect(restored.present('default', context)).toEqual(before);
     await restored.close();
   });
 
   it('reuses known shapes, isolates variants and preserves pinned details', async () => {
     const { history } = await setup();
     const recorder = history.openRecorder(meta());
-    const make = (
-      id: string,
-      extra: Record<string, string> = {},
-    ): ExtendedUIMessage => ({
-      id,
-      role: 'user',
-      parts: [
-        {
-          type: 'data-context',
-          data: {
-            sourceEnv: 'fixture',
-            metadata: {
-              origin: 'events',
-              type: 'message',
-              eventId: id,
-              data: {
-                message: `Fact ${id}`,
-                traceId: 'x'.repeat(8_000),
-                ...extra,
-              },
-            },
-            content: [],
-          },
+    const make = (id: string, extra: Record<string, string> = {}) =>
+      event(id, {
+        sourceEnv: 'fixture',
+        metadata: {
+          origin: 'events',
+          type: 'message',
+          data: { message: `Fact ${id}`, traceId: 'x'.repeat(8_000), ...extra },
         },
-      ],
-    });
+        content: [],
+      });
     const messages = [make('first')];
     const generate = vi.fn().mockImplementation(async (args) => ({
       success: true,
       finishReason: 'stop',
       output: {
-        assignments: JSON.parse(args.prompt).map(
-          (field: { fieldId: string; path: string[] }) => ({
-            fieldId: field.fieldId,
-            section: field.path.at(-1) === 'traceId' ? 'objectIds' : 'default',
-          }),
-        ),
+        keep: JSON.parse(args.prompt)
+          .fields.filter(
+            (field: { path: string[] }) => field.path.at(-1) !== 'traceId',
+          )
+          .map(({ path }: { path: string[] }) => path),
       },
     }));
     const generation = {
@@ -483,13 +489,15 @@ describe('input projection storage', () => {
       await projections.prepare('default', messages, generation);
     };
     await prepare();
-    const first = messages[0]!.parts[0];
-    if (first?.type !== 'data-context')
-      throw new Error('Missing fixture context');
-    const pinned = projections.present('default', first.data);
+    const first = contextOf(messages[0]!);
+    const pinned = projections.present('default', first);
     expect(pinned.metadata.data).toEqual({ message: 'Fact first' });
+    expect(pinned.metadata.type).toBe('message');
+    expect(JSON.parse(generate.mock.calls[0]?.[0].prompt).identity).toEqual([
+      { path: ['type'], type: 'string', sample: '"message"' },
+    ]);
     expect(Buffer.byteLength(JSON.stringify(pinned.metadata))).toBeLessThan(
-      Buffer.byteLength(JSON.stringify(first.data.metadata)) / 2,
+      Buffer.byteLength(JSON.stringify(first.metadata)) / 2,
     );
     messages.push(make('second'));
     await prepare();
@@ -497,192 +505,95 @@ describe('input projection storage', () => {
     messages.push(make('changed', { newFact: 'Must stay visible' }));
     await prepare();
     expect(generate).toHaveBeenCalledTimes(2);
-    const changed = messages[2]!.parts[0];
-    if (changed?.type !== 'data-context')
-      throw new Error('Missing fixture context');
-    expect(projections.present('default', changed.data).metadata.data).toEqual({
+    const changed = contextOf(messages[2]!);
+    expect(projections.present('default', changed).metadata.data).toEqual({
       message: 'Fact changed',
       newFact: 'Must stay visible',
     });
-    expect(projections.present('default', first.data)).toEqual(pinned);
-    const details = (await projections.readSection(
+    expect(projections.present('default', first)).toEqual(pinned);
+    const details = (await projections.readUnfiltered(
       'default',
       pinned.metadata.inputEventRef as string,
-      'objectIds',
     )) as { chunk: string; nextCursor: string | null };
-    expect(details.chunk).toContain('traceId');
-    expect(first.data.metadata.data).toHaveProperty(
-      'traceId',
-      'x'.repeat(8_000),
-    );
+    expect(details.nextCursor).toBeNull();
+    expect(JSON.parse(details.chunk)).toEqual(first);
+    expect(first.metadata.data).toHaveProperty('traceId', 'x'.repeat(8_000));
   });
 
-  it('detects reference collisions without binding another source and expires evicted sources', async () => {
-    const { history } = await setup();
-    const context = {
-      sourceEnv: 'fixture',
-      metadata: { origin: 'events', data: { message: 'fact' } },
-      content: [],
-    };
-    const sources: ExtendedUIMessage[] = ['one', 'two'].map((id) => ({
-      id,
-      role: 'user',
-      parts: [{ type: 'data-context', data: context }],
-    }));
-    history.openRecorder(meta()).scheduleSync(() => sources);
-    await history.flush();
-    const binding = {
-      reference: 'abcdefgh',
-      sessionId: 'default',
-      messageId: 'one',
-      part: 0,
-      contextHash: createHash('sha256')
-        .update(JSON.stringify(context))
-        .digest('hex'),
-      revision: 'identity-v1',
-    };
-    expect(await history.bindInputProjection(binding)).toEqual(binding);
-    expect(
-      await history.bindInputProjection({ ...binding, messageId: 'two' }),
-    ).toBeUndefined();
-    expect(
-      await history.bindInputProjection({
-        ...binding,
-        messageId: 'two',
-        reference: 'ijklmnop',
-      }),
-    ).toMatchObject({ reference: 'ijklmnop', messageId: 'two' });
-    expect(
-      (await history.readInputProjection('default', 'abcdefgh'))?.binding
-        .messageId,
-    ).toBe('one');
-  });
-  it('does not cache small-event identity decisions for later large events of the same shape', async () => {
-    const { history } = await setup();
-    const recorder = history.openRecorder(meta());
-    const context = (traceId: string) => ({
-      sourceEnv: 'fixture',
-      metadata: {
-        origin: 'events',
-        type: 'message',
-        data: { message: 'keep', traceId },
-      },
-      content: [],
-    });
-    const small = context('short');
-    const large = context('x'.repeat(8_000));
-    const source = (id: string, data: typeof small): ExtendedUIMessage => ({
-      id,
-      role: 'user',
-      parts: [{ type: 'data-context', data }],
-    });
-    const messages = [source('small', small)];
-    recorder.scheduleSync(() => messages);
-    const projections = createInputProjections(history);
-    const generate = vi.fn().mockResolvedValue({
-      success: true,
-      finishReason: 'stop',
-      output: {
-        assignments: [
-          { fieldId: 'f0', section: 'default' },
-          { fieldId: 'f1', section: 'objectIds' },
-        ],
-      },
-    });
-    const generation = {
-      generate,
-      modelIds: [{ providerId: 'fixture', modelId: 'chat' }],
-    };
-    await projections.prepare('default', messages, generation);
-    expect(generate).not.toHaveBeenCalled();
-    expect(projections.present('default', small).metadata.data).toEqual(
-      small.metadata.data,
-    );
-    messages.push(source('large', large));
-    recorder.scheduleSync(() => messages);
-    await projections.prepare('default', messages, generation);
-    expect(generate).toHaveBeenCalledTimes(1);
-    expect(projections.present('default', large).metadata.data).toEqual({
-      message: 'keep',
-    });
-    expect(projections.present('default', small).metadata.data).toEqual(
-      small.metadata.data,
-    );
-  });
-  it('assigns references to content-only notifications and rejects unadvertised sections', async () => {
+  it.each([true, false])(
+    'evaluates small unseen shapes once and persists keep=%s decisions',
+    async (keep) => {
+      const { history } = await setup();
+      const recorder = history.openRecorder(meta());
+      const context = (traceId: string) => ({
+        sourceEnv: 'fixture',
+        metadata: {
+          origin: 'events',
+          type: 'message',
+          data: { message: 'keep', traceId },
+        },
+        content: [],
+      });
+      const small = context('short');
+      const large = context('x'.repeat(8_000));
+      const messages = [event('small', small)];
+      recorder.scheduleSync(() => messages);
+      const projections = createInputProjections(history);
+      const generate = vi.fn().mockResolvedValue({
+        success: true,
+        finishReason: 'stop',
+        output: {
+          keep: keep ? [['message'], ['traceId']] : [['message']],
+        },
+      });
+      const generation = {
+        generate,
+        modelIds: [{ providerId: 'fixture', modelId: 'chat' }],
+      };
+      await projections.prepare('default', messages, generation);
+      expect(generate).toHaveBeenCalledTimes(1);
+      expect(projections.present('default', small).metadata.data).toEqual(
+        keep ? small.metadata.data : { message: 'keep' },
+      );
+      expect(projections.present('default', small).metadata.inputFiltered).toBe(
+        keep ? undefined : true,
+      );
+      await projections.close();
+      const restored = createInputProjections(history);
+      messages.push(event('large', large));
+      recorder.scheduleSync(() => messages);
+      await restored.prepare('default', messages, generation);
+      expect(generate).toHaveBeenCalledTimes(1);
+      expect(restored.present('default', large).metadata.data).toEqual(
+        keep
+          ? expect.objectContaining({
+              message: 'keep',
+              traceId: expect.any(String),
+            })
+          : { message: 'keep' },
+      );
+      await restored.close();
+    },
+  );
+  it('recovers content-only notifications without a filter plan', async () => {
     const { history } = await setup();
     const context = {
       sourceEnv: 'fixture',
       metadata: { origin: 'push-notifications' },
       content: [{ type: 'text' as const, text: 'hello' }],
     };
-    const source: ExtendedUIMessage = {
-      id: 'content-only',
-      role: 'user',
-      parts: [{ type: 'data-context', data: context }],
-    };
+    const source = event('content-only', context);
     history.openRecorder(meta()).scheduleSync(() => [source]);
     const projections = createInputProjections(history);
     await projections.prepare('default', [source]);
     const presented = projections.present('default', context);
     expect(presented.content).toEqual(context.content);
     expect(presented.metadata.inputEventRef).toMatch(/^[a-z0-9]{8}$/);
-    expect(
-      await projections.readSection(
-        'default',
-        presented.metadata.inputEventRef as string,
-        'links',
-      ),
-    ).toEqual({ status: 'unknown-section' });
-  });
-  it('prepares compact defaults and recovers all raw details across service restart', async () => {
-    const { history } = await setup();
-    const context = {
-      sourceEnv: 'fixture',
-      metadata: {
-        origin: 'events',
-        type: 'message',
-        data: {
-          message: 'Keep this fact',
-          debug: { traceId: 'x'.repeat(8_000) },
-        },
-      },
-      content: [],
-    };
-    const source = {
-      id: 'compact-source',
-      role: 'user',
-      parts: [{ type: 'data-context', data: context }],
-    } as ExtendedUIMessage;
-    const recorder = history.openRecorder(meta());
-    recorder.scheduleSync(() => [source]);
-    const projections = createInputProjections(history);
-    await projections.prepare('default', [source]);
-    const compact = projections.present('default', context);
-    expect(compact.metadata.data).toEqual({ message: 'Keep this fact' });
-    expect(context.metadata.data.debug.traceId).toHaveLength(8_000);
-    const reference = compact.metadata.inputEventRef as string;
-    const restarted = createInputProjections(history);
-    await restarted.prepare('default', [source]);
-    expect(restarted.present('default', context).metadata.inputEventRef).toBe(
-      reference,
-    );
-    let cursor: string | undefined;
-    let text = '';
-    do {
-      const result = (await restarted.readSection(
-        'default',
-        reference,
-        'raw',
-        cursor,
-      )) as { chunk: string; nextCursor: string | null };
-      text += result.chunk;
-      cursor = result.nextCursor ?? undefined;
-    } while (cursor);
-    expect(JSON.parse(text)).toEqual(context.metadata);
-    expect(await restarted.readSection('child', reference, 'raw')).toEqual({
-      status: 'unavailable',
-    });
+    const result = (await projections.readUnfiltered(
+      'default',
+      presented.metadata.inputEventRef as string,
+    )) as { chunk: string };
+    expect(JSON.parse(result.chunk)).toEqual(context);
   });
   it('binds only durable matching sources, pins plans, scopes reads and survives restart', async () => {
     const { history, directory } = await setup();
@@ -691,11 +602,7 @@ describe('input projection storage', () => {
       metadata: { origin: 'events', data: { nested: { id: 'original' } } },
       content: [],
     };
-    const source = {
-      id: 'event-source',
-      role: 'user',
-      parts: [{ type: 'data-context', data: context }],
-    } as ExtendedUIMessage;
+    const source = event('event-source', context);
     const binding = {
       reference: 'abcdefgh',
       sessionId: 'default',
@@ -708,7 +615,7 @@ describe('input projection storage', () => {
     };
     expect(await history.bindInputProjection(binding)).toBeUndefined();
     const recorder = history.openRecorder(meta());
-    recorder.scheduleSync(() => [source]);
+    recorder.scheduleSync(() => [source, event('other', context)]);
     await history.flush();
     const plan = {
       revision: 'revision-1',
@@ -721,6 +628,16 @@ describe('input projection storage', () => {
       await history.bindInputProjection({ ...binding, contextHash: 'bad' }),
     ).toBeUndefined();
     expect(await history.bindInputProjection(binding)).toEqual(binding);
+    expect(
+      await history.bindInputProjection({ ...binding, messageId: 'other' }),
+    ).toBeUndefined();
+    expect(
+      await history.bindInputProjection({
+        ...binding,
+        messageId: 'other',
+        reference: 'qrstuvwx',
+      }),
+    ).toMatchObject({ messageId: 'other', reference: 'qrstuvwx' });
     expect(
       await history.bindInputProjection({
         ...binding,

@@ -1222,18 +1222,10 @@ class ChatSessionModule implements AgentSession {
   ): Promise<void> => {
     if (!this.deps.inputProjections) return;
     this.scheduleTranscriptSync();
-    const entries = this.deps.config.get().modelSelection.chat;
-    const active = this.fallbackManager.getChatModelEntry();
-    const modelIds = [active, ...entries]
-      .filter(
-        (entry): entry is NonNullable<typeof entry> => entry !== undefined,
-      )
-      .filter(
-        (entry, i, all) =>
-          all.findIndex(
-            (candidate) => JSON.stringify(candidate) === JSON.stringify(entry),
-          ) === i,
-      );
+    const memoryModels = this.deps.config.getModelSelection('memory');
+    const modelIds = memoryModels.length
+      ? memoryModels
+      : this.deps.config.getModelSelection('chat');
     try {
       await this.deps.inputProjections.prepare(
         this.sessionId,
@@ -1407,7 +1399,7 @@ class ChatSessionModule implements AgentSession {
     const history = [...this.messages];
     const historyRevision = history.length;
     const updateWatermark = this.leaseManager.updateWatermark;
-    await this.prepareProjectedInputs();
+    await this.prepareProjectedInputs(request.signal);
     const assembled = await assembleInferenceContext({
       projectContext: (context) =>
         this.deps.inputProjections?.present(this.sessionId, context) ?? context,

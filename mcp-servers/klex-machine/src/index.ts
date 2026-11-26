@@ -4,7 +4,7 @@ import {
   packageVersion,
   parseCli,
 } from './cli.js';
-import { createMachineLogger } from './logger.js';
+import { createMachineLogger, type MachineLogger } from './logger.js';
 import { createNotificationStore } from './notifications/index.js';
 
 async function main(): Promise<void> {
@@ -50,8 +50,12 @@ async function main(): Promise<void> {
         import('./server.js'),
         import('./desktop/platform/index.js'),
       ]);
-    const desktop = desktopFromEnvironment();
+    const logger = createMachineLogger(result.config.logLevel);
+    const desktop = desktopFromEnvironment(process.env, {
+      warn: desktopWarning(logger),
+    });
     await startMachineServer(result.config, {
+      logger,
       dataDir: result.dataDir,
       omitHostDetails: result.omitHostDetails,
       ...(desktop ? { desktop } : {}),
@@ -76,13 +80,15 @@ async function main(): Promise<void> {
     import('./mcp.js'),
     import('./desktop/platform/index.js'),
   ]);
-  const desktop = desktopFromEnvironment();
+  const logger = createMachineLogger(result.config.logLevel);
+  const desktop = desktopFromEnvironment(process.env, {
+    warn: desktopWarning(logger),
+  });
   const enrollment = await loadMachineEnrollment(result.dataDir);
   const protectedResource = await loadProtectedResourceConfiguration(
     enrollment.oauthProtectedResourceUrl,
     enrollment.mcpResourceUrl,
   );
-  const logger = createMachineLogger(result.config.logLevel);
   const store = createNotificationStore({
     dataDir: result.dataDir,
     logger,
@@ -147,6 +153,10 @@ async function main(): Promise<void> {
       );
     });
   }
+}
+
+function desktopWarning(logger: MachineLogger): (message: string) => void {
+  return (message) => logger.warn({ source: 'desktop' }, message);
 }
 
 void main().catch((error: unknown) => {

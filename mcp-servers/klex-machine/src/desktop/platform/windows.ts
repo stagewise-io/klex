@@ -3,6 +3,7 @@ import {
   type SpawnOptionsWithoutStdio,
   spawn,
 } from 'node:child_process';
+import { hostname } from 'node:os';
 import { win32 } from 'node:path';
 import type { Duplex } from 'node:stream';
 
@@ -18,10 +19,14 @@ import {
   type ScreenSize,
   type ScrollDirection,
 } from '../provider.js';
+import { RfbServer } from '../rfb/index.js';
+import { StreamHelperBackend } from './stream-helper.js';
+import { windowsKeyToken } from './stream-keys.js';
 import {
   WINDOWS_HELPER_READY,
   windowsHelperBootstrap,
 } from './windows-helper.js';
+import { windowsStreamBootstrap } from './windows-stream.js';
 
 const STARTUP_TIMEOUT_MS = 30_000;
 const REQUEST_TIMEOUT_MS = 15_000;
@@ -45,6 +50,8 @@ export interface WindowsDesktopProviderOptions {
   /** Replaces the persistent PowerShell helper, for tests. */
   helper?: WindowsDesktopHelper;
   launch?: WindowsProcessLauncher;
+  /** Starts the PowerShell process for a stream capture, for tests. */
+  spawnStream?: HelperSpawner;
   /** Receives each new hint from `probe()`. Defaults to stderr. */
   warn?: (hint: string) => void;
 }
@@ -161,13 +168,19 @@ const launchProcess: WindowsProcessLauncher = ({ command, args, cwd, env }) =>
  *
  * Session 0 (services) and non-interactive window stations have no desktop.
  * The lock screen and the UAC secure desktop belong to Winlogon and cannot be
- * captured or driven; while one is up, the probe reports no desktop.
- * Streaming and accessibility are not implemented yet.
+ * captured or driven. While one is up the probe reports no computer use, but
+ * the stream stays up and shows a placeholder until the user is back.
+ *
+ * The stream is the built-in RFB server fed by a second PowerShell process
+ * running the C# stream host, started only while a viewer watches.
+ * Accessibility is not implemented yet.
  */
 export class WindowsDesktopProvider implements DesktopProvider {
   readonly #env: NodeJS.ProcessEnv;
   readonly #helper: WindowsDesktopHelper;
   readonly #launch: WindowsProcessLauncher;
+  readonly #spawnStream: HelperSpawner;
+  #stream: RfbServer | undefined;
   readonly #ownHelper: PowerShellDesktopHelper | undefined;
   /** Set once the session can never have a desktop, so probes stop asking. */
   #permanent: DesktopCapabilities | undefined;
@@ -184,6 +197,9 @@ export class WindowsDesktopProvider implements DesktopProvider {
       this.#helper = (request, args) => helper.request(request, args);
     }
     this.#launch = options.launch ?? launchProcess;
+    this.#spawnStream =
+      options.spawnStream ??
+      ((file, args, spawnOptions) => spawn(file, args, spawnOptions));
     this.#warn =
       options.warn ??
       ((hint) => process.stderr.write(`klex-machine desktop: ${hint}\n`));
@@ -218,16 +234,19 @@ export class WindowsDesktopProvider implements DesktopProvider {
         "klex-machine's window station is not interactive, as in an SSH session or a task set to run whether or not the user is signed in. Run it in the signed-in user's desktop session to use the desktop.",
       );
     }
-    const desktop = decode(info.get('desktop') ?? '');
-    if (desktop.toLowerCase() !== 'default') {
-      return unavailable(
-        `The input desktop is ${desktop ? `"${desktop}"` : 'not accessible'}: Windows is locked, or the sign-in screen or a UAC prompt is showing. These secure desktops cannot be captured or driven; computer use returns once the user is back on their desktop.`,
-      );
-    }
     const width = Number(info.get('width'));
     const height = Number(info.get('height'));
     if (!(width > 0 && height > 0)) {
       return unavailable('Windows reported no primary screen.');
+    }
+    const desktop = decode(info.get('desktop') ?? '');
+    if (desktop.toLowerCase() !== 'default') {
+      return {
+        computerUse: false,
+        stream: true,
+        screen: { width, height },
+        hint: `The input desktop is ${desktop ? `"${desktop}"` : 'not accessible'}: Windows is locked, or the sign-in screen or a UAC prompt is showing. These secure desktops cannot be captured or driven; computer use returns once the user is back on their desktop, and until then the stream shows a placeholder.`,
+      };
     }
     const capture = info.get('capture');
     if (capture !== 'ok') {
@@ -235,7 +254,7 @@ export class WindowsDesktopProvider implements DesktopProvider {
         `Screen capture failed: ${decode(capture ?? '')}. A minimized or disconnected Remote Desktop session has no screen to capture.`,
       );
     }
-    return { computerUse: true, stream: false, screen: { width, height } };
+    return { computerUse: true, stream: true, screen: { width, height } };
   }
 
   #unavailableForever(hint: string): DesktopCapabilities {
@@ -360,12 +379,33 @@ export class WindowsDesktopProvider implements DesktopProvider {
   }
 
   async openStream(): Promise<Duplex> {
-    throw new Error('Desktop streaming is not available on Windows yet');
+    if (!this.#stream?.capturing) {
+      const { stream, hint } = await this.probe();
+      if (!stream) throw new Error(hint ?? 'The Windows desktop cannot stream');
+    }
+    this.#stream ??= new RfbServer(
+      new StreamHelperBackend({
+        spawn: () => {
+          const system32 = systemDirectory(this.#env);
+          return this.#spawnStream(powerShellPath(system32), POWERSHELL_ARGS, {
+            cwd: system32,
+            env: this.#env,
+            windowsHide: true,
+          });
+        },
+        preamble: windowsStreamBootstrap(),
+        keyToken: windowsKeyToken,
+        onLog: (message) => this.#warn(message),
+      }),
+      { name: hostname(), onError: (error) => this.#warn(message(error)) },
+    );
+    return this.#stream.open();
   }
 
-  /** Stops the helper process; the next call starts a new one. */
+  /** Stops the helper process and any stream; the next call starts anew. */
   close(): void {
     this.#ownHelper?.close();
+    this.#stream?.close();
   }
 }
 
@@ -402,6 +442,25 @@ function message(error: unknown): string {
     /\.$/,
     '',
   );
+}
+
+const POWERSHELL_ARGS = [
+  '-NoLogo',
+  '-NoProfile',
+  '-NonInteractive',
+  '-Command',
+  '-',
+];
+
+function systemDirectory(env: NodeJS.ProcessEnv): string {
+  return win32.join(
+    env.SystemRoot ?? env.SYSTEMROOT ?? 'C:\\Windows',
+    'System32',
+  );
+}
+
+function powerShellPath(system32: string): string {
+  return win32.join(system32, 'WindowsPowerShell', 'v1.0', 'powershell.exe');
 }
 
 export type HelperSpawner = (
@@ -524,14 +583,11 @@ export class PowerShellDesktopHelper {
       this.#connection.ref();
       return this.#connection;
     }
-    const system32 = win32.join(
-      this.#env.SystemRoot ?? this.#env.SYSTEMROOT ?? 'C:\\Windows',
-      'System32',
-    );
+    const system32 = systemDirectory(this.#env);
     const connection = new HelperConnection(
       this.#spawn(
-        win32.join(system32, 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
-        ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', '-'],
+        powerShellPath(system32),
+        POWERSHELL_ARGS,
         // Not the daemon's cwd: an orphaned helper would keep it locked.
         { cwd: system32, env: this.#env, windowsHide: true },
       ),

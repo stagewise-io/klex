@@ -1,7 +1,11 @@
-import { execFile, spawn } from 'node:child_process';
+import {
+  type ChildProcessWithoutNullStreams,
+  execFile,
+  spawn,
+} from 'node:child_process';
 import { constants } from 'node:fs';
 import { access, mkdtemp, readFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Duplex } from 'node:stream';
 import { fileURLToPath } from 'node:url';
@@ -19,6 +23,9 @@ import {
   type ScreenSize,
   type ScrollDirection,
 } from '../provider.js';
+import { RfbServer } from '../rfb/index.js';
+import { StreamHelperBackend } from './stream-helper.js';
+import { macosKeyToken } from './stream-keys.js';
 
 export const MACOS_HELPER_NAME = 'klex-desktop-helper';
 const SCREENCAPTURE = '/usr/sbin/screencapture';
@@ -60,12 +67,19 @@ export type MacosProcessLauncher = (
   options: LaunchOptions & { env: NodeJS.ProcessEnv },
 ) => Promise<{ pid: number }>;
 
+/** Starts `klex-desktop-helper stream`. */
+export type MacosStreamSpawner = (
+  helper: string,
+  env: NodeJS.ProcessEnv,
+) => ChildProcessWithoutNullStreams;
+
 export interface MacosDesktopProviderOptions {
   env?: NodeJS.ProcessEnv;
   /** The helper binary. Found next to the bundle, or in dist/ from sources, when omitted. */
   helperPath?: string;
   run?: MacosCommandRunner;
   launch?: MacosProcessLauncher;
+  spawnStream?: MacosStreamSpawner;
   /** Receives each new hint from `probe()`. Defaults to stderr. */
   warn?: (hint: string) => void;
   now?: () => number;
@@ -270,6 +284,9 @@ const launchProcess: MacosProcessLauncher = ({ command, args, cwd, env }) =>
     });
   });
 
+const spawnStreamHelper: MacosStreamSpawner = (helper, env) =>
+  spawn(helper, ['stream'], { env, stdio: 'pipe' });
+
 function defaultHelperCandidates(): string[] {
   const here = import.meta.url;
   // Bundled, this module is dist/index.js and the helper sits in dist/macos.
@@ -289,7 +306,8 @@ function defaultHelperCandidates(): string[] {
  * input, windows and app launch through a small Swift helper using CGEvent,
  * CGWindowList and NSWorkspace. Computer use needs a logged-in window server
  * session plus Screen Recording and Accessibility permission for the app that
- * started klex-machine. There is no stream and no accessibility tree yet.
+ * started klex-machine. The stream is the built-in RFB server fed by the
+ * helper's ScreenCaptureKit capture. There is no accessibility tree yet.
  *
  * The provider works in physical pixels; the helper takes and returns points,
  * so coordinates are scaled by the backing scale factor (2 on Retina).
@@ -299,11 +317,13 @@ export class MacosDesktopProvider implements DesktopProvider {
   readonly #helperCandidates: string[];
   readonly #run: MacosCommandRunner;
   readonly #launch: MacosProcessLauncher;
+  readonly #spawnStream: MacosStreamSpawner;
   readonly #warn: (hint: string) => void;
   readonly #now: () => number;
   #helper: string | undefined;
   #display: { value: MacosDisplay; at: number } | undefined;
   #lastHint: string | undefined;
+  #stream: RfbServer | undefined;
 
   constructor(options: MacosDesktopProviderOptions = {}) {
     this.#env = options.env ?? process.env;
@@ -312,6 +332,7 @@ export class MacosDesktopProvider implements DesktopProvider {
       : defaultHelperCandidates();
     this.#run = options.run ?? runCommand;
     this.#launch = options.launch ?? launchProcess;
+    this.#spawnStream = options.spawnStream ?? spawnStreamHelper;
     this.#warn =
       options.warn ??
       ((hint) => process.stderr.write(`klex-machine desktop: ${hint}\n`));
@@ -349,7 +370,7 @@ export class MacosDesktopProvider implements DesktopProvider {
     this.#display = { value: probe, at: this.#now() };
     return {
       computerUse: true,
-      stream: false,
+      stream: true,
       screen: { width: probe.pixelWidth, height: probe.pixelHeight },
     };
   }
@@ -359,10 +380,26 @@ export class MacosDesktopProvider implements DesktopProvider {
     return { width: display.pixelWidth, height: display.pixelHeight };
   }
 
-  openStream(): Promise<Duplex> {
-    return Promise.reject(
-      new Error('Streaming the macOS desktop is not supported yet'),
-    );
+  async openStream(): Promise<Duplex> {
+    if (!this.#stream?.capturing) {
+      const { stream, hint } = await this.probe();
+      if (!stream) throw new Error(hint ?? 'The macOS desktop cannot stream');
+    }
+    if (!this.#stream) {
+      const helper = await this.#requireHelper();
+      this.#stream ??= new RfbServer(
+        new StreamHelperBackend({
+          spawn: () => this.#spawnStream(helper, this.#env),
+          keyToken: macosKeyToken,
+          onLog: (message) => this.#warn(message),
+        }),
+        {
+          name: hostname(),
+          onError: (error) => this.#warn(errorMessage(error)),
+        },
+      );
+    }
+    return this.#stream.open();
   }
 
   async capture(options: CaptureOptions): Promise<Buffer> {

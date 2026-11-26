@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 
 import { MacosDesktopProvider } from '../src/desktop/platform/macos.js';
 import { describeDesktopProviderContract } from './desktop-provider-contract.js';
+import { ENC, TestRfbClient } from './rfb-test-client.js';
 
 /**
  * Runs against the real helper and window server, so only on macOS after a
@@ -41,7 +42,7 @@ describe.runIf(native)('macOS desktop helper on this Mac', () => {
   it('reports its version and the main display in points and pixels', async () => {
     const version = await runHelper(['version']);
     expect(version.code).toBe(0);
-    expect(JSON.parse(version.stdout)).toEqual({ version: '1' });
+    expect(JSON.parse(version.stdout)).toEqual({ version: '2' });
     const display = await runHelper(['display']);
     expect(display.code).toBe(0);
     const geometry = JSON.parse(display.stdout);
@@ -61,6 +62,7 @@ describe.runIf(native)('macOS desktop helper on this Mac', () => {
     expect((await runHelper(['click', '1', '1', 'left', '1'])).code).toBe(2);
     expect((await runHelper(['key', 'cmd|char:é'])).code).toBe(2);
     expect((await runHelper(['nope'])).code).toBe(2);
+    expect((await runHelper(['stream', 'now'])).code).toBe(2);
   });
 
   it('reports a permission hint whenever computer use is off', () => {
@@ -80,12 +82,43 @@ describe.runIf(native)('macOS desktop helper on this Mac', () => {
     expect(move.code).toBe(3);
     expect(move.stderr).toMatch(/Accessibility permission is missing/);
   });
+
+  it('refuses to stream without permission', async () => {
+    const probe = JSON.parse((await runHelper(['probe'])).stdout);
+    if (probe.screenRecording && probe.accessibility) return;
+    const stream = await runHelper(['stream']);
+    expect(stream.code).toBe(3);
+    expect(stream.stdout).toBe('');
+  });
+
+  it.runIf(capabilities?.computerUse)(
+    'streams the main display over RFB',
+    { timeout: 30_000 },
+    async () => {
+      const desktop = provider();
+      const client = new TestRfbClient(await desktop.openStream());
+      try {
+        await client.handshake();
+        expect(client.width).toBeGreaterThan(0);
+        client.setEncodings([ENC.tight, ENC.raw]);
+        client.request(false);
+        const rects = await client.nextUpdate();
+        const area = rects.reduce(
+          (sum, rect) => sum + rect.width * rect.height,
+          0,
+        );
+        expect(area).toBe(client.width * client.height);
+      } finally {
+        client.socket.destroy();
+      }
+    },
+  );
 });
 
 if (capabilities) {
   describeDesktopProviderContract(
     'macOS on this Mac',
-    { computerUse: capabilities.computerUse, stream: false },
+    { computerUse: capabilities.computerUse, stream: capabilities.computerUse },
     async () => ({ provider: provider() }),
   );
 }

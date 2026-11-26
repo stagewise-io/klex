@@ -1,8 +1,12 @@
-import type { ChildProcessWithoutNullStreams } from 'node:child_process';
+import {
+  type ChildProcessWithoutNullStreams,
+  spawn as spawnProcess,
+} from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
+import { fileURLToPath } from 'node:url';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   createDesktopProvider,
@@ -20,9 +24,18 @@ import {
   windowsHelperBootstrap,
 } from '../src/desktop/platform/windows-helper.js';
 import {
+  WINDOWS_STREAM_SOURCE,
+  windowsStreamBootstrap,
+} from '../src/desktop/platform/windows-stream.js';
+import {
   type DesktopProviderFixture,
   describeDesktopProviderContract,
 } from './desktop-provider-contract.js';
+import { ENC, loadFrame, TestRfbClient } from './rfb-test-client.js';
+
+const FAKE_STREAM_HELPER = fileURLToPath(
+  new URL('./fixtures/fake-stream-helper.mjs', import.meta.url),
+);
 
 const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
 const b64 = (text: string) => Buffer.from(text).toString('base64');
@@ -73,20 +86,32 @@ function fakeHelper(fake: FakeWindows = {}) {
   return { helper, calls };
 }
 
-function fakeWindows(fake: FakeWindows = {}): DesktopProviderFixture {
-  return {
-    provider: new WindowsDesktopProvider({
-      env: {},
-      helper: fakeHelper(fake).helper,
-      launch: async () => ({ pid: 4242 }),
-      warn: () => undefined,
-    }),
+/** Runs the fake stream helper in place of `powershell.exe`. */
+function fakeStreamSpawner() {
+  const spawns: { file: string; args: readonly string[]; cwd?: unknown }[] = [];
+  const spawn: HelperSpawner = (file, args, options) => {
+    spawns.push({ file, args, cwd: options.cwd });
+    return spawnProcess(process.execPath, [FAKE_STREAM_HELPER], {
+      stdio: 'pipe',
+    });
   };
+  return { spawn, spawns };
+}
+
+function fakeWindows(fake: FakeWindows = {}): DesktopProviderFixture {
+  const provider = new WindowsDesktopProvider({
+    env: {},
+    helper: fakeHelper(fake).helper,
+    launch: async () => ({ pid: 4242 }),
+    spawnStream: fakeStreamSpawner().spawn,
+    warn: () => undefined,
+  });
+  return { provider, close: async () => provider.close() };
 }
 
 describeDesktopProviderContract(
   'Windows on the signed-in desktop',
-  { computerUse: true, stream: false },
+  { computerUse: true, stream: true },
   async () => fakeWindows(),
 );
 describeDesktopProviderContract(
@@ -101,7 +126,7 @@ describeDesktopProviderContract(
 );
 describeDesktopProviderContract(
   'Windows while locked or on the UAC secure desktop',
-  { computerUse: false, stream: false },
+  { computerUse: false, stream: true },
   async () => fakeWindows({ desktop: 'Winlogon' }),
 );
 describeDesktopProviderContract(
@@ -124,14 +149,17 @@ describe('createDesktopProvider on Windows', () => {
 describe('WindowsDesktopProvider', () => {
   function provider(fake: FakeWindows = {}) {
     const { helper, calls } = fakeHelper(fake);
+    const { spawn, spawns } = fakeStreamSpawner();
     const warnings: string[] = [];
     return {
       calls,
+      spawns,
       warnings,
       backend: new WindowsDesktopProvider({
         env: {},
         helper,
         launch: async () => ({ pid: 7 }),
+        spawnStream: spawn,
         warn: (hint) => warnings.push(hint),
       }),
     };
@@ -158,7 +186,13 @@ describe('WindowsDesktopProvider', () => {
   it('reports the lock screen and UAC prompts, then recovers', async () => {
     const fake: FakeWindows = { desktop: 'Winlogon' };
     const { backend, warnings } = provider(fake);
-    expect((await backend.probe()).hint).toMatch(
+    const locked = await backend.probe();
+    expect(locked).toMatchObject({
+      computerUse: false,
+      stream: true,
+      screen: { width: 1920, height: 1080 },
+    });
+    expect(locked.hint).toMatch(
       /"Winlogon".*locked.*UAC prompt.*cannot be captured or driven/,
     );
     fake.desktop = '';
@@ -166,7 +200,7 @@ describe('WindowsDesktopProvider', () => {
     fake.desktop = 'Default';
     expect(await backend.probe()).toEqual({
       computerUse: true,
-      stream: false,
+      stream: true,
       screen: { width: 1920, height: 1080 },
     });
     fake.desktop = 'Winlogon';
@@ -271,12 +305,55 @@ describe('WindowsDesktopProvider', () => {
     expect(calls).toEqual([]);
   });
 
-  it('has no stream or accessibility yet', async () => {
-    const { backend } = provider();
-    await expect(backend.openStream()).rejects.toThrow(
-      'not available on Windows',
-    );
-    expect(backend).not.toHaveProperty('accessibilityTree');
+  it('streams through the PowerShell stream host with scan codes', async () => {
+    const { backend, spawns, warnings } = provider();
+    try {
+      const client = new TestRfbClient(await backend.openStream());
+      await client.handshake();
+      client.setEncodings([ENC.raw, ENC.qemuKey]);
+      client.request(false);
+      await client.nextUpdate();
+      client.request(false);
+      await client.nextUpdate();
+      expect(client.screen).toEqual(loadFrame('desktop-260x140').pixels);
+      expect(spawns).toEqual([
+        {
+          file: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+          args: ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', '-'],
+          cwd: 'C:\\Windows\\System32',
+        },
+      ]);
+
+      client.qemuKey(true, 0xffeb, 0xdb);
+      client.qemuKey(true, 0xff51, 0xcb);
+      client.qemuKey(false, 0xff51, 0xcb);
+      client.qemuKey(false, 0xffeb, 0xdb);
+      await vi.waitFor(() =>
+        expect(warnings).toEqual([
+          'preamble',
+          'key 1 e5b',
+          'key 1 e4b',
+          'key 0 e4b',
+          'key 0 e5b',
+        ]),
+      );
+      client.socket.destroy();
+    } finally {
+      backend.close();
+    }
+  });
+
+  it('keeps streaming the lock screen placeholder but not Session 0', async () => {
+    const locked = provider({ desktop: 'Winlogon' }).backend;
+    const stream = await locked.openStream();
+    stream.destroy();
+    locked.close();
+    const service = provider({ session: '0', interactive: false }).backend;
+    await expect(service.openStream()).rejects.toThrow(/Session 0/);
+  });
+
+  it('has no accessibility tree yet', () => {
+    expect(provider().backend).not.toHaveProperty('accessibilityTree');
   });
 });
 
@@ -548,10 +625,14 @@ describe('PowerShellDesktopHelper', () => {
     expect(shells).toHaveLength(0);
   });
 
-  it('keeps the helper source free of template syntax and newer C#', () => {
-    expect(WINDOWS_HELPER_SOURCE).not.toMatch(/\$"|\?\.|nameof\(|=>/);
+  it('keeps the helper sources free of template syntax and newer C#', () => {
+    for (const source of [WINDOWS_HELPER_SOURCE, WINDOWS_STREAM_SOURCE]) {
+      expect(source).not.toMatch(/\$"|\?\.|nameof\(|=>/);
+    }
     expect(windowsHelperBootstrap()).not.toMatch(/[\r\n]/);
+    expect(windowsStreamBootstrap()).not.toMatch(/[\r\n]/);
     expect(WINDOWS_HELPER_SOURCE).toContain(`"${WINDOWS_HELPER_READY}"`);
+    expect(WINDOWS_STREAM_SOURCE).toContain('"klex-stream-ready 1');
   });
 });
 
@@ -568,7 +649,7 @@ describe.runIf(process.platform === 'win32')(
 
     describeDesktopProviderContract(
       'Windows with the PowerShell helper',
-      { computerUse: requireDesktop, stream: false },
+      { computerUse: requireDesktop, stream: requireDesktop },
       async () => {
         const provider = new WindowsDesktopProvider({
           // The contract launches `true`, which Windows does not have.
@@ -613,6 +694,27 @@ describe.runIf(process.platform === 'win32')(
           args: ['/d', '/c', 'exit', '0'],
         });
         expect(pid).toBeGreaterThan(0);
+      } finally {
+        provider.close();
+      }
+    });
+
+    it.runIf(requireDesktop)('streams the screen over RFB', async () => {
+      const provider = new WindowsDesktopProvider();
+      try {
+        const { screen } = await provider.probe();
+        const client = new TestRfbClient(await provider.openStream());
+        await client.handshake();
+        expect({ width: client.width, height: client.height }).toEqual(screen);
+        client.setEncodings([ENC.tight, ENC.raw]);
+        client.request(false);
+        const rects = await client.nextUpdate();
+        const area = rects.reduce(
+          (sum, rect) => sum + rect.width * rect.height,
+          0,
+        );
+        expect(area).toBe(client.width * client.height);
+        client.socket.destroy();
       } finally {
         provider.close();
       }

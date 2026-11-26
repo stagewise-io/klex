@@ -254,7 +254,7 @@ export function startDesktopLink(options: DesktopLinkOptions): DesktopLink {
       streams.delete(streamId);
       if (reason) fail(reason);
       logger.info(
-        { streamId, code, reason, input: filter?.input },
+        { streamId, code, ...(reason && { reason }), input: filter?.input },
         'Desktop stream closed',
       );
       vnc?.destroy();

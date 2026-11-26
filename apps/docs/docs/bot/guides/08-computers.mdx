@@ -40,11 +40,19 @@ A compatible desktop may also be available on your own computer. On macOS, deskt
 
 A Linux administrator can configure a systemd service to start `klex-machine` at boot and restart it on failure. The service must run as the intended unprivileged user and use that user's existing machine identity. A background service does not by itself provide a desktop session.
 
-If you use a coding agent to set up the service, you can adapt this prompt after enrolling the computer:
+If you use a coding agent to set up the service, copy and adapt this prompt after enrolling the computer:
+
+<button className="copy-agent-prompt" type="button" hidden>Copy prompt</button>
+<span className="copy-agent-prompt-status" role="status" aria-live="polite"></span>
+<details className="agent-prompt-details">
+<summary>View setup prompt</summary>
 
 ```text
 Help me run my already-enrolled klex-machine as a systemd service on this Linux computer. First inspect the installed binary, the intended unprivileged user, and its existing identity directory. Propose a service that starts at boot and restarts on failure, using that same user and identity. Do not put enrollment codes or private keys in the unit, logs, or your response. Show me the proposed changes and commands and ask before making privileged changes. Explain how to check the service and stop or disable it.
 ```
+
+</details>
+<script src="/copy-agent-prompt.js" defer></script>
 
 Review the proposed service before enabling it. Protect the identity directory and avoid running the service as root unless you have a specific reason.
 

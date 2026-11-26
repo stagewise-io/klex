@@ -551,7 +551,7 @@ section('controlled')('media-only causal controls', () => {
         expect(facts.every((fact) => fact.present)).toBe(true);
         const input = JSON.stringify(run.calls.at(-1)?.input);
         if (mode === 'text-only') {
-          expect(input).toContain('<derived-content');
+          expect(input).toContain('derived-content');
           expect(run.calls.length).toBeGreaterThan(1);
         }
         expect(
@@ -718,7 +718,7 @@ section('refusal')('ordinary-success refusal checkpoint safety', () => {
     });
     expect(run.calls.length).toBeGreaterThanOrEqual(3);
     expect(JSON.stringify(run.calls.at(-1)?.input)).toContain(
-      '<derived-content',
+      'derived-content',
     );
     expect(run.summary()).not.toContain(injectedRefusal);
     await run.verifyCheckpoint();

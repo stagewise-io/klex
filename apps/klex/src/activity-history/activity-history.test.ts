@@ -22,6 +22,48 @@ const ready = (now: number) => ({
 });
 
 describe('canonical activity view', () => {
+  it('shares sparse UTC time anchors across pending, range and page views', async () => {
+    const { activities, append, setTime, now } = await setup();
+    const first = await append('first');
+    await append('second');
+    setTime('2026-10-01T12:01:00Z');
+    const last = await append('third');
+    const pending = await activities.readPending(null, ready(now() + 600_000));
+    const range = await activities.readRange(null, last.id, 40_000);
+    const page = await activities.readPage(last.id, {
+      firstSourceId: first.id,
+      offset: 0,
+      limit: 40_000,
+      maxBytes: 100_000,
+    });
+    for (const result of [pending, range, page]) {
+      expect(result?.text).toBe(
+        '12:00 # your_output\ncontent: |\n~ first\n\n# your_output\ncontent: |\n~ second\n\n12:01 # your_output\ncontent: |\n~ third',
+      );
+    }
+    expect(
+      (await activities.readRange(first.id, last.id, 40_000))?.text,
+    ).toMatch(/^12:00 #/);
+  });
+
+  it('repeats the time on date changes and does not advance it for filtered sources', async () => {
+    const { activities, append, setTime } = await setup();
+    const first = await append('first');
+    setTime('2026-10-01T12:01:00Z');
+    await append('hidden', 'user');
+    await append('visible');
+    setTime('2026-10-02T12:01:00Z');
+    const last = await append('next day');
+    const range = await activities.readRange(null, last.id, 40_000);
+    expect(range?.text.match(/^12:01 #/gm)).toHaveLength(2);
+    expect(range?.text).not.toContain('hidden');
+    const page = await activities.readPage(first.id, {
+      offset: 0,
+      limit: 40_000,
+      maxBytes: 100_000,
+    });
+    expect(page?.text).toMatch(/^12:00 #/);
+  });
   it('preserves exclusions and consumes filtered-only sources', async () => {
     const { activities, append, now } = await setup();
     const hidden = await append('private raw user text', 'user');
@@ -93,15 +135,16 @@ describe('canonical activity view', () => {
 
   it('splits on rendered size independently of idle, duration and date', async () => {
     const { activities, append, now } = await setup();
-    const first = await append('first bounded record');
-    await append('second bounded record');
+    const first = await append('first');
+    await append('second');
     const batch = await activities.readPending(null, {
       ...ready(now()),
       maxCharacters: 40,
     });
     expect(batch?.id).toBe(first.id);
-    expect(batch?.text).toContain('first bounded record');
-    expect(batch?.text).not.toContain('second bounded record');
+    expect(batch?.text).toContain('~ first');
+    expect(batch?.text).not.toContain('~ second');
+    expect(batch!.text.length).toBeLessThanOrEqual(40);
   });
 
   it('bounds the first oversized source and advances past it without waiting for idle', async () => {
@@ -141,6 +184,7 @@ describe('canonical activity view', () => {
     expect(batch?.text.length).toBeLessThanOrEqual(50);
     expect(batch?.text).toContain('TAIL');
     expect(batch?.text).not.toContain('HEAD');
+    expect(batch?.text).toMatch(/^12:00 /);
   });
 
   it('labels writer evidence including bounded oversized tails', async () => {
@@ -148,10 +192,39 @@ describe('canonical activity view', () => {
     const source = await append(`HEAD${'x'.repeat(2000)}TAIL`);
     const batch = await activities.readRange(null, source.id, 500, true);
     expect(batch?.text).toContain(`Source ${source.id}`);
+    expect(batch?.text).toContain(`(${source.persistedAt})\n12:00 `);
     expect(batch?.text).toContain('TAIL');
     expect(batch?.text.length).toBeLessThanOrEqual(500);
     expect(batch?.sourceIds).toEqual([source.id]);
     expect(batch?.truncated).toBe(true);
+  });
+
+  it('anchors clipped multi-source tails to the first visible source minute', async () => {
+    const { activities, append, setTime } = await setup();
+    const first = await append('first');
+    setTime('2026-10-01T12:05:00Z');
+    const last = await append(`HEAD${'x'.repeat(1000)}TAIL`);
+    const page = await activities.readPage(last.id, {
+      firstSourceId: first.id,
+      offset: 0,
+      limit: 50,
+      maxBytes: 10000,
+      tail: true,
+    });
+    expect(page?.text).toMatch(/^12:05 /);
+    expect(page?.text).toContain('TAIL');
+    expect(page?.text).not.toContain('HEAD');
+    expect(page?.text.length).toBeLessThanOrEqual(50);
+    expect(page?.nextOffset).toBeNull();
+    for (const limit of [0, 1, 5, 6]) {
+      const tiny = await activities.readPage(last.id, {
+        offset: 0,
+        limit,
+        maxBytes: 10000,
+        tail: true,
+      });
+      expect(tiny?.text.length).toBeLessThanOrEqual(limit);
+    }
   });
 
   it('resolves the newest history entry for the given message ids', async () => {
@@ -172,9 +245,11 @@ describe('canonical activity view', () => {
         }),
       ),
     );
+    // The second source shares its time with the first; omit its six-character prefix.
+    // Leave exactly the combined record lengths, but no room for the separator.
     const maxCharacters = pages.reduce(
       (sum, page) => sum + (page?.text.length ?? 0),
-      0,
+      -6,
     );
     const batch = await activities.readPending(null, {
       ...ready(now()),
@@ -316,7 +391,8 @@ describe('canonical activity view', () => {
       tail: true,
     });
     expect(head?.nextOffset).toBe(10);
-    expect(tail?.text).toBe('y evidence');
+    expect(tail?.text).toBe('12:00 ence');
+    expect(tail?.text.length).toBeLessThanOrEqual(10);
     expect(
       (
         await activities.search('SQLite', {

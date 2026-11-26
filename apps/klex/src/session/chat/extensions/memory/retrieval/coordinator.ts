@@ -14,7 +14,11 @@ import type { ExtensionDeps } from '@/session/chat/extensions/extension-api';
 import { createNameLoaderExt } from '@/session/chat/extensions/name-loader';
 import { createSoulExt } from '@/session/chat/extensions/soul';
 import type { ExtendedUIMessage } from '@/session/chat/message-types';
-import { LINES_FORMAT_PROMPT } from '@/session/chat/utils/history-view';
+import {
+  field,
+  LINES_FORMAT_PROMPT,
+  renderDataBlock,
+} from '@/session/chat/utils/history-view';
 import { getExtensionIdentifier } from '@/session/chat/utils/tracing';
 import { SessionInboxUrgency } from '@/session/inbox';
 import type { ChildSessionHandle } from '@/session/types';
@@ -172,7 +176,13 @@ class MemoryRetrievalCoordinatorImpl implements MemoryRetrievalCoordinator {
       this.deps.logger.debug('Memory observation deferred — child unavailable');
       return false;
     }
-    this.sendToChild(child, `<observation>\n${text}\n</observation>`);
+    this.sendToChild(
+      child,
+      renderDataBlock({
+        type: 'observation',
+        fields: [field('history', text, 'bot')],
+      }),
+    );
     this.observationsSent += 1;
     this.deps.logger.debug(
       { characters: text.length },
@@ -328,13 +338,13 @@ class MemoryRetrievalCoordinatorImpl implements MemoryRetrievalCoordinator {
 
   /**
    * The legacy recall path into the main session. Wraps every text in a
-   * `<memory>` block; callers pass raw memory text.
+   * bot-prefixed memory-result block; callers pass raw memory text.
    */
   private deliverToMain(text: string, urgency: SessionInboxUrgency): void {
     try {
       this.deps.inbox.sendMessage(
         {
-          id: randomUUID(),
+          id: `memory-result:${randomUUID()}`,
           role: 'user',
           parts: [{ type: 'text', text: wrapMemoryResult(text) }],
         } as ExtendedUIMessage,

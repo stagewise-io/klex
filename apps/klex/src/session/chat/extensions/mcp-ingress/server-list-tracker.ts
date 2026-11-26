@@ -1,7 +1,10 @@
-import type { TextPart } from 'ai';
-
 import type { McpConnectionStatus, McpServerInfo } from '@/mcp';
 import type { ExtendedUIMessage } from '@/session/chat/message-types';
+import {
+  type DataBlock,
+  field,
+  tableField,
+} from '@/session/chat/utils/history-view';
 
 import { isDataPartOf } from '../extension-api';
 
@@ -133,31 +136,38 @@ export function latestServerListPart(
 // Rendering
 // ---------------------------------------------------------------------------
 
-/** Renders a server list entry as a compact pipe-delimited row. */
-function formatServerRow(entry: ServerListEntry): string {
-  return `${entry.name}|${entry.status}|${entry.toolCount}|${entry.resourceCount}|${entry.supportsEvents ? 'yes' : 'no'}`;
-}
-
-/** Renders `ServerListData` into model-visible text parts. */
-export function renderServerListData(data: ServerListData): TextPart[] {
-  if (data.isInitial) {
-    const lines = ['<mcp-servers>', 'name|status|tools|resources|events'];
-    for (const s of data.servers) lines.push(formatServerRow(s));
-    lines.push('</mcp-servers>');
-    return [{ type: 'text', text: lines.join('\n') }];
-  }
-
-  // Diff
-  const diff = data.diff;
-  if (!diff) return [];
-  const lines = [
-    '<mcp-servers-diff>',
-    'action|name|status|tools|resources|events',
+export function projectServerListData(data: ServerListData): DataBlock[] {
+  if (!data.isInitial && !data.diff) return [];
+  return [
+    {
+      type: data.isInitial ? 'mcp-servers' : 'mcp-servers-diff',
+      ...(data.isInitial
+        ? {
+            body: tableField(
+              'servers',
+              [
+                'name',
+                'status',
+                'toolCount',
+                'resourceCount',
+                'supportsEvents',
+              ],
+              data.servers.map((server) => [
+                server.name,
+                server.status,
+                server.toolCount,
+                server.resourceCount,
+                server.supportsEvents ?? false,
+              ]),
+              'trusted',
+            ),
+            fields: [],
+          }
+        : {
+            fields: Object.entries(data.diff!).map(([key, value]) =>
+              field(key, value, 'trusted'),
+            ),
+          }),
+    },
   ];
-  for (const s of diff.added) lines.push(`added|${formatServerRow(s)}`);
-  // Removed entries retain only their name, not their previous status/counts.
-  for (const name of diff.removed) lines.push(`removed|${name}||||`);
-  for (const s of diff.changed) lines.push(`changed|${formatServerRow(s)}`);
-  lines.push('</mcp-servers-diff>');
-  return [{ type: 'text', text: lines.join('\n') }];
 }

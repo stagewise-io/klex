@@ -105,7 +105,7 @@ function keepNewest(
   }
 
   if (limit <= marker.length) {
-    return { text: marker.slice(0, Math.max(0, limit)), truncated: true };
+    return { text: limit === marker.length ? marker : '', truncated: true };
   }
 
   const selected: string[] = [];

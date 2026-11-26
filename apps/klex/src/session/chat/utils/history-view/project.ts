@@ -7,6 +7,7 @@ import {
   extractContentOutputText,
 } from '@/shared-utilities/tool-result';
 
+import { compactDataBlocks, createDataPartDispatcher } from './data-parts';
 import { serializeValue, truncateText } from './truncate';
 import type {
   ContextItem,
@@ -54,6 +55,7 @@ export function historyAfterCursor(
 export function projectMessage(
   message: HistoryMessage,
   filter: HistoryFilterOptions,
+  dispatcher = createDataPartDispatcher({}),
 ): ProjectedMessage {
   const summaryKey = filter.summary ? filter.summary.key : undefined;
   const projected: ProjectedMessage = {
@@ -64,11 +66,19 @@ export function projectMessage(
       message.parts.some((part) => isDataPartOf(summaryKey, part)),
     records: [],
   };
-  if (filter.roles && !filter.roles.includes(message.role)) return projected;
-  if (filter.skipMessage?.(message)) return projected;
-
+  const skipped =
+    (filter.roles && !filter.roles.includes(message.role)) ||
+    filter.skipMessage?.(message);
   for (const part of message.parts) {
-    const record = projectPart(part, message.role, filter);
+    const occurrence = dispatcher.consume(part);
+    if (skipped) continue;
+    const record = projectPart(
+      part,
+      message.role,
+      filter,
+      dispatcher,
+      occurrence,
+    );
     if (record) projected.records.push(record);
   }
   return projected;
@@ -78,6 +88,8 @@ function projectPart(
   part: Part,
   role: HistoryMessage['role'],
   filter: HistoryFilterOptions,
+  dispatcher: ReturnType<typeof createDataPartDispatcher>,
+  occurrence: number,
 ): HistoryRecord | null {
   if (part.type === 'text') {
     const text = filter.text;
@@ -123,11 +135,25 @@ function projectPart(
   }
 
   if (part.type.startsWith('data-')) {
-    const projector = filter.data?.[part.type.slice('data-'.length)];
-    const projectedData = projector?.(
-      (part as unknown as { data: unknown }).data,
-    );
-    return projectedData ? { kind: 'data', ...projectedData } : null;
+    const key = part.type.slice('data-'.length);
+    const selection = filter.dataParts;
+    if (
+      selection &&
+      (selection.keys === 'all' || selection.keys.includes(key)) &&
+      !selection.exclude?.includes(key)
+    ) {
+      const blocks = compactDataBlocks(
+        dispatcher.project(
+          key,
+          (part as { data: unknown }).data,
+          occurrence,
+          true,
+        ),
+        selection,
+      );
+      return blocks.length ? { kind: 'data', blocks } : null;
+    }
+    return null;
   }
 
   return null;
@@ -180,6 +206,12 @@ function projectContext(
 ): HistoryRecord | null {
   const record: Extract<HistoryRecord, { kind: 'context' }> = {
     kind: 'context',
+    type:
+      data.metadata?.origin === 'events'
+        ? 'event'
+        : data.metadata?.origin === 'push-notifications'
+          ? 'push-notification'
+          : 'input',
     source: options.source
       ? truncateText(data.sourceEnv, options.source)
       : data.sourceEnv,
@@ -192,7 +224,7 @@ function projectContext(
   // Events carry their semantic body in metadata rather than MCP content
   // blocks. Transcript presets omit general metadata, but must retain Events
   // for compaction, consult and the classifier under the context text budget.
-  if (!options.metadata && data.metadata.origin === 'events') {
+  if (!options.metadata && data.metadata?.origin === 'events') {
     // Occurrences are size/depth bounded at ingress. Serialize their JSON body
     // directly before applying the text budget: compactJson's node cap would
     // replace wide but valid payloads wholesale with [unserializable]. Keep

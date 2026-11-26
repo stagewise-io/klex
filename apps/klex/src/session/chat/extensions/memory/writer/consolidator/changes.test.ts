@@ -66,6 +66,12 @@ describe('consolidator change cursor', () => {
     expect(result.items[0]?.text).toContain('Uses titanium');
     expect(result.items[0]?.text).toContain('revision');
     expect(result.items[2]?.text).toBe(skillReadResult(skills[1] as Skill));
+    expect(result.items[0]?.text).toMatch(/^# memory\nentity: A/);
+    expect(result.items[0]?.text).toContain('\n\n# memory-detail\nentity: A');
+    expect(result.items[2]?.text).toMatch(/^# skill\nskill: learning\/deploy/);
+    for (const item of result.items) {
+      expect(item.text).not.toMatch(/^~ (?:# |~ )/m);
+    }
   });
   it('resumes across equal-time budget boundaries without losing or repeating items', () => {
     const records = [entity('A'), entity('B'), entity('C')];
@@ -109,6 +115,9 @@ describe('consolidator change cursor', () => {
     const result = collectChanges([record], [], empty, budget);
     expect(result.items).toHaveLength(1);
     expect(result.items[0]?.text).toContain('Oversized document');
+    expect(result.items[0]?.text).toMatch(
+      /^# changed-document\nkind: entity\nid: A/,
+    );
     expect(result.cutoff).toBe(at);
     expect(result.overflow).toBe(false);
     expect(

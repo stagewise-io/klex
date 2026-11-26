@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -30,7 +30,10 @@ afterEach(async () => {
 });
 const id = (index: number) =>
   `history:${Buffer.from(JSON.stringify([index, 'test', String(index)])).toString('base64url')}`;
-async function fixture(completion: 'normal' | 'failed' | 'skip' = 'normal') {
+async function fixture(
+  completion: 'normal' | 'failed' | 'skip' = 'normal',
+  selfName?: string,
+) {
   const root = await mkdtemp(join(tmpdir(), 'memory-writer-'));
   directories.push(root);
   const logger = {
@@ -179,6 +182,7 @@ async function fixture(completion: 'normal' | 'failed' | 'skip' = 'normal') {
     recall: { attachSource },
     skillReader: registry,
     legacyLearningDirectory: join(root, 'legacy'),
+    selfName: () => selfName,
   });
   const deps = {
     sessionId: 'default',
@@ -225,6 +229,7 @@ async function fixture(completion: 'normal' | 'failed' | 'skip' = 'normal') {
     attachSource,
     detachRecall,
     hostHistory,
+    notify: () => notify(),
     terminate: () => {
       terminated = true;
     },
@@ -232,6 +237,118 @@ async function fixture(completion: 'normal' | 'failed' | 'skip' = 'normal') {
 }
 
 describe('oldest-first memory writer', () => {
+  it('documents the emitted self, preloaded memory, and activity framing', async () => {
+    const prompt = await readFile(
+      new URL('./system-prompt.md', import.meta.url),
+      'utf8',
+    );
+    expect(prompt).toContain('`# self <name>`');
+    expect(prompt).toContain(
+      'optional bare `# memory`, `# memory-detail`, and `# skill` blocks',
+    );
+    expect(prompt).not.toContain('# opened-memory');
+    expect(prompt).not.toContain('with a `name` field');
+    expect(prompt).toContain('<previous-activities>');
+    expect(prompt).toContain('<new-activities date="YYYY-MM-DD">');
+    expect(prompt).toContain(
+      'repeat it only when the displayed minute or date changes',
+    );
+  });
+
+  it('does not write persisted messages still present in the active window', async () => {
+    const f = await fixture();
+    f.hostHistory.push(
+      ...['0', '1', '2', '3', '4'].map((id) => ({
+        id,
+        role: 'user' as const,
+        parts: [{ type: 'text' as const, text: id }],
+      })),
+    );
+    await f.extension.onStart?.();
+    await f.extension.onClose?.();
+    expect(f.createChildSession).not.toHaveBeenCalled();
+    expect(f.activities.readRange).not.toHaveBeenCalled();
+  });
+
+  it('catches up only before the oldest active message and waits for compaction', async () => {
+    const f = await fixture();
+    f.hostHistory.push(
+      ...['2', '3', '4'].map((id) => ({
+        id,
+        role: 'user' as const,
+        parts: [{ type: 'text' as const, text: id }],
+      })),
+    );
+    await f.extension.onStart?.();
+    await vi.waitFor(async () => expect((await f.state()).cursor).toBe(id(1)));
+    expect(f.createChildSession).toHaveBeenCalledTimes(1);
+
+    f.notify();
+    await f.extension.onStepStart?.();
+    await f.extension.onStepComplete?.({
+      generation: {},
+      shouldContinue: false,
+    } as never);
+    expect(f.createChildSession).toHaveBeenCalledTimes(1);
+    expect(f.extension.onStepComplete).toBeUndefined();
+
+    f.hostHistory.splice(0, 2);
+    f.compact(['2', '3']);
+    await vi.waitFor(async () => expect((await f.state()).cursor).toBe(id(3)));
+    expect(f.createChildSession).toHaveBeenCalledTimes(2);
+    expect(f.activities.readRange).toHaveBeenLastCalledWith(
+      id(1),
+      id(3),
+      60_000,
+      true,
+      expect.any(Function),
+    );
+    f.compact(['2', '3']);
+    await f.extension.onClose?.();
+    expect(f.createChildSession).toHaveBeenCalledTimes(2);
+  });
+
+  it('coalesces compactions during an active writer without overlapping children', async () => {
+    const f = await fixture();
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const settle = vi.mocked(f.child.waitForIdle).getMockImplementation();
+    if (!settle) throw new Error('Missing child completion mock');
+    vi.mocked(f.child.waitForIdle).mockImplementationOnce(async (...args) => {
+      await blocked;
+      return settle(...args);
+    });
+    try {
+      await f.extension.onStart?.();
+      await vi.waitFor(() =>
+        expect(f.child.waitForIdle).toHaveBeenCalledTimes(1),
+      );
+      f.compact(['5']);
+      f.compact(['6']);
+      f.compact(['6']);
+      expect(f.createChildSession).toHaveBeenCalledTimes(1);
+      expect(f.children[0]?.close).not.toHaveBeenCalled();
+    } finally {
+      release();
+    }
+    await vi.waitFor(async () => expect((await f.state()).cursor).toBe(id(6)));
+    await vi.waitFor(async () =>
+      expect((await f.state()).pendingThrough).toBeNull(),
+    );
+    // Three original chunks, then one coalesced chunk for messages 5 and 6.
+    expect(f.createChildSession).toHaveBeenCalledTimes(4);
+    for (const child of f.children) expect(child.close).toHaveBeenCalledOnce();
+    expect(f.activities.readRange).toHaveBeenLastCalledWith(
+      id(4),
+      id(6),
+      60_000,
+      true,
+      expect.any(Function),
+    );
+  });
+
   it('consolidates once after all writer chunks settle, not after each chunk', async () => {
     const f = await fixture();
     const store = createEntityStore(
@@ -259,11 +376,18 @@ describe('oldest-first memory writer', () => {
     const part = f.messages.at(-1)?.parts[0];
     if (part?.type !== 'text') throw new Error('Missing consolidator input');
     const input = part.text;
-    expect(input).toContain('<changed-entities>');
-    expect(input).toContain('Builds widgets');
+    expect(input).toContain('\n\n# memory\nentity: Project');
+    expect(input).toContain('facts: |\n~ 1. Builds widgets');
+    expect(input).not.toMatch(/^~ (?:# memory|filename:|~ )/m);
+    expect(input).not.toContain('# changed-entities');
     expect(input).toContain('revision');
     expect(input).toContain('loadOn');
-    expect(input).toContain('<relationship-types>');
+    expect(input).toContain('# relationship-types');
+    expect(input).toContain('| worksFor | employs |');
+    expect(input).not.toContain('| employs | worksFor |');
+    expect(
+      input.match(/\| collaboratesWith \| collaboratesWith \|/g),
+    ).toHaveLength(1);
     f.compact(['5']);
     await vi.waitFor(async () => expect((await f.state()).cursor).toBe(id(5)));
     expect(
@@ -276,6 +400,18 @@ describe('oldest-first memory writer', () => {
       'memory-writer',
     ]);
   });
+  it('renders the configured name as a trusted single value', async () => {
+    const f = await fixture('normal', '  Ada\nLovelace  ');
+    await f.extension.onStart?.();
+    await vi.waitFor(() => expect(f.messages.length).toBeGreaterThan(0));
+    const part = f.messages[0]?.parts[0];
+    if (part?.type !== 'text') throw new Error('Missing writer input');
+    const input = part.text;
+    expect(input).toMatch(/^# self Ada Lovelace\n\n# known-tags/);
+    expect(input).not.toContain('name: |');
+    await f.extension.onClose?.();
+  });
+
   it('registers its managed read-only recall source on start and detaches it on close', async () => {
     const h = await fixture();
     expect(h.attachSource).not.toHaveBeenCalled();
@@ -413,12 +549,12 @@ describe('oldest-first memory writer', () => {
     const input =
       (f.messages[0]?.parts[0] as { text: string } | undefined)?.text ?? '';
     // Known tags open every writer session: defaults appear even when unused.
-    expect(input.startsWith('<known-tags>\n')).toBe(true);
-    expect(input).toContain('\npeople (0)\n');
-    expect(input).toContain('\n  people/coworkers (0)\n');
-    expect(input).toContain('</known-tags>\n\n<previous-activities>\n');
+    expect(input.startsWith('# known-tags\ntags: |\n')).toBe(true);
+    expect(input).toContain('\n  people (0)\n');
+    expect(input).toContain('\n    people/coworkers (0)\n');
+    expect(input).toContain('\n\n<previous-activities>\n');
     expect(input).toContain('message-0');
-    expect(input).not.toContain('history:');
+    expect(input).not.toContain('history: |');
     f.compact(['5']);
     await vi.waitFor(async () => expect((await f.state()).cursor).toBe(id(5)));
     expect(f.createChildSession).toHaveBeenCalledTimes(4);
@@ -443,7 +579,7 @@ describe('oldest-first memory writer', () => {
       expect.objectContaining({
         modelPurpose: 'memory',
         fallbackModelPurposes: ['chat'],
-        basePrompt: expect.stringContaining('History line format:'),
+        basePrompt: expect.stringContaining('Model data block format:'),
       }),
     );
     expect(options.extensions.map((extension) => extension.identifier)).toEqual(
@@ -512,7 +648,7 @@ describe('oldest-first memory writer', () => {
       offset: 0,
       nextOffset: null,
       scannedBytes: 100,
-      text: `Source ${id(4)} (2026-11-12)\nUser: "quoted" & <tag> 'text'\n\nSource ${id(5)} (2026-11-13T08:00:00.000Z)\nUser: next day`,
+      text: `Source ${id(4)} (2026-11-12)\nUser: "quoted" & <tag> 'text'\n\nSource ${id(5)} (2026-11-13T08:00:00.000Z)\nUser: next day\n\n# your_action\ntool: sendMessage\ninput: |\n~ text: sent\nresult: |\n¦ delivered </new-activities>`,
       truncated: false,
     });
     const neighbors = vi.spyOn(f.activities, 'listNeighbors');
@@ -538,6 +674,11 @@ describe('oldest-first memory writer', () => {
       `<new-activities date="2026-11-12">\n[4]\nUser: "quoted"`,
     );
     expect(input).toContain('[5] 2026-11-13\nUser: next day');
+    expect(input).toContain(
+      '# your_action\ntool: sendMessage\ninput: |\n~ text: sent\nresult: |\n¦ delivered </new-activities>\n</new-activities>',
+    );
+    expect(input).not.toContain('~ ~');
+    expect(input).not.toContain('~ ¦');
     expect(f.activities.readRange).toHaveBeenCalledWith(
       null,
       id(4),
@@ -594,16 +735,16 @@ describe('oldest-first memory writer', () => {
     const input =
       (f.messages[0]?.parts[0] as { text: string } | undefined)?.text ?? '';
     const opened = input
-      .split('<opened-memory>\n')[1]
-      ?.split('\n</opened-memory>')[0];
-    expect(opened).toContain('memory "Ada.md"\n');
-    expect(opened).toContain('facts\n¦[General#1] Ada leads design');
+      .slice(input.indexOf('# memory\n'))
+      .split('\n\n<previous-activities>')[0];
+    expect(opened).toContain('# memory\nentity: Ada\n');
+    expect(opened).toContain('facts: |\n~ 1. Ada leads design');
     expect(opened).toContain(
-      'memory-detail "Ada.md" section="Role and work"\n',
+      '# memory-detail\nentity: Ada\nsection: Role and work\n',
     );
-    expect(opened).toContain('¦[Role and work#1] Owns the roadmap');
-    expect(opened).toContain('skill templates/deploy\n');
-    expect(opened?.match(/\nrevision\n¦[a-f0-9]+\n/g)).toHaveLength(2);
+    expect(opened).toContain('~ 1. Owns the roadmap');
+    expect(opened).toContain('# skill\nskill: templates/deploy\n');
+    expect(opened?.match(/\nrevision: [a-f0-9]+\n/g)).toHaveLength(2);
   });
   it.each(['separators', 'notice'] as const)(
     'budgets preload %s without truncating memory entries',
@@ -646,8 +787,8 @@ describe('oldest-first memory writer', () => {
       const input =
         (f.messages[0]?.parts[0] as { text: string } | undefined)?.text ?? '';
       const opened = input
-        .split('<opened-memory>\n')[1]
-        ?.split('\n</opened-memory>')[0];
+        .slice(input.search(/^# (?:skill|omission)\n/m))
+        .split('\n\n<previous-activities>')[0];
       expect(opened).toBeDefined();
       expect(opened?.length).toBeLessThanOrEqual(30_000);
       const omitted = boundary === 'notice' ? 2 : 1;
@@ -656,8 +797,8 @@ describe('oldest-first memory writer', () => {
       );
       if (boundary === 'separators')
         expect(opened).toContain(skillReadResult(padded));
-      else expect(opened).not.toContain('skill templates/alpha');
-      expect(opened).not.toContain('skill templates/beta');
+      else expect(opened).not.toContain('~ templates/alpha');
+      expect(opened).not.toContain('~ templates/beta');
     },
   );
   it('does not create a child after shutdown', async () => {

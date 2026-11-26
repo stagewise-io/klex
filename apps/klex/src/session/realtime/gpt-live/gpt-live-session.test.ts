@@ -693,7 +693,7 @@ describe('GPT-Live model session', () => {
       event_id: 'notice-1',
       item: { role: 'user' },
     });
-    expect(JSON.stringify(silent[0])).toContain('source-env');
+    expect(JSON.stringify(silent[0])).toContain('source: |');
     expect(JSON.stringify(silent[0])).toContain('Deployment complete');
     expect(silent[1]).toEqual({
       type: 'session.thinking.append',

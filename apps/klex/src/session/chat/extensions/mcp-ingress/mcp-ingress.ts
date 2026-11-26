@@ -25,14 +25,14 @@ import type {
   ProvisionalStepContext,
   ResolvedModel,
 } from '../extension-api';
-import { createDataPart, dataPartTransformer } from '../extension-api';
+import { blockPartTransformer, createDataPart } from '../extension-api';
 import { boundInboxEvent, truncateUtf8 } from './inbox-helpers';
 import {
   diffOpenResources,
   latestOpenResourcesPart,
   OPEN_RESOURCES_KEY,
   type OpenResourcesData,
-  renderOpenResourcesData,
+  projectOpenResourcesData,
   toOpenResourcesEntry,
 } from './open-resources-tracker';
 import { mcpPushNotificationToInboxEvent } from './push-notification-adapter';
@@ -50,10 +50,10 @@ import {
   diffResource,
   formatInitialContent,
   MAX_RESOURCE_BINARY_BYTES,
+  projectResourceState,
   type ResourceDiffResult,
   type ResourceSnapshot,
   type ResourceStateData,
-  renderResourceState,
 } from './resource-handlers';
 import {
   DEFAULT_RESOURCE_WINDOW_CONFIG,
@@ -64,7 +64,7 @@ import {
 import {
   diffServerLists,
   latestServerListPart,
-  renderServerListData,
+  projectServerListData,
   SERVER_LIST_KEY,
   type ServerListData,
   toServerListEntry,
@@ -72,7 +72,7 @@ import {
 import { getSystemPromptPart as systemPromptPartGetter } from './system-prompt-part';
 import {
   latestWatchedEventsPart,
-  renderWatchedEventsData,
+  projectWatchedEventsData,
   toWatchEntry,
   WATCHED_EVENTS_KEY,
   type WatchedEventsData,
@@ -668,20 +668,20 @@ class McpIngressExtension implements Extension {
     return carry;
   }
 
-  // -- dataPartTransformer ------------------------------------------------
+  // -- Typed data-part projections ----------------------------------------
 
   dataPartTransformers = {
-    [WATCHED_EVENTS_KEY]: dataPartTransformer<WatchedEventsData>(
-      renderWatchedEventsData,
+    [WATCHED_EVENTS_KEY]: blockPartTransformer<WatchedEventsData>(
+      projectWatchedEventsData,
     ),
-    'mcp-resource-state': dataPartTransformer<ResourceStateData>((data) =>
-      renderResourceState(data),
+    'mcp-resource-state': blockPartTransformer<ResourceStateData>((data) =>
+      projectResourceState(data),
     ),
-    [SERVER_LIST_KEY]: dataPartTransformer<ServerListData>((data) =>
-      renderServerListData(data),
+    [SERVER_LIST_KEY]: blockPartTransformer<ServerListData>((data) =>
+      projectServerListData(data),
     ),
-    [OPEN_RESOURCES_KEY]: dataPartTransformer<OpenResourcesData>((data) =>
-      renderOpenResourcesData(data),
+    [OPEN_RESOURCES_KEY]: blockPartTransformer<OpenResourcesData>((data) =>
+      projectOpenResourcesData(data),
     ),
   };
 

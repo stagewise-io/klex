@@ -368,6 +368,7 @@ describe('projectMessage', () => {
       expect(records(message, { context: base })).toEqual([
         {
           kind: 'context',
+          type: 'input',
           source: 'whatsapp-server',
           items: [
             { kind: 'text', text: 'hello c…' },
@@ -396,6 +397,7 @@ describe('projectMessage', () => {
       ).toEqual([
         {
           kind: 'context',
+          type: 'input',
           source: 'what…',
           metadata: '{"sourceId":"c1"}',
           items: [
@@ -425,7 +427,9 @@ describe('projectMessage', () => {
             metadata: { max: 100, truncate: 'end', json: 'plain' },
           },
         }),
-      ).toEqual([{ kind: 'context', source: 'chat', items: [] }]);
+      ).toEqual([
+        { kind: 'context', type: 'input', source: 'chat', items: [] },
+      ]);
     });
 
     it('drops context parts when context is disabled', () => {
@@ -454,6 +458,7 @@ describe('projectMessage', () => {
       ).toEqual([
         {
           kind: 'context',
+          type: 'input',
           source: 'chat',
           metadata: 'sourceId: c1',
           items: [],
@@ -473,22 +478,10 @@ describe('projectMessage', () => {
       'user',
     );
     const summary = { key: 'context-summary', limit: LIMIT };
-    const projectors = {
-      time: (data: unknown) =>
-        typeof data === 'object' && data !== null && 'label' in data
-          ? { label: 'time', value: String(data.label) }
-          : null,
-    };
 
     it('projects summaries and drops unconfigured data parts', () => {
       expect(records(message, { summary })).toEqual([
         { kind: 'summary', text: 'durable…' },
-      ]);
-    });
-
-    it('uses projectors and drops rejected values', () => {
-      expect(records(message, { data: projectors })).toEqual([
-        { kind: 'data', label: 'time', value: 'Friday' },
       ]);
     });
 

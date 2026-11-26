@@ -49,7 +49,9 @@ const HISTORY: ExtendedUIMessage[] = [
       output: 'Recalling...',
     },
   ]),
-  msg('m1', 'user', [{ type: 'text', text: wrapMemoryResult('MEMORY_TEXT') }]),
+  msg('memory-result:m1', 'user', [
+    { type: 'text', text: wrapMemoryResult('MEMORY_TEXT') },
+  ]),
   msg('t1', 'user', [{ type: 'data-time', data: { label: 'TIME_UPDATE' } }]),
   msg('u2', 'user', [{ type: 'text', text: 'Thanks!' }]),
 ];
@@ -83,23 +85,28 @@ describe('renderObservation', () => {
   it('renders line-format records with prefixed content', () => {
     expect(text).toBe(
       [
-        'context whatsapp',
-        '¦sourceId: chat-42',
-        '¦sender: Ada',
-        'text',
-        '¦Can we move the review to Friday?',
-        'image png',
-        'resource',
-        '¦uri: file:///notes.md',
-        'body',
-        '¦launch notes',
+        '# input',
+        'source: |',
+        '¦ whatsapp',
+        'metadata: |',
+        '¦ sourceId: chat-42',
+        '¦ sender: Ada',
+        'content: |',
+        '¦ Can we move the review to Friday?',
+        '¦ image png',
+        '¦ uri: file:///notes.md',
+        '¦ launch notes',
         '',
-        'your_action sendMessage succeeded',
-        '¦to: Ada',
-        `¦text: ${'x'.repeat(135)}…`,
+        '# your_action',
+        'tool: sendMessage',
+        'status: succeeded',
+        'input: |',
+        '~ to: Ada',
+        `~ text: ${'x'.repeat(135)}…`,
         '',
-        'user',
-        '¦Thanks!',
+        '# user',
+        'content: |',
+        '¦ Thanks!',
       ].join('\n'),
     );
   });
@@ -115,7 +122,7 @@ describe('renderObservation', () => {
   });
 
   it('renders only messages after the cursor', () => {
-    const after = renderObservation(HISTORY, 'm1');
+    const after = renderObservation(HISTORY, 'memory-result:m1');
 
     expect(after.text).toContain('Thanks!');
     expect(after.text).not.toContain('whatsapp');
@@ -143,12 +150,14 @@ describe('renderObservation', () => {
           output: 'Recalling...',
         },
       ]),
-      msg('m2', 'user', [{ type: 'text', text: wrapMemoryResult('x') }]),
+      msg('memory-result:m2', 'user', [
+        { type: 'text', text: wrapMemoryResult('x') },
+      ]),
     ];
 
     expect(renderObservation(history, null)).toEqual({
       text: '',
-      cursor: 'm2',
+      cursor: 'memory-result:m2',
       hasMore: false,
     });
   });
@@ -188,7 +197,7 @@ describe('renderObservation', () => {
 
     expect(next.text.length).toBeLessThanOrEqual(2_000);
     expect(next.text).toContain('part-0');
-    expect(next.text).toMatch(/\[… \d+ more parts\]$/u);
+    expect(next.text).toMatch(/\nomittedParts: \d+$/u);
     expect(next).toMatchObject({ cursor: 'big', hasMore: false });
   });
 });

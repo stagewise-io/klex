@@ -7,6 +7,7 @@ export {
   MAX_RESOURCE_BINARY_BYTES,
   MAX_RESOURCE_TEXT_CHARS,
   normalizeMimeType,
+  projectResourceState,
   type ResourceDiffResult,
   type ResourceHandler,
   ResourceSizeLimitError,

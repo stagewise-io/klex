@@ -1,7 +1,6 @@
-import type { TextPart } from 'ai';
-
 import type { Mcp } from '@/mcp';
 import type { ExtendedUIMessage } from '@/session/chat/message-types';
+import { type DataBlock, field } from '@/session/chat/utils/history-view';
 
 export const WATCHED_EVENTS_KEY = 'mcp-watched-events';
 type Watch = ReturnType<Mcp['getEventWatches']>[number];
@@ -64,24 +63,18 @@ export function watchedEventsUpdate(
   return { isInitial: false, watches, diff: { added, changed, removed } };
 }
 
-export function renderWatchedEventsData(data: WatchedEventsData): TextPart[] {
-  const tag = data.isInitial ? 'watched-mcp-events' : 'watched-mcp-events-diff';
-  const row = (watch: WatchEntry) =>
-    `¦${JSON.stringify({ watchId: watch.watchId, server: watch.server, name: watch.name, status: watch.status, delivery: watch.delivery, gap: watch.gap, reason: watch.reason })}`;
-  const lines = [`<${tag}>`];
-  if (data.isInitial)
-    lines.push(...(data.watches.length ? data.watches.map(row) : ['(none)']));
-  else if (data.diff) {
-    if (data.diff.added.length)
-      lines.push('added:', ...data.diff.added.map(row));
-    if (data.diff.removed.length)
-      lines.push(
-        'removed:',
-        ...data.diff.removed.map((id) => `¦${JSON.stringify(id)}`),
-      );
-    if (data.diff.changed.length)
-      lines.push('changed:', ...data.diff.changed.map(row));
-  }
-  lines.push(`</${tag}>`);
-  return [{ type: 'text', text: lines.join('\n') }];
+export function projectWatchedEventsData(data: WatchedEventsData): DataBlock[] {
+  if (!data.isInitial && !data.diff) return [];
+  return [
+    {
+      type: data.isInitial ? 'watched-mcp-events' : 'watched-mcp-events-diff',
+      ...(data.isInitial
+        ? { body: field('items', data.watches, 'trusted'), fields: [] }
+        : {
+            fields: Object.entries(data.diff!).map(([key, value]) =>
+              field(key, value, 'trusted'),
+            ),
+          }),
+    },
+  ];
 }

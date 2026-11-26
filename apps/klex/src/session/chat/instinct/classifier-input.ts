@@ -1,11 +1,7 @@
-import type { TextPart } from 'ai';
-
 import type { DataPartTransformers } from '@/session/chat/extensions/extension-api';
 import type { ExtendedUIMessage } from '@/session/chat/message-types';
 import {
-  CONTEXT_SUMMARY_KEY,
   createInstinctHistoryView,
-  type DataProjector,
   RECORD_SEPARATOR,
   renderFittedMessage,
 } from '@/session/chat/utils/history-view';
@@ -28,28 +24,6 @@ export interface InstinctClassifierInputArgs {
 }
 
 const HISTORY_MESSAGE_COUNT = 5;
-
-/** Project extension text as the main agent does, without binary files. */
-function createDataProjectors(
-  transformers: DataPartTransformers,
-  occurrences: Map<string, number>,
-): Record<string, DataProjector> {
-  const projectors: Record<string, DataProjector> = {};
-  for (const [key, transform] of Object.entries(transformers)) {
-    if (key === CONTEXT_SUMMARY_KEY) continue;
-    projectors[key] = (data) => {
-      const occurrence = occurrences.get(key) ?? 0;
-      occurrences.set(key, occurrence + 1);
-      const value = transform(data, occurrence)
-        .filter((part): part is TextPart => part.type === 'text')
-        .map((part) => part.text)
-        .join('\n')
-        .trim();
-      return value.length > 0 ? { label: key, value } : null;
-    };
-  }
-  return projectors;
-}
 
 /** Keep a chronological suffix, retaining the newest fragment for tiny budgets. */
 function fitHistory(rendered: readonly string[], budget: number): string {
@@ -81,23 +55,14 @@ export function buildInstinctClassifierInput(
 ): string {
   const { limits } = args;
   const windowStart = Math.max(0, args.history.length - HISTORY_MESSAGE_COUNT);
-  const occurrences = new Map<string, number>();
-  // Preserve full-history occurrence indices without projecting omitted data.
-  for (let i = 0; i < windowStart; i++) {
-    const message = args.history[i];
-    if (!message) continue;
-    for (const part of message.parts) {
-      if (!part.type.startsWith('data-')) continue;
-      const key = part.type.slice('data-'.length);
-      if (key !== CONTEXT_SUMMARY_KEY && args.dataPartTransformers[key])
-        occurrences.set(key, (occurrences.get(key) ?? 0) + 1);
-    }
-  }
   const view = createInstinctHistoryView({
-    data: createDataProjectors(args.dataPartTransformers, occurrences),
+    transformers: args.dataPartTransformers,
   });
   const rendered = view
-    .fit(args.history.slice(windowStart))
+    .fit(args.history, {
+      kind: 'after-cursor',
+      cursor: args.history[windowStart - 1]?.id ?? null,
+    })
     .messages.map((message) =>
       truncateWithMarker(
         renderFittedMessage(message).text,

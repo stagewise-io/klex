@@ -3,14 +3,20 @@ import { randomUUID } from 'node:crypto';
 import type { TextPart, ToolSet } from 'ai';
 import z from 'zod';
 
+import {
+  type DataBlock,
+  dataBlock,
+  field,
+  joinDataBlocks,
+} from '@/session/chat/utils/history-view';
 import { DEFAULT_SESSION_ID } from '@/session/types';
 
 import { SessionInboxUrgency } from '../../inbox';
 import type { ExtendedUIMessage } from '../../message-types';
 import {
+  blockPartTransformer,
   createDataPart,
   type DataPartTransformers,
-  dataPartTransformer,
   type Extension,
   type ExtensionDeps,
   type ExtensionFactory,
@@ -70,22 +76,24 @@ function formatScheduledFor(reminderTime: string): string {
   return new Date(reminderTime).toUTCString();
 }
 
-function formatReminderNotice(todoId: string): string {
-  return `<todo-reminder>Reminder due for todo ID: ${todoId}</todo-reminder>`;
-}
-
-function formatReminderSuffix(todo: Todo): string {
-  return todo.reminderTime
-    ? ` — reminder: ${formatScheduledFor(todo.reminderTime)}`
-    : '';
-}
-
-function formatFullList(todos: Todo[]): string {
-  if (todos.length === 0) return '<todos>\n</todos>';
-  const lines = todos.map((todo, index) => {
-    return `${index + 1}. (ID: ${todo.id}) ${todo.description}${formatReminderSuffix(todo)}`;
-  });
-  return `<todos>\n${lines.join('\n')}\n</todos>`;
+function todoBlocks(data: TodosDataUIPart, previous?: Todo[]): DataBlock[] {
+  return [
+    previous
+      ? dataBlock('todos-diff', computeDiff(previous, data.todos), 'trusted')
+      : {
+          type: 'todos',
+          body: field('items', data.todos, 'trusted'),
+          fields: [],
+        },
+    ...(data.reminderTodoId
+      ? [
+          {
+            type: 'todo-reminder',
+            fields: [field('todoId', data.reminderTodoId, 'trusted')],
+          },
+        ]
+      : []),
+  ];
 }
 
 interface TodosDiff {
@@ -126,29 +134,6 @@ function computeDiff(prev: Todo[], current: Todo[]): TodosDiff {
       );
     }),
   };
-}
-
-function formatDiff(diff: TodosDiff): string {
-  const lines: string[] = [];
-  for (const todo of diff.added) {
-    lines.push(
-      `New todo added: (ID: ${todo.id}) ${todo.description}${formatReminderSuffix(todo)}`,
-    );
-  }
-  for (const t of diff.removed) {
-    lines.push(`Todo cleared: (ID: ${t.id}) ${t.description}`);
-  }
-  for (const t of diff.descriptionUpdated) {
-    lines.push(`Todo updated: (ID: ${t.id}) ${t.description}`);
-  }
-  for (const t of diff.reminderUpdated) {
-    lines.push(
-      t.reminderTime
-        ? `Todo reminder set: (ID: ${t.id}) ${formatScheduledFor(t.reminderTime)}`
-        : `Todo reminder cleared: (ID: ${t.id})`,
-    );
-  }
-  return lines.length > 0 ? lines.join('\n') : 'Todos unchanged.';
 }
 
 /**
@@ -359,18 +344,10 @@ class TodosExtension implements Extension {
           hasTodoPart = true;
           const { todos, reminderTodoId } = (part as { data: TodosDataUIPart })
             .data;
-          let text: string;
-          if (diffBase === null) {
-            // First occurrence with no injection → render full list.
-            text = formatFullList(todos);
-          } else {
-            const diff = computeDiff(diffBase, todos);
-            text = formatDiff(diff);
-          }
+          const text = joinDataBlocks(
+            todoBlocks({ todos, reminderTodoId }, diffBase ?? undefined),
+          );
           diffBase = todos;
-          if (reminderTodoId) {
-            text += `\n${formatReminderNotice(reminderTodoId)}`;
-          }
           return { type: 'text', text } as TextPart;
         }
         return part;
@@ -385,16 +362,9 @@ class TodosExtension implements Extension {
   }
 
   dataPartTransformers: DataPartTransformers = {
-    [TODOS_KEY]: dataPartTransformer<TodosDataUIPart>((data) => [
-      {
-        type: 'text',
-        text:
-          formatFullList(data.todos) +
-          (data.reminderTodoId
-            ? `\n${formatReminderNotice(data.reminderTodoId)}`
-            : ''),
-      },
-    ]),
+    [TODOS_KEY]: blockPartTransformer<TodosDataUIPart>((data) =>
+      todoBlocks(data),
+    ),
   };
 
   introspect(): Record<string, unknown> {

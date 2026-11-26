@@ -1,9 +1,10 @@
 import type { FilePart, TextPart } from 'ai';
 
+import { renderDataRecord } from '@/session/chat/utils/history-view';
+
 import {
   buildResourceAttrs,
   type ContextDataContent,
-  escCData,
   extractText,
   MAX_LCS_CELLS,
   MAX_RESOURCE_TEXT_CHARS,
@@ -134,7 +135,7 @@ export function formatTextContent(
 }
 
 // ---------------------------------------------------------------------------
-// Render: text-diff and full content in <resource> blocks
+// Render: quoted text-diff and full content
 // ---------------------------------------------------------------------------
 
 function renderText(data: ResourceStateData): (TextPart | FilePart)[] {
@@ -145,7 +146,11 @@ function renderText(data: ResourceStateData): (TextPart | FilePart)[] {
     return [
       {
         type: 'text',
-        text: `<resource ${attrs} type="update">\n<diff><![CDATA[${escCData(diff.patch)}]]></diff>\n</resource>`,
+        text: renderDataRecord('resource', {
+          ...attrs,
+          type: 'update',
+          diff: diff.patch,
+        }),
       },
     ];
   }

@@ -1,11 +1,13 @@
 import { type ToolSet, tool } from 'ai';
 import z from 'zod';
 
+import type { DataBlock } from '@/session/chat/utils/history-view';
+
 import type { ExtendedUIMessage } from '../../message-types';
 import {
+  blockPartTransformer,
   createDataPart,
   type DataPartTransformers,
-  dataPartTransformer,
   type Extension,
   type ExtensionFactory,
   isDataPartOf,
@@ -148,15 +150,28 @@ function isTimeData(data: unknown): data is TimeData {
   return (
     isRecord(data) &&
     typeof data.timestamp === 'number' &&
-    Number.isFinite(data.timestamp)
+    Number.isFinite(new Date(data.timestamp * 1000).getTime())
   );
+}
+
+/** Self-contained timestamps for history; never mutates live conversion state. */
+export function timeHistoryBlocks(
+  data: unknown,
+  fallbackTimezone = 'UTC',
+): readonly DataBlock[] {
+  if (!isTimeData(data)) return [];
+  const tz =
+    typeof data.tz === 'string' && isValidTimezone(data.tz)
+      ? data.tz
+      : fallbackTimezone;
+  return [{ type: 'time', value: formatTimeContext(data.timestamp, tz, true) }];
 }
 
 function isTimezoneData(data: unknown): data is TimezoneData {
   return (
     isRecord(data) &&
     typeof data.timestamp === 'number' &&
-    Number.isFinite(data.timestamp) &&
+    Number.isFinite(new Date(data.timestamp * 1000).getTime()) &&
     typeof data.tz === 'string' &&
     isValidTimezone(data.tz)
   );
@@ -286,29 +301,26 @@ class TimeExt implements Extension {
   }
 
   dataPartTransformers: DataPartTransformers = {
-    [TIME_KEY]: dataPartTransformer<TimeData>((data, occurrence) => {
-      if (!isTimeData(data)) return [];
-      const tz =
-        typeof data.tz === 'string' && isValidTimezone(data.tz)
-          ? data.tz
-          : this.cfg.timezone;
-      const key = dayKey(data.timestamp, tz);
-      const full = occurrence === 0 || this.convDayKey !== key;
-      this.convDayKey = key;
-      return [
-        {
-          type: 'text',
-          text: `<time>${formatTimeContext(data.timestamp, tz, full)}</time>`,
-        },
-      ];
-    }),
-    [TIMEZONE_KEY]: dataPartTransformer<TimezoneData>((data) => {
+    [TIME_KEY]: blockPartTransformer<TimeData>(
+      (data, occurrence) => {
+        if (!isTimeData(data)) return [];
+        const tz =
+          typeof data.tz === 'string' && isValidTimezone(data.tz)
+            ? data.tz
+            : this.cfg.timezone;
+        const key = dayKey(data.timestamp, tz);
+        const full = occurrence === 0 || this.convDayKey !== key;
+        this.convDayKey = key;
+        return [
+          { type: 'time', value: formatTimeContext(data.timestamp, tz, full) },
+        ];
+      },
+      (data) => timeHistoryBlocks(data, this.cfg.timezone),
+    ),
+    [TIMEZONE_KEY]: blockPartTransformer<TimezoneData>((data) => {
       if (!isTimezoneData(data)) return [];
       return [
-        {
-          type: 'text',
-          text: `<timezone>${formatTimezone(data.timestamp, data.tz)}</timezone>`,
-        },
+        { type: 'timezone', value: formatTimezone(data.timestamp, data.tz) },
       ];
     }),
   };

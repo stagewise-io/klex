@@ -197,6 +197,10 @@ function collectText(message: ModelMessage): string {
 }
 
 function hasCompactionSummary(text: string): boolean {
+  if (/(?:^|\n\n)# summary\n(?:content|summary): \|\n~ /.test(text))
+    return true;
+  if (/(?:^|\n\n)summary\n¦/.test(text)) return true;
+  // Preserve support for history supplied by older runtimes.
   const start = text.indexOf('<summary>');
   if (start === -1) return false;
   const end = text.indexOf('</summary>', start + '<summary>'.length);
@@ -220,7 +224,7 @@ function retainNewestHistory(
 
   const first = items[0];
   const summaryIndex =
-    first?.role === 'assistant' &&
+    (first?.role === 'assistant' || first?.role === 'user') &&
     hasCompactionSummary(first.content[0]?.text ?? '') &&
     items.length > 1
       ? 0

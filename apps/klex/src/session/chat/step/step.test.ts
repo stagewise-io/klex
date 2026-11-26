@@ -1034,9 +1034,12 @@ describe('Step — provisional step context', () => {
     expect(modelMessages[0]).toMatchObject({
       role: 'user',
       content: [
-        { type: 'text', text: '<summary>Previous work summarized</summary>' },
-        { type: 'text', text: expect.stringContaining('<time>') },
-        { type: 'text', text: expect.stringContaining('<timezone>UTC') },
+        {
+          type: 'text',
+          text: '# summary\ncontent: |\n~ Previous work summarized\n\n',
+        },
+        { type: 'text', text: expect.stringContaining('# time ') },
+        { type: 'text', text: expect.stringContaining('# timezone UTC') },
       ],
     });
     expect(modelMessages[1]).toMatchObject({

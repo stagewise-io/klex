@@ -1,5 +1,7 @@
 import z from 'zod';
 
+import { field, renderDataBlock } from '@/session/chat/utils/history-view';
+
 const RECALL_SCOPE_MAX_LENGTH = 256;
 const RECALL_QUESTION_MAX_LENGTH = 4_000;
 
@@ -99,15 +101,12 @@ export function recallFingerprint(input: RecallInput): string {
  */
 export function renderRecall(input: RecallInput, id: string): string {
   const scope = input.scope?.trim() || 'unspecified scope';
-  // Keep caller-controlled text inside JSON strings, not recall/observation tags.
-  // Escape angle brackets even inside strings so no payload can close the block.
-  const payload = JSON.stringify({
-    scope,
-    question: input.question.trim(),
-  }).replace(
-    /[<>&\u2028\u2029]/gu,
-    (character) =>
-      `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`,
-  );
-  return `<recall id="${id}">\n${payload}\n</recall>`;
+  return renderDataBlock({
+    type: 'recall',
+    fields: [
+      field('id', id, 'trusted'),
+      field('scope', scope, 'bot'),
+      field('question', input.question.trim(), 'bot'),
+    ],
+  });
 }

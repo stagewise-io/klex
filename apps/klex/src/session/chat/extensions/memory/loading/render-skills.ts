@@ -2,25 +2,28 @@ import { createHash } from 'node:crypto';
 
 import { isDataPartOf } from '@/session/chat/extensions/extension-api';
 import type { ExtendedUIMessage } from '@/session/chat/message-types';
+import {
+  field,
+  renderDataBlock,
+  renderDataRecord,
+  tableField,
+} from '@/session/chat/utils/history-view';
 
-import { formatSkill, inline, quote, skillBody } from './format';
+import { formatSkill, skillBody } from './format';
 import { diff } from './render';
 import { type MemorySnapshot, parseSnapshot } from './types';
 
-const cell = (value: string) =>
-  value.replaceAll('\\', '\\\\').replaceAll('|', '\\|').replace(/\s+/gu, ' ');
 interface Listed {
   name: string;
   description: string;
 }
-function table(skills: Listed[]): string {
-  return [
-    '| name | description |',
-    '| --- | --- |',
-    ...skills.map(
-      (skill) => `| ${cell(skill.name)} | ${cell(skill.description)} |`,
-    ),
-  ].join('\n');
+function table(key: string, skills: Listed[]) {
+  return tableField(
+    key,
+    ['name', 'description'],
+    skills.map((skill) => [skill.name, skill.description]),
+    'trusted',
+  );
 }
 /** Historical immutable snapshots render once; checkpoint carry becomes the new base. */
 export function materializeSkills(
@@ -58,7 +61,18 @@ export function materializeSkills(
         )
           continue;
         if (catalogue === undefined)
-          prefix.push(`available-skills\n${quote(table(skills))}`);
+          prefix.push(
+            renderDataBlock({
+              type: 'available-skills',
+              fields: [],
+              body: tableField(
+                'skills',
+                ['name', 'description'],
+                skills.map((skill) => [skill.name, skill.description]),
+                'trusted',
+              ),
+            }),
+          );
         else if (JSON.stringify(catalogue) !== JSON.stringify(skills)) {
           const previous = new Map(
             catalogue.map((skill) => [skill.name, skill.description]),
@@ -74,16 +88,17 @@ export function materializeSkills(
               (previous) =>
                 !skills.some((skill) => skill.name === previous.name),
             )
-            .map((skill) => `Deleted: ${cell(skill.name)}`);
+            .map((skill) => skill.name);
           if (added.length || changed.length || removed.length)
             blocks.push(
-              `available-skills-change\n${quote(
-                [
-                  ...(added.length ? [`New:\n${table(added)}`] : []),
-                  ...(changed.length ? [`Updated:\n${table(changed)}`] : []),
-                  ...removed,
-                ].join('\n'),
-              )}`,
+              renderDataBlock({
+                type: 'available-skills-change',
+                fields: [
+                  table('added', added),
+                  table('changed', changed),
+                  field('removed', removed, 'trusted'),
+                ],
+              }),
             );
         }
         catalogue = skills;
@@ -111,7 +126,6 @@ export function materializeSkills(
         const hash = createHash('sha256').update(value).digest('hex');
         if (seen.get(filename) === hash) continue;
         seen.set(filename, hash);
-        const label = `${inline(snapshot.title)}${snapshot.kind === 'skill-reference' ? ` reference=${JSON.stringify(snapshot.section ?? '')}` : ''}`;
         const tag = snapshot.kind;
         const previous = snapshots.get(filename);
         snapshots.set(filename, snapshot);
@@ -126,7 +140,15 @@ export function materializeSkills(
           });
         let text = full();
         if (snapshot.removed) {
-          text = `${tag}-update ${label} deleted`;
+          text = renderDataRecord(
+            `${tag}-update`,
+            {
+              skill: snapshot.title,
+              reference: snapshot.section,
+              deleted: true,
+            },
+            { defaultSource: 'trusted' },
+          );
         } else if (previous && !previous.removed) {
           const before = skillBody(previous);
           const metadata =
@@ -144,11 +166,19 @@ export function materializeSkills(
             bounded &&
             (before === current ||
               patch.length + metadata.length < current.length)
-              ? [
-                  `${tag}-update ${label}`,
-                  ...(patch ? [`patch\n${quote(patch)}`] : []),
-                  ...(metadata ? [`metadata\n${quote(metadata.trim())}`] : []),
-                ].join('\n')
+              ? renderDataBlock({
+                  type: `${tag}-update`,
+                  fields: [
+                    field('skill', snapshot.title ?? '', 'trusted'),
+                    ...(snapshot.section
+                      ? [field('reference', snapshot.section, 'trusted')]
+                      : []),
+                    ...(patch ? [field('patch', patch, 'bot')] : []),
+                    ...(metadata
+                      ? [field('metadata', metadata.trim(), 'bot')]
+                      : []),
+                  ],
+                })
               : full(true);
         }
         if (

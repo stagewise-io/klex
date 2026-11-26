@@ -24,7 +24,6 @@ import {
 import compactionPrompt from './compaction-prompt.md';
 import { summaryRejectionReason } from './summary-validation';
 
-const COMPACTION_TRANSCRIPT_VIEW = createTranscriptHistoryView();
 const COMPACTION_SYSTEM_PROMPT = `${compactionPrompt}\n\n${LINES_FORMAT_PROMPT}`;
 
 /**
@@ -514,7 +513,11 @@ class ContextCompactionExt implements Extension {
       history.length - slice.length,
     );
 
-    const transcript = COMPACTION_TRANSCRIPT_VIEW.render(slice).text;
+    const transcript = createTranscriptHistoryView(
+      undefined,
+      this.deps.getDataPartTransformers?.(),
+      ['time', 'timezone', 'todos', 'consult-report'],
+    ).render(slice).text;
     span.setAttribute('compaction.transcriptLength', transcript.length);
 
     if (transcript.trim().length === 0) {

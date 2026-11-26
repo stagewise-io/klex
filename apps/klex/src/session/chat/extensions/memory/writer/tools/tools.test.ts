@@ -11,7 +11,7 @@ import type { ActivityHistory } from '@/activity-history';
 import { createSkillRegistry } from '@/skills';
 
 import { createEntityStore, entityRevision } from '../entities';
-import { CURATION_TOOLS, createWriterTools } from './tools';
+import { CURATION_TOOLS, createWriterTools, entityReadResult } from './tools';
 
 const directories: string[] = [];
 const source = 'message-1';
@@ -71,7 +71,7 @@ async function call(
   });
 }
 function revision(output: unknown): string {
-  const match = String(output).match(/\nrevision\n¦([a-f0-9]+)\n/);
+  const match = String(output).match(/\nrevision: ([a-f0-9]+)\n/);
   if (!match?.[1]) throw new Error('Missing revision in memory block');
   return match[1];
 }
@@ -444,8 +444,8 @@ describe('memory writer tools', () => {
       description: external.description,
     });
     const read = await call(tools, 'readSkill', { id: 'templates/deploy' });
-    expect(read).toContain(`skill ${external.id}\n`);
-    expect(read).toContain(`content\n¦${external.body}`);
+    expect(read).toContain(`# skill\nskill: ${external.id}\n`);
+    expect(read).toContain(`content: |\n~ ${external.body}`);
     expect(revision(read)).toBeTruthy();
     expect(
       await call(tools, 'createEntity', {
@@ -607,7 +607,9 @@ describe('memory writer tools', () => {
       status: 'rejected',
     });
     const read = await call(second, 'readEntity', { id: entity.id });
-    expect(read).toContain('facts\n¦[General#1] Project owner');
+    expect(read).toContain('section: General');
+    expect(read).toContain('facts: |\n~ 1. Project owner');
+    expect(read).not.toContain('[General#');
     expect(JSON.stringify(read)).not.toContain('history:');
     expect(
       await call(second, 'updateEntity', {
@@ -637,7 +639,7 @@ describe('memory writer tools', () => {
       ],
     });
     expect(await call(second, 'readEntity', { id: 'Alex Smith' })).toContain(
-      'facts\n¦[General#1] Former project owner\n¦  was 1: Project owner',
+      'facts: |\n~ 1. Former project owner\n~   was 1: Project owner',
     );
     await call(
       second,
@@ -1251,6 +1253,45 @@ describe('memory writer tools', () => {
       expect(f.entities.get(entity.id)?.sections).toEqual(entity.sections);
     },
   );
+  it('groups relation targets under their predicates in memory reads', async () => {
+    const f = await fixture();
+    const entity = await f.entities.create(
+      { title: 'Ada', tags: ['people'] },
+      { General: [fact('Owner')] },
+    );
+    const text = entityReadResult(
+      {
+        ...entity,
+        frontmatter: {
+          ...entity.frontmatter,
+          RelatedTo: [
+            {
+              target: { kind: 'entity', id: 'CLOUD-220' },
+              relationship: 'requested',
+            },
+            {
+              target: { kind: 'entity', id: 'CLOUD-221' },
+              relationship: 'requested',
+            },
+            {
+              target: { kind: 'skill', id: 'learning/deploy' },
+              relationship: 'uses',
+            },
+          ],
+        },
+      },
+      ['General'],
+    );
+    expect(text).toContain('requested: |\n  - CLOUD-220\n  - CLOUD-221');
+    expect(text).toContain('uses: |\n  - learning/deploy');
+    expect(text).not.toContain('target:');
+    expect(text).not.toContain('relatedTo:');
+    expect(text).not.toContain('.md');
+    expect(text).toContain('loadOn: []');
+    expect(text).not.toContain('loadOn: |\n~');
+    expect(text).not.toMatch(/^~ ~/m);
+  });
+
   it('rejects credentials in entity and skill writes', async () => {
     const { tools, entities, skills } = await fixture();
     const token = 'ghs_abcdefghijklmnopqrstuvwxyz123456';

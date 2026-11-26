@@ -1,5 +1,8 @@
 import type { ExtendedUIMessage } from '@/session/chat/message-types';
 
+import type { DataBlock } from './blocks';
+import type { DataPartRegistry } from './data-parts';
+
 export type HistoryMessage = ExtendedUIMessage;
 export type HistoryRole = ExtendedUIMessage['role'];
 
@@ -27,11 +30,6 @@ export type JsonMode = 'plain' | 'compact' | 'lines';
 export interface ValueLimit extends FieldLimit {
   json: JsonMode;
 }
-
-/** Projects a `data-{key}` part to a labelled value, or drops it (`null`). */
-export type DataProjector = (
-  data: unknown,
-) => { label: string; value: string } | null;
 
 /** Stage 1: decides which parts become records and how fields are bounded. */
 export interface HistoryFilterOptions {
@@ -71,8 +69,13 @@ export interface HistoryFilterOptions {
         media: 'inline' | 'placeholder';
       };
   summary: false | { key: string; limit: FieldLimit };
-  /** Projectors for `data-{key}` parts; other data parts are dropped. */
-  data?: Readonly<Record<string, DataProjector>>;
+  /** Extension keys selected for shared projection. Omitted means none. */
+  dataParts?: {
+    keys: readonly string[] | 'all';
+    exclude?: readonly string[];
+    limit?: FieldLimit;
+    media?: 'inline' | 'placeholder';
+  };
 }
 
 export type ToolStatus = 'pending' | 'succeeded' | 'failed' | 'denied';
@@ -94,9 +97,18 @@ export type HistoryRecord =
       output?: string;
       error?: string;
     }
-  | { kind: 'context'; source: string; metadata?: string; items: ContextItem[] }
+  | {
+      kind: 'context';
+      type?: 'event' | 'push-notification' | 'input';
+      source: string;
+      metadata?: string;
+      items: ContextItem[];
+    }
   | { kind: 'summary'; text: string }
-  | { kind: 'data'; label: string; value: string };
+  | {
+      kind: 'data';
+      blocks: readonly DataBlock[];
+    };
 
 export interface ProjectedMessage {
   id: string;
@@ -167,6 +179,7 @@ export type HistoryScope =
 
 export interface HistoryViewOptions {
   filter: HistoryFilterOptions;
+  transformers?: DataPartRegistry;
   lines?: LineRendererOptions;
   /** Omitted: every non-empty message in scope, no limit. */
   budget?: HistoryBudget;

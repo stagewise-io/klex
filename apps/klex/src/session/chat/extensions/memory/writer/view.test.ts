@@ -32,10 +32,12 @@ describe('memory writer view', () => {
       tool('runCommand', { command: 'git diff' }, 'ok'),
     ]);
     const [output, action] = text?.split('\n\n') ?? [];
-    expect(output).toBe('your_output\n¦Checking the diff');
-    expect(action).toMatch(/^your_action runCommand succeeded\n¦/);
+    expect(output).toBe('# your_output\ncontent: |\n~ Checking the diff');
+    expect(action).toMatch(
+      /^# your_action\ntool: runCommand\nstatus: succeeded\ninput: \|\n~ /,
+    );
     expect(action).toContain('git diff');
-    expect(action).toMatch(/\nresult\n¦ok$/);
+    expect(action).toMatch(/\nresult: \|\n¦ ok$/);
   });
 
   it('hides todo tools', () => {

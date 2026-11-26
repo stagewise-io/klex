@@ -1,55 +1,82 @@
+import {
+  type BlockField,
+  field as blockField,
+  dataFields,
+  type FieldPolicy,
+  renderDataBlock,
+} from '@/session/chat/utils/history-view';
+
 import type { MemorySnapshot } from './types';
 
-export const quote = (value: string): string =>
-  value
-    .split(/\r\n|[\r\n\v\f\u0085\u2028\u2029]/u)
-    .map((line) => `¦${line}`)
-    .join('\n');
-export const inline = (value: string): string =>
-  value.replace(/[\r\n\v\f\u0085\u2028\u2029]/gu, ' ');
-export const labelString = (value: string): string =>
-  JSON.stringify(value)
-    .replace(/\u2028/gu, '\\u2028')
-    .replace(/\u2029/gu, '\\u2029');
-export const field = (name: string, value: string): string =>
-  `${name}\n${quote(value)}`;
+export { inline } from '@/session/chat/utils/history-view';
+export const MEMORY_FIELD_POLICY = {
+  defaultSource: 'bot',
+  sources: {
+    entity: 'trusted',
+    skill: 'trusted',
+    section: 'trusted',
+    additionalSections: 'trusted',
+    entityType: 'trusted',
+    tags: 'trusted',
+    linkedIdentities: 'trusted',
+    loadOn: 'trusted',
+    replacement: 'trusted',
+    removed: 'trusted',
+  },
+} as const satisfies FieldPolicy;
 
 /** Shared presentation only; persisted snapshots deliberately stay unchanged. */
 export function formatMemory(
   snapshot: MemorySnapshot,
   filename: string,
   replacement = false,
-  extra: readonly string[] = [],
+  extra: readonly BlockField[] = [],
 ): string {
-  const linked = (snapshot.linkedIdentities ?? [])
-    .map(
-      (identity) =>
-        `${inline(identity.server)}:\n${Object.entries(identity.match)
-          .map(([key, value]) => `  ${inline(key)}: ${inline(value)}`)
-          .join('\n')}`,
-    )
-    .join('\n');
-  return [
-    `${snapshot.kind === 'detail' ? 'memory-detail' : 'memory'} ${labelString(filename)}${snapshot.section ? ` section=${labelString(snapshot.section)}` : ''}${replacement ? ' replacement' : ''}`,
-    ...(snapshot.entityType ? [field('entityType', snapshot.entityType)] : []),
-    ...(snapshot.tags?.length ? [field('tags', snapshot.tags.join(','))] : []),
-    ...(snapshot.description
-      ? [field('description', snapshot.description)]
-      : []),
-    ...(linked ? [field('linkedIdentities', linked)] : []),
-    ...(snapshot.sections.length
-      ? [
-          field(
-            'additionalSections',
-            snapshot.sections
-              .map((section) => `- ${inline(section)}`)
-              .join('\n'),
-          ),
-        ]
-      : []),
-    ...extra,
-    field('facts', snapshot.body),
-  ].join('\n');
+  if (snapshot.kind === 'skill' || snapshot.kind === 'skill-reference')
+    return formatSkill(snapshot, {
+      replacement,
+      reference:
+        snapshot.kind === 'skill-reference' ? snapshot.section : undefined,
+      extra,
+    });
+  return renderDataBlock({
+    type: snapshot.kind === 'detail' ? 'memory-detail' : 'memory',
+    fields: [
+      ...dataFields(
+        {
+          entity: filename
+            .replace(/^extensions\/io\.stagewise\/memory\/entities\//, '')
+            .replace(/\.md$/, ''),
+          section: snapshot.section || undefined,
+          replacement: replacement || undefined,
+          entityType: snapshot.entityType || undefined,
+          tags: snapshot.tags?.length ? snapshot.tags : undefined,
+          description: snapshot.description || undefined,
+          linkedIdentities: snapshot.linkedIdentities?.length
+            ? snapshot.linkedIdentities
+            : undefined,
+          additionalSections: snapshot.sections.length
+            ? snapshot.sections
+            : undefined,
+        },
+        MEMORY_FIELD_POLICY,
+      ),
+      ...dataFields(
+        Object.fromEntries(
+          Object.entries(snapshot.relationships ?? {}).map(([key, targets]) => [
+            key,
+            targets.map((target) => target.replace(/(?:\/SKILL)?\.md$/, '')),
+          ]),
+        ),
+        'trusted',
+      ),
+      ...(snapshot.loadOn?.length
+        ? [blockField('loadOn', snapshot.loadOn, 'trusted')]
+        : []),
+      ...extra,
+      ...dataFields({ facts: snapshot.body }, MEMORY_FIELD_POLICY),
+    ],
+  });
 }
 
 export function skillBody(
@@ -73,15 +100,24 @@ export function formatSkill(
     reference?: string;
     referenceTool?: 'loadSkill' | 'readSkill';
     replacement?: boolean;
-    extra?: readonly string[];
+    extra?: readonly BlockField[];
   } = {},
 ): string {
-  return [
-    `${options.reference === undefined ? 'skill' : 'skill-reference'} ${inline(snapshot.title)}${options.reference === undefined ? '' : ` reference=${JSON.stringify(options.reference)}`}${options.replacement ? ' replacement' : ''}`,
-    ...(snapshot.description
-      ? [field('description', snapshot.description)]
-      : []),
-    ...(options.extra ?? []),
-    field('content', skillBody(snapshot, options.referenceTool)),
-  ].join('\n');
+  return renderDataBlock({
+    type: options.reference === undefined ? 'skill' : 'skill-reference',
+    fields: [
+      blockField('skill', snapshot.title ?? '', 'trusted'),
+      ...(options.reference === undefined
+        ? []
+        : [blockField('reference', options.reference, 'trusted')]),
+      ...(options.replacement
+        ? [blockField('replacement', true, 'trusted')]
+        : []),
+      ...(snapshot.description
+        ? [blockField('description', snapshot.description, 'bot')]
+        : []),
+      ...(options.extra ?? []),
+      blockField('content', skillBody(snapshot, options.referenceTool), 'bot'),
+    ],
+  });
 }

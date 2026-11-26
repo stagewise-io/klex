@@ -542,7 +542,7 @@ describe('canonical activity search index', () => {
     const [hit] = await index.search('quarterly invoice', 5);
     const entries = await index.readHandles([hit!.handle], 1, 1);
     expect(entries).toHaveLength(3);
-    expect(entries[1]?.text).toContain('¦quarterly invoice ready');
+    expect(entries[1]?.text).toContain('~ quarterly invoice ready');
     expect(entries[0]?.text).toContain('older context');
     expect(entries[2]?.text).toContain('newer context');
     await append('raw user secret', 'user');

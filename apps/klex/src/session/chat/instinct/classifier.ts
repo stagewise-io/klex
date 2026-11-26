@@ -9,10 +9,13 @@ import type {
   InstinctClassificationOutcome,
   InstinctClassificationRequest,
 } from '@/session/chat/extensions/extension-api';
-import { LINES_FORMAT_PROMPT } from '@/session/chat/utils/history-view';
+import {
+  field,
+  LINES_FORMAT_PROMPT,
+  renderDataBlock,
+} from '@/session/chat/utils/history-view';
 
 import classifierBasePrompt from './classifier-prompt.md';
-import { escapeAttribute, escapeExternalContent } from './external-input';
 
 const ACTIVITY_FORMAT = [
   LINES_FORMAT_PROMPT,
@@ -156,12 +159,25 @@ function prepareQuestions(entries: readonly InstinctClassifierEntry[]) {
       policy = `p${policies.size}`;
       policies.set(entry.request.prompt, policy);
       declarations.push(
-        `<policy id="${policy}">${escapeExternalContent(entry.request.prompt)}</policy>`,
+        renderDataBlock({
+          type: 'policy',
+          fields: [
+            field('id', policy, 'trusted'),
+            field('instructions', entry.request.prompt, 'trusted'),
+          ],
+        }),
       );
     }
     const extension = `e${extensionIndex}`;
     declarations.push(
-      `<extension id="${extension}" name="${escapeAttribute(entry.extensionIdentifier)}" policy="${policy}"/>`,
+      renderDataBlock({
+        type: 'extension',
+        fields: [
+          field('id', extension, 'trusted'),
+          field('name', entry.extensionIdentifier, 'trusted'),
+          field('policy', policy, 'trusted'),
+        ],
+      }),
     );
     for (const descriptor of Object.values(entry.request.keys)) {
       const id = `q${Object.keys(questions).length}`;
@@ -192,7 +208,7 @@ function prepareQuestions(entries: readonly InstinctClassifierEntry[]) {
             : { type: 'boolean', instructions: instruction };
     }
   }
-  return { questions, declarations: declarations.join('\n') };
+  return { questions, declarations: declarations.join('\n\n') };
 }
 
 /** Trusted policies and question meanings, once each; evidence stays outside. */
@@ -201,14 +217,22 @@ function renderSystemPrompt(plan: ReturnType<typeof prepareQuestions>): string {
     const type = question.type === 'boolean' ? 'predicate' : question.type;
     const criteria =
       'criteria' in question ? JSON.stringify(question.criteria) : '';
-    return `<question id="${id}" type="${type}" instruction="${escapeAttribute(question.instructions)}">${escapeExternalContent(criteria)}</question>`;
+    return renderDataBlock({
+      type: 'question',
+      fields: [
+        field('id', id, 'trusted'),
+        field('type', type, 'trusted'),
+        field('instructions', question.instructions, 'trusted'),
+        field('criteria', criteria, 'trusted'),
+      ],
+    });
   });
   return [
     classifierBasePrompt.trim(),
     ACTIVITY_FORMAT,
     plan.declarations,
     ...questions,
-  ].join('\n');
+  ].join('\n\n');
 }
 
 /** Prepared once per classification, using the same evidence for both APIs. */
@@ -232,7 +256,7 @@ export function compileInstinctClassificationBatch(
     'Apply only the trusted policies declared below. When evidence is ambiguous, use the conservative judgment allowed by the rubric.',
     plan.declarations,
     prompt,
-  ].join('\n');
+  ].join('\n\n');
   if (
     Object.keys(questions).length > INSTINCT_CLASSIFIER_LIMITS.maxBatchQuestions
   )

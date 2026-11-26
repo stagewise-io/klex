@@ -202,7 +202,19 @@ function harness(
       extensionDeps = deps;
       return {
         dataPartTransformers: {
-          'instinct-test': () => [{ type: 'text', text: 'persistent memory' }],
+          'instinct-test': () => [
+            {
+              type: 'memory',
+              fields: [
+                {
+                  key: 'content',
+                  kind: 'value',
+                  value: 'persistent memory',
+                  source: 'bot',
+                },
+              ],
+            },
+          ],
         },
         getInstinctClassificationRequest: () => ({
           prompt: 'Memory needed?',
@@ -701,7 +713,7 @@ describe.skip('ChatSession instinct tracing', () => {
           ) as { content: string }[];
           expect(
             instructions.map(({ content }) => content).join('\n'),
-          ).toContain('<question id="q0"');
+          ).toContain('# question\nid: "q0"');
           expect(successful.attributes['gen_ai.input.messages']).toContain(
             'Remember the project',
           );

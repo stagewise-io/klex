@@ -163,7 +163,10 @@ describe('instinct executor', () => {
     }));
     for (const entry of entries)
       expect(validateInstinctClassificationRequest(entry.request)).toBeNull();
-    const batch = compileInstinctClassificationBatch(entries, 'Activity');
+    const batch = {
+      ...compileInstinctClassificationBatch(entries, 'Activity'),
+      system: 'x'.repeat(128_001),
+    };
     expect(
       JSON.stringify({ system: batch.system, prompt: batch.prompt }).length,
     ).toBeGreaterThan(128_000);

@@ -15,7 +15,6 @@ import {
   type ExtensionFactory,
   isDataPartOf,
   type ResolvedModel,
-  type StepCompleteEvent,
 } from '@/session/chat/extensions/extension-api';
 import {
   createLearningState,
@@ -29,7 +28,14 @@ import {
 } from '@/session/chat/extensions/memory/loading';
 import type { MemoryRecall } from '@/session/chat/extensions/memory/recall';
 import type { ExtendedUIMessage } from '@/session/chat/message-types';
-import { LINES_FORMAT_PROMPT } from '@/session/chat/utils/history-view';
+import {
+  field,
+  inline,
+  joinDataBlocks,
+  LINES_FORMAT_PROMPT,
+  RECORD_SEPARATOR,
+  renderDataRecord,
+} from '@/session/chat/utils/history-view';
 import { SessionInboxUrgency } from '@/session/inbox';
 import type { ChildSessionHandle } from '@/session/types';
 import type { SkillRegistry } from '@/skills';
@@ -154,8 +160,6 @@ class MemoryWriterExtension implements Extension {
   private work = Promise.resolve();
   private running = false;
   private wakePending = false;
-  private parentActive = false;
-  private unsubscribe: (() => void) | undefined;
   private removeDeletionGuard: (() => void) | undefined;
   private retry: ReturnType<typeof setTimeout> | undefined;
   private childCompleted = false;
@@ -265,9 +269,6 @@ class MemoryWriterExtension implements Extension {
       },
       getHistory: () => this.deps.getHistory(),
     });
-    this.unsubscribe = this.options.activities.subscribe(() => {
-      if (!this.parentActive) this.wake();
-    });
     this.wake();
   }
 
@@ -298,28 +299,6 @@ class MemoryWriterExtension implements Extension {
     return this.loader?.carry(this.deps.getHistory()) ?? Promise.resolve([]);
   }
 
-  onStepStart(): void {
-    this.parentActive = true;
-  }
-
-  onStepComplete(event: StepCompleteEvent): void {
-    if (
-      event.shouldContinue ||
-      event.forceNextStep ||
-      event.modelFallbackOccurred
-    )
-      return;
-    this.parentActive = false;
-    if (
-      !event.generationFailed &&
-      !event.fatalError &&
-      !event.requestRejected &&
-      !event.instinctAborted &&
-      event.generation
-    )
-      this.wake();
-  }
-
   onCheckpointApplied(): void {
     this.wake();
   }
@@ -328,7 +307,6 @@ class MemoryWriterExtension implements Extension {
     this.closed = true;
     this.detachRecallSource?.();
     this.detachRecallSource = undefined;
-    this.unsubscribe?.();
     clearTimeout(this.retry);
     this.abort?.abort();
     await this.consolidator.close();
@@ -369,7 +347,13 @@ class MemoryWriterExtension implements Extension {
     }
     if (omitted) {
       const notice = () =>
-        `${omitted} more loaded entries omitted for size; read them if needed.`;
+        renderDataRecord(
+          'omission',
+          {
+            reason: `${omitted} more loaded entries omitted for size; read them if needed.`,
+          },
+          'trusted',
+        );
       // Keep entries intact, making room for the notice and its separator.
       while (notice().length + (blocks.length ? 2 : 0) > remaining) {
         const removed = blocks.pop();
@@ -409,20 +393,34 @@ class MemoryWriterExtension implements Extension {
   private wake(): void {
     if (!this.ready || this.closed) return;
     this.wakePending = true;
+    // Claim the worker synchronously, before any await. Compactions only queue
+    // another boundary check; writer children and consolidation stay serial.
     if (this.running || this.retry) return;
     this.running = true;
     this.work = (async () => {
       try {
         while (this.wakePending && !this.closed) {
           this.wakePending = false;
-          const latest = (await this.options.activities.latest(1))[0];
-          if (!latest || this.closed) continue;
+          // Only consume the persisted prefix that has left the live window.
+          // Recompute on retries too: older versions may have queued live history.
+          const manifest = await this.options.activities.manifest();
+          const activeIds = new Set(this.deps.getHistory().map(({ id }) => id));
+          const activeIndex = manifest.findIndex((source) =>
+            activeIds.has(activityMessageId(source.id) ?? ''),
+          );
+          const eligible =
+            activeIndex === -1 ? manifest : manifest.slice(0, activeIndex);
+          const latest = eligible.at(-1);
+          if (this.closed) continue;
+          if (!latest) {
+            await this.state.update((draft) => {
+              draft.pendingThrough = null;
+            });
+            continue;
+          }
           const first = this.state.get().initialized
             ? null
-            : firstRunStart(
-                await this.options.activities.manifest(),
-                Date.now(),
-              );
+            : firstRunStart(eligible, Date.now());
           if (first?.skipped)
             this.deps.logger.info(
               { skipped: first.skipped, cursor: first.cursor },
@@ -434,14 +432,7 @@ class MemoryWriterExtension implements Extension {
               draft.initialized = true;
               draft.cursor ??= first?.cursor ?? null;
             }
-            if (
-              !draft.pendingThrough ||
-              this.options.activities.compareIds(
-                latest.id,
-                draft.pendingThrough,
-              ) > 0
-            )
-              draft.pendingThrough = latest.id;
+            draft.pendingThrough = latest.id;
           });
           await this.drain();
           if (
@@ -594,7 +585,25 @@ class MemoryWriterExtension implements Extension {
               parts: [
                 {
                   type: 'text',
-                  text: `${selfName ? `<self name="${selfName}"/>\n\n` : ''}<known-tags>\n${tagSnapshot}\n</known-tags>\n\n${opened ? `<opened-memory>\n${opened}\n</opened-memory>\n\n` : ''}<previous-activities>\n${previousText}\n</previous-activities>\n\n<new-activities date="${date}">\n${newText}\n</new-activities>`,
+                  text: [
+                    joinDataBlocks([
+                      ...(selfName
+                        ? [
+                            {
+                              type: 'self',
+                              value: inline(selfName),
+                            },
+                          ]
+                        : []),
+                      {
+                        type: 'known-tags',
+                        fields: [field('tags', tagSnapshot, 'trusted')],
+                      },
+                    ]),
+                    ...(opened ? [opened] : []),
+                    `<previous-activities>\n${previousText}\n</previous-activities>`,
+                    `<new-activities date="${date}">\n${newText}\n</new-activities>`,
+                  ].join(RECORD_SEPARATOR),
                 },
               ],
             },

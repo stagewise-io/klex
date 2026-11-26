@@ -29,7 +29,7 @@ export type CheckDataUIPart = Record<string, never>;
  * session itself live here — extension-defined data parts are NOT
  * registered centrally. Extensions define their own part types locally
  * and use the helpers from `extension-api.ts` (`createDataPart`,
- * `isDataPartOf`, `dataPartTransformer`) for type-safe creation,
+ * `isDataPartOf`, `blockPartTransformer`) for type-safe creation,
  * consumption, and transformation.
  */
 export type CustomUIDataParts = {

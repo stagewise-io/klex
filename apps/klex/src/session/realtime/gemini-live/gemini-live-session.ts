@@ -25,6 +25,7 @@ import {
 import { createPcmAudioMixer } from '@/media-transport/pcm-audio-mixer';
 import { createPcmResampler } from '@/media-transport/pcm-resampler';
 import { googleInputSchema } from '@/provider-registry/google-input-schema';
+import { field, renderDataBlock } from '@/session/chat/utils/history-view';
 import {
   type InteractionToolResult,
   type InteractionUpdateEnvelope,
@@ -643,7 +644,14 @@ export class GeminiLiveSession implements RealtimeModelSession {
             this.appendCallLog(
               'model',
               'context',
-              `<tool-call call-id="${call.callId}" name="${call.name}">${safeStringify(call.args)}</tool-call>`,
+              renderDataBlock({
+                type: 'tool-call',
+                fields: [
+                  field('callId', call.callId, 'bot'),
+                  field('name', call.name, 'bot'),
+                  field('input', call.args, 'bot'),
+                ],
+              }),
             );
             void this.eventQueue.push({
               type: 'tool-call',
@@ -1496,7 +1504,14 @@ function toolResultText(
   name: string,
   response: Record<string, unknown>,
 ): string {
-  return `<tool-result call-id="${callId}" name="${name}">${safeStringify(response)}</tool-result>`;
+  return renderDataBlock({
+    type: 'tool-result',
+    fields: [
+      field('callId', callId),
+      field('name', name),
+      field('output', response),
+    ],
+  });
 }
 
 function safeStringify(value: unknown): string {

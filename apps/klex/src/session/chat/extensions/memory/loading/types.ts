@@ -1,8 +1,8 @@
 import { z } from 'zod';
 
-import type {
+import {
   loadMatcherSchema,
-  MemoryEntity,
+  type MemoryEntity,
 } from '@/session/chat/extensions/memory/writer/entities';
 
 export type LoadMatcher = z.infer<typeof loadMatcherSchema>;
@@ -21,6 +21,8 @@ export const snapshotSchema = z.object({
       z.object({ server: z.string(), match: z.record(z.string(), z.string()) }),
     )
     .optional(),
+  loadOn: z.array(loadMatcherSchema).optional(),
+  relationships: z.record(z.string(), z.array(z.string())).optional(),
   section: z.string().optional(),
   sections: z.array(z.string()).default([]),
   body: z.string(),
@@ -68,6 +70,26 @@ export function entitySnapshot(entity: MemoryEntity): string {
     title: entity.id,
     tags: entity.frontmatter.Tags,
     linkedIdentities: entity.frontmatter.LinkedIdentities,
+    loadOn: entity.frontmatter.LoadOn,
+    relationships: Object.fromEntries(
+      Object.entries(
+        Object.groupBy(
+          entity.frontmatter.RelatedTo,
+          ({ relationship }) => relationship,
+        ),
+      ).map(([relationship, relations]) => [
+        relationship,
+        [
+          ...new Set(
+            (relations ?? []).map(({ target }) =>
+              target.kind === 'skill'
+                ? `${target.id}/SKILL.md`
+                : `${target.id}.md`,
+            ),
+          ),
+        ],
+      ]),
+    ),
     sections: Object.keys(entity.sections).filter((name) => name !== 'General'),
     body: (entity.sections.General ?? [])
       .map((fact) => `- ${fact.text}`)

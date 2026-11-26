@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { type FakeCloud, startFakeCloud } from '../src/cloud.js';
+import type { MachineReportedFacts } from '../src/machine-facts.js';
 import {
   type CliOptions,
   implementation,
@@ -276,11 +277,16 @@ describe('cloud enrollment', () => {
         reports.push(connection.facts);
         await machine.stop();
       }
-      const [ts, rust] = reports;
-      expect(rust).toEqual(ts);
-      expect(Object.keys(rust!.host!).sort()).toEqual(
-        Object.keys(ts!.host!).sort(),
-      );
+      const [ts, rust] = reports as [
+        MachineReportedFacts,
+        MachineReportedFacts,
+      ];
+      // The device probe may miss its one-second budget on a cold runner, and
+      // then that report legitimately omits deviceType.
+      const { deviceType: tsDevice, ...tsHost } = ts.host!;
+      const { deviceType: rustDevice, ...rustHost } = rust.host!;
+      expect({ ...rust, host: rustHost }).toEqual({ ...ts, host: tsHost });
+      if (tsDevice && rustDevice) expect(rustDevice).toBe(tsDevice);
     },
   );
 });

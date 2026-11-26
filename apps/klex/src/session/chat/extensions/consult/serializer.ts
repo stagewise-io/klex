@@ -1,4 +1,9 @@
-import { escapeXml } from '@/session/chat/utils/escape-xml';
+import {
+  type DataBlock,
+  field,
+  renderDataBlock,
+  tableField,
+} from '@/session/chat/utils/history-view';
 
 export const CONSULT_REPORT_KEY = 'consult-report';
 export const CONSULTS_KEY = 'consults';
@@ -22,33 +27,53 @@ export type ConsultSessionContextData =
   | { mode: 'change'; sessions: ConsultSession[]; changes: string[] };
 
 export function contextPrompt(serializedHistory: string): string {
-  return `<main-session-context>\n${serializedHistory}\n</main-session-context>`;
+  return renderDataBlock({
+    type: 'main-session-context',
+    fields: [field('history', serializedHistory, 'bot')],
+  });
 }
 
 export function updatePrompt(content: string): string {
-  return `<message-from-main>\n${escapeXml(content)}\n</message-from-main>`;
+  return renderDataBlock({
+    type: 'message-from-main',
+    fields: [field('content', content, 'bot')],
+  });
 }
 
-export function reportPrompt(data: ConsultReportData): string {
-  const final = data.final ? ' final' : '';
-  return `<${CONSULT_REPORT_KEY} handle=${escapeXml(data.handle)}${final}>\n${escapeXml(data.content)}\n</${CONSULT_REPORT_KEY}>`;
+export function reportBlock(data: ConsultReportData): DataBlock {
+  return {
+    type: CONSULT_REPORT_KEY,
+    fields: [
+      field('handle', data.handle, 'bot'),
+      field('final', data.final ?? false, 'trusted'),
+      field('content', data.content, 'bot'),
+    ],
+  };
 }
 
-function fullPrompt(sessions: ConsultSession[]): string {
-  const rows = sessions.map(
-    (session) => `${session.handle}: ${session.status}`,
-  );
-  return [`<${CONSULTS_KEY} full>`, ...rows, `</${CONSULTS_KEY}>`].join('\n');
+function fullBlock(sessions: ConsultSession[]): DataBlock {
+  return {
+    type: CONSULTS_KEY,
+    fields: [
+      tableField(
+        'sessions',
+        ['handle', 'status'],
+        sessions.map((session) => [session.handle, session.status]),
+        'bot',
+      ),
+    ],
+  };
 }
 
-function changePrompt(changes: string[]): string {
-  return [`<${CONSULTS_KEY} change>`, ...changes, `</${CONSULTS_KEY}>`].join(
-    '\n',
-  );
+function changeBlock(changes: string[]): DataBlock {
+  return {
+    type: 'consults-update',
+    fields: [field('changes', changes, 'bot')],
+  };
 }
 
-export function sessionsPrompt(data: ConsultSessionContextData): string {
+export function sessionsBlock(data: ConsultSessionContextData): DataBlock {
   return data.mode === 'full'
-    ? fullPrompt(data.sessions)
-    : changePrompt(data.changes);
+    ? fullBlock(data.sessions)
+    : changeBlock(data.changes);
 }

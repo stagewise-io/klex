@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { ExtendedUIMessage } from '@/session/chat/message-types';
 
+import { dataBlock } from './blocks';
 import { createHistoryView } from './history-view';
 import {
   createInstinctHistoryView,
@@ -40,7 +41,7 @@ it.each([
     ];
     for (const view of [
       createTranscriptHistoryView(),
-      createInstinctHistoryView({ data: {} }),
+      createInstinctHistoryView({}),
     ]) {
       const result = view.render(history);
       expect(result.text).toContain('incident.opened');
@@ -70,12 +71,7 @@ const FILTER: HistoryFilterOptions = {
     media: 'placeholder',
   },
   summary: false,
-  data: {
-    time: (data) =>
-      typeof data === 'object' && data !== null && 'label' in data
-        ? { label: 'time', value: String(data.label) }
-        : null,
-  },
+  dataParts: { keys: ['time'] },
 };
 
 const HISTORY: ExtendedUIMessage[] = [
@@ -131,27 +127,40 @@ describe('createHistoryView', () => {
   it('filters, projects, and renders the whole history as lines', () => {
     const view = createHistoryView({
       filter: { ...FILTER, skipMessage: (message) => message.id === 'm1' },
+      transformers: {
+        time: (data) =>
+          typeof data === 'object' && data !== null && 'label' in data
+            ? [dataBlock('time', String(data.label))]
+            : [],
+      },
     });
     const result = view.render(HISTORY);
 
     expect(result.text).toBe(
       [
-        'user',
-        '¦hello',
+        '# user',
+        'content: |',
+        '¦ hello',
         '',
-        'your_action search succeeded',
-        `¦{"query":"${'q'.repeat(19)}…`,
+        '# your_action',
+        'tool: search',
+        'status: succeeded',
+        'input: |',
+        `~ {"query":"${'q'.repeat(19)}…`,
         '',
-        'time',
-        '¦Friday',
+        '# time',
+        'content: |',
+        '¦ Friday',
         '',
-        'context chat',
-        '¦{"sourceId":"c-1"}',
-        'text',
-        '¦ping',
-        'link',
-        '¦uri: chat://1',
-        '¦name: Chat',
+        '# input',
+        'source: |',
+        '¦ chat',
+        'metadata: |',
+        '¦ {"sourceId":"c-1"}',
+        'content: |',
+        '¦ ping',
+        '¦ uri: chat://1',
+        '¦ name: Chat',
       ].join('\n'),
     );
     expect(result.cursor).toBe('c1');
@@ -164,7 +173,7 @@ describe('createHistoryView', () => {
     }).render(HISTORY, { kind: 'after-cursor', cursor: 'u1' });
 
     expect(result.text).toBe(
-      `your_action search succeeded\n¦{"query":"${'q'.repeat(19)}…`,
+      `# your_action\ntool: search\nstatus: succeeded\ninput: |\n~ {"query":"${'q'.repeat(19)}…`,
     );
     expect(result.cursor).toBe('c1');
   });
@@ -192,7 +201,9 @@ describe('createHistoryView', () => {
       },
     ]);
 
-    expect(result.text).toBe('context whatsapp\ntext\n¦look\nimage png');
+    expect(result.text).toBe(
+      '# input\nsource: |\n¦ whatsapp\ncontent: |\n¦ look\n¦ image png',
+    );
     expect(result.segments).toContainEqual({
       type: 'media',
       kind: 'image',

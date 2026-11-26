@@ -1,10 +1,11 @@
 import type { FilePart, TextPart } from 'ai';
 
+import { renderDataRecord } from '@/session/chat/utils/history-view';
+
 import {
   buildResourceAttrs,
   type ContextDataContent,
   deepEqual,
-  escCData,
   formatScalar,
   isJsonMime,
   JSON_FULL_CHANGE_FRACTION,
@@ -145,7 +146,7 @@ function formatJsonContent(snapshot: ResourceSnapshot): ContextDataContent[] {
 }
 
 // ---------------------------------------------------------------------------
-// Render: json-diff and full content in <resource> blocks
+// Render: quoted JSON-diff and full content
 // ---------------------------------------------------------------------------
 
 function renderJson(data: ResourceStateData): (TextPart | FilePart)[] {
@@ -156,7 +157,11 @@ function renderJson(data: ResourceStateData): (TextPart | FilePart)[] {
     return [
       {
         type: 'text',
-        text: `<resource ${attrs} type="update">\n<json-diff><![CDATA[${escCData(diff.summary)}]]></json-diff>\n</resource>`,
+        text: renderDataRecord('resource', {
+          ...attrs,
+          type: 'update',
+          jsonDiff: diff.summary,
+        }),
       },
     ];
   }

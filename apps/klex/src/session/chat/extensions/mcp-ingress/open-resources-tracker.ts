@@ -1,6 +1,5 @@
-import type { TextPart } from 'ai';
-
 import type { ExtendedUIMessage } from '@/session/chat/message-types';
+import { type DataBlock, field } from '@/session/chat/utils/history-view';
 
 import { isDataPartOf } from '../extension-api';
 import type { ResourceWindow } from './resource-window-manager';
@@ -135,44 +134,21 @@ export function latestOpenResourcesPart(
 // Rendering
 // ---------------------------------------------------------------------------
 
-/** Renders an open-resource entry as a compact pipe-delimited row. */
-function formatOpenResourceRow(entry: OpenResourcesEntry): string {
-  return `${entry.handle}|${entry.server}|${entry.uri}|${entry.mimeType ?? '?'}|${entry.live ? 'yes' : 'no'}`;
-}
-
-/** Renders `OpenResourcesData` into model-visible text parts. */
-export function renderOpenResourcesData(data: OpenResourcesData): TextPart[] {
-  if (data.isInitial) {
-    if (data.resources.length === 0) {
-      return [
-        { type: 'text', text: '<open-resources>\n(none)\n</open-resources>' },
-      ];
-    }
-    const lines = ['<open-resources>', 'handle|server|uri|mime|live'];
-    for (const r of data.resources) lines.push(formatOpenResourceRow(r));
-    lines.push('</open-resources>');
-    return [{ type: 'text', text: lines.join('\n') }];
-  }
-
-  // Diff
-  const diff = data.diff;
-  if (!diff) return [];
-  const lines = ['<open-resources-diff>'];
-  if (diff.added.length > 0) {
-    lines.push('added:');
-    for (const r of diff.added) lines.push(`  ${formatOpenResourceRow(r)}`);
-  }
-  if (diff.removed.length > 0) {
-    lines.push('removed:');
-    for (const handle of diff.removed) lines.push(`  ${handle}`);
-  }
-  if (diff.changed.length > 0) {
-    lines.push('changed:');
-    for (const r of diff.changed) lines.push(`  ${formatOpenResourceRow(r)}`);
-  }
-  // Include current full list for context after the diff
-  lines.push('current:');
-  for (const r of data.resources) lines.push(`  ${formatOpenResourceRow(r)}`);
-  lines.push('</open-resources-diff>');
-  return [{ type: 'text', text: lines.join('\n') }];
+export function projectOpenResourcesData(data: OpenResourcesData): DataBlock[] {
+  if (!data.isInitial && !data.diff) return [];
+  return [
+    {
+      type: data.isInitial ? 'open-resources' : 'open-resources-diff',
+      ...(data.isInitial
+        ? { body: field('items', data.resources, 'trusted'), fields: [] }
+        : {
+            fields: [
+              ...Object.entries(data.diff!).map(([key, value]) =>
+                field(key, value, 'trusted'),
+              ),
+              field('current', data.resources, 'trusted'),
+            ],
+          }),
+    },
+  ];
 }

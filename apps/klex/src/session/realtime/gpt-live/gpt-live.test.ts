@@ -700,9 +700,9 @@ describe('GPT-Live startup configuration', () => {
   });
 
   it('caps >8,192-token history below the provider initial-items limit while retaining summary and newest tail', () => {
-    const summary = '<summary>Earlier context summary</summary>';
+    const summary = '# summary\ncontent: |\n~ Earlier context summary';
     const messages: ModelMessage[] = [
-      { role: 'assistant', content: summary },
+      { role: 'user', content: summary },
       ...Array.from({ length: 120 }, (_, index) => ({
         role: (index % 2 === 0 ? 'user' : 'assistant') as 'user' | 'assistant',
         content: `turn-${index} ${'history '.repeat(100)}`,
@@ -716,8 +716,8 @@ describe('GPT-Live startup configuration', () => {
     );
     expect(defaultPrepared.omittedHistoryMessages).toBeGreaterThan(0);
     expect(defaultPrepared.session.input[0]).toMatchObject({
-      role: 'assistant',
-      content: [{ type: 'output_text', text: summary }],
+      role: 'user',
+      content: [{ type: 'input_text', text: summary }],
     });
     expect(defaultPrepared.session.input.at(-1)).toMatchObject({
       role: 'user',
@@ -801,7 +801,7 @@ describe('GPT-Live startup configuration', () => {
 
   it('pins compaction summary when prepended with transformer context', () => {
     const summary =
-      '<time>Saturday, 17.10.2026, 11:35</time>\n<timezone>UTC, UTC, +00:00</timezone>\n<summary>Earlier context</summary>';
+      'time\n¦Saturday, 17.10.2026, 11:35\n\ntimezone\n¦UTC, UTC, +00:00\n\nsummary\n¦Earlier context';
     const messages: ModelMessage[] = [
       { role: 'assistant', content: summary },
       { role: 'user', content: 'older small message' },

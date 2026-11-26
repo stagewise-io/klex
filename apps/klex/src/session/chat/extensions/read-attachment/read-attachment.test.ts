@@ -53,7 +53,17 @@ function fixture() {
       Array.isArray(result) ? result : result.history,
       {
         [CONTEXT_SUMMARY_KEY]: (data) => [
-          { type: 'text', text: (data as { summary: string }).summary },
+          {
+            type: 'summary',
+            fields: [
+              {
+                key: 'content',
+                kind: 'value',
+                value: (data as { summary: string }).summary,
+                source: 'bot',
+              },
+            ],
+          },
         ],
       },
     );
@@ -390,7 +400,12 @@ describe('readAttachment', () => {
       const messages = await convert(JSON.parse(original));
       expect(messages.at(-2)).toEqual({
         role: 'assistant',
-        content: [{ type: 'text', text: 'Compacted context' }],
+        content: [
+          {
+            type: 'text',
+            text: expect.stringContaining('~ Compacted context'),
+          },
+        ],
       });
       const outputs = (messages: ModelMessage[]) =>
         messages.flatMap((message) =>

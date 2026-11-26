@@ -156,6 +156,19 @@ function renderActivityRecords(
   );
 }
 
+/** Each independently readable page starts with a time anchor; empty sources do not advance it. */
+function activityRecordRenderer() {
+  let previousMinute: string | undefined;
+  return (source: ActivityMessage, records: readonly string[]): string => {
+    if (!records.length) return '';
+    const minute = source.persistedAt.slice(0, 16);
+    const prefix =
+      minute === previousMinute ? '' : `${source.persistedAt.slice(11, 16)} `;
+    previousMinute = minute;
+    return prefix + records.join(RECORD_SEPARATOR);
+  };
+}
+
 class ActivityHistoryModule implements ActivityHistory {
   constructor(private readonly history: SessionHistory) {}
 
@@ -212,11 +225,10 @@ class ActivityHistoryModule implements ActivityHistory {
     let size = 0;
     let count = 0;
     let truncated = false;
+    const renderRecords = activityRecordRenderer();
     for (const row of rows) {
       const records = renderActivityRecords(row, view);
-      const rendered = records
-        .map((record) => `${row.persistedAt.slice(11, 16)} ${record}`)
-        .join(RECORD_SEPARATOR);
+      const rendered = renderRecords(row, records);
       const text =
         includeSourceIds && rendered
           ? `Source ${row.id} (${row.persistedAt})\n${rendered}`
@@ -232,16 +244,14 @@ class ActivityHistoryModule implements ActivityHistory {
         const header = includeSourceIds
           ? `Source ${row.id} (${row.persistedAt})\n`
           : '';
-        const tailBudget = Math.max(0, allowed - header.length);
+        const anchor = `${row.persistedAt.slice(11, 16)} `;
+        const prefix = header + anchor;
+        const tailBudget = Math.max(0, allowed - prefix.length);
         const bounded =
           allowed >= text.length
             ? text
-            : includeSourceIds
-              ? header.slice(0, allowed) +
-                (tailBudget > 0 ? rendered.slice(-tailBudget) : '')
-              : allowed > 0
-                ? text.slice(-allowed)
-                : '';
+            : prefix.slice(0, allowed) +
+              (tailBudget > 0 ? rendered.slice(-tailBudget) : '');
         blocks.push(bounded);
         size += bounded.length + separatorSize;
         truncated ||= bounded.length < text.length;
@@ -292,11 +302,10 @@ class ActivityHistoryModule implements ActivityHistory {
     let count = 0;
     let boundary = false;
     let truncated = false;
+    const renderRecords = activityRecordRenderer();
     for (const row of rows) {
       const records = renderActivityRecords(row);
-      const text = records
-        .map((record) => `${row.persistedAt.slice(11, 16)} ${record}`)
-        .join(RECORD_SEPARATOR);
+      const text = renderRecords(row, records);
       const separatorSize = text && blocks.length ? RECORD_SEPARATOR.length : 0;
       if (
         selected.length &&
@@ -390,20 +399,36 @@ class ActivityHistoryModule implements ActivityHistory {
     });
     const row = rows.at(-1);
     if (!row || row.id !== id) return null;
+    const renderRecords = activityRecordRenderer();
     const rendered = rows.map((source) => ({
       source,
-      text: renderActivityRecords(source, options.view)
-        .map((record) => `${source.persistedAt.slice(11, 16)} ${record}`)
-        .join(RECORD_SEPARATOR),
+      text: renderRecords(source, renderActivityRecords(source, options.view)),
     }));
     const text = rendered
       .filter((item) => item.text)
       .map((item) => item.text)
       .join(RECORD_SEPARATOR);
     const limit = Math.max(0, Math.min(60_000, options.limit));
+    const tailClipped = Boolean(options.tail) && text.length > limit;
+    // Reserve space for a fresh time anchor when slicing away the original.
+    const contentLimit = tailClipped ? Math.max(0, limit - 6) : limit;
     const offset = options.tail
-      ? Math.max(0, text.length - limit)
+      ? Math.max(0, text.length - contentLimit)
       : Math.max(0, options.offset);
+    let pageText = text.slice(offset, offset + contentLimit);
+    if (tailClipped) {
+      let end = 0;
+      const firstVisible = rendered
+        .filter((item) => item.text)
+        .find((item) => {
+          end += item.text.length;
+          if (end > offset) return true;
+          end += RECORD_SEPARATOR.length;
+          return false;
+        });
+      const anchor = `${(firstVisible?.source ?? row).persistedAt.slice(11, 16)} `;
+      pageText = anchor.slice(0, limit) + pageText;
+    }
     return {
       id,
       ...(options.firstSourceId === undefined
@@ -427,7 +452,7 @@ class ActivityHistoryModule implements ActivityHistory {
       ],
       startedAt: rows[0]?.persistedAt ?? row.persistedAt,
       endedAt: row.persistedAt,
-      text: text.slice(offset, offset + limit),
+      text: pageText,
       offset,
       nextOffset: offset + limit < text.length ? offset + limit : null,
       scannedBytes: rows.reduce(

@@ -138,7 +138,12 @@ describe('realtime canonical messages', () => {
       id: 'person/Ada',
       name: 'Ada',
       entityType: 'person',
-      frontmatter: { LoadOn: [], LinkedIdentities: [] },
+      frontmatter: {
+        LoadOn: [],
+        LinkedIdentities: [],
+        RelatedTo: [],
+        Tags: ['people'],
+      },
       sections: {
         General: [{ text: 'Base secret' }],
         Work: [{ text: 'Old detail' }],
@@ -150,7 +155,7 @@ describe('realtime canonical messages', () => {
       logger: { debug: () => {}, warn: () => {} } as never,
     });
     const execute = loader.tools.readMemorySection!.execute! as unknown as (
-      input: { filename: string; sectionName: string },
+      input: { entity: string; sectionName: string },
       options: { toolCallId: string; messages: [] },
     ) => Promise<{
       memorySection: number;
@@ -159,7 +164,7 @@ describe('realtime canonical messages', () => {
       snapshot: string;
     }>;
     const output = await execute(
-      { filename, sectionName: 'Work' },
+      { entity: current.id, sectionName: 'Work' },
       { toolCallId: 'read', messages: [] },
     );
     const read = toCanonicalMessage({

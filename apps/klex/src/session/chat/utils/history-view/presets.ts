@@ -1,12 +1,8 @@
-import { formatTimeContext } from '@/session/chat/extensions/time';
+import { timeHistoryBlocks } from '@/session/chat/extensions/time';
 
+import type { DataPartRegistry } from './data-parts';
 import { createHistoryView } from './history-view';
-import type {
-  DataProjector,
-  HistoryBudget,
-  HistoryFilterOptions,
-  HistoryView,
-} from './types';
+import type { HistoryBudget, HistoryFilterOptions, HistoryView } from './types';
 
 /** Compact activity filter shared by history readers and the memory writer. */
 export const ACTIVITY_HISTORY_FILTER: HistoryFilterOptions = {
@@ -28,35 +24,15 @@ export const ACTIVITY_HISTORY_FILTER: HistoryFilterOptions = {
     media: 'placeholder',
   },
   summary: false,
-  data: { time: projectTime },
+  dataParts: { keys: ['time'] },
 };
 
 export function createActivityHistoryView(): HistoryView {
   return createHistoryView({
     filter: ACTIVITY_HISTORY_FILTER,
+    transformers: { time: (data) => timeHistoryBlocks(data) },
     lines: { messageLimit: 4_000, contextLimit: 2_000 },
   });
-}
-
-function projectTime(data: unknown): { label: string; value: string } | null {
-  if (
-    typeof data !== 'object' ||
-    data === null ||
-    !('timestamp' in data) ||
-    !('tz' in data) ||
-    typeof data.timestamp !== 'number' ||
-    !Number.isFinite(data.timestamp) ||
-    typeof data.tz !== 'string'
-  )
-    return null;
-  try {
-    return {
-      label: 'time_update',
-      value: formatTimeContext(data.timestamp, data.tz, true),
-    };
-  } catch {
-    return null;
-  }
 }
 
 /** Data-part key of context-compaction summaries. */
@@ -99,9 +75,19 @@ const TRANSCRIPT_HISTORY_FILTER: HistoryFilterOptions = {
  */
 export function createTranscriptHistoryView(
   budget: HistoryBudget = { keep: 'newest' },
+  transformers: DataPartRegistry = {},
+  keys: readonly string[] = [],
 ): HistoryView {
   return createHistoryView({
-    filter: TRANSCRIPT_HISTORY_FILTER,
+    filter: {
+      ...TRANSCRIPT_HISTORY_FILTER,
+      dataParts: {
+        keys,
+        limit: { max: 500, truncate: 'middle' },
+        media: 'placeholder',
+      },
+    },
+    transformers,
     budget,
   });
 }
@@ -114,12 +100,15 @@ export function createTranscriptHistoryView(
  * applies its aggregate character budget while retaining newest activity.
  */
 export function createInstinctHistoryView(options: {
-  data: Readonly<Record<string, DataProjector>>;
+  transformers?: DataPartRegistry;
 }): HistoryView {
   return createHistoryView({
+    transformers: options.transformers,
     filter: {
       ...TRANSCRIPT_HISTORY_FILTER,
-      data: options.data,
+      dataParts: options.transformers
+        ? { keys: 'all', exclude: [CONTEXT_SUMMARY_KEY], media: 'placeholder' }
+        : undefined,
     },
   });
 }

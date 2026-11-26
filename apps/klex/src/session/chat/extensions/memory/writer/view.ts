@@ -1,5 +1,6 @@
 import type { ActivityView } from '@/activity-history';
 import { isMemoryResultMessage } from '@/session/chat/extensions/memory/retrieval/memory-result';
+import { timeHistoryBlocks } from '@/session/chat/extensions/time';
 import {
   ACTIVITY_HISTORY_FILTER,
   createHistoryView,
@@ -17,6 +18,7 @@ const HIDDEN_TOOLS = new Set([
 ]);
 
 const historyView = createHistoryView({
+  transformers: { time: (data) => timeHistoryBlocks(data) },
   filter: {
     ...ACTIVITY_HISTORY_FILTER,
     skipMessage: isMemoryResultMessage,

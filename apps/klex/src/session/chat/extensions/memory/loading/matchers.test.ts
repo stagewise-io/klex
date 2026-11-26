@@ -4,7 +4,18 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ExtendedUIMessage } from '@/session/chat/message-types';
 
+import { wrapMemoryResult } from '../retrieval/memory-result';
 import { createMatcherEngine, project } from './matchers';
+
+it('excludes retrieval results from content-pattern evidence', () => {
+  expect(
+    project({
+      id: 'memory-result:test',
+      role: 'user',
+      parts: [{ type: 'text', text: wrapMemoryResult('Ada deployment') }],
+    }).text,
+  ).toEqual([]);
+});
 
 const workers = vi.hoisted(() => ({ instances: [] as unknown[] }));
 vi.mock('node:worker_threads', () => ({

@@ -4,17 +4,16 @@ import type { Span } from '@opentelemetry/api';
 
 import type { ModuleLogger } from '@stagewise/logger';
 
-import { escapeXml } from '@/session/chat/utils/escape-xml';
-import { CONTEXT_SUMMARY_KEY } from '@/session/chat/utils/history-view';
+import { CONTEXT_SUMMARY_KEY, field } from '@/session/chat/utils/history-view';
 import type { SessionHistoryRecorder } from '@/session-history';
 
 import type { ExtensionHandler } from '../extension-handler';
 import {
+  blockPartTransformer,
   type CheckpointCommitRequest,
   type CheckpointCommitResult,
   createDataPart,
   type DataPartTransformers,
-  dataPartTransformer,
   isDataPartOf,
 } from '../extensions/extension-api';
 import type { ExtendedUIMessage } from '../message-types';
@@ -44,8 +43,8 @@ export function isCheckpointHeader(
 
 /** Core renderer for the header summary part. */
 export const CHECKPOINT_DATA_PART_TRANSFORMERS: DataPartTransformers = {
-  [CONTEXT_SUMMARY_KEY]: dataPartTransformer<CheckpointSummaryData>((data) => [
-    { type: 'text', text: `<summary>${escapeXml(data.summary)}</summary>` },
+  [CONTEXT_SUMMARY_KEY]: blockPartTransformer<CheckpointSummaryData>((data) => [
+    { type: 'summary', fields: [field('content', data.summary, 'bot')] },
   ]),
 };
 

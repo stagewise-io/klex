@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ModuleLogger } from '@stagewise/logger';
 
+import { createDataPartDispatcher } from '@/session/chat/utils/history-view';
 import { DEFAULT_SESSION_ID } from '@/session/types';
 
 import { SessionInboxUrgency } from '../../inbox';
@@ -745,13 +746,51 @@ describe('Todos extension', () => {
     expect(result).toHaveLength(3);
     // The second message (index 1) should have its data-todos part replaced with text
     const text = extractTextParts(result[1]!);
-    expect(text).toContain('<todos>');
-    expect(text).toContain('1. (ID: aaaa) Task A');
-    expect(text).toContain('reminder: Sat, 15 Mar 2025 11:00:00 GMT');
-    expect(text).toContain('</todos>');
+    expect(text).toContain('todos\n');
+    expect(text).toContain('  - id: aaaa\n    description: Task A');
+    expect(text).toContain('reminderTime: 2025-03-15T11:00:00Z');
+    expect(
+      text
+        .split('\n')
+        .slice(2)
+        .every((line) => line.startsWith('  ')),
+    ).toBe(true);
     expect(text).not.toContain('New todo added');
-    expect(text).not.toContain('Todo cleared');
+    expect(text).not.toContain('removed: |\n  - id: aaaa');
   });
+
+  it.each([false, true])(
+    'separates reminder records in history with a diff base: %s',
+    (hasBase) => {
+      const { deps } = createMockDeps();
+      const ext = todosExt.create(deps);
+      const todo = makeTodo({ id: 'aaaa', description: 'Task A' });
+      const reminder = {
+        id: 'reminder',
+        role: 'user',
+        parts: [
+          createDataPart(TODOS_KEY, { todos: [todo], reminderTodoId: todo.id }),
+        ],
+      } as unknown as ExtendedUIMessage;
+      const history = hasBase
+        ? [createTodosMessage([todo]), reminder]
+        : [reminder];
+
+      const result = ext.historyTransformer?.(
+        history,
+        {} as never,
+      ) as ExtendedUIMessage[];
+      const renderedReminder = result.at(-1);
+      if (!renderedReminder) throw new Error('Expected a rendered reminder');
+      const text = extractTextParts(renderedReminder);
+      expect(text.split('\n\n')).toEqual([
+        hasBase
+          ? '# todos-diff\nadded: []\nremoved: []\ndescriptionUpdated: []\nreminderUpdated: []'
+          : '# todos\n  - id: aaaa\n    description: Task A\n    reminderTime: null',
+        '# todo-reminder\ntodoId: aaaa',
+      ]);
+    },
+  );
 
   it('historyTransformer renders subsequent parts as diffs', () => {
     const { deps, setHistory } = createMockDeps();
@@ -778,19 +817,19 @@ describe('Todos extension', () => {
     ) as ExtendedUIMessage[];
     // Part 1 (index 1): full list
     const text1 = extractTextParts(result[1]!);
-    expect(text1).toContain('<todos>');
+    expect(text1).toContain('todos\n');
     expect(text1).not.toContain('New todo added');
     // Part 2 (index 3): diff — added bbbb
     const text2 = extractTextParts(result[3]!);
-    expect(text2).toContain('New todo added');
+    expect(text2).toContain('added: |\n  - id: bbbb');
     expect(text2).toContain('bbbb');
-    expect(text2).toContain('reminder: Tue, 15 Apr 2025 10:00:00 GMT');
-    expect(text2).not.toContain('<todos>');
+    expect(text2).toContain('reminderTime: 2025-04-15T10:00:00Z');
+    expect(text2).not.toContain('todos\n');
     // Part 3 (index 5): diff — cleared aaaa
     const text3 = extractTextParts(result[5]!);
-    expect(text3).toContain('Todo cleared');
+    expect(text3).toContain('removed: |\n  - id: aaaa');
     expect(text3).toContain('aaaa');
-    expect(text3).not.toContain('<todos>');
+    expect(text3).not.toContain('todos\n');
   });
 
   it('getCheckpointCarry carries the last dropped todo list without reminder', async () => {
@@ -845,14 +884,14 @@ describe('Todos extension', () => {
 
     expect(result).toHaveLength(3);
     const baseText = extractTextParts(result[0]!);
-    expect(baseText).toContain('<todos>');
+    expect(baseText).toContain('todos\n');
     expect(baseText).toContain('aaaa');
     expect(baseText).toContain('bbbb');
     expect(result[1]).toBe(msg);
     const diffText = extractTextParts(result[2]!);
-    expect(diffText).toContain('Todo cleared');
+    expect(diffText).toContain('removed: |\n  - id: aaaa');
     expect(diffText).toContain('aaaa');
-    expect(diffText).not.toContain('<todos>');
+    expect(diffText).not.toContain('todos\n');
   });
 
   it('historyTransformer handles empty todos list in a data part', () => {
@@ -877,7 +916,7 @@ describe('Todos extension', () => {
     expect(text1).toContain('aaaa');
     // Part 2: diff — cleared t1
     const text2 = extractTextParts(result[2]!);
-    expect(text2).toContain('Todo cleared');
+    expect(text2).toContain('removed: |\n  - id: aaaa');
     expect(text2).toContain('aaaa');
   });
 
@@ -890,17 +929,45 @@ describe('Todos extension', () => {
     const ext = todosExt.create(deps);
     const transformers = ext.dataPartTransformers;
     if (!transformers) throw new Error('No dataPartTransformers');
-    const transformer = transformers[TODOS_KEY];
+    const transformer = (data: unknown) =>
+      createDataPartDispatcher(transformers).materialize(TODOS_KEY, data, 0);
     if (!transformer) throw new Error(`No transformer for ${TODOS_KEY}`);
 
     const t1 = makeTodo({ id: 'aaaa', description: 'Task A' });
     const result = transformer({ todos: [t1] } as TodosDataUIPart);
     expect(result).toHaveLength(1);
     expect(result[0]!.type).toBe('text');
-    expect((result[0] as { text: string }).text).toContain('<todos>');
+    expect((result[0] as { text: string }).text).toContain('todos\n');
     expect((result[0] as { text: string }).text).toContain(
-      '1. (ID: aaaa) Task A',
+      '  - id: aaaa\n    description: Task A',
     );
+  });
+
+  it.each([
+    { todos: [] },
+    { todos: [makeTodo({ id: 'aaaa', description: 'Task A' })] },
+  ])('separates fallback reminder records for $todos', ({ todos }) => {
+    const { deps } = createMockDeps();
+    const ext = todosExt.create(deps);
+    const transformer = (data: unknown) =>
+      createDataPartDispatcher(ext.dataPartTransformers ?? {}).materialize(
+        TODOS_KEY,
+        data,
+        0,
+      );
+    if (!transformer) throw new Error(`No transformer for ${TODOS_KEY}`);
+
+    const result = transformer({
+      todos,
+      reminderTodoId: 'aaaa',
+    } as TodosDataUIPart);
+    const text = result.map((part) => (part as { text: string }).text).join('');
+    expect(text.trimEnd().split('\n\n')).toEqual([
+      todos.length
+        ? '# todos\n  - id: aaaa\n    description: Task A\n    reminderTime: null'
+        : '# todos\n[]',
+      '# todo-reminder\ntodoId: aaaa',
+    ]);
   });
 
   it('dataPartTransformers handles empty todos list', () => {
@@ -908,12 +975,13 @@ describe('Todos extension', () => {
     const ext = todosExt.create(deps);
     const transformers = ext.dataPartTransformers;
     if (!transformers) throw new Error('No dataPartTransformers');
-    const transformer = transformers[TODOS_KEY];
+    const transformer = (data: unknown) =>
+      createDataPartDispatcher(transformers).materialize(TODOS_KEY, data, 0);
     if (!transformer) throw new Error(`No transformer for ${TODOS_KEY}`);
 
     const result = transformer({ todos: [] } as TodosDataUIPart);
     expect(result).toHaveLength(1);
-    expect((result[0] as { text: string }).text).toBe('<todos>\n</todos>');
+    expect((result[0] as { text: string }).text).toBe('# todos\n[]\n\n');
   });
 
   // -------------------------------------------------------------------------
@@ -1012,7 +1080,7 @@ describe('Todos extension', () => {
     const diff = rendered.at(1);
     if (!diff) throw new Error('Expected a rendered todos diff');
     expect(extractTextParts(diff)).toBe(
-      `Todo updated: (ID: ${todo.id}) Edited by the operator`,
+      `# todos-diff\nadded: []\nremoved: []\ndescriptionUpdated: |\n  - id: ${todo.id}\n    description: Edited by the operator\n    reminderTime: null\nreminderUpdated: []`,
     );
   });
 

@@ -1,3 +1,4 @@
+import { renderDataRecord } from '@/session/chat/utils/history-view';
 import type { Skill } from '@/skills';
 
 import type { MemoryEntity } from '../entities';
@@ -58,12 +59,16 @@ export function collectChanges(
     // reads their full content (and references) through its ordinary read tools.
     const text =
       candidate.text.length + 1 > budget
-        ? JSON.stringify({
-            kind: candidate.kind,
-            id: candidate.id,
-            omitted:
-              'Oversized document; read with readEntity/readSkill before curating.',
-          })
+        ? renderDataRecord(
+            'changed-document',
+            {
+              kind: candidate.kind,
+              id: candidate.id,
+              omitted:
+                'Oversized document; read with readEntity/readSkill before curating.',
+            },
+            'trusted',
+          )
         : candidate.text;
     if (size + text.length + 1 > budget) break;
     items.push({ ...candidate, text });

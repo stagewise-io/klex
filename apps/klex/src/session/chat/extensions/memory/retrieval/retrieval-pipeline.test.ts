@@ -127,9 +127,11 @@ describe('retrieval over canonical SQLite history', () => {
     expect(
       hits.every((hit) => hit.occurredAt === '2026-10-01T14:03:00.000Z'),
     ).toBe(true);
-    expect(text).toContain('context slack');
-    expect(text).toContain('¦Can you ship the invoice export?');
-    expect(text).toContain('your_action sendMessage succeeded');
+    expect(text).toContain('# input\nsource: |\n¦ slack');
+    expect(text).toContain('¦ Can you ship the invoice export?');
+    expect(text).toContain(
+      '# your_action\ntool: sendMessage\nstatus: succeeded',
+    );
     expect(text).toContain('C123');
     expect(text).toContain('Shipped the invoice export to Dana.');
   });

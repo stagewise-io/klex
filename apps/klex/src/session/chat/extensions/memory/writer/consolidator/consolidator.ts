@@ -3,6 +3,14 @@ import { randomUUID } from 'node:crypto';
 import type { ActivityHistory } from '@/activity-history';
 import { createContextCompactionExt } from '@/session/chat/extensions/context-compaction';
 import type { ExtensionDeps } from '@/session/chat/extensions/extension-api';
+import {
+  field,
+  joinDataBlocks,
+  LINES_FORMAT_PROMPT,
+  RECORD_SEPARATOR,
+  renderDataBlock,
+  tableField,
+} from '@/session/chat/utils/history-view';
 import { SessionInboxUrgency } from '@/session/inbox';
 import type { ChildSessionHandle } from '@/session/types';
 import type { SkillRegistry } from '@/skills';
@@ -100,7 +108,14 @@ class ConsolidatorModule implements Consolidator {
         const child = await deps.createChildSession({
           name: 'memory-consolidator',
           extensionIdentifier: 'io.stagewise/memory-consolidator',
-          basePrompt: `${prompt.trimEnd()}\n\n<guidance>\n${guidance}\n</guidance>`,
+          basePrompt: [
+            prompt.trimEnd(),
+            LINES_FORMAT_PROMPT,
+            renderDataBlock({
+              type: 'guidance',
+              fields: [field('content', guidance, 'trusted')],
+            }),
+          ].join('\n\n'),
           modelPurpose: 'memory',
           fallbackModelPurposes: ['chat'],
           extensions: [
@@ -127,18 +142,36 @@ class ConsolidatorModule implements Consolidator {
               {
                 type: 'text',
                 text: [
-                  `<known-tags>\n${renderKnownTags(knownTags(before))}\n</known-tags>`,
-                  `<relationship-types>\n${JSON.stringify(RELATION_INVERSES)}\n</relationship-types>`,
-                  ...(['entity', 'skill'] as const).map(
-                    (kind) =>
-                      `<changed-${kind === 'entity' ? 'entities' : 'skills'}>\n${changes.items
-                        .filter((item) => item.kind === kind)
-                        .map((item) => item.text)
-                        .join(
-                          '\n',
-                        )}\n</changed-${kind === 'entity' ? 'entities' : 'skills'}>`,
-                  ),
-                ].join('\n\n'),
+                  joinDataBlocks([
+                    {
+                      type: 'known-tags',
+                      fields: [
+                        field(
+                          'tags',
+                          renderKnownTags(knownTags(before)),
+                          'trusted',
+                        ),
+                      ],
+                    },
+                    {
+                      type: 'relationship-types',
+                      fields: [
+                        tableField(
+                          'types',
+                          ['relationship', 'inverse'],
+                          Object.entries(RELATION_INVERSES).filter(
+                            ([relationship, inverse], index, pairs) =>
+                              !pairs
+                                .slice(0, index)
+                                .some(([previous]) => previous === inverse),
+                          ),
+                          'trusted',
+                        ),
+                      ],
+                    },
+                  ]),
+                  ...changes.items.map((item) => item.text),
+                ].join(RECORD_SEPARATOR),
               },
             ],
           },

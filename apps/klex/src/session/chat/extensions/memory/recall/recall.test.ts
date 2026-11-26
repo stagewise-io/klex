@@ -195,20 +195,24 @@ describe('temporary memory recall', () => {
     const text = sent.parts
       .flatMap((part) => (part.type === 'text' ? [part.text] : []))
       .join('\n');
-    expect(text).toContain('memory "Ada.md"\ntags\n¦people/humans,people/bots');
-    expect(text).toContain('facts\n¦Owns deployment');
     expect(text).toContain(
-      'linkedIdentities\n¦github:\n¦  repositoryId: 123\n¦  subjectNodeId: PR_123',
+      '# memory\nentity: Ada\ntags: |\n  - people/humans\n  - people/bots',
     );
-    expect(text).toContain('additionalSections\n¦- Work\n¦- Details');
+    expect(text).toContain('facts: |\n~ Owns deployment');
+    expect(text).toContain(
+      'linkedIdentities: |\n  - server: github\n    match:\n      repositoryId: "123"\n      subjectNodeId: PR_123',
+    );
+    expect(text).toContain('additionalSections: |\n  - Work\n  - Details');
     expect(text).not.toContain('title="Ada"');
     expect(text).not.toContain('&quot;');
-    expect(text).toContain('skill-update test\npatch');
-    expect(text).toContain('¦-Old\n¦+New');
-    const delta = text.split('available-skills-change\n')[1]?.split('\n\n')[0];
-    expect(delta).toContain('New:');
-    expect(delta).toContain('Updated:');
-    expect(delta).toContain('Deleted: gone');
+    expect(text).toContain('# skill-update\nskill: test\npatch: |');
+    expect(text).toContain('~ -Old\n~ +New');
+    const delta = text
+      .split('# available-skills-change\n')[1]
+      ?.split('\n\n')[0];
+    expect(delta).toContain('| new | New skill |');
+    expect(delta).toContain('| test | Updated description |');
+    expect(delta).toContain('removed: |\n  - gone');
     expect(delta).not.toContain('stable');
   });
   it('waits for answerRecall, inherits main memory, and automatically closes its isolated child', async () => {
@@ -233,7 +237,7 @@ describe('temporary memory recall', () => {
       h.child.inbox.sendMessage.mock.calls as unknown[][]
     )[0]?.[0] as ExtendedUIMessage;
     expect(JSON.stringify(sent)).toContain('Owns deployment');
-    expect(JSON.stringify(sent)).toContain('memory ');
+    expect(JSON.stringify(sent)).toContain('# memory');
     expect(JSON.stringify(sent)).toContain('Who owns deployment?');
     expect(h.child.close).toHaveBeenCalledOnce();
   });
@@ -324,10 +328,10 @@ describe('temporary memory recall', () => {
     ] as never);
     const set = tools(h.reader());
     const general = await call(set, 'readEntity', { id: 'Ada', sections: [] });
-    expect(general).toContain('memory "Ada.md"\ntags\n¦people');
-    expect(general).toContain('additionalSections\n¦- Role');
+    expect(general).toContain('# memory\nentity: Ada\ntags: |\n  - people');
+    expect(general).toContain('additionalSections: |\n  - Role');
     expect(general).toContain(
-      'facts\n¦- Leads design [Evidence](history:source-1)',
+      'facts: |\n~ - Leads design [Evidence](history:source-1)',
     );
     expect(general).toContain(
       'was: Designed icons [Earlier](history:source-0)',
@@ -339,7 +343,7 @@ describe('temporary memory recall', () => {
       sections: ['Role'],
     });
     expect(detailed).toContain(
-      'memory-detail "Ada.md" section="Role"\nfacts\n¦- Owns roadmap',
+      '# memory-detail\nentity: Ada\nsection: Role\nfacts: |\n~ - Owns roadmap',
     );
     h.skills.snapshot.mockResolvedValue([
       {
@@ -352,7 +356,7 @@ describe('temporary memory recall', () => {
     ] as never);
     const skill = await call(set, 'readSkill', { skill: 'learning/deploy' });
     expect(skill).toContain(
-      'skill learning/deploy\ndescription\n¦Deploying\ncontent\n¦Push first',
+      '# skill\nskill: learning/deploy\ndescription: |\n~ Deploying\ncontent: |\n~ Push first',
     );
     expect(skill).not.toContain('metadata');
     expect(skill).toContain('References (readSkill with reference): flags');
@@ -364,7 +368,7 @@ describe('temporary memory recall', () => {
         reference: 'flags',
       }),
     ).toBe(
-      'skill-reference learning/deploy reference="flags"\ncontent\n¦Use --dry-run',
+      '# skill-reference\nskill: learning/deploy\nreference: flags\ncontent: |\n~ Use --dry-run',
     );
   });
 

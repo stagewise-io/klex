@@ -1,10 +1,8 @@
 import type {
-  FilePart,
   FinishReason,
   FlexibleSchema,
   LanguageModelUsage,
   ModelMessage,
-  TextPart,
   ToolSet,
 } from 'ai';
 
@@ -18,6 +16,10 @@ import type {
 } from '@/config';
 import type { Mcp } from '@/mcp';
 import type { ProviderModelResolver } from '@/provider-registry';
+import type {
+  DataBlock,
+  DataPartTransformer,
+} from '@/session/chat/utils/history-view';
 import type {
   ChildSessionHandle,
   ChildSessionOptions,
@@ -73,44 +75,24 @@ export function isDataPartOf<KEY extends string, DATA>(
   return part.type === `data-${key}`;
 }
 
-/**
- * A typed data-part transformer. Extensions use this instead of bare
- * functions to get compile-time safety on the input shape.
- *
- * The second parameter is the zero-based occurrence index of this
- * data-part type within the current conversion pass (resets every step).
- * Extensions that don't need it can omit the parameter.
- *
- * @example
- * const summaryTransformer = dataPartTransformer<SummaryPart>(
- *   (data) => [{ type: 'text', text: `<summary>${data.summary}</summary>` }],
- * );
- */
-export function dataPartTransformer<DATA>(
-  fn: (data: DATA, occurrence: number) => (TextPart | FilePart)[],
-): (data: unknown, occurrence?: number) => (TextPart | FilePart)[] {
-  return (data: unknown, occurrence?: number) =>
-    fn(data as DATA, occurrence ?? 0);
+/** A typed presentation shared by live conversion and helper history views. */
+export function blockPartTransformer<DATA>(
+  project: (data: DATA, occurrence: number) => readonly DataBlock[],
+  projectHistory?: (data: DATA, occurrence: number) => readonly DataBlock[],
+): DataPartTransformer {
+  const transform: DataPartTransformer = (data, occurrence = 0) =>
+    project(data as DATA, occurrence);
+  if (projectHistory)
+    transform.history = (data, occurrence) =>
+      projectHistory(data as DATA, occurrence);
+  return transform;
 }
-
-/**
- * A runtime data-part transformer. Each extension provides a record of
- * these keyed by their part type string. The handler merges them across
- * extensions and the converter dispatches by the `data-{key}` prefix.
- *
- * Keys are arbitrary strings — there is no central type map. Extensions
- * use `dataPartTransformer<T>()` to get type safety on the data shape.
- */
-export type RuntimeDataPartTransformer = (
-  data: unknown,
-  occurrence?: number,
-) => (TextPart | FilePart)[];
 
 /**
  * Maps data part type keys to their transformers. Keys are arbitrary
  * strings (e.g. `'context-summary'`) — not limited to `CustomUIDataParts`.
  */
-export type DataPartTransformers = Record<string, RuntimeDataPartTransformer>;
+export type DataPartTransformers = Record<string, DataPartTransformer>;
 
 /**
  * Flags that an extension can set when transforming history, describing
@@ -603,7 +585,7 @@ export interface InstinctPreparation {
   /**
    * Committed to canonical history at instinct commit as one message per
    * extension, in factory order. Survives generation failure. Only
-   * extension-owned `data-*` parts with a registered `dataPartTransformer`
+   * extension-owned `data-*` parts with a registered `blockPartTransformer`
    * are allowed, so compaction, observation and writers can recognise them.
    */
   appendPersistent(parts: ExtendedUIMessage['parts']): void;
@@ -910,6 +892,8 @@ export interface ExtensionDeps {
    * are only in the durable log.
    */
   getHistory: () => ExtendedUIMessage[];
+  /** Shared projections for history consumers; resolved after extension initialization. */
+  getDataPartTransformers?: () => DataPartTransformers;
 
   /** Core checkpoint API; see {@link CheckpointApi}. */
   checkpoints: CheckpointApi;

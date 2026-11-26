@@ -376,7 +376,7 @@ describe('ChatSession turn trigger', () => {
     const sendMemory = () =>
       deps?.inbox.sendMessage(
         {
-          id: 'memory-1',
+          id: 'memory-result:memory-1',
           role: 'user',
           parts: [{ type: 'text', text: wrapMemoryResult('remembered') }],
         } as ExtendedUIMessage,

@@ -10,6 +10,7 @@ import {
 } from '@/session/chat/extensions/memory/writer/entities';
 import type { ExtendedUIMessage } from '@/session/chat/message-types';
 
+import { isMemoryResultMessage } from '../retrieval/memory-result';
 import type { LoadMatcher } from './types';
 
 interface Evidence {
@@ -64,6 +65,7 @@ function textValue(value: unknown): string {
 }
 export function project(message: ExtendedUIMessage): Projection {
   const result: Projection = { text: [], events: [], tools: [] };
+  if (isMemoryResultMessage(message)) return result;
   for (const part of message.parts) {
     if (part.type === 'text') {
       if (

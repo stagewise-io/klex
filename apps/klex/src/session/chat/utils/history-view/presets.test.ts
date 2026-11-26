@@ -108,7 +108,7 @@ describe('activity history preset', () => {
     const [message] = activityView.fit([longParts]).messages;
     if (!message) throw new Error('Missing fitted message');
     expect(message.omittedRecords).toBeGreaterThan(0);
-    expect(renderFittedMessage(message).text).toMatch(/more parts/);
+    expect(renderFittedMessage(message).text).toMatch(/omittedParts: \d+/);
     expect(collectTexts([longParts], null).texts.join(RECORD_SEPARATOR)).toBe(
       renderFittedMessage(message).text,
     );
@@ -158,6 +158,6 @@ describe('activity history preset', () => {
       ],
       null,
     );
-    expect(result.texts).toEqual(['time_update\n¦Friday, 18.9.2026, 16:05']);
+    expect(result.texts).toEqual(['# time Friday, 18.9.2026, 16:05']);
   });
 });

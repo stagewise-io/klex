@@ -12,6 +12,7 @@ import {
   type RealtimeEndpointClosure,
 } from '@/media-transport';
 import { BoundedAsyncQueue } from '@/media-transport/async-queue';
+import { field, renderDataBlock } from '@/session/chat/utils/history-view';
 import {
   type InteractionToolResult,
   type InteractionUpdateEnvelope,
@@ -304,7 +305,10 @@ class OpenAIRealtimeSession implements RealtimeModelSession {
   private toolResultItem(callId: string, output: string): ConversationItem {
     if (this.liveCallIds.has(callId)) return functionOutputItem(callId, output);
     return userTextItem(
-      `<tool-result call-id="${callId}">${output}</tool-result>`,
+      renderDataBlock({
+        type: 'tool-result',
+        fields: [field('callId', callId), field('output', output)],
+      }),
     );
   }
 

@@ -4,7 +4,13 @@ import type { ReadResourceResult } from '@modelcontextprotocol/client';
 import type { FilePart, TextPart } from 'ai';
 
 import {
-  buildResourceAttrs,
+  type BlockField,
+  type DataBlock,
+  field,
+  renderBlockSegments,
+} from '@/session/chat/utils/history-view';
+
+import {
   type ContextDataContent,
   inferMimeType,
   normalizeMimeType,
@@ -13,7 +19,6 @@ import {
   type ResourceHandler,
   type ResourceSnapshot,
   type ResourceStateData,
-  renderDeletedResource,
 } from './helpers';
 import { imageHandler } from './image';
 import { jsonHandler } from './json';
@@ -137,21 +142,66 @@ export function deletedResource(
 
 /**
  * Renders a {@link ResourceStateData} part into model-visible text/file parts,
- * wrapping content in `<resource>` blocks. Routes to the per-MIME-type handler
- * for diff-specific rendering.
+ * using shared provenance-aware resource blocks and native media slots.
  */
 export function renderResourceState(
   data: ResourceStateData,
 ): (TextPart | FilePart)[] {
+  return projectResourceState(data).flatMap((block) =>
+    renderBlockSegments(block).map((segment): TextPart | FilePart =>
+      segment.type === 'text'
+        ? segment
+        : { type: 'file', mediaType: segment.mediaType, data: segment.data },
+    ),
+  );
+}
+
+export function projectResourceState(data: ResourceStateData): DataBlock[] {
   const { diff } = data;
-
-  // Deletion is not MIME-specific — handle uniformly.
-  if (diff.kind === 'full' && diff.reason === 'deleted') {
-    return renderDeletedResource(buildResourceAttrs(data));
+  if (diff.kind === 'unchanged') return [];
+  const fields: BlockField[] = [
+    field('handle', data.handle, 'trusted'),
+    field('generation', data.generation, 'trusted'),
+    field('namespace', data.namespace),
+    field('uri', data.uri),
+    ...(data.mimeType ? [field('mimeType', data.mimeType)] : []),
+    field('mode', diff.kind, 'trusted'),
+  ];
+  if (diff.kind === 'text-diff') fields.push(field('patch', diff.patch));
+  else if (diff.kind === 'json-diff')
+    fields.push(
+      field('added', diff.added),
+      field('updated', diff.updated),
+      field('deleted', diff.deleted),
+      field('summary', diff.summary),
+    );
+  else {
+    fields.push(
+      field('replacement', !data.isInitial, 'trusted'),
+      field('reason', diff.reason, 'trusted'),
+    );
+    if (diff.content.length === 0) fields.push(field('content', 'No content.'));
+    for (const [index, content] of diff.content.entries()) {
+      const key = `content${index + 1}`;
+      if (content.type === 'image' || content.type === 'audio')
+        fields.push({
+          key,
+          kind: 'media',
+          media: {
+            type: 'media',
+            kind: content.type,
+            mediaType: content.mimeType,
+            data: content.data,
+          },
+        });
+      else
+        fields.push(
+          field(key, content.type === 'text' ? content.text : content),
+        );
+    }
   }
-
-  const handler = findHandler(data.mimeType);
-  return handler.render(data);
+  if (data.truncated) fields.push(field('truncated', true, 'trusted'));
+  return [{ type: 'resource', fields }];
 }
 
 // ---------------------------------------------------------------------------

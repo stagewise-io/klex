@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 
 import type { FilePart, ImagePart, ModelMessage, TextPart } from 'ai';
 
+import { field, renderDataBlock } from '@/session/chat/utils/history-view';
 import { describeMediaContent } from '@/shared-utilities/tool-result';
 
 import {
@@ -29,13 +30,13 @@ import {
   UNSUPPORTED_IMAGE_TEXT,
 } from '../image-input-optimizer/vision-helper';
 import visionSystemPrompt from '../image-input-optimizer/vision-system-prompt.md';
-import { projectToolMedia } from './media-projection';
 import {
+  type AdaptationModel,
   adaptFilePart,
   adaptRemoteMedia,
   normalizeMediaType,
-  type AdaptationModel,
 } from './file-adaptation';
+import { projectToolMedia } from './media-projection';
 
 /** Media-only projections can use this entry point without interactive tool policy. */
 export async function adaptContent(
@@ -138,7 +139,14 @@ async function adaptImagePart(
     if (description !== null)
       return {
         type: 'text',
-        text: `<derived-content source="image" kind="description">\n${description}\n</derived-content>`,
+        text: renderDataBlock({
+          type: 'derived-content',
+          fields: [
+            field('source', 'image', 'trusted'),
+            field('kind', 'description', 'trusted'),
+            field('content', description),
+          ],
+        }),
       };
   }
   return { type: 'text', text: UNSUPPORTED_IMAGE_TEXT };
@@ -175,7 +183,14 @@ export async function adaptAudioPart(
     if (description !== null)
       return {
         type: 'text',
-        text: `<derived-content source="audio" kind="transcription-description">\n${description}\n</derived-content>`,
+        text: renderDataBlock({
+          type: 'derived-content',
+          fields: [
+            field('source', 'audio', 'trusted'),
+            field('kind', 'transcription-description', 'trusted'),
+            field('content', description),
+          ],
+        }),
       };
     return { type: 'text', text: UNSUPPORTED_AUDIO_TEXT };
   }

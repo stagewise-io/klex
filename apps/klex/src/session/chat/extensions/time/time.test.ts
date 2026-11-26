@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { createDataPartDispatcher } from '@/session/chat/utils/history-view';
+
 import { CHECKPOINT_DATA_PART_TRANSFORMERS } from '../../checkpoint';
 import type { ExtendedUIMessage } from '../../message-types';
 import { convertToModelMessagesExtended } from '../../utils/convert-to-model-messages';
@@ -10,7 +12,14 @@ import {
   type ExtensionDeps,
   type ProvisionalStepContext,
 } from '../extension-api';
-import { createTimeExt, type TimeExtConfig } from './time';
+import { createTimeExt, type TimeExtConfig, timeHistoryBlocks } from './time';
+
+it.each([Number.MAX_VALUE, 8_640_000_000_001, -8_640_000_000_001])(
+  'omits out-of-range Unix timestamp %s from history',
+  (timestamp) => {
+    expect(timeHistoryBlocks({ timestamp, tz: 'UTC' })).toEqual([]);
+  },
+);
 
 vi.mock('./system-prompt.md', () => ({
   default: 'time prompt',
@@ -26,7 +35,12 @@ function getTransformer(
 ) {
   const transformer = ext.dataPartTransformers?.[key];
   if (!transformer) throw new Error(`${key} transformer not registered`);
-  return transformer;
+  return (data: unknown, occurrence = 0) =>
+    createDataPartDispatcher({ [key]: transformer }).materialize(
+      key,
+      data,
+      occurrence,
+    );
 }
 
 // --- Fixed timestamps (UTC) ---
@@ -398,11 +412,11 @@ describe('TimeExt.getCheckpointCarry', () => {
     expect(modelMessages[0]).toMatchObject({
       role: 'user',
       content: [
-        { type: 'text', text: '<summary>Earlier history</summary>' },
-        { type: 'text', text: '<time>Sunday, 12.4.2026, 18:45</time>' },
+        { type: 'text', text: '# summary\ncontent: |\n~ Earlier history\n\n' },
+        { type: 'text', text: '# time Sunday, 12.4.2026, 18:45\n\n' },
         {
           type: 'text',
-          text: '<timezone>Europe/Berlin, CEST, +02:00</timezone>',
+          text: '# timezone Europe/Berlin, CEST, +02:00\n\n',
         },
       ],
     });
@@ -581,7 +595,7 @@ describe('TimeExt.dataPartTransformers — time (UTC)', () => {
     const ext = createTimeExt(DEFAULT_CONFIG).create(makeDeps());
     const transformer = getTransformer(ext, TIME_KEY);
     expect(transformer({ timestamp: TS_SUN_1530 }, 0)).toEqual([
-      { type: 'text', text: '<time>Sunday, 12.4.2026, 15:30</time>' },
+      { type: 'text', text: '# time Sunday, 12.4.2026, 15:30\n\n' },
     ]);
   });
 
@@ -599,7 +613,7 @@ describe('TimeExt.dataPartTransformers — time (UTC)', () => {
     const transformer = getTransformer(ext, TIME_KEY);
     const result = transformer({ timestamp: TS_SUN_1530, tz: 'UTC' }, 0);
     expect(result).toEqual([
-      { type: 'text', text: '<time>Sunday, 12.4.2026, 15:30</time>' },
+      { type: 'text', text: '# time Sunday, 12.4.2026, 15:30\n\n' },
     ]);
   });
 
@@ -609,7 +623,7 @@ describe('TimeExt.dataPartTransformers — time (UTC)', () => {
 
     transformer({ timestamp: TS_SUN_1530, tz: 'UTC' }, 0);
     const result = transformer({ timestamp: TS_SUN_1645, tz: 'UTC' }, 1);
-    expect(result).toEqual([{ type: 'text', text: '<time>16:45</time>' }]);
+    expect(result).toEqual([{ type: 'text', text: '# time 16:45\n\n' }]);
   });
 
   it('renders full format when the calendar day changes', () => {
@@ -619,7 +633,7 @@ describe('TimeExt.dataPartTransformers — time (UTC)', () => {
     transformer({ timestamp: TS_SUN_1530, tz: 'UTC' }, 0);
     const result = transformer({ timestamp: TS_MON_0900, tz: 'UTC' }, 1);
     expect(result).toEqual([
-      { type: 'text', text: '<time>Monday, 13.4.2026, 9:00</time>' },
+      { type: 'text', text: '# time Monday, 13.4.2026, 9:00\n\n' },
     ]);
   });
 
@@ -634,7 +648,7 @@ describe('TimeExt.dataPartTransformers — time (UTC)', () => {
     const result = transformer({ timestamp: TS_SUN_1645, tz: 'UTC' }, 0);
     expect(result[0]).toEqual({
       type: 'text',
-      text: '<time>Sunday, 12.4.2026, 16:45</time>',
+      text: '# time Sunday, 12.4.2026, 16:45\n\n',
     });
   });
 });
@@ -650,7 +664,7 @@ describe('TimeExt.dataPartTransformers — time (Europe/Berlin)', () => {
       0,
     );
     expect(result).toEqual([
-      { type: 'text', text: '<time>Sunday, 12.4.2026, 17:30</time>' },
+      { type: 'text', text: '# time Sunday, 12.4.2026, 17:30\n\n' },
     ]);
   });
 
@@ -663,7 +677,7 @@ describe('TimeExt.dataPartTransformers — time (Europe/Berlin)', () => {
       { timestamp: TS_SUN_1645, tz: 'Europe/Berlin' },
       1,
     );
-    expect(result).toEqual([{ type: 'text', text: '<time>18:45</time>' }]);
+    expect(result).toEqual([{ type: 'text', text: '# time 18:45\n\n' }]);
   });
 
   it('renders historical context using its recorded timezone', () => {
@@ -678,11 +692,11 @@ describe('TimeExt.dataPartTransformers — time (Europe/Berlin)', () => {
         0,
       ),
     }).toEqual({
-      time: [{ type: 'text', text: '<time>Sunday, 12.4.2026, 17:30</time>' }],
+      time: [{ type: 'text', text: '# time Sunday, 12.4.2026, 17:30\n\n' }],
       timezone: [
         {
           type: 'text',
-          text: '<timezone>Europe/Berlin, CEST, +02:00</timezone>',
+          text: '# timezone Europe/Berlin, CEST, +02:00\n\n',
         },
       ],
     });
@@ -695,7 +709,7 @@ describe('TimeExt.dataPartTransformers — timezone', () => {
     const transformer = getTransformer(ext, TIMEZONE_KEY);
     const result = transformer({ tz: 'UTC', timestamp: TS_SUN_1530 }, 0);
     expect(result).toEqual([
-      { type: 'text', text: '<timezone>UTC, UTC, +00:00</timezone>' },
+      { type: 'text', text: '# timezone UTC, UTC, +00:00\n\n' },
     ]);
   });
 
@@ -709,7 +723,7 @@ describe('TimeExt.dataPartTransformers — timezone', () => {
     expect(result).toEqual([
       {
         type: 'text',
-        text: '<timezone>Europe/Berlin, CEST, +02:00</timezone>',
+        text: '# timezone Europe/Berlin, CEST, +02:00\n\n',
       },
     ]);
   });

@@ -378,9 +378,9 @@ describe('shared classifier', () => {
 
   it('includes all extension prompt fragments', () => {
     const { system: prompt } = compileInstinctClassificationBatch(entries, '');
-    expect(prompt).toContain('name="memory"');
-    expect(prompt).toContain('name="task/planner"');
-    expect(prompt).toContain('History line format:');
+    expect(prompt).toContain('name: memory');
+    expect(prompt).toContain('name: task/planner');
+    expect(prompt).toContain('Model data block format:');
     expect(prompt).toContain(
       'ordered oldest to newest; the final entry is the most recent',
     );

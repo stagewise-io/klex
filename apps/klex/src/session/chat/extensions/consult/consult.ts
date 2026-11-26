@@ -12,8 +12,8 @@ import type { ChildSessionHandle } from '@/session/types';
 import { SessionInboxUrgency } from '../../inbox';
 import type { ExtendedUIMessage } from '../../message-types';
 import {
+  blockPartTransformer,
   createDataPart,
-  dataPartTransformer,
   type Extension,
   type ExtensionDeps,
   type ExtensionFactory,
@@ -29,8 +29,8 @@ import {
   type ConsultSession,
   type ConsultSessionContextData,
   contextPrompt,
-  reportPrompt,
-  sessionsPrompt,
+  reportBlock,
+  sessionsBlock,
   updatePrompt,
 } from './serializer';
 
@@ -212,11 +212,11 @@ class ConsultExtension implements Extension {
   }
 
   dataPartTransformers = {
-    [CONSULT_REPORT_KEY]: dataPartTransformer<ConsultReportData>((data) => [
-      { type: 'text', text: reportPrompt(data) },
+    [CONSULT_REPORT_KEY]: blockPartTransformer<ConsultReportData>((data) => [
+      reportBlock(data),
     ]),
-    [CONSULTS_KEY]: dataPartTransformer<ConsultSessionContextData>((data) => [
-      { type: 'text', text: sessionsPrompt(data) },
+    [CONSULTS_KEY]: blockPartTransformer<ConsultSessionContextData>((data) => [
+      sessionsBlock(data),
     ]),
   };
 
@@ -348,19 +348,23 @@ class ConsultExtension implements Extension {
 
     try {
       const history = this.deps.getHistory();
-      const serializedContext = createTranscriptHistoryView({
-        keep: 'newest',
-        maxCharacters: CONSULT_CONTEXT_MAX_CHARACTERS,
-        recentMessageLimit:
-          this.config.maxContextMessages ?? CONSULT_DEFAULT_CONTEXT_MESSAGES,
-      }).render(history).text;
+      const serializedContext = createTranscriptHistoryView(
+        {
+          keep: 'newest',
+          maxCharacters: CONSULT_CONTEXT_MAX_CHARACTERS,
+          recentMessageLimit:
+            this.config.maxContextMessages ?? CONSULT_DEFAULT_CONTEXT_MESSAGES,
+        },
+        this.deps.getDataPartTransformers?.(),
+        ['time', 'timezone', 'todos', CONSULT_REPORT_KEY],
+      ).render(history).text;
       const delivered = child.inbox.sendMessage(
         {
           id: randomUUID(),
           role: 'user',
           parts: [
-            { type: 'text', text: contextPrompt(serializedContext) },
-            { type: 'text', text: task },
+            { type: 'text', text: `${contextPrompt(serializedContext)}\n\n` },
+            { type: 'text', text: updatePrompt(task) },
           ],
         },
         SessionInboxUrgency.Default,

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { normalizeBlockText } from '@/session/chat/utils/history-view';
+
 import {
   compactRecallScopeSchema,
   recallFingerprint,
@@ -84,22 +86,22 @@ describe('retrieval contracts', () => {
     const input = recallInputSchema.parse({ scope: value, question: value });
     const rendered = renderRecall(input, 'r1');
     const lines = rendered.split('\n');
-    expect(lines).toHaveLength(3);
-    expect(lines[0]).toBe('<recall id="r1">');
-    expect(lines[2]).toBe('</recall>');
-    const payload = lines[1] ?? '';
-    expect(payload).not.toMatch(/[<>&\u2028\u2029]/u);
-    expect(JSON.parse(payload)).toEqual(input);
+    expect(lines[0]).toBe('# recall');
+    expect(lines[1]).toBe('id: r1');
+    expect(lines[2]).toBe('scope: |');
+    const quoted = normalizeBlockText(value)
+      .split('\n')
+      .map((line) => `~ ${line}`);
+    expect(lines.slice(3)).toEqual([...quoted, 'question: |', ...quoted]);
+    expect(lines.filter((line) => line.startsWith('# '))).toEqual(['# recall']);
   });
 
   it('renders a recall block with its id and a scope placeholder', () => {
     expect(
       renderRecall({ question: 'Who is Ada?', scope: 'slack' }, 'r1'),
-    ).toBe(
-      '<recall id="r1">\n{"scope":"slack","question":"Who is Ada?"}\n</recall>',
-    );
+    ).toBe('# recall\nid: r1\nscope: |\n~ slack\nquestion: |\n~ Who is Ada?');
     expect(renderRecall({ question: 'Who is Ada?' }, 'r2')).toBe(
-      '<recall id="r2">\n{"scope":"unspecified scope","question":"Who is Ada?"}\n</recall>',
+      '# recall\nid: r2\nscope: |\n~ unspecified scope\nquestion: |\n~ Who is Ada?',
     );
   });
 });

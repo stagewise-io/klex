@@ -6,10 +6,10 @@ import { z } from 'zod';
 
 import type { ActivityHistory, ActivityView } from '@/activity-history';
 import {
-  field,
   formatMemory,
   formatSkill,
 } from '@/session/chat/extensions/memory/loading';
+import { field } from '@/session/chat/utils/history-view';
 import {
   MAX_BODY_LENGTH,
   MAX_DESCRIPTION_LENGTH,
@@ -313,7 +313,7 @@ function writerSections(
         name,
         facts
           .flatMap((fact, index) => [
-            `[${name}#${index + 1}] ${fact.text}`,
+            `${index + 1}. ${fact.text}`,
             ...fact.history.map(
               (version, offset) => `  was ${offset + 1}: ${version.text}`,
             ),
@@ -434,6 +434,7 @@ export function entityReadResult(
         version: 1,
         kind: 'entity',
         title: entity.id,
+        section: 'General',
         tags: Tags,
         linkedIdentities: LinkedIdentities,
         sections: Object.keys(entity.sections).filter(
@@ -444,9 +445,17 @@ export function entityReadResult(
       `${entity.id}.md`,
       false,
       [
-        field('revision', entityRevision(entity)),
-        field('loadOn', JSON.stringify(LoadOn)),
-        field('relatedTo', JSON.stringify(RelatedTo)),
+        field('revision', entityRevision(entity), 'trusted'),
+        field('loadOn', LoadOn, 'trusted'),
+        ...Object.entries(
+          Object.groupBy(RelatedTo, ({ relationship }) => relationship),
+        ).map(([relationship, relations]) =>
+          field(
+            relationship,
+            [...new Set((relations ?? []).map(({ target }) => target.id))],
+            'trusted',
+          ),
+        ),
       ],
     ),
     ...Object.entries(sections)
@@ -481,8 +490,8 @@ export function skillReadResult(
     {
       referenceTool: 'readSkill',
       extra: [
-        field('revision', skillRevision(skill)),
-        field('loadOn', JSON.stringify(skill.metadata.loadOn ?? [])),
+        field('revision', skillRevision(skill), 'trusted'),
+        field('loadOn', skill.metadata.loadOn ?? [], 'trusted'),
       ],
     },
   );

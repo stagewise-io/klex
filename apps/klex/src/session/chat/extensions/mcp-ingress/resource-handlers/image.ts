@@ -65,7 +65,7 @@ function formatImageContent(snapshot: ResourceSnapshot): ContextDataContent[] {
 }
 
 // ---------------------------------------------------------------------------
-// Render: full content as <resource> blocks (image as file parts)
+// Render: quoted full content with native image file parts
 // ---------------------------------------------------------------------------
 
 function renderImage(data: ResourceStateData): (TextPart | FilePart)[] {

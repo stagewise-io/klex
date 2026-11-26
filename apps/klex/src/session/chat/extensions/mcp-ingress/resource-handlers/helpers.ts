@@ -1,6 +1,8 @@
 import type { ReadResourceResult } from '@modelcontextprotocol/client';
 import type { FilePart, TextPart } from 'ai';
 
+import { renderDataRecord } from '@/session/chat/utils/history-view';
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -291,88 +293,79 @@ export function truncate(text: string, max: number): string {
 }
 
 // ---------------------------------------------------------------------------
-// XML helpers
-// ---------------------------------------------------------------------------
-
-/** Escapes a string for use in an XML attribute value. */
-export function escAttr(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/"/g, '&quot;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-}
-
-/**
- * Escapes `]]>` sequences inside CDATA content to prevent premature CDATA
- * termination and prompt injection. The standard XML workaround splits the
- * CDATA section at each occurrence: `]]>` becomes `]]]]><![CDATA[>`, which
- * a parser reassembles into the literal `]]>` characters.
- */
-export function escCData(s: string): string {
-  return s.replaceAll(']]>', ']]]]><![CDATA[>');
-}
-
-// ---------------------------------------------------------------------------
 // Shared render helpers
 // ---------------------------------------------------------------------------
 
-/** Builds the common attribute string for a `<resource>` block. */
+/** Selects resource metadata shared by full, delta, and deletion records. */
 export function buildResourceAttrs(
   data: Pick<
     ResourceStateData,
     'handle' | 'generation' | 'namespace' | 'uri' | 'mimeType'
   >,
-): string {
+) {
   const { handle, generation, namespace, uri, mimeType } = data;
-  const mimeAttr = mimeType ? ` mime-type="${escAttr(mimeType)}"` : '';
-  return `handle="${escAttr(handle)}" generation="${generation}" namespace="${escAttr(namespace)}" uri="${escAttr(uri)}"${mimeAttr}`;
+  return { handle, generation, namespace, uri, mimeType };
 }
 
-/** Renders full content (initial or replacement) as `<resource type="full">` blocks. */
+/** Renders quoted content while preserving native image order. */
 export function renderFullContent(
-  attrs: string,
+  attrs: ReturnType<typeof buildResourceAttrs>,
   content: ContextDataContent[],
   isInitial: boolean,
 ): (TextPart | FilePart)[] {
   const parts: (TextPart | FilePart)[] = [];
   for (const block of content) {
     if (block.type === 'image') {
-      parts.push({ type: 'text', text: `<resource ${attrs} type="full">` });
+      parts.push({
+        type: 'text',
+        text: renderDataRecord('resource', {
+          ...attrs,
+          type: 'full',
+          image: block.mimeType,
+        }),
+      });
       parts.push({
         type: 'file',
         mediaType: block.mimeType,
         data: block.data,
       });
     } else if (block.type === 'text') {
-      if (isInitial) {
-        parts.push({
-          type: 'text',
-          text: `<resource ${attrs} type="full"><![CDATA[${escCData(block.text)}]]></resource>`,
-        });
-      } else {
-        parts.push({
-          type: 'text',
-          text: `<resource ${attrs} type="full">\n<full-replacement><![CDATA[${escCData(block.text)}]]></full-replacement>\n</resource>`,
-        });
-      }
+      parts.push({
+        type: 'text',
+        text: renderDataRecord('resource', {
+          ...attrs,
+          type: 'full',
+          replacement: !isInitial,
+          content: block.text,
+        }),
+      });
     }
   }
   if (parts.length === 0) {
     parts.push({
       type: 'text',
-      text: `<resource ${attrs} type="full"><![CDATA[No content.]]></resource>`,
+      text: renderDataRecord('resource', {
+        ...attrs,
+        type: 'full',
+        content: 'No content.',
+      }),
     });
   }
   return parts;
 }
 
-/** Renders a deleted-resource notice as a `<resource type="update">` block. */
-export function renderDeletedResource(attrs: string): TextPart[] {
+/** Renders a quoted deleted-resource notice. */
+export function renderDeletedResource(
+  attrs: ReturnType<typeof buildResourceAttrs>,
+): TextPart[] {
   return [
     {
       type: 'text',
-      text: `<resource ${attrs} type="update"><![CDATA[Resource no longer available. Window closed.]]></resource>`,
+      text: renderDataRecord('resource', {
+        ...attrs,
+        type: 'update',
+        content: 'Resource no longer available. Window closed.',
+      }),
     },
   ];
 }

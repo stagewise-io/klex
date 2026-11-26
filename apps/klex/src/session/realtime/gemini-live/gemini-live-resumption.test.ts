@@ -620,7 +620,7 @@ describe('Gemini live session durability', () => {
     expect(texts(replayed)).toEqual([
       expect.stringContaining('Sent after the handle'),
       expect.stringContaining('Sent during the gap'),
-      expect.stringContaining('<tool-result call-id="call-1"'),
+      expect.stringContaining('# tool-result\ncallId: |\n¦ call-1'),
     ]);
     // The call belongs to the lost connection, so no raw toolResponse.
     expect(replayed.some((message) => message.toolResponse)).toBe(false);

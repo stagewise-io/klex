@@ -610,7 +610,7 @@ describe('OpenAI realtime processor', () => {
           content: [
             {
               type: 'input_text',
-              text: '<context source-env="telegram"><metadata>{"chatId":"7"}</metadata><content>Anna: are we live?</content></context>',
+              text: '# input\nsource: |\n¦ telegram\nmetadata: |\n¦ chatId: "7"\ncontent: |\n¦ Anna: are we live?',
             },
           ],
         },
@@ -1087,7 +1087,7 @@ describe('OpenAI realtime processor', () => {
         role: 'user',
         content: [
           {
-            text: '<tool-result call-id="call-1">{"ok":true}</tool-result>',
+            text: '# tool-result\ncallId: |\n¦ call-1\noutput: |\n¦ {"ok":true}',
           },
         ],
       },

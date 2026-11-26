@@ -46,6 +46,17 @@ function render(
 }
 
 describe('keep newest', () => {
+  it.each([-1, 0])(
+    'preserves only complete omission markers at boundary %s',
+    (offset) => {
+      const result = render([message('large', 'x'.repeat(500))], {
+        keep: 'newest',
+        maxCharacters: LINES_TRUNCATION_MARKER.length + offset,
+      });
+      expect(result.text).toBe(offset === 0 ? LINES_TRUNCATION_MARKER : '');
+      expect(result.truncated).toBe(true);
+    },
+  );
   it('uses the latest summary when truncating', () => {
     const { text } = render(
       [
@@ -95,7 +106,7 @@ describe('keep newest', () => {
       { keep: 'newest', recentMessageLimit: 2 },
     );
 
-    expect(text.match(/^summary$/gm)).toHaveLength(1);
+    expect(text.match(/^# summary$/gm)).toHaveLength(1);
     expect(text.match(/latest/g)).toHaveLength(1);
   });
 
@@ -109,9 +120,9 @@ describe('keep newest', () => {
       { keep: 'newest', recentMessageLimit: 2 },
     );
 
-    expect(text).not.toContain('¦old');
-    expect(text).toContain('¦middle');
-    expect(text).toContain('¦new');
+    expect(text).not.toContain('¦ old');
+    expect(text).toContain('¦ middle');
+    expect(text).toContain('¦ new');
   });
 
   it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY])(
@@ -123,14 +134,14 @@ describe('keep newest', () => {
       );
 
       expect(text).toContain('facts');
-      expect(text).not.toContain('¦new');
+      expect(text).not.toContain('¦ new');
     },
   );
 
   it('applies the character budget after recent-message selection', () => {
     const { text } = render(
       [
-        message('summary', 'summary', 'facts'),
+        message('summary', 's', 'facts'),
         message('old', 'old'),
         message('middle', 'middle'),
         message('new', 'x'.repeat(500)),
@@ -140,15 +151,15 @@ describe('keep newest', () => {
 
     expect(text.length).toBeLessThanOrEqual(100);
     expect(text).toContain('facts');
-    expect(text).not.toContain('¦old');
-    expect(text).not.toContain('¦middle');
+    expect(text).not.toContain('¦ old');
+    expect(text).not.toContain('¦ middle');
   });
 
   it('never exceeds a tiny character budget', () => {
     expect(
       render([message('one', 'content')], { keep: 'newest', maxCharacters: 5 })
         .text,
-    ).toHaveLength(5);
+    ).toHaveLength(0);
   });
 });
 
@@ -175,10 +186,10 @@ describe('keep oldest', () => {
     expect(first.text.length).toBeLessThanOrEqual(400);
     expect(first.truncated).toBe(true);
     expect(first.text).not.toContain(LINES_TRUNCATION_MARKER);
-    expect(first.cursor).toBe('m3');
+    expect(first.cursor).toBe('m2');
 
     const second = oldest(history, first.cursor, 10_000);
-    expect(second.text.startsWith('user\n¦4-')).toBe(true);
+    expect(second.text.startsWith('# user\ncontent: |\n¦ 3-')).toBe(true);
     expect(second.cursor).toBe('m9');
     expect(second.truncated).toBe(false);
   });

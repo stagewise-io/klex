@@ -559,6 +559,8 @@ class ChatSessionModule implements AgentSession {
 
     const extensionDeps: BaseExtensionDeps = {
       getHistory: () => [...this.messages],
+      getDataPartTransformers: () =>
+        this.extensionHandler.getDataPartTransformers(),
       checkpoints: {
         commit: (request) => {
           if (this._status === 'terminated') {

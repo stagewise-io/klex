@@ -5,7 +5,6 @@ import {
   isToolUIPart,
   type TextPart,
 } from 'ai';
-import { stringify } from 'yaml';
 
 import {
   materializeMemories,
@@ -15,7 +14,8 @@ import type { ContextDataUIPart } from '@/session/inbox';
 
 import type { DataPartTransformers } from '../extensions/extension-api';
 import type { ExtendedUIMessage } from '../message-types';
-import { quote } from './history-view/lines';
+import { createDataPartDispatcher, renderBlockSegments } from './history-view';
+import { contextBlock } from './history-view/context-block';
 import { projectSandboxToolMedia } from './project-sandbox-media';
 
 /**
@@ -60,9 +60,12 @@ export const convertToModelMessagesExtended = async (
   if (lastUserMsgIdx === -1) {
     return projectSandboxToolMedia(
       await convertToModelMessages<ExtendedUIMessage>(
-        materializeMemories(materializeSkills(materialized), onMemoryMetrics),
+        materializeExtensionParts(
+          materializeMemories(materializeSkills(materialized), onMemoryMetrics),
+          transformers,
+        ),
         {
-          convertDataPart: makeConvertDataPart(transformers),
+          convertDataPart: convertCoreDataPart,
         },
       ),
     );
@@ -102,9 +105,12 @@ export const convertToModelMessagesExtended = async (
 
   return projectSandboxToolMedia(
     await convertToModelMessages<ExtendedUIMessage>(
-      materializeMemories(materializeSkills(filtered), onMemoryMetrics),
+      materializeExtensionParts(
+        materializeMemories(materializeSkills(filtered), onMemoryMetrics),
+        transformers,
+      ),
       {
-        convertDataPart: makeConvertDataPart(transformers),
+        convertDataPart: convertCoreDataPart,
       },
     ),
   );
@@ -119,6 +125,40 @@ export const convertToModelMessagesExtended = async (
 // check-retry prompts would be silently dropped. Extensions cannot
 // override these.
 // ---------------------------------------------------------------------------
+
+function materializeExtensionParts(
+  messages: ExtendedUIMessage[],
+  transformers: DataPartTransformers,
+): ExtendedUIMessage[] {
+  const dispatcher = createDataPartDispatcher(transformers);
+  return messages.map((message) => ({
+    ...message,
+    parts: message.parts.flatMap<ExtendedUIMessage['parts'][number]>((part) => {
+      const occurrence = dispatcher.consume(part);
+      if (!part.type.startsWith('data-')) return [part];
+      const key = part.type.slice(5);
+      if (['context', 'continue', 'check'].includes(key)) return [part];
+      const transform = transformers[key];
+      if (!transform) return [part];
+      return dispatcher
+        .materialize(key, (part as { data: unknown }).data, occurrence)
+        .map((item) =>
+          item.type === 'text'
+            ? { type: 'text' as const, text: item.text }
+            : {
+                type: 'file' as const,
+                mediaType: item.mediaType,
+                url:
+                  item.data instanceof URL ||
+                  (typeof item.data === 'string' &&
+                    /^(https?:|data:)/.test(item.data))
+                    ? String(item.data)
+                    : `data:${item.mediaType};base64,${typeof item.data === 'string' ? item.data : Buffer.from(item.data as Uint8Array).toString('base64')}`,
+              },
+        );
+    }),
+  }));
+}
 
 function materializeContextParts(
   messages: ExtendedUIMessage[],
@@ -135,91 +175,15 @@ function materializeContextParts(
 function materializeContextPart(
   data: ContextDataUIPart,
 ): ExtendedUIMessage['parts'] {
-  // YAML is presentation only: never parse strings as JSON/YAML, and never
-  // wrap long strings. Native media stays in order between the text parts.
-  const yaml = (value: unknown): string =>
-    quote(
-      stringify(value, { lineWidth: 0, aliasDuplicateObjects: false }).replace(
-        /\n$/,
-        '',
-      ),
-    ).join('\n');
-  const source = JSON.stringify(data.sourceEnv).replace(
-    /[\u0085\u2028\u2029]/g,
-    (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`,
+  return renderBlockSegments(contextBlock(data)).map((segment) =>
+    segment.type === 'text'
+      ? segment
+      : {
+          type: 'file' as const,
+          mediaType: segment.mediaType,
+          url: `data:${segment.mediaType};base64,${segment.data}`,
+        },
   );
-  const { origin, data: payload, ...envelope } = data.metadata;
-  const isMcp = origin === 'events' || origin === 'push-notifications';
-  const kind = origin === 'events' ? 'event' : 'push-notification';
-  // Delivery IDs stay internal; Events extension metadata is not model context.
-  // Payload fields are intentionally untouched, including IDs and nested _meta.
-  const fields = isMcp
-    ? Object.fromEntries(
-        Object.entries(envelope).filter(
-          ([key]) =>
-            key !== 'eventId' && !(origin === 'events' && key === '_meta'),
-        ),
-      )
-    : {};
-  const hasPayload = Object.hasOwn(data.metadata, 'data');
-  const body =
-    origin === 'events'
-      ? hasPayload
-        ? `${yaml(payload)}\n`
-        : ''
-      : isMcp
-        ? hasPayload
-          ? `${yaml({ metadata: payload })}\n`
-          : ''
-        : Object.keys(data.metadata).length
-          ? `${yaml({ metadata: data.metadata })}\n`
-          : '';
-  const isPush = origin === 'push-notifications';
-  const contentText = (text: string): string =>
-    quote(text)
-      .map((line) => (isPush ? `¦  ${line.slice(1)}` : line))
-      .join('\n');
-  const parts: ExtendedUIMessage['parts'] = [
-    {
-      type: 'text',
-      text: `input ${source}${isMcp ? ` ${kind}` : ''}\n${Object.keys(fields).length ? `${yaml(fields)}\n` : ''}data\n${body}${isPush ? (data.content.length ? '¦content:\n' : '¦content: ""\n') : ''}`,
-    },
-  ];
-  for (const block of data.content) {
-    if (block.type === 'image' || block.type === 'audio') {
-      const mimeType = block.mimeType.toLowerCase();
-      parts.push({
-        type: 'file',
-        mediaType: mimeType,
-        url: `data:${mimeType};base64,${block.data}`,
-      });
-    } else if (
-      block.type === 'resource' &&
-      block.resource.blob !== undefined &&
-      block.resource.mimeType?.trim()
-    ) {
-      const { blob, ...resource } = block.resource;
-      parts.push({
-        type: 'text',
-        text: `${isPush ? contentText(stringify({ resource }, { lineWidth: 0 }).replace(/\n$/, '')) : yaml({ resource })}\n`,
-      });
-      const mimeType =
-        resource.mimeType?.split(';', 1)[0]?.trim().toLowerCase() ||
-        'application/octet-stream';
-      parts.push({
-        type: 'file',
-        mediaType: mimeType,
-        url: `data:${mimeType};base64,${blob.replaceAll(/\s/g, '')}`,
-      });
-    } else {
-      parts.push({
-        type: 'text',
-        text: `${block.type === 'text' ? contentText(block.text) : isPush ? contentText(stringify(block, { lineWidth: 0 }).replace(/\n$/, '')) : yaml(block)}\n`,
-      });
-    }
-  }
-  parts.push({ type: 'text', text: '\n' });
-  return parts;
 }
 
 /** Transforms a `data-continue` part into the literal text `"Continue."`. */
@@ -238,54 +202,13 @@ function convertCheckPart(): TextPart[] {
 }
 
 /**
- * Builds a `convertDataPart` callback for the AI SDK.
- *
- * Core data part types (`context`, `continue`, `check`) are always
- * handled by built-in transformers — extension-registered transformers
- * for these keys are ignored. All other custom types are dispatched to
- * the extension-registered transformer map.
- *
- * The AI SDK calls this function for each custom data part in a message.
- * The part's `type` is `data-{key}` (e.g. `data-context`); we strip the
- * `data-` prefix to look up the corresponding transformer.
- *
- * The extension API returns `(TextPart | FilePart)[]` to allow future
- * multi-part conversions, but the AI SDK's `convertDataPart` accepts
- * only a single `TextPart | FilePart | undefined`. We return the first
- * element of the array, or `undefined` if the array is empty.
+ * Handles core signals after multipart context/extension materialization.
+ * Unknown parts are deliberately omitted by the SDK.
  */
-function makeConvertDataPart(
-  transformers: DataPartTransformers,
-): (
+function convertCoreDataPart(
   part: DataUIPart<Record<string, unknown>>,
-) => TextPart | FilePart | undefined {
-  // Per-key occurrence counter, reset for each conversion pass.
-  const occurrenceCounts = new Map<string, number>();
-
-  return (part) => {
-    // Strip the `data-` prefix to get the data part key.
-    const key = part.type.replace(/^data-/, '');
-
-    // Context is materialized into ordered standard UI
-    // parts beforehand — the convertDataPart hook never sees them.
-    if (key === 'context') return undefined;
-    if (key === 'continue') {
-      const result = convertContinuePart();
-      return result.length > 0 ? result[0] : undefined;
-    }
-    if (key === 'check') {
-      const result = convertCheckPart();
-      return result.length > 0 ? result[0] : undefined;
-    }
-
-    // Non-core types: dispatch to extension-registered transformers.
-    const transformer = transformers[key];
-    if (!transformer) return undefined;
-
-    const occurrence = occurrenceCounts.get(key) ?? 0;
-    occurrenceCounts.set(key, occurrence + 1);
-
-    const result = transformer(part.data, occurrence);
-    return result.length > 0 ? result[0] : undefined;
-  };
+): TextPart | FilePart | undefined {
+  if (part.type === 'data-continue') return convertContinuePart()[0];
+  if (part.type === 'data-check') return convertCheckPart()[0];
+  return undefined;
 }

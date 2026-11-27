@@ -171,10 +171,11 @@ async fn serve_cloud(
             return Err(error);
         }
     };
+    let first = signals::shutdown();
     if announce {
         println!("{}", machine_live_message(&enrollment.machine_id));
     }
-    let first = signals::shutdown().await;
+    let first = first.await;
     // The TS runtime registers one-shot listeners and never removes the other
     // one, so only a repeat of an already-handled signal is fatal.
     tokio::spawn(async move {

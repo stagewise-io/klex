@@ -4,7 +4,7 @@
 //! Retina displays and bandwidth stays near that of a non-Retina screen.
 
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -540,7 +540,11 @@ const MAIN_THREAD_TIMEOUT: Duration = Duration::from_secs(2);
 /// thread is slow.
 type LastChange = Arc<Mutex<Option<isize>>>;
 
-fn poll_pasteboard(sink: &StreamSink, last: &LastChange, initial: bool) {
+fn poll_pasteboard(sink: &StreamSink, last: &LastChange, writes: &AtomicUsize, initial: bool) {
+    // A queued viewer write wins over whatever the pasteboard holds now.
+    if writes.load(Ordering::SeqCst) > 0 {
+        return;
+    }
     let pasteboard = NSPasteboard::generalPasteboard();
     let count = pasteboard.changeCount();
     let mut last = lock(last);
@@ -572,27 +576,34 @@ fn write_pasteboard(text: &str, last: &LastChange) {
 /// thread, as AppKit requires; this thread only paces it.
 fn clipboard_loop(sink: StreamSink, texts: Receiver<String>) {
     let last = LastChange::default();
+    let writes = Arc::new(AtomicUsize::new(0));
     let polling = Arc::new(AtomicBool::new(true));
     main_async({
-        let (sink, last, polling) = (sink.clone(), last.clone(), polling.clone());
+        let (sink, last, writes, polling) =
+            (sink.clone(), last.clone(), writes.clone(), polling.clone());
         move || {
-            poll_pasteboard(&sink, &last, true);
+            poll_pasteboard(&sink, &last, &writes, true);
             polling.store(false, Ordering::SeqCst);
         }
     });
     loop {
         match texts.recv_timeout(CLIPBOARD_POLL) {
             Ok(text) => {
-                let last = last.clone();
-                main_async(move || write_pasteboard(&text, &last));
+                let (last, writes) = (last.clone(), writes.clone());
+                writes.fetch_add(1, Ordering::SeqCst);
+                main_async(move || {
+                    write_pasteboard(&text, &last);
+                    writes.fetch_sub(1, Ordering::SeqCst);
+                });
             }
             Err(RecvTimeoutError::Timeout) => {
                 if polling.swap(true, Ordering::SeqCst) {
                     continue;
                 }
-                let (sink, last, polling) = (sink.clone(), last.clone(), polling.clone());
+                let (sink, last, writes, polling) =
+                    (sink.clone(), last.clone(), writes.clone(), polling.clone());
                 main_async(move || {
-                    poll_pasteboard(&sink, &last, false);
+                    poll_pasteboard(&sink, &last, &writes, false);
                     polling.store(false, Ordering::SeqCst);
                 });
             }

@@ -1,4 +1,3 @@
-import type { CaptureResult, PostHogConfig } from 'posthog-js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import main from '../main.ts?raw';
@@ -19,6 +18,7 @@ const config = { key: 'phc_testonly', host: 'https://eu.i.posthog.com' };
 beforeEach(() => {
   sdk.init.mockReset();
   sdk.construct.mockReset();
+  vi.stubGlobal('navigator', { doNotTrack: null });
   vi.stubEnv('VITE_POSTHOG_KEY', '');
   vi.stubEnv('VITE_POSTHOG_HOST', '');
 });
@@ -27,18 +27,8 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-function setup(signals = {}) {
-  vi.stubGlobal('navigator', { doNotTrack: null, ...signals });
-  vi.stubGlobal(
-    'location',
-    new URL('https://www.klex.bot/?email=private@example.com#secret'),
-  );
-  return sdk.init;
-}
-
-describe('website telemetry privacy boundary', () => {
+describe('website telemetry', () => {
   it('disables missing or invalid configuration without constructing the SDK', async () => {
-    const init = setup();
     for (const invalid of [
       {},
       ...['', ' ', 'secret', 'phx_personal', 'phc_', 'phc_has space'].map(
@@ -59,7 +49,7 @@ describe('website telemetry privacy boundary', () => {
       ].map((host) => ({ ...config, host })),
     ])
       await createTelemetry(invalid).initialize();
-    expect(init).not.toHaveBeenCalled();
+    expect(sdk.init).not.toHaveBeenCalled();
     expect(sdk.construct).not.toHaveBeenCalled();
   });
 
@@ -67,255 +57,69 @@ describe('website telemetry privacy boundary', () => {
     { doNotTrack: '1' },
     { doNotTrack: 'yes' },
     { globalPrivacyControl: true },
-  ])('suppresses capture for privacy signals: %o', async (signals) => {
-    const init = setup(signals);
+  ])('respects browser privacy signals: %o', async (signals) => {
+    vi.stubGlobal('navigator', signals);
     await createTelemetry(config).initialize();
-    expect(init).not.toHaveBeenCalled();
     expect(sdk.construct).not.toHaveBeenCalled();
   });
 
-  it('uses the existing build variables and initializes only once, including concurrent calls', async () => {
-    const init = setup();
-    const forbidden = new Proxy(
-      {},
-      {
-        get() {
-          throw new Error('Browser data must not be accessed');
-        },
-        set() {
-          throw new Error('Browser data must not be written');
-        },
-      },
-    );
-    for (const name of [
-      'document',
-      'localStorage',
-      'sessionStorage',
-      'location',
-    ])
-      vi.stubGlobal(name, forbidden);
+  it('uses standard SDK analytics without stripping URLs, attribution, identity, or session properties', async () => {
     vi.stubEnv('VITE_POSTHOG_KEY', config.key);
     vi.stubEnv('VITE_POSTHOG_HOST', config.host);
     const telemetry = createTelemetry();
     await Promise.all([telemetry.initialize(), telemetry.initialize()]);
-    expect(init).toHaveBeenCalledTimes(1);
-    const [key, options] = init.mock.calls[0];
-    expect(key).toBe(config.key);
-    expect(options).toMatchObject({
+    expect(sdk.construct).toHaveBeenCalledTimes(1);
+    expect(sdk.init).toHaveBeenCalledExactlyOnceWith(config.key, {
       api_host: config.host,
-      persistence: 'memory',
-      disable_persistence: true,
-      person_profiles: 'never',
-      bootstrap: {
-        distinctID: expect.stringMatching(/^[0-9a-f-]{36}$/),
-        isIdentifiedID: false,
-      },
+      persistence: 'localStorage+cookie',
+      person_profiles: 'identified_only',
       respect_dnt: true,
-      capture_pageview: true,
-      capture_pageleave: false,
-      autocapture: {
-        dom_event_allowlist: ['click'],
-        css_selector_allowlist: ['a', 'button', '[role="button"]', 'summary'],
-        css_selector_ignorelist: [
-          '.ph-no-autocapture',
-          '[data-ph-no-autocapture]',
-          'input',
-          'textarea',
-          'select',
-          '[contenteditable]',
-        ],
-        capture_copied_text: false,
-      },
-      mask_all_text: true,
-      mask_all_element_attributes: true,
-      disable_capture_url_hashes: true,
-      save_referrer: false,
-      save_campaign_params: false,
-      rageclick: false,
-      capture_dead_clicks: false,
-      capture_heatmaps: false,
-      capture_performance: false,
-      capture_exceptions: false,
+      capture_pageview: 'history_change',
+      capture_pageleave: true,
+      autocapture: true,
+      disable_capture_url_hashes: false,
+      save_referrer: true,
+      save_campaign_params: true,
       disable_session_recording: true,
-      enable_recording_console_log: false,
-      disable_surveys: true,
-      disable_product_tours: true,
-      disable_conversations: true,
-      disable_web_experiments: true,
-      disable_external_dependency_loading: true,
-      advanced_disable_flags: true,
-      remote_config_refresh_interval_ms: 0,
-      before_send: expect.any(Function),
     });
+    const options = sdk.init.mock.calls[0][1];
+    for (const removed of [
+      'before_send',
+      'bootstrap',
+      'disable_persistence',
+      'mask_all_text',
+      'mask_all_element_attributes',
+      'advanced_disable_flags',
+      'disable_external_dependency_loading',
+    ])
+      expect(options).not.toHaveProperty(removed);
   });
 
-  it('accepts the original EU host with a trailing slash', async () => {
-    const init = setup();
+  it('accepts the EU host with a trailing slash', async () => {
     await createTelemetry({ ...config, host: `${config.host}/` }).initialize();
-    expect(init).toHaveBeenCalledTimes(1);
+    expect(sdk.init).toHaveBeenCalledTimes(1);
   });
 
-  it('uses a fresh ID for each document-owned instance', async () => {
-    const init = setup();
-    await createTelemetry(config).initialize();
-    await createTelemetry(config).initialize();
-    const ids = init.mock.calls.map(
-      ([, options]) => options.bootstrap.distinctID,
-    );
-    expect(ids).toHaveLength(2);
-    expect(ids[0]).not.toBe(ids[1]);
-  });
-
-  it.each(['construct', 'init', 'uuid'] as const)(
+  it.each(['construct', 'init'] as const)(
     'ignores %s failures without blocking the website or reinitializing',
     async (failure) => {
-      const init = setup();
       const fail = () => {
         throw new Error('blocked');
       };
       if (failure === 'construct') sdk.construct.mockImplementationOnce(fail);
-      if (failure === 'init') init.mockImplementationOnce(fail);
-      if (failure === 'uuid') vi.stubGlobal('crypto', {});
+      if (failure === 'init') sdk.init.mockImplementationOnce(fail);
       const telemetry = createTelemetry(config);
       await expect(telemetry.initialize()).resolves.toBeUndefined();
       await telemetry.initialize();
-      expect(init).toHaveBeenCalledTimes(failure === 'init' ? 1 : 0);
+      expect(sdk.construct).toHaveBeenCalledTimes(1);
+      expect(sdk.init).toHaveBeenCalledTimes(failure === 'init' ? 1 : 0);
     },
   );
 
-  it('strips browser context, person updates, session IDs, text, attributes, and link URLs before sending', async () => {
-    const init = setup();
-    await createTelemetry(config).initialize();
-    const options: Partial<PostHogConfig> = init.mock.calls[0][1];
-    const sanitize = options.before_send;
-    if (typeof sanitize !== 'function')
-      throw new Error('Missing event sanitizer');
-    const properties = {
-      token: 'untrusted',
-      distinct_id: 'old-user-id',
-      $session_id: 'session',
-      $window_id: 'window',
-      $device_id: 'device',
-      $current_url: 'https://example.com/?email=private@example.com#secret',
-      $referrer: 'https://example.com/private',
-      $title: 'Private title',
-      utm_source: 'private-campaign',
-      $browser: 'Browser',
-      $event_type: 'click',
-      $el_text: 'Private text',
-      $elements_chain: 'button:attr__data-email="private@example.com"',
-      $elements: [
-        {
-          tag_name: 'button',
-          nth_child: 2,
-          nth_of_type: 1,
-          $el_text: 'Private text',
-          attr__href: 'https://example.com/?secret=x',
-          attr__value: 'private input',
-          classes: ['private-class'],
-        },
-      ],
-      $set: { email: 'private@example.com' },
-      unexpected: 'future SDK property',
-    };
-    const base: CaptureResult = {
-      uuid: crypto.randomUUID(),
-      event: '$pageview',
-      timestamp: new Date(),
-      properties,
-      $set: { email: 'private@example.com' },
-      $set_once: { name: 'Private name' },
-      $unset: ['private'],
-    };
-    const expectedProperties = {
-      token: config.key,
-      distinct_id: options.bootstrap?.distinctID,
-      $host: 'www.klex.bot',
-      $current_url: 'https://www.klex.bot/',
-      $pathname: '/',
-      $ip: null,
-      $geoip_disable: true,
-      $process_person_profile: false,
-      $is_identified: false,
-    };
-    expect(sanitize(base)).toEqual({
-      uuid: base.uuid,
-      event: '$pageview',
-      timestamp: base.timestamp,
-      properties: expectedProperties,
-    });
-    expect(sanitize({ ...base, event: '$autocapture' })).toEqual({
-      uuid: base.uuid,
-      event: '$autocapture',
-      timestamp: base.timestamp,
-      properties: {
-        ...expectedProperties,
-        $event_type: 'click',
-        $elements: [{ tag_name: 'button', nth_child: 2, nth_of_type: 1 }],
-      },
-    });
-    for (const event of [
-      '$pageleave',
-      '$snapshot',
-      '$identify',
-      '$exception',
-      'heartbeat',
-      '$rageclick',
-      '$web_vitals',
-      'new-sdk-event',
-    ])
-      expect(sanitize({ ...base, event })).toBeNull();
-    for (const $event_type of ['change', 'submit', 'copy', undefined])
-      expect(
-        sanitize({
-          ...base,
-          event: '$autocapture',
-          properties: { ...properties, $event_type },
-        }),
-      ).toBeNull();
-  });
-
-  it.each([
-    'https://www.klex.bot',
-    'https://klex.bot',
-    'https://website-preview.vercel.app',
-    'http://localhost:5173',
-  ])(
-    'includes the actual origin for pageviews and clicks on %s without URL secrets',
-    async (origin) => {
-      const init = setup();
-      vi.stubGlobal(
-        'location',
-        new URL(`${origin}/?email=private@example.com#secret`),
-      );
-      await createTelemetry(config).initialize();
-      const sanitize = init.mock.calls[0][1].before_send;
-      for (const event of ['$pageview', '$autocapture']) {
-        const result = sanitize({
-          event,
-          properties: {
-            $event_type: 'click',
-            $host: 'untrusted.example',
-            $current_url: 'https://untrusted.example/private?secret=value',
-          },
-        });
-        expect(result.properties).toMatchObject({
-          $host: new URL(origin).host,
-          $current_url: `${origin}/`,
-          $pathname: '/',
-        });
-        expect(JSON.stringify(result)).not.toMatch(/private|secret|untrusted/);
-      }
-    },
-  );
-
-  it('wires telemetry into the current homepage without tracking resource pages or mounting analytics UI', () => {
-    expect(main).toContain("import { createTelemetry } from './telemetry';");
-    expect(main).toContain('const telemetry = createTelemetry();');
-    expect(main).toContain('telemetry.initialize();');
-    expect(resources).not.toMatch(/createTelemetry|telemetry/);
-    expect(main).not.toMatch(
-      /analytics-consent|telemetry\.css|Allow analytics|No thanks/,
-    );
+  it('initializes analytics on homepage and resource pages', () => {
+    for (const entry of [main, resources]) {
+      expect(entry).toContain('createTelemetry');
+      expect(entry).toContain('telemetry.initialize();');
+    }
   });
 });

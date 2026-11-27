@@ -18,6 +18,7 @@ import type {
   ExtensionDeps,
   ExtensionFactory,
   GenerateTextResult,
+  HistoryTransformOptions,
   InstinctClassificationRequest,
   InstinctContext,
   InstinctInput,
@@ -75,6 +76,10 @@ export interface InstinctReactionSettlement {
 }
 
 export interface ExtensionHandler {
+  getChildContextExtensions(
+    history: readonly ExtendedUIMessage[],
+  ): ExtensionFactory[];
+
   /** All instantiated extensions. */
   readonly extensions: readonly Extension[];
 
@@ -200,6 +205,7 @@ export interface ExtensionHandler {
   runHistoryTransformers: (
     history: ExtendedUIMessage[],
     model: ResolvedModel,
+    options?: HistoryTransformOptions,
   ) => Promise<{ history: ExtendedUIMessage[]; flags: TransformationFlags }>;
 
   /**
@@ -759,9 +765,18 @@ class ExtensionHandlerModule implements ExtensionHandler {
     throw new Error('History changed repeatedly during annotation preparation');
   }
 
+  getChildContextExtensions(
+    history: readonly ExtendedUIMessage[],
+  ): ExtensionFactory[] {
+    return this.extensions.flatMap(
+      (extension) => extension.getChildContextExtensions?.(history) ?? [],
+    );
+  }
+
   async runHistoryTransformers(
     history: ExtendedUIMessage[],
     model: ResolvedModel,
+    options: HistoryTransformOptions = { purpose: 'inference' },
   ): Promise<{ history: ExtendedUIMessage[]; flags: TransformationFlags }> {
     let currentHistory = history;
     let flags: TransformationFlags = {};
@@ -769,7 +784,11 @@ class ExtensionHandlerModule implements ExtensionHandler {
     for (const ext of this.extensions) {
       if (!ext.historyTransformer) continue;
       try {
-        const result = await ext.historyTransformer(currentHistory, model);
+        const result = await ext.historyTransformer(
+          currentHistory,
+          model,
+          options,
+        );
         const normalized = normalizeResult(result);
         currentHistory = normalized.history;
         flags = mergeFlags(flags, normalized.flags);

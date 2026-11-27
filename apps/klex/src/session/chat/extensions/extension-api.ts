@@ -657,6 +657,11 @@ export function readInstinctClassification<
   return ctx.classification.answers as InstinctClassificationAnswers<K>;
 }
 
+export interface HistoryTransformOptions {
+  purpose: 'inference' | 'transcript' | 'realtime-update';
+  signal?: AbortSignal;
+}
+
 export interface Extension {
   /**
    * Checked before step-start hooks, history repair, or inference. Returning
@@ -805,6 +810,7 @@ export interface Extension {
   historyTransformer?: (
     history: ExtendedUIMessage[],
     model: ResolvedModel,
+    options?: HistoryTransformOptions,
   ) => HistoryProcessingResult | Promise<HistoryProcessingResult>;
 
   /**
@@ -872,6 +878,11 @@ export interface Extension {
    */
   onCheckpointApplied?: (event: CheckpointAppliedEvent) => void | Promise<void>;
 
+  /** Delegates capabilities from trusted structured parent history, never rendered text. */
+  getChildContextExtensions?: (
+    history: readonly ExtendedUIMessage[],
+  ) => ExtensionFactory[];
+
   dataPartTransformers?: DataPartTransformers;
 
   /**
@@ -894,6 +905,13 @@ export interface ExtensionDeps {
   getHistory: () => ExtendedUIMessage[];
   /** Shared projections for history consumers; resolved after extension initialization. */
   getDataPartTransformers?: () => DataPartTransformers;
+  /** Runs the existing history transformers on a copy for helper transcripts. */
+  transformHistory?: (
+    history: readonly ExtendedUIMessage[],
+  ) => Promise<ExtendedUIMessage[]>;
+  getChildContextExtensions?: (
+    history: readonly ExtendedUIMessage[],
+  ) => ExtensionFactory[];
 
   /** Core checkpoint API; see {@link CheckpointApi}. */
   checkpoints: CheckpointApi;

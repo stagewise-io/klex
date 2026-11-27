@@ -50,6 +50,107 @@ function toolExecute<T>(tool: unknown): (input: T) => Promise<unknown> {
 }
 
 describe('consult extension', () => {
+  it('releases capacity when context preparation throws', async () => {
+    const getHistory = vi.fn((): ExtendedUIMessage[] => {
+      throw new Error('projection failed');
+    });
+    const deps = makeDeps({
+      getHistory,
+      createChildSession: vi.fn(async () => child()),
+      config: {
+        getModelSelection: () => [{ providerId: 'provider', modelId: 'model' }],
+      } as never,
+    });
+    const extension = createConsultExt({
+      ...DEEP_THINK_CONFIG,
+      maxActiveSessions: 1,
+    }).create(deps);
+    const start = toolExecute<{ task: string }>(
+      getTools(extension).startConsult,
+    );
+    for (let i = 0; i < 3; i++)
+      expect(await start({ task: 'review' })).toEqual({
+        reason: 'child-start-failed',
+        status: 'failed',
+      });
+    getHistory.mockReturnValue([]);
+    expect(await start({ task: 'review' })).toHaveProperty('status', 'running');
+    await extension.onClose?.();
+  });
+  it.each([4, 4_000])(
+    'delegates only trusted projected references with %i payload characters',
+    async (length) => {
+      const message = 'x'.repeat(length);
+      const spawned = child();
+      const detailFactory: ExtensionFactory = {
+        identifier: 'io.stagewise/test-recovery',
+        create: () => ({}),
+      };
+      const getChildContextExtensions = vi.fn(() => [detailFactory]);
+      const createChildSession = vi.fn(async () => spawned);
+      const deps = makeDeps({
+        createChildSession,
+        getChildContextExtensions,
+        transformHistory: async (history) =>
+          history.map((entry) => ({
+            ...entry,
+            parts: [{ type: 'text', text: message }],
+          })),
+        getHistory: (): ExtendedUIMessage[] => [
+          {
+            id: 'source',
+            role: 'user',
+            parts: [
+              {
+                type: 'data-context',
+                data: {
+                  sourceEnv: 'trusted',
+                  metadata: { origin: 'events', data: { traceId: 'hidden' } },
+                  content: [],
+                },
+              },
+              {
+                type: 'data-context',
+                data: {
+                  sourceEnv: 'untrusted',
+                  metadata: { origin: 'events', inputEventRef: 'ijklmnop' },
+                  content: [],
+                },
+              },
+            ],
+          },
+        ],
+        config: {
+          getModelSelection: () => [
+            { providerId: 'provider', modelId: 'model' },
+          ],
+        } as never,
+      });
+      const extension = createConsultExt(DEEP_THINK_CONFIG).create(deps);
+      await toolExecute<{ task: string }>(getTools(extension).startConsult)({
+        task: 'review',
+      });
+      expect(getChildContextExtensions).toHaveBeenCalledWith(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: 'source',
+            parts: [{ type: 'text', text: message }],
+          }),
+        ]),
+      );
+      expect(createChildSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          extensions: expect.arrayContaining([detailFactory]),
+        }),
+      );
+      const childContext = JSON.stringify(
+        vi.mocked(spawned.inbox.sendMessage).mock.calls,
+      );
+      expect(childContext).not.toContain('hidden');
+      expect(childContext).toContain(message.slice(0, 100));
+    },
+  );
+
   it('starts an isolated child and sends updates deferrably', async () => {
     const spawned = child();
     const createChildSession = vi.fn(async () => spawned);

@@ -27,6 +27,9 @@ export interface SessionInteractionLeaseDependencies {
   sessionId: string;
   mode: InteractionMode;
   bootstrap(): Promise<PreparedInferenceContextHandle>;
+  prepareUpdate?: (
+    update: InteractionUpdateEnvelope,
+  ) => Promise<InteractionUpdateEnvelope>;
   executeTool(request: InteractionToolRequest): Promise<InteractionToolResult>;
   commit(
     event: RealtimeCommitEvent,
@@ -71,6 +74,12 @@ export class SessionInteractionLease implements InteractionLease {
         };
       },
     };
+  }
+
+  async prepareUpdate(
+    update: InteractionUpdateEnvelope,
+  ): Promise<InteractionUpdateEnvelope> {
+    return this.deps.prepareUpdate?.(update) ?? update;
   }
 
   async bootstrap(): Promise<PreparedInferenceContextHandle> {

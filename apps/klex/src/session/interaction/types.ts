@@ -36,6 +36,7 @@ export interface PreparedInferenceContextHandle {
 }
 
 export interface InteractionUpdateEnvelope {
+  readonly modelText?: string;
   readonly sequence: number;
   readonly eventId: string;
   readonly event: SessionInboxEvent;
@@ -122,6 +123,9 @@ export type InteractionLeaseClosure =
   | { readonly type: 'failed'; readonly error: unknown };
 
 export interface InteractionLease {
+  prepareUpdate?: (
+    update: InteractionUpdateEnvelope,
+  ) => Promise<InteractionUpdateEnvelope>;
   readonly id: string;
   readonly sessionId: string;
   readonly mode: InteractionMode;

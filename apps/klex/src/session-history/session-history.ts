@@ -32,6 +32,8 @@ import type {
   ActivityMessage,
   ActivityQuery,
   ActivitySource,
+  InputProjectionBinding,
+  InputProjectionPlanRecord,
   SessionHistoryListPage,
   SessionHistoryListQuery,
   SessionHistoryMessage,
@@ -53,7 +55,42 @@ export interface SessionHistoryDependencies {
   now?: () => Date;
 }
 
+export interface InputProjectionReview {
+  revision: string;
+  batch: number;
+  reasons: string[];
+  plan?: InputProjectionPlanRecord;
+}
+
 export interface SessionHistory {
+  recordInputProjectionFetch(revision: string, reason: string): Promise<void>;
+  pendingInputProjectionReviews(): Promise<InputProjectionReview[]>;
+  deferInputProjectionReview(review: InputProjectionReview): Promise<void>;
+  completeInputProjectionReview(
+    review: InputProjectionReview,
+    replacement?: InputProjectionPlanRecord,
+  ): Promise<void>;
+  saveInputProjectionPlan(
+    plan: InputProjectionPlanRecord,
+  ): Promise<InputProjectionPlanRecord>;
+  findInputProjectionPlan(
+    family: string,
+    shape: string,
+  ): Promise<InputProjectionPlanRecord | undefined>;
+  bindInputProjection(
+    binding: InputProjectionBinding,
+  ): Promise<InputProjectionBinding | undefined>;
+  readInputProjection(
+    sessionId: string,
+    reference: string,
+  ): Promise<
+    | {
+        binding: InputProjectionBinding;
+        plan: InputProjectionPlanRecord | undefined;
+        context: import('@/session/inbox').ContextDataUIPart;
+      }
+    | undefined
+  >;
   start(): Promise<void>;
   activityAvailable(): boolean;
   subscribeActivity(listener: () => void): () => void;
@@ -1354,6 +1391,270 @@ class SessionHistoryModule implements SessionHistory {
         hasMore,
         nextCursor: hasMore ? (messages[0]?.seq ?? null) : null,
         trimmedMessageCount: session.trimmedMessageCount,
+      };
+    });
+  }
+
+  recordInputProjectionFetch(revision: string, reason: string): Promise<void> {
+    return this.enqueueResult(async () => {
+      const tx = await this.requireClient().transaction('write');
+      try {
+        const result = await tx.execute({
+          sql: 'SELECT count, reasons FROM input_projection_feedback WHERE revision = ?',
+          args: [revision],
+        });
+        const row = result.rows[0];
+        const count = (row ? toNumber(row.count) : 0) + 1;
+        const reasons = [
+          ...(row ? (JSON.parse(toText(row.reasons)) as string[]) : []),
+          reason,
+        ];
+        await tx.execute({
+          sql: 'INSERT INTO input_projection_feedback(revision, count, reasons) VALUES (?, ?, ?) ON CONFLICT(revision) DO UPDATE SET count = excluded.count, reasons = excluded.reasons',
+          args: [
+            revision,
+            count,
+            JSON.stringify(count % 10 === 0 ? [] : reasons),
+          ],
+        });
+        if (count % 10 === 0)
+          await tx.execute({
+            sql: 'INSERT INTO input_projection_reviews(revision, batch, reasons) VALUES (?, ?, ?)',
+            args: [revision, count / 10, JSON.stringify(reasons)],
+          });
+        // Bound queued feedback even when no helper/inference boundary runs.
+        await tx.execute(
+          'DELETE FROM input_projection_reviews WHERE completed = 1 OR rowid NOT IN (SELECT rowid FROM input_projection_reviews ORDER BY rowid DESC LIMIT 256)',
+        );
+        await tx.execute({
+          sql: 'DELETE FROM input_projection_feedback WHERE revision NOT IN (SELECT revision FROM input_projection_bindings) AND revision NOT IN (SELECT revision FROM input_projection_reviews WHERE completed = 0) AND revision <> ?',
+          args: [revision],
+        });
+        await tx.commit();
+      } finally {
+        await tx.close();
+      }
+    });
+  }
+  pendingInputProjectionReviews(): Promise<InputProjectionReview[]> {
+    return this.enqueueResult(async () => {
+      const client = this.requireClient();
+      await client.execute(
+        'DELETE FROM input_projection_reviews WHERE completed = 1',
+      );
+      await client.execute(
+        `DELETE FROM input_projection_reviews WHERE rowid NOT IN (SELECT rowid FROM input_projection_reviews ORDER BY rowid DESC LIMIT 256)`,
+      );
+      await client.execute(
+        `DELETE FROM input_projection_feedback WHERE revision NOT IN (SELECT revision FROM input_projection_bindings) AND revision NOT IN (SELECT revision FROM input_projection_reviews WHERE completed = 0)`,
+      );
+      const result = await client.execute({
+        sql: 'SELECT r.revision, r.batch, r.reasons, p.family, p.shape, p.body FROM input_projection_reviews r LEFT JOIN input_projection_plans p ON p.revision = r.revision WHERE r.completed = 0 AND r.retry_after <= ? ORDER BY r.rowid LIMIT 2',
+        args: [this.nowIso()],
+      });
+      return result.rows.map((row) => ({
+        revision: toText(row.revision),
+        batch: toNumber(row.batch),
+        reasons: JSON.parse(toText(row.reasons)) as string[],
+        plan: row.body
+          ? {
+              revision: toText(row.revision),
+              family: toText(row.family),
+              shape: toText(row.shape),
+              body: toText(row.body),
+            }
+          : undefined,
+      }));
+    });
+  }
+  deferInputProjectionReview(review: InputProjectionReview): Promise<void> {
+    return this.enqueueResult(async () => {
+      await this.requireClient().execute({
+        sql: `UPDATE input_projection_reviews SET attempts = attempts + 1, retry_after = ?, completed = CASE WHEN attempts >= 4 THEN 1 ELSE 0 END, reasons = CASE WHEN attempts >= 4 THEN '[]' ELSE reasons END WHERE revision = ? AND batch = ?`,
+        args: [
+          new Date(this.deps.now().getTime() + 60_000).toISOString(),
+          review.revision,
+          review.batch,
+        ],
+      });
+    });
+  }
+  completeInputProjectionReview(
+    review: InputProjectionReview,
+    replacement?: InputProjectionPlanRecord,
+  ): Promise<void> {
+    return this.enqueueResult(async () => {
+      const tx = await this.requireClient().transaction('write');
+      try {
+        // Compare-and-swap: delayed reviews must not overwrite a newer learned revision.
+        if (replacement)
+          await tx.execute({
+            sql: `INSERT OR IGNORE INTO input_projection_plans(revision, family, shape, body, created_at) SELECT ?, ?, ?, ?, ? WHERE (SELECT revision FROM input_projection_plans WHERE family = ? AND shape = ? ORDER BY created_at DESC, rowid DESC LIMIT 1) = ?`,
+            args: [
+              replacement.revision,
+              replacement.family,
+              replacement.shape,
+              replacement.body,
+              this.nowIso(),
+              replacement.family,
+              replacement.shape,
+              review.revision,
+            ],
+          });
+        await tx.execute({
+          sql: 'UPDATE input_projection_reviews SET completed = 1, reasons = ? WHERE revision = ? AND batch = ?',
+          args: ['[]', review.revision, review.batch],
+        });
+        await tx.commit();
+      } finally {
+        await tx.close();
+      }
+    });
+  }
+  saveInputProjectionPlan(
+    plan: InputProjectionPlanRecord,
+  ): Promise<InputProjectionPlanRecord> {
+    return this.enqueueResult(async () => {
+      const client = this.requireClient();
+      await client.execute({
+        sql: 'INSERT OR IGNORE INTO input_projection_plans(revision, family, shape, body, created_at) VALUES (?, ?, ?, ?, ?)',
+        args: [
+          plan.revision,
+          plan.family,
+          plan.shape,
+          plan.body,
+          this.nowIso(),
+        ],
+      });
+      // Bound reusable unreferenced definitions; live bindings always pin revisions.
+      await client.execute(`DELETE FROM input_projection_plans WHERE revision IN (
+        SELECT p.revision FROM input_projection_plans p
+        WHERE NOT EXISTS (SELECT 1 FROM input_projection_bindings b WHERE b.revision = p.revision)
+        AND NOT EXISTS (SELECT 1 FROM input_projection_feedback f WHERE f.revision = p.revision)
+        AND NOT EXISTS (SELECT 1 FROM input_projection_reviews r WHERE r.revision = p.revision AND r.completed = 0)
+        ORDER BY p.created_at DESC, p.rowid DESC LIMIT -1 OFFSET 2048
+      )`);
+      const result = await client.execute({
+        sql: 'SELECT revision, family, shape, body FROM input_projection_plans WHERE revision = ?',
+        args: [plan.revision],
+      });
+      const row = result.rows[0];
+      if (!row) throw new Error('Projection plan collision');
+      return {
+        revision: toText(row.revision),
+        family: toText(row.family),
+        shape: toText(row.shape),
+        body: toText(row.body),
+      };
+    });
+  }
+  findInputProjectionPlan(
+    family: string,
+    shape: string,
+  ): Promise<InputProjectionPlanRecord | undefined> {
+    return this.enqueueResult(async () => {
+      const result = await this.requireClient().execute({
+        sql: 'SELECT revision, family, shape, body FROM input_projection_plans WHERE family = ? AND shape = ? ORDER BY created_at DESC, rowid DESC LIMIT 1',
+        args: [family, shape],
+      });
+      const row = result.rows[0];
+      return row
+        ? {
+            revision: toText(row.revision),
+            family: toText(row.family),
+            shape: toText(row.shape),
+            body: toText(row.body),
+          }
+        : undefined;
+    });
+  }
+  bindInputProjection(
+    binding: InputProjectionBinding,
+  ): Promise<InputProjectionBinding | undefined> {
+    return this.enqueueResult(async () => {
+      const client = this.requireClient();
+      const source = await client.execute({
+        sql: 'SELECT ord, content FROM messages WHERE session_id = ? AND message_id = ? LIMIT 1',
+        args: [binding.sessionId, binding.messageId],
+      });
+      const row = source.rows[0];
+      if (!row) return undefined;
+      const message = await decodeSnapshots(client, toText(row.content));
+      const part = message.parts[binding.part];
+      if (
+        part?.type !== 'data-context' ||
+        createHash('sha256').update(JSON.stringify(part.data)).digest('hex') !==
+          binding.contextHash
+      )
+        return undefined;
+      if (!/^[a-z0-9]{8}$/.test(binding.reference))
+        throw new Error('Invalid projection reference');
+      await client.execute({
+        sql: 'INSERT OR IGNORE INTO input_projection_bindings(reference, session_id, ord, part, context_hash, revision, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        args: [
+          binding.reference,
+          binding.sessionId,
+          toNumber(row.ord),
+          binding.part,
+          binding.contextHash,
+          binding.revision,
+          this.nowIso(),
+        ],
+      });
+      const stored = await client.execute({
+        sql: 'SELECT reference, context_hash, revision FROM input_projection_bindings WHERE session_id = ? AND ord = ? AND part = ?',
+        args: [binding.sessionId, toNumber(row.ord), binding.part],
+      });
+      const bound = stored.rows[0];
+      return bound
+        ? {
+            ...binding,
+            reference: toText(bound.reference),
+            contextHash: toText(bound.context_hash),
+            revision: toText(bound.revision),
+          }
+        : undefined;
+    });
+  }
+  readInputProjection(
+    sessionId: string,
+    reference: string,
+  ): ReturnType<SessionHistory['readInputProjection']> {
+    return this.enqueueResult(async () => {
+      const client = this.requireClient();
+      const result = await client.execute({
+        sql: 'SELECT b.*, m.message_id, m.content, p.body, p.family, p.shape FROM input_projection_bindings b JOIN messages m ON m.session_id = b.session_id AND m.ord = b.ord LEFT JOIN input_projection_plans p ON p.revision = b.revision WHERE b.session_id = ? AND b.reference = ?',
+        args: [sessionId, reference],
+      });
+      const row = result.rows[0];
+      if (!row) return undefined;
+      const message = await decodeSnapshots(client, toText(row.content));
+      const part = message.parts[toNumber(row.part)];
+      if (
+        part?.type !== 'data-context' ||
+        createHash('sha256').update(JSON.stringify(part.data)).digest('hex') !==
+          toText(row.context_hash)
+      )
+        throw new Error('Projection source mismatch');
+      const revision = toText(row.revision);
+      return {
+        context: part.data,
+        binding: {
+          reference,
+          sessionId,
+          messageId: toText(row.message_id),
+          part: toNumber(row.part),
+          contextHash: toText(row.context_hash),
+          revision,
+        },
+        plan: row.body
+          ? {
+              revision,
+              family: toText(row.family),
+              shape: toText(row.shape),
+              body: toText(row.body),
+            }
+          : undefined,
       };
     });
   }

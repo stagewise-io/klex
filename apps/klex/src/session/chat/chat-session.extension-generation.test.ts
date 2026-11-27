@@ -55,7 +55,10 @@ function call(
     warnings: [],
   };
 }
-async function harness(models: MockLanguageModelV4[]) {
+async function harness(
+  models: MockLanguageModelV4[],
+  overrides: Partial<ChatSessionDependencies> = {},
+) {
   let deps: ExtensionDeps | undefined;
   const modelResolver: ChatSessionDependencies['modelResolver'] = {
     resolveInstinctCandidates: () => [],
@@ -100,6 +103,7 @@ async function harness(models: MockLanguageModelV4[]) {
     introspectionScope: scope(),
     sessionContext: { kind: 'default', name: 'main', sessionId: 'default' },
     basePrompt: 'Test.',
+    ...overrides,
   });
   await session.start();
   if (!deps) throw new Error('Extension dependencies missing');

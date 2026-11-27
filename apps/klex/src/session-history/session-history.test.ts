@@ -1,10 +1,10 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { createClient } from '@libsql/client';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createLogger } from '@stagewise/logger';
 
@@ -12,7 +12,15 @@ import { type KlexConfig, klexConfigSchema } from '@/config';
 import type { SqliteStoreDefinition } from '@/local-data';
 import { createLocalData } from '@/local-data';
 import { KLEX_VERSION } from '@/release';
+import type { ExtensionDeps } from '@/session/chat/extensions/extension-api';
+import {
+  createInputFilter,
+  createInputProjections,
+} from '@/session/chat/extensions/mcp-ingress/input-filter';
 import type { ExtendedUIMessage } from '@/session/chat/message-types';
+import { convertToModelMessagesExtended } from '@/session/chat/utils/convert-to-model-messages';
+import { createTranscriptHistoryView } from '@/session/chat/utils/history-view';
+import type { ContextDataUIPart } from '@/session/inbox';
 
 import { summarizeGenerationFailure } from './generation-health';
 import {
@@ -55,7 +63,9 @@ function meta(
   };
 }
 
-async function setup(options: { maxBytes?: number; directory?: string } = {}) {
+async function setup(
+  options: { maxBytes?: number; directory?: string; now?: () => Date } = {},
+) {
   const directory =
     options.directory ??
     (await mkdtemp(join(tmpdir(), 'klex-session-history-')));
@@ -74,6 +84,7 @@ async function setup(options: { maxBytes?: number; directory?: string } = {}) {
     logging: logger,
     dataDirectory: directory,
     config: { get: () => config },
+    now: options.now,
   });
   modules.push(history);
   await history.start();
@@ -98,6 +109,693 @@ afterEach(async () => {
       .splice(0)
       .map((directory) => rm(directory, { recursive: true, force: true })),
   );
+});
+
+describe('input projection storage', () => {
+  function event(
+    id: string,
+    context: ContextDataUIPart = {
+      sourceEnv: 'fixture',
+      metadata: {
+        origin: 'events',
+        type: 'message',
+        data: { message: id, traceId: 'x'.repeat(8_000) },
+      },
+      content: [],
+    },
+  ) {
+    return {
+      id,
+      role: 'user' as const,
+      parts: [{ type: 'data-context' as const, data: context }],
+    };
+  }
+  const contextOf = (source: ReturnType<typeof event>) => source.parts[0]!.data;
+  const generation = (
+    generate = vi.fn().mockResolvedValue({ success: false }),
+  ) => ({
+    generate,
+    modelIds: [{ providerId: 'test', modelId: 'chat' }],
+  });
+  it.each([true, false])(
+    'projects collision-free wrappers with memory models (memory=%s)',
+    async (hasMemory) => {
+      const { history } = await setup();
+      const controls = {
+        inputEventRef: 'producer',
+        inputFiltered: false,
+        inputFilterNote: 'producer note',
+        inputPreviewLimited: false,
+        projectionStatus: 'producer status',
+      };
+      const context = {
+        sourceEnv: 'fixture',
+        metadata: {
+          origin: 'events',
+          ...controls,
+          data: { message: 'hello', ...controls, traceId: 'hidden' },
+        },
+        content: [{ type: 'text' as const, text: 'native text' }],
+      };
+      const messages = [event('wrapped', context)];
+      history.openRecorder(meta()).scheduleSync(() => messages);
+      const generate = vi.fn().mockResolvedValue({
+        success: true,
+        finishReason: 'stop',
+        output: {
+          keep: [['message'], ...Object.keys(controls).map((key) => [key])],
+        },
+      });
+      const memory = [{ providerId: 'test', modelId: 'memory' }];
+      const chat = [{ providerId: 'test', modelId: 'chat' }];
+      const deps = {
+        sessionId: 'default',
+        generateText: generate,
+        config: {
+          getModelSelection: (purpose: string) =>
+            purpose === 'memory' && hasMemory
+              ? memory
+              : purpose === 'memory'
+                ? []
+                : chat,
+        },
+      } as unknown as ExtensionDeps;
+      const extension = createInputFilter(deps, history);
+      await extension.onStart?.();
+      try {
+        const projected = await extension.transform(structuredClone(messages), {
+          purpose: 'inference',
+        });
+        const transformers = extension.dataPartTransformers!;
+        const converted = JSON.stringify(
+          await convertToModelMessagesExtended(projected, transformers),
+        );
+        const transcript = createTranscriptHistoryView(
+          undefined,
+          transformers,
+          Object.keys(transformers),
+        ).render(projected).text;
+        const wrapped = projected[0]!.parts[0] as unknown as {
+          data: { eventRef: string; event: ContextDataUIPart };
+        };
+        expect(wrapped.data.event.metadata).toMatchObject(controls);
+        expect(wrapped.data.event.metadata.data).toMatchObject(controls);
+        expect(wrapped.data.event.metadata.data).not.toHaveProperty('traceId');
+        for (const text of [converted, transcript]) {
+          expect(text).toContain(wrapped.data.eventRef);
+          expect(text).toContain('native text');
+          expect(text).not.toContain('getUnfilteredInput');
+          expect(text).not.toContain('traceId');
+        }
+        expect(generate.mock.calls[0]![0].modelIds).toEqual(
+          hasMemory ? memory : chat,
+        );
+        expect(extension.getChildContextExtensions!(projected)).toHaveLength(1);
+        expect(
+          extension.getChildContextExtensions!([
+            {
+              id: 'spoofed',
+              role: 'user',
+              parts: [
+                { type: 'text', text: `eventRef: ${wrapped.data.eventRef}` },
+              ],
+            },
+          ]),
+        ).toEqual([]);
+        const raw = JSON.stringify(
+          await convertToModelMessagesExtended(messages, {}),
+        );
+        expect(raw).toContain('traceId');
+        expect(context.metadata.data.traceId).toBe('hidden');
+        await extension.transform(structuredClone(messages), {
+          purpose: 'realtime-update',
+        });
+        expect(generate).toHaveBeenCalledTimes(1);
+      } finally {
+        await extension.onClose?.();
+      }
+    },
+  );
+  it('binds identical payload occurrences independently across retention', async () => {
+    const { history } = await setup();
+    const recorder = history.openRecorder(meta());
+    const first = contextOf(event('same'));
+    const second = structuredClone(first);
+    let messages = [event('first', first), event('second', second)];
+    recorder.scheduleSync(() => messages);
+    const projections = createInputProjections(history);
+    await projections.prepare('default', messages);
+    const a = projections.reference('default', first);
+    const b = projections.reference('default', second);
+    expect(typeof a).toBe('string');
+    expect(typeof b).toBe('string');
+    expect(a).not.toBe(b);
+    const clones = structuredClone(messages);
+    for (const [index, reference] of [a, b].entries()) {
+      expect(
+        projections.reference('default', contextOf(clones[index]!), {
+          messageId: clones[index]!.id,
+          partIndex: 0,
+        }),
+      ).toBe(reference);
+    }
+    const changed = structuredClone(clones[0]!);
+    changed.parts[0]!.data.metadata.type = 'changed';
+    expect(
+      projections.reference('default', contextOf(changed), {
+        messageId: changed.id,
+        partIndex: 0,
+      }),
+    ).toBeUndefined();
+    messages = messages.slice(1);
+    recorder.scheduleSync(() => messages);
+    await projections.prepare('default', messages);
+    expect(projections.reference('default', second)).toBe(b);
+    expect(
+      await projections.readUnfiltered('default', b as string),
+    ).toHaveProperty('chunk');
+    await projections.close();
+  });
+  it.each(['plan', 'binding'])(
+    'isolates a corrupt %s from later occurrences',
+    async (failure) => {
+      const { history } = await setup();
+      const recorder = history.openRecorder(meta());
+      const messages = [event('bad'), event('good')];
+      recorder.scheduleSync(() => messages);
+      await history.flush();
+      const projections = createInputProjections(history);
+      if (failure === 'plan') {
+        vi.spyOn(history, 'findInputProjectionPlan').mockResolvedValueOnce({
+          body: 'invalid',
+        } as never);
+      } else {
+        vi.spyOn(history, 'readInputProjection').mockRejectedValueOnce(
+          new Error('Source hash mismatch'),
+        );
+      }
+      await projections.prepare('default', messages);
+      expect(
+        projections.reference('default', contextOf(messages[0]!)),
+      ).toBeUndefined();
+      expect(projections.reference('default', contextOf(messages[1]!))).toMatch(
+        /^[a-z0-9]{8}$/,
+      );
+      await projections.close();
+    },
+  );
+  it('advertises fallback details for an incomplete catalog', async () => {
+    const { history } = await setup();
+    const recorder = history.openRecorder(meta());
+    const context = {
+      sourceEnv: 'audit',
+      metadata: {
+        origin: 'events',
+        data: Object.fromEntries(
+          Array.from({ length: 150 }, (_, i) => [`field${i}`, i]),
+        ),
+      },
+      content: [],
+    };
+    const messages = [event('wide', context)];
+    recorder.scheduleSync(() => messages);
+    const projections = createInputProjections(history);
+    await projections.prepare('default', messages);
+    const presented = projections.present('default', context);
+    expect(presented).not.toEqual(context);
+    expect(presented.metadata.moreInfoSections).toBeUndefined();
+    expect(
+      await projections.readUnfiltered(
+        'default',
+        projections.reference('default', context) as string,
+      ),
+    ).toHaveProperty('chunk');
+    await projections.close();
+  });
+  it('audit: realtime fallback stays pinned while a later helper can learn for future events', async () => {
+    const { history } = await setup();
+    const recorder = history.openRecorder(meta());
+    const messages = [event('realtime-first')];
+    recorder.scheduleSync(() => messages);
+    const projections = createInputProjections(history);
+    await projections.prepare('default', messages);
+    const context = contextOf(messages[0]!);
+    const before = projections.present('default', context);
+    expect(before.metadata.data).not.toHaveProperty('traceId');
+    const generate = vi.fn().mockResolvedValue({ success: false });
+    await projections.prepare('default', messages, generation(generate));
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(projections.present('default', context)).toEqual(before);
+    await projections.close();
+  });
+
+  it('caps helper calls across a flood of new shapes', async () => {
+    const { history } = await setup();
+    const recorder = history.openRecorder(meta());
+    const messages = Array.from({ length: 12 }, (_, i) =>
+      event(`shape-${i}`, {
+        sourceEnv: 'flood',
+        metadata: {
+          origin: 'events',
+          data: { message: 'hello', [`trace${i}`]: 'x'.repeat(8_000) },
+        },
+        content: [],
+      }),
+    );
+    recorder.scheduleSync(() => messages);
+    const projections = createInputProjections(history);
+    const generate = vi.fn().mockResolvedValue({ success: false });
+    await projections.prepare('default', messages, generation(generate));
+    expect(generate).toHaveBeenCalledTimes(2);
+    for (const message of messages) {
+      const ref = projections.reference(
+        'default',
+        contextOf(message),
+      ) as string;
+      expect(await history.readInputProjection('default', ref)).toBeDefined();
+    }
+    await projections.close();
+  });
+
+  it('audit: reordering an unchanged source message preserves its durable reference', async () => {
+    const { history } = await setup();
+    const recorder = history.openRecorder(meta());
+    const source = event('source');
+    const later = message('later');
+    let messages = [source, later];
+    recorder.scheduleSync(() => messages);
+    const projections = createInputProjections(history);
+    await projections.prepare('default', messages);
+    const context = contextOf(source);
+    const reference = projections.reference('default', context) as string;
+    expect(
+      await history.readInputProjection('default', reference),
+    ).toBeDefined();
+    messages = [later, source];
+    recorder.scheduleSync(() => messages);
+    await projections.prepare('default', messages);
+    expect(
+      await history.readInputProjection('default', reference),
+    ).toBeDefined();
+    expect(projections.reference('default', context)).toBe(reference);
+    await projections.close();
+  });
+
+  it('audit: a failed review backs off without blocking other revisions', async () => {
+    const { history } = await setup();
+    for (const revision of ['review-audit', 'review-second']) {
+      await history.saveInputProjectionPlan({
+        revision,
+        family: revision,
+        shape: 'shape',
+        body: JSON.stringify({
+          version: 1,
+          fields: [{ path: ['message'], type: 'string', keep: false }],
+        }),
+      });
+      for (let i = 0; i < 10; i++)
+        await history.recordInputProjectionFetch(
+          revision,
+          `Need original ${i}`,
+        );
+    }
+    const generate = vi.fn().mockResolvedValue({ success: false });
+    const projections = createInputProjections(history);
+    const generation = {
+      generate,
+      modelIds: [{ providerId: 'audit', modelId: 'chat' }],
+    };
+    await projections.prepare('default', [], generation);
+    await projections.prepare('default', [], generation);
+    expect(generate).toHaveBeenCalledTimes(2);
+
+    expect(await history.pendingInputProjectionReviews()).toEqual([]);
+    await projections.close();
+  });
+  it('persists ten-fetch batches, reviews at a safe boundary, and pins old events', async () => {
+    const first = await setup();
+    const recorder = first.history.openRecorder(meta());
+    const make = (id: string) =>
+      event(id, {
+        sourceEnv: 'feedback',
+        metadata: {
+          origin: 'push-notifications',
+          data: { message: id, traceId: 'x'.repeat(20_000) },
+        },
+        content: [{ type: 'text', text: 'original content' }],
+      });
+    const messages = [make('before')];
+    const generate = vi.fn().mockImplementation(async (args) => {
+      const parsed = JSON.parse(args.prompt);
+      const fields = parsed.fields;
+      return {
+        success: true,
+        finishReason: 'stop',
+        output: {
+          keep: fields
+            .filter(
+              (field: { path: string[] }) =>
+                parsed.review || field.path[0] === 'message',
+            )
+            .map(({ path }: { path: string[] }) => path),
+        },
+      };
+    });
+    const generation = {
+      generate,
+      modelIds: [{ providerId: 'test', modelId: 'chat' }],
+    };
+    const projections = createInputProjections(first.history);
+    recorder.scheduleSync(() => messages);
+    await projections.prepare('default', messages, generation);
+    const context = contextOf(messages[0]!);
+    const before = projections.present('default', context);
+    expect(before.metadata.data).not.toHaveProperty('traceId');
+    expect(before.metadata.moreInfoSections).toBeUndefined();
+    const ref = projections.reference('default', context) as string;
+    for (let i = 0; i < 9; i++)
+      await projections.readUnfiltered(
+        'default',
+        ref,
+        undefined,
+        `Need trace ${i}`,
+      );
+    expect(await first.history.pendingInputProjectionReviews()).toEqual([]);
+    const page = (await projections.readUnfiltered('default', ref)) as {
+      nextCursor: string;
+    };
+    await projections.readUnfiltered(
+      'default',
+      ref,
+      page.nextCursor,
+      'Continuation must not count',
+    );
+    expect(
+      await projections.readUnfiltered(
+        'wrong',
+        ref,
+        undefined,
+        'Denied must not count',
+      ),
+    ).toEqual({ status: 'unavailable' });
+
+    await projections.close();
+    await first.history.close();
+    let now = Date.now();
+    const second = await setup({
+      directory: first.directory,
+      now: () => new Date(now),
+    });
+    const restored = createInputProjections(second.history);
+    let cursor: string | undefined;
+    let text = '';
+    do {
+      const result = (await restored.readUnfiltered(
+        'default',
+        ref,
+        cursor,
+        'Need trace 9',
+      )) as { chunk: string; nextCursor: string | null };
+      expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(
+        12 * 1_024,
+      );
+      text += result.chunk;
+      cursor = result.nextCursor ?? undefined;
+    } while (cursor);
+    expect(JSON.parse(text)).toEqual(context);
+    const pending = await second.history.pendingInputProjectionReviews();
+    expect(pending).toHaveLength(1);
+    expect(pending[0]?.reasons).toEqual(
+      Array.from({ length: 10 }, (_, i) => `Need trace ${i}`),
+    );
+    const failed = {
+      ...generation,
+      generate: vi.fn().mockResolvedValue({ success: false }),
+    };
+    await restored.prepare('default', messages, failed);
+    expect(await second.history.pendingInputProjectionReviews()).toEqual([]);
+    await restored.prepare('default', messages, generation);
+    expect(generate).toHaveBeenCalledTimes(1);
+    now += 60_001;
+    expect(await second.history.pendingInputProjectionReviews()).toHaveLength(
+      1,
+    );
+    await restored.prepare('default', messages, generation);
+    expect(await second.history.pendingInputProjectionReviews()).toEqual([]);
+    expect(generate).toHaveBeenCalledTimes(2);
+    const reviewPrompt = JSON.parse(generate.mock.calls[1]![0].prompt);
+    expect(reviewPrompt.review.reasons).toEqual(pending[0]?.reasons);
+    expect(restored.present('default', context)).toEqual(before);
+    const nextRecorder = second.history.openRecorder(meta());
+    messages.push(make('after'));
+    nextRecorder.scheduleSync(() => messages);
+    await restored.prepare('default', messages, generation);
+    expect(
+      restored.present('default', contextOf(messages[1]!)).metadata.data,
+    ).toHaveProperty('traceId');
+    // Requests pinned to the old revision still produce the next disjoint ten-reason batch.
+    await Promise.all(
+      Array.from({ length: 10 }, (_, i) =>
+        restored.readUnfiltered('default', ref, undefined, `Again ${i}`),
+      ),
+    );
+    const batch2 = await second.history.pendingInputProjectionReviews();
+    expect(batch2[0]?.batch).toBe(2);
+    expect(batch2[0]?.reasons).toHaveLength(10);
+    // The first review already superseded this revision: do not spend a helper
+    // call or let feedback from pinned old events overwrite the learned plan.
+    await restored.prepare('default', messages, generation);
+    expect(generate).toHaveBeenCalledTimes(2);
+    expect(await second.history.pendingInputProjectionReviews()).toEqual([]);
+    expect(restored.present('default', context)).toEqual(before);
+    await restored.close();
+  });
+
+  it('reuses known shapes, isolates variants and preserves pinned details', async () => {
+    const { history } = await setup();
+    const recorder = history.openRecorder(meta());
+    const make = (id: string, extra: Record<string, string> = {}) =>
+      event(id, {
+        sourceEnv: 'fixture',
+        metadata: {
+          origin: 'events',
+          type: 'message',
+          data: { message: `Fact ${id}`, traceId: 'x'.repeat(8_000), ...extra },
+        },
+        content: [],
+      });
+    const messages = [make('first')];
+    const generate = vi.fn().mockImplementation(async (args) => ({
+      success: true,
+      finishReason: 'stop',
+      output: {
+        keep: JSON.parse(args.prompt)
+          .fields.filter(
+            (field: { path: string[] }) => field.path.at(-1) !== 'traceId',
+          )
+          .map(({ path }: { path: string[] }) => path),
+      },
+    }));
+    const generation = {
+      generate,
+      modelIds: [{ providerId: 'fixture', modelId: 'chat' }],
+    };
+    const projections = createInputProjections(history);
+    const prepare = async () => {
+      recorder.scheduleSync(() => messages);
+      await projections.prepare('default', messages, generation);
+    };
+    await prepare();
+    const first = contextOf(messages[0]!);
+    const pinned = projections.present('default', first);
+    expect(pinned.metadata.data).toEqual({ message: 'Fact first' });
+    expect(pinned.metadata.type).toBe('message');
+    const clonedHistory = structuredClone(messages);
+    const projectedHistory = clonedHistory.map((message) => ({
+      ...message,
+      parts: message.parts.map((part, partIndex) => ({
+        ...part,
+        data: projections.present('default', part.data, {
+          messageId: message.id,
+          partIndex,
+        }),
+      })),
+    }));
+    const converted = JSON.stringify(
+      await convertToModelMessagesExtended(projectedHistory, {}),
+    );
+    const transcript = createTranscriptHistoryView(
+      { keep: 'newest', maxCharacters: 20_000 },
+      undefined,
+      [],
+    ).render(projectedHistory).text;
+    for (const rendered of [converted, transcript]) {
+      expect(rendered).toContain('Fact first');
+      expect(rendered).not.toContain('traceId');
+    }
+    expect(clonedHistory).toEqual(messages);
+    expect(JSON.parse(generate.mock.calls[0]?.[0].prompt).identity).toEqual([
+      { path: ['type'], type: 'string', sample: '"message"' },
+    ]);
+    expect(Buffer.byteLength(JSON.stringify(pinned.metadata))).toBeLessThan(
+      Buffer.byteLength(JSON.stringify(first.metadata)) / 2,
+    );
+    messages.push(make('second'));
+    await prepare();
+    expect(generate).toHaveBeenCalledTimes(1);
+    messages.push(make('changed', { newFact: 'Must stay visible' }));
+    await prepare();
+    expect(generate).toHaveBeenCalledTimes(2);
+    const changed = contextOf(messages[2]!);
+    expect(projections.present('default', changed).metadata.data).toEqual({
+      message: 'Fact changed',
+      newFact: 'Must stay visible',
+    });
+    expect(projections.present('default', first)).toEqual(pinned);
+    const details = (await projections.readUnfiltered(
+      'default',
+      projections.reference('default', first) as string,
+    )) as { chunk: string; nextCursor: string | null };
+    expect(details.nextCursor).toBeNull();
+    expect(JSON.parse(details.chunk)).toEqual(first);
+    expect(first.metadata.data).toHaveProperty('traceId', 'x'.repeat(8_000));
+  });
+
+  it.each([true, false])(
+    'evaluates small unseen shapes once and persists keep=%s decisions',
+    async (keep) => {
+      const { history } = await setup();
+      const recorder = history.openRecorder(meta());
+      const context = (traceId: string) => ({
+        sourceEnv: 'fixture',
+        metadata: {
+          origin: 'events',
+          type: 'message',
+          data: { message: 'keep', traceId },
+        },
+        content: [],
+      });
+      const small = context('short');
+      const large = context('x'.repeat(8_000));
+      const messages = [event('small', small)];
+      recorder.scheduleSync(() => messages);
+      const projections = createInputProjections(history);
+      const generate = vi.fn().mockResolvedValue({
+        success: true,
+        finishReason: 'stop',
+        output: {
+          keep: keep ? [['message'], ['traceId']] : [['message']],
+        },
+      });
+      const generation = {
+        generate,
+        modelIds: [{ providerId: 'fixture', modelId: 'chat' }],
+      };
+      await projections.prepare('default', messages, generation);
+      expect(generate).toHaveBeenCalledTimes(1);
+      expect(projections.present('default', small).metadata.data).toEqual(
+        keep ? small.metadata.data : { message: 'keep' },
+      );
+      expect(projections.reference('default', small)).toMatch(/^[a-z0-9]{8}$/);
+      await projections.close();
+      const restored = createInputProjections(history);
+      messages.push(event('large', large));
+      recorder.scheduleSync(() => messages);
+      await restored.prepare('default', messages, generation);
+      expect(generate).toHaveBeenCalledTimes(1);
+      expect(restored.present('default', large).metadata.data).toEqual(
+        keep
+          ? expect.objectContaining({
+              message: 'keep',
+              traceId: expect.any(String),
+            })
+          : { message: 'keep' },
+      );
+      await restored.close();
+    },
+  );
+  it('recovers content-only notifications without a filter plan', async () => {
+    const { history } = await setup();
+    const context = {
+      sourceEnv: 'fixture',
+      metadata: { origin: 'push-notifications' },
+      content: [{ type: 'text' as const, text: 'hello' }],
+    };
+    const source = event('content-only', context);
+    history.openRecorder(meta()).scheduleSync(() => [source]);
+    const projections = createInputProjections(history);
+    await projections.prepare('default', [source]);
+    const presented = projections.present('default', context);
+    expect(presented.content).toEqual(context.content);
+    expect(projections.reference('default', context)).toMatch(/^[a-z0-9]{8}$/);
+    const result = (await projections.readUnfiltered(
+      'default',
+      projections.reference('default', context) as string,
+    )) as { chunk: string };
+    expect(JSON.parse(result.chunk)).toEqual(context);
+  });
+  it('binds only durable matching sources, pins plans, scopes reads and survives restart', async () => {
+    const { history, directory } = await setup();
+    const context = {
+      sourceEnv: 'fixture',
+      metadata: { origin: 'events', data: { nested: { id: 'original' } } },
+      content: [],
+    };
+    const source = event('event-source', context);
+    const binding = {
+      reference: 'abcdefgh',
+      sessionId: 'default',
+      messageId: source.id,
+      part: 0,
+      contextHash: createHash('sha256')
+        .update(JSON.stringify(context))
+        .digest('hex'),
+      revision: 'revision-1',
+    };
+    expect(await history.bindInputProjection(binding)).toBeUndefined();
+    const recorder = history.openRecorder(meta());
+    recorder.scheduleSync(() => [source, event('other', context)]);
+    await history.flush();
+    const plan = {
+      revision: 'revision-1',
+      family: 'fixture/events/test',
+      shape: 'shape-1',
+      body: '{"version":1,"fields":[]}',
+    };
+    await history.saveInputProjectionPlan(plan);
+    expect(
+      await history.bindInputProjection({ ...binding, contextHash: 'bad' }),
+    ).toBeUndefined();
+    expect(await history.bindInputProjection(binding)).toEqual(binding);
+    expect(
+      await history.bindInputProjection({ ...binding, messageId: 'other' }),
+    ).toBeUndefined();
+    expect(
+      await history.bindInputProjection({
+        ...binding,
+        messageId: 'other',
+        reference: 'qrstuvwx',
+      }),
+    ).toMatchObject({ messageId: 'other', reference: 'qrstuvwx' });
+    expect(
+      await history.bindInputProjection({
+        ...binding,
+        reference: 'ijklmnop',
+        revision: 'new',
+      }),
+    ).toEqual(binding);
+    expect(
+      await history.readInputProjection('child', 'abcdefgh'),
+    ).toBeUndefined();
+    await history.close();
+    const restarted = await setup({ directory });
+    expect(
+      await restarted.history.readInputProjection('default', 'abcdefgh'),
+    ).toEqual({ context, binding, plan });
+    expect(
+      await restarted.history.findInputProjectionPlan(plan.family, plan.shape),
+    ).toEqual(plan);
+  });
 });
 
 describe('snapshot storage', () => {
@@ -418,7 +1116,7 @@ describe('snapshot storage', () => {
           (step) => step.to <= 4,
         ),
       }),
-    ).rejects.toThrow(/schema=5.*schema=4/);
+    ).rejects.toThrow(/schema=6.*schema=4/);
     expect(await readFile(path)).toEqual(bytes);
     const migrated = createClient({ url: `file:${path}` });
     expect((await migrated.execute('SELECT * FROM messages')).rows).toEqual(
@@ -658,7 +1356,7 @@ describe('canonical activity queries', () => {
           "SELECT value FROM meta WHERE key = 'schemaVersion'",
         )
       ).rows[0]?.value,
-    ).toBe('5');
+    ).toBe('6');
     migrated.close();
     const bytes = await readFile(path);
     await migrate(SESSION_HISTORY_STORE_DEFINITION);
@@ -672,7 +1370,7 @@ describe('canonical activity queries', () => {
           (step) => step.to <= 3,
         ),
       }),
-    ).rejects.toThrow(/schema=5.*schema=3/);
+    ).rejects.toThrow(/schema=6.*schema=3/);
     expect(await readFile(path)).toEqual(bytes);
     const second = await setup({ directory });
     expect(await second.history.activityManifest()).toEqual(sources);
@@ -875,7 +1573,7 @@ describe('session history sync', () => {
         '',
       )
         .replace('  content_revision TEXT,\n', '')
-        .replace(/CREATE TABLE memory_snapshots[\s\S]*$/, ''),
+        .replace(/CREATE TABLE input_projection_plans[\s\S]*$/, ''),
       migrations: SESSION_HISTORY_STORE_DEFINITION.migrations.filter(
         (migration) => migration.to <= 2,
       ),
@@ -927,7 +1625,7 @@ describe('session history sync', () => {
       name: 'old',
     });
     await history.close();
-    await expect(migrate(v2)).rejects.toThrow(/schema=5.*schema=2/);
+    await expect(migrate(v2)).rejects.toThrow(/schema=6.*schema=2/);
   });
 
   it('persists and deduplicates zero-message failures through sync, end, and restart', async () => {

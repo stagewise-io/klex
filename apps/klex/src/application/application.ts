@@ -738,7 +738,7 @@ class ApplicationModule implements Application {
       createReadAttachmentExt,
       todosExt,
       createSkillsExt(skillRegistry),
-      createMcpIngressExt(),
+      createMcpIngressExt(undefined, sessionHistory),
       createVoiceCapabilityExt({
         hasVoiceModel: () =>
           providerRegistry.resolveRealtimeProvider() !== undefined,

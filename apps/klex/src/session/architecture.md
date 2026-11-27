@@ -98,9 +98,12 @@ The composition root wires shared deps once and passes a `sessionFactory` to `Se
 ### Startup order
 
 ```
-model-call-logger → session-history → admin-api → cloud-connectivity
+model-call-logger → session-history → skill-registry
+  → admin-api → cloud-connectivity
   → session-host → realtime → mcp → telemetry-manager
 ```
+
+MCP ingress owns filtering lifecycle, policy and recovery tools, borrowing a narrow sessions-storage repository. Its existing history-transform hook covers inference, helper transcripts and realtime delivery on copies, with no separate model-projection dispatch. Ingress factory configuration can disable filtering while keeping ingestion active. Consult children receive only explicitly delegated recovery capabilities and no MCP access.
 
 ### Soul administration
 

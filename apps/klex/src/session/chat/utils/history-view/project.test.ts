@@ -67,6 +67,62 @@ describe('applyScope', () => {
 });
 
 describe('projectMessage', () => {
+  it.each(['events', 'push-notifications'])(
+    'preserves baseline %s rendering without mutating canonical data',
+    (origin) => {
+      const message = msg(
+        [
+          context({
+            metadata: { origin, data: { message: 'keep', traceId: 'hidden' } },
+            content: [{ type: 'text', text: 'native content' }],
+          }),
+        ],
+        'user',
+      );
+      const before = structuredClone(message);
+      const result = records(message, {
+        context: {
+          metadata: false,
+          text: { max: 2_000, truncate: 'end' },
+          media: 'placeholder',
+          resources: 'placeholder',
+        },
+      });
+      const rendered = JSON.stringify(result);
+      expect(rendered.includes('traceId')).toBe(origin === 'events');
+      expect(rendered).toContain('native content');
+      expect(rendered).not.toContain('abcdefgh');
+      expect(rendered.includes('hidden')).toBe(origin === 'events');
+      expect(message).toEqual(before);
+    },
+  );
+  it('does not promote raw metadata references into recovery headers or payload exposure', () => {
+    const message = msg(
+      [
+        context({
+          metadata: {
+            origin: 'push-notifications',
+            inputEventRef: 'abcdefgh',
+            data: { hidden: 'private payload' },
+          },
+          content: [],
+        }),
+      ],
+      'user',
+    );
+    const rendered = JSON.stringify(
+      records(message, {
+        context: {
+          metadata: false,
+          text: { max: 200, truncate: 'end' },
+          media: 'placeholder',
+          resources: 'placeholder',
+        },
+      }),
+    );
+    expect(rendered).not.toContain('inputEventRef:');
+    expect(rendered).not.toContain('private payload');
+  });
   it.each([
     'https://example.test/audio?token=SECRET',
     'file:///private/SECRET',

@@ -402,7 +402,7 @@ export class GeminiLiveSession implements RealtimeModelSession {
 
   async sendUpdate(update: InteractionUpdateEnvelope): Promise<void> {
     if (this.settled) return;
-    const text = renderInteractionUpdateText(update.event);
+    const text = update.modelText ?? renderInteractionUpdateText(update.event);
     if (!text.trim()) return;
     this.appendCallLog('user', 'context', text);
     this.trackUnconfirmed({

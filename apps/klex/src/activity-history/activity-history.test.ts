@@ -2,7 +2,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ExtendedUIMessage } from '@/session/chat/message-types';
 
-import { activityMessageId, activityOrdinal } from './activity-history';
+import {
+  activityMessageId,
+  activityOrdinal,
+  createActivityHistory,
+} from './activity-history';
 import { createActivityFixture, TEST_ACTIVITY_LIMITS } from './test-support';
 
 const fixtures: Awaited<ReturnType<typeof createActivityFixture>>[] = [];
@@ -63,6 +67,22 @@ describe('canonical activity view', () => {
       maxBytes: 100_000,
     });
     expect(page?.text).toMatch(/^12:00 #/);
+  });
+
+  it('reads canonical activity without projection dependencies', async () => {
+    const { history, append } = await setup();
+    const source = await append('canonical activity survives');
+    const activities = createActivityHistory(history);
+    expect(
+      await activities.readPage(source.id, {
+        offset: 0,
+        limit: 1000,
+        maxBytes: 10000,
+      }),
+    ).toHaveProperty(
+      'text',
+      expect.stringContaining('canonical activity survives'),
+    );
   });
   it('preserves exclusions and consumes filtered-only sources', async () => {
     const { activities, append, now } = await setup();

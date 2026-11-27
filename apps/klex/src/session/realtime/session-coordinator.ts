@@ -447,7 +447,9 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
     processor: RealtimeModelSession,
     update: InteractionUpdateEnvelope,
   ): Promise<void> {
-    await processor.sendUpdate(update);
+    // Shared awaited boundary covers all three provider adapters and replay logs.
+    const prepared = (await lease.prepareUpdate?.(update)) ?? update;
+    await processor.sendUpdate(prepared);
     lease.acknowledgeUpdate(update.sequence);
     this.deps.logger.debug(
       {

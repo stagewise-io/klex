@@ -102,6 +102,7 @@ import {
 import type { ExtendedUIMessage } from './message-types';
 import { createTurn, type Turn, type TurnResult } from './turn';
 import { BackoffManager } from './utils/backoff-manager';
+import { convertToModelMessagesExtended } from './utils/convert-to-model-messages';
 import { ModelFallbackManager } from './utils/model-fallback-manager';
 import {
   getExtensionIdentifier,
@@ -568,6 +569,21 @@ class ChatSessionModule implements AgentSession {
       getHistory: () => [...this.messages],
       getDataPartTransformers: () =>
         this.extensionHandler.getDataPartTransformers(),
+      transformHistory: async (history) => {
+        const reference = this.deps.config.getModelSelection?.('chat')?.[0];
+        const model = reference
+          ? this.deps.modelResolver.resolveModel(reference)
+          : { modelId: 'transcript', contextSize: 0, inputCapabilities: {} };
+        return (
+          await this.extensionHandler.runHistoryTransformers(
+            structuredClone([...history]),
+            model,
+            { purpose: 'transcript' },
+          )
+        ).history;
+      },
+      getChildContextExtensions: (history) =>
+        this.extensionHandler.getChildContextExtensions(history),
       checkpoints: {
         commit: (request) => {
           if (this._status === 'terminated') {
@@ -652,6 +668,54 @@ class ChatSessionModule implements AgentSession {
         quiesceGenerationLane: (reason) => this.quiesceGenerationLane(reason),
         resumeGenerationLane: () => this.resumeGenerationLane(),
         prepareContext: (request) => this.prepareLeaseContext(request),
+        prepareUpdate: async (update) => {
+          this.scheduleTranscriptSync();
+          const source = this.messages.findLast((message) =>
+            message.parts.some(
+              (part) =>
+                part.type === 'data-context' &&
+                part.data === update.event.context,
+            ),
+          );
+          if (!source) return update;
+          const partIndex = source.parts.findIndex(
+            (part) =>
+              part.type === 'data-context' &&
+              part.data === update.event.context,
+          );
+          const { history: projected } =
+            await this.extensionHandler.runHistoryTransformers(
+              structuredClone([source]),
+              this.leaseModel ?? {
+                modelId: 'realtime',
+                contextSize: 0,
+                inputCapabilities: {},
+              },
+              { purpose: 'realtime-update' },
+            );
+          const part = projected[0]?.parts[partIndex];
+          if (
+            !part ||
+            JSON.stringify(part) === JSON.stringify(source.parts[partIndex])
+          )
+            return update;
+          const transformers = this.extensionHandler.getDataPartTransformers();
+          const messages = await convertToModelMessagesExtended(
+            [{ ...source, parts: [part] }],
+            transformers,
+          );
+          // Realtime adapters consume typed-block text, not SDK message envelopes.
+          const text = messages
+            .flatMap((message) =>
+              typeof message.content === 'string'
+                ? [message.content]
+                : message.content.flatMap((content) =>
+                    content.type === 'text' ? [content.text] : [],
+                  ),
+            )
+            .join('\n\n');
+          return { ...update, modelText: text };
+        },
         executeTool: (request) => this.executeLeaseTool(request),
         finalizeLease: () => this.finalizeLeaseState(),
         commit: (event) => this.commitLeaseEvent(event),
@@ -1180,7 +1244,6 @@ class ChatSessionModule implements AgentSession {
     this.scheduleTranscriptSync();
   };
 
-  /** Coalesced, non-throwing transcript persistence. */
   private scheduleTranscriptSync(): void {
     this.transcriptRecorder?.scheduleSync(() => this.messages);
   }
@@ -1337,6 +1400,7 @@ class ChatSessionModule implements AgentSession {
       extensionHandler: this.extensionHandler,
       model,
       baseInstructions: voiceSystemPrompt,
+      signal: request.signal,
       onMemoryMetrics: (metrics) =>
         this.deps.logger.debug(metrics, 'Memory context rendered'),
     });

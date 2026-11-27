@@ -36,6 +36,7 @@ import { sessionsV1ToV2 } from './sessions/v1-to-v2/migration';
 import { sessionsV2ToV3 } from './sessions/v2-to-v3/migration';
 import { sessionsV3ToV4 } from './sessions/v3-to-v4/migration';
 import { sessionsV4ToV5 } from './sessions/v4-to-v5/migration';
+import { sessionsV5ToV6 } from './sessions/v5-to-v6/migration';
 import { skillRegistryV1ToV2 } from './skill-registry/v1-to-v2/migration';
 import {
   skillRegistryV1,
@@ -88,6 +89,7 @@ export const LOCAL_DATA_MIGRATIONS = {
       sessionsV2ToV3,
       sessionsV3ToV4,
       sessionsV4ToV5,
+      sessionsV5ToV6,
     ],
   },
   'episodic-search-index': { migrations: [episodicSearchV1ToV2] },

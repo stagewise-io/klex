@@ -100,7 +100,11 @@ vi.mock('@/directory-lock', () => ({
 vi.mock('@/health-server', () => ({
   createHealthServer: () => mocks.healthServer,
 }));
-vi.mock('@/introspection', () => ({ createIntrospector: vi.fn() }));
+vi.mock('@/introspection', () => ({
+  createIntrospector: () => ({
+    child: () => ({ introspect: vi.fn() }),
+  }),
+}));
 vi.mock('@/local-data', () => ({ createLocalData: () => mocks.resource }));
 vi.mock('@/local-data-registry', () => ({ KLEX_LOCAL_DATA_STORES: [] }));
 vi.mock('@/log-store', () => ({ createLogStore: vi.fn() }));

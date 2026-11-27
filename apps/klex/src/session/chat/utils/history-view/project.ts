@@ -131,7 +131,8 @@ function projectPart(
   }
 
   if (part.type === 'data-context') {
-    return filter.context ? projectContext(part.data, filter.context) : null;
+    if (!filter.context) return null;
+    return projectContext(part.data, filter.context);
   }
 
   if (part.type.startsWith('data-')) {

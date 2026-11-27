@@ -297,6 +297,7 @@ class StepModule implements Step {
         // reactions. Runs after the decision (skipped steps never classify)
         // and before model resolution. Persistent parts are committed here
         // synchronously; provisional and ephemeral parts are applied below.
+        if (this.stepAbort.signal.aborted) return abortPreparation();
         const instinct = await this.runInstinct(stepSpan);
         instinctSummary =
           instinct.status !== 'skipped' ? instinct.summary : undefined;
@@ -591,6 +592,7 @@ class StepModule implements Step {
               this.deps.extensionHandler,
               messagesCopy,
               resolvedModel,
+              this.stepAbort.signal,
             );
           } catch (error) {
             transformSpan.setAttribute('history_pre_process.error', true);

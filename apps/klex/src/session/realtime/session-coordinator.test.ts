@@ -713,6 +713,49 @@ describe('realtime session coordinator', () => {
     expect(lease.releaseCount).toBe(1);
   });
 
+  it('awaits projection before provider delivery and preserves update ordering and acknowledgement', async () => {
+    const { coordinator, mcpHarness, processorFactory, host } = setup();
+    await coordinator.start();
+    await mcpHarness.notify(offered());
+    const lease = await host.nextLease();
+    const processor = await processorFactory.nextProcessor();
+    await vi.waitFor(() => expect(processor.receivedUpdates).toHaveLength(1));
+    const gate = deferred<void>();
+    vi.spyOn(lease, 'prepareUpdate').mockImplementation(async (entry) => {
+      if (entry.sequence === 4) await gate.promise;
+      return {
+        ...entry,
+        event: {
+          ...entry.event,
+          context: {
+            ...entry.event.context,
+            metadata: {
+              inputEventRef: 'abcdefgh',
+              data: { message: 'compact' },
+            },
+          },
+        },
+      };
+    });
+    lease.publish({ ...update(4), requestResponse: false });
+    lease.publish(update(5));
+    await vi.waitFor(() =>
+      expect(lease.prepareUpdate).toHaveBeenCalledTimes(1),
+    );
+    expect(processor.receivedUpdates).toHaveLength(1);
+    expect(lease.acknowledged).toEqual([]);
+    gate.resolve();
+    await vi.waitFor(() => expect(lease.acknowledged).toEqual([4, 5]));
+    expect(
+      processor.receivedUpdates.slice(1).map((entry) => entry.sequence),
+    ).toEqual([4, 5]);
+    expect(processor.receivedUpdates[1]).toMatchObject({
+      requestResponse: false,
+      event: { context: { metadata: { inputEventRef: 'abcdefgh' } } },
+    });
+    await coordinator.close();
+  });
+
   it('forwards inbox updates to the model and acknowledges them', async () => {
     const { coordinator, mcpHarness, processorFactory, host } = setup();
     await coordinator.start();

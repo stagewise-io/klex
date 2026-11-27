@@ -180,6 +180,11 @@ describe.skipIf(!enabled)('X11 desktop', () => {
     const point = { x: XEV.x + 200, y: XEV.y + 150 };
     await act(machine, 'desktop_move', point);
     await act(machine, 'desktop_click', { ...point, button: 'right' });
+    await act(machine, 'desktop_click', {
+      ...point,
+      button: 'left',
+      modifiers: ['ctrl'],
+    });
     await act(machine, 'desktop_scroll', {
       ...point,
       direction: 'down',
@@ -193,7 +198,7 @@ describe.skipIf(!enabled)('X11 desktop', () => {
     const events = await waitFor(async () => {
       const text = await readFile(log, 'utf8').catch(() => '');
       return count(text, 'keysym 0xff0d, Return') === 2 &&
-        count(text, 'keysym 0xffe3, Control_L') === 2
+        count(text, 'keysym 0xffe3, Control_L') === 4
         ? text
         : undefined;
     });
@@ -206,13 +211,15 @@ describe.skipIf(!enabled)('X11 desktop', () => {
       const state = /state (0x[0-9a-f]+)/.exec(event)?.[1];
       const at = /root:\((\d+),(\d+)\)/.exec(event);
       return button
-        ? `button ${button} at ${at?.[1]},${at?.[2]}`
+        ? `button ${button} ${state} at ${at?.[1]},${at?.[2]}`
         : `${keysym} ${state}`;
     });
     expect(summary).toEqual([
-      `button 3 at ${point.x},${point.y}`,
-      `button 5 at ${point.x},${point.y}`,
-      `button 5 at ${point.x},${point.y}`,
+      `button 3 0x0 at ${point.x},${point.y}`,
+      'Control_L 0x0',
+      `button 1 0x4 at ${point.x},${point.y}`,
+      `button 5 0x0 at ${point.x},${point.y}`,
+      `button 5 0x0 at ${point.x},${point.y}`,
       'a 0x0',
       'Shift_L 0x0',
       'B 0x1',

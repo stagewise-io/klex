@@ -636,18 +636,28 @@ impl Session {
     }
 
     /// Presses or releases modifiers by xdotool name, without clearing others.
+    /// Releasing tries every name, so one bad name cannot leave the rest held.
     pub fn modifiers(&self, names: &[String], down: bool) -> XResult<()> {
         self.require_xtest()?;
         let keymap = self.keymap()?;
+        let mut outcome = Ok(());
         for name in names {
-            let keysym =
-                keys::keysym(name).ok_or_else(|| format!("Unsupported modifier: {name}"))?;
-            let (code, _) = keymap
-                .find(keysym)
-                .ok_or_else(|| format!("The keyboard has no {name} key"))?;
-            self.key_event(code, down)?;
+            let sent = keys::keysym(name)
+                .ok_or_else(|| XError::from(format!("Unsupported modifier: {name}")))
+                .and_then(|keysym| {
+                    keymap
+                        .find(keysym)
+                        .ok_or_else(|| format!("The keyboard has no {name} key").into())
+                })
+                .and_then(|(code, _)| self.key_event(code, down));
+            if let Err(error) = sent {
+                if down || matches!(error, XError::Broken(_)) {
+                    return Err(error);
+                }
+                outcome = outcome.and(Err(error));
+            }
         }
-        self.flush()
+        outcome.and(self.flush())
     }
 
     fn property(&self, window: Window, property: Atom, kind: Atom) -> XResult<Option<Vec<u8>>> {

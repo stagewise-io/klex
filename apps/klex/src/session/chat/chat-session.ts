@@ -700,12 +700,20 @@ class ChatSessionModule implements AgentSession {
           )
             return update;
           const transformers = this.extensionHandler.getDataPartTransformers();
-          const text = JSON.stringify(
-            await convertToModelMessagesExtended(
-              [{ ...source, parts: [part] }],
-              transformers,
-            ),
+          const messages = await convertToModelMessagesExtended(
+            [{ ...source, parts: [part] }],
+            transformers,
           );
+          // Realtime adapters consume typed-block text, not SDK message envelopes.
+          const text = messages
+            .flatMap((message) =>
+              typeof message.content === 'string'
+                ? [message.content]
+                : message.content.flatMap((content) =>
+                    content.type === 'text' ? [content.text] : [],
+                  ),
+            )
+            .join('\n\n');
           return { ...update, modelText: text };
         },
         executeTool: (request) => this.executeLeaseTool(request),

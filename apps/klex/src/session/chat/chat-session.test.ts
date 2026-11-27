@@ -346,6 +346,8 @@ it.each([true, false])(
         expect(delivered.sequence).toBe(update.sequence);
         expect(delivered.eventId).toBe(update.eventId);
         if (enabled) {
+          expect(delivered.modelText).toMatch(/^# input\n/);
+          expect(delivered.modelText).not.toContain('"role":');
           expect(delivered.modelText).toContain('projected');
           expect(delivered.modelText).toContain('tail-preserved');
           expect(delivered.modelText).not.toContain('live-secret');

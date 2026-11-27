@@ -50,7 +50,7 @@ class InputFilterModule {
   private readonly references = new Map<string, string>();
   constructor(
     private readonly deps: ExtensionDeps,
-    repository?: ProjectionRepository,
+    private readonly repository?: ProjectionRepository,
     private readonly enabled = true,
   ) {
     this.projections = createInputProjections(repository);
@@ -63,11 +63,18 @@ class InputFilterModule {
   introspect = () => this.projections.diagnostics();
   dataPartTransformers = { [KEY]: blockPartTransformer<FilteredInput>(blocks) };
 
-  async transform(
+  transform(
     history: ExtendedUIMessage[],
     options: HistoryTransformOptions = { purpose: 'inference' },
+  ): ExtendedUIMessage[] | Promise<ExtendedUIMessage[]> {
+    if (!this.enabled || !this.repository) return history;
+    return this.projectHistory(history, options);
+  }
+
+  private async projectHistory(
+    history: ExtendedUIMessage[],
+    options: HistoryTransformOptions,
   ): Promise<ExtendedUIMessage[]> {
-    if (!this.enabled) return history;
     const memory = this.deps.config.getModelSelection?.('memory') ?? [];
     // A storage failure cannot safely produce a bounded preview with recovery.
     // Propagate it so the consumer aborts preparation rather than sending raw data.
@@ -94,7 +101,12 @@ class InputFilterModule {
           part.data,
           occurrence,
         );
-        if (!eventRef) return part;
+        if (!eventRef) {
+          const origin = part.data.metadata.origin;
+          if (origin === 'events' || origin === 'push-notifications')
+            throw new Error('Input event recovery binding unavailable');
+          return part;
+        }
         this.references.set(JSON.stringify([message.id, partIndex]), eventRef);
         if (this.references.size > 2_048)
           this.references.delete(this.references.keys().next().value!);

@@ -117,9 +117,13 @@ class InputProjectionsModule implements InputProjections {
         }
       : undefined;
     if (boundedGeneration && !this.reviewFlight) {
-      this.reviewFlight = this.reviewFeedback(boundedGeneration).finally(() => {
-        this.reviewFlight = undefined;
-      });
+      this.reviewFlight = this.reviewFeedback(boundedGeneration)
+        .catch(() => {
+          // Review storage is optional maintenance, not an ingress dependency.
+        })
+        .finally(() => {
+          this.reviewFlight = undefined;
+        });
     }
     // Realtime delivery and helper transcripts must never await helper-model work.
     if (boundedGeneration) await this.reviewFlight;
@@ -281,66 +285,72 @@ class InputProjectionsModule implements InputProjections {
     if (!this.history) return;
     for (const review of await this.history.pendingInputProjectionReviews()) {
       if (this.shutdown.signal.aborted || generation.signal?.aborted) return;
-      if (!review.plan) {
-        await this.history.completeInputProjectionReview(review);
-        continue;
-      }
-      const latest = await this.history.findInputProjectionPlan(
-        review.plan.family,
-        review.plan.shape,
-      );
-      if (latest?.revision !== review.revision) {
-        await this.history.completeInputProjectionReview(review);
-        continue;
-      }
-      const current = planSchema.parse(JSON.parse(review.plan.body));
-      const input = {
-        fields: current.fields.map(({ path, type }) => ({
-          path,
-          type,
-          sample: '',
-        })),
-        complete: true,
-        shape: review.plan.shape,
-      };
-      this.counts.feedbackReviews++;
-      const revised = await generatePlan(
-        input,
-        {
-          ...generation,
-          signal: AbortSignal.any([
-            this.shutdown.signal,
-            ...(generation.signal ? [generation.signal] : []),
-          ]),
-        },
-        { current, reasons: review.reasons },
-      );
-      // Failed/timed-out reviews remain queued for a later safe inference boundary.
-      if (!revised) {
-        await this.history.deferInputProjectionReview(review);
-        continue;
-      }
-      for (const field of revised.fields) {
-        if (
-          current.fields.some(
-            (old) => old.keep && digest(old.path) === digest(field.path),
+      try {
+        if (!review.plan) {
+          await this.history.completeInputProjectionReview(review);
+          continue;
+        }
+        const latest = await this.history.findInputProjectionPlan(
+          review.plan.family,
+          review.plan.shape,
+        );
+        if (latest?.revision !== review.revision) {
+          await this.history.completeInputProjectionReview(review);
+          continue;
+        }
+        const current = planSchema.parse(JSON.parse(review.plan.body));
+        const input = {
+          fields: current.fields.map(({ path, type }) => ({
+            path,
+            type,
+            sample: '',
+          })),
+          complete: true,
+          shape: review.plan.shape,
+        };
+        this.counts.feedbackReviews++;
+        const revised = await generatePlan(
+          input,
+          {
+            ...generation,
+            signal: AbortSignal.any([
+              this.shutdown.signal,
+              ...(generation.signal ? [generation.signal] : []),
+            ]),
+          },
+          { current, reasons: review.reasons },
+        );
+        // Failed/timed-out reviews remain queued for a later safe inference boundary.
+        if (!revised) {
+          await this.history.deferInputProjectionReview(review);
+          continue;
+        }
+        for (const field of revised.fields) {
+          if (
+            current.fields.some(
+              (old) => old.keep && digest(old.path) === digest(field.path),
+            )
           )
-        )
-          field.keep = true;
+            field.keep = true;
+        }
+        const changed = digest(current.fields) !== digest(revised.fields);
+        if (changed) this.counts.feedbackUpdates++;
+        const body = JSON.stringify(revised);
+        await this.history.completeInputProjectionReview(
+          review,
+          changed
+            ? {
+                ...review.plan,
+                revision: digest([review.plan.family, review.plan.shape, body]),
+                body,
+              }
+            : undefined,
+        );
+      } catch {
+        // Corrupt definitions and transient review failures must not block
+        // unrelated revisions or preparation of the current input window.
+        await this.history.deferInputProjectionReview(review).catch(() => {});
       }
-      const changed = digest(current.fields) !== digest(revised.fields);
-      if (changed) this.counts.feedbackUpdates++;
-      const body = JSON.stringify(revised);
-      await this.history.completeInputProjectionReview(
-        review,
-        changed
-          ? {
-              ...review.plan,
-              revision: digest([review.plan.family, review.plan.shape, body]),
-              body,
-            }
-          : undefined,
-      );
     }
   }
   present(

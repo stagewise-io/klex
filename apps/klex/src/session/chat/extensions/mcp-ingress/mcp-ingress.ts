@@ -565,17 +565,6 @@ class McpIngressExtension implements Extension {
       }
     }
 
-    if (
-      !history.some((message) =>
-        message.parts.some(
-          (part) =>
-            part.type === 'data-context' &&
-            (part.data.metadata.origin === 'events' ||
-              part.data.metadata.origin === 'push-notifications'),
-        ),
-      )
-    )
-      return history;
     return this.deps.inputFilter.transform(history, options);
   }
 

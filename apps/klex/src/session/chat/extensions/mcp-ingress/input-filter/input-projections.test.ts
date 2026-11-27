@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { catalog, compile } from './catalog';
 import { edgeValues, nestedEvent, pushEvent } from './fixtures';
@@ -98,6 +98,66 @@ describe('deterministic projections', () => {
       if (cursor) expect(() => page(value, 'otherref', 'v1', cursor)).toThrow();
     } while (cursor);
     expect(JSON.parse(text)).toEqual(value);
+  });
+});
+
+describe('feedback isolation', () => {
+  it('backs off a corrupt review and still processes unrelated revisions', async () => {
+    const corrupt = {
+      revision: 'corrupt',
+      batch: 1,
+      reasons: ['need data'],
+      plan: { family: 'bad', shape: 'shape', body: '{' },
+    };
+    const valid = {
+      revision: 'valid',
+      batch: 1,
+      reasons: ['need data'],
+      plan: {
+        family: 'good',
+        shape: 'shape',
+        body: JSON.stringify({ version: 1, fields: [] }),
+      },
+    };
+    const repository = {
+      flush: vi.fn().mockResolvedValue(undefined),
+      pendingInputProjectionReviews: vi
+        .fn()
+        .mockResolvedValue([corrupt, valid]),
+      findInputProjectionPlan: vi.fn(async (family: string) => ({
+        revision: family === 'bad' ? 'corrupt' : 'valid',
+      })),
+      deferInputProjectionReview: vi.fn().mockResolvedValue(undefined),
+      completeInputProjectionReview: vi.fn().mockResolvedValue(undefined),
+    };
+    const generate = vi
+      .fn()
+      .mockResolvedValue({ success: true, output: { keep: [] } });
+    const projections = createInputProjections(repository as never);
+    await projections.prepare('default', [], {
+      generate,
+      modelIds: [{ providerId: 'test', modelId: 'test' }],
+    });
+    expect(repository.deferInputProjectionReview).toHaveBeenCalledWith(corrupt);
+    expect(repository.completeInputProjectionReview).toHaveBeenCalledWith(
+      valid,
+      undefined,
+    );
+    expect(generate).toHaveBeenCalledOnce();
+    await projections.close();
+  });
+
+  it('does not fail input preparation when feedback storage is unavailable', async () => {
+    const projections = createInputProjections({
+      flush: vi.fn().mockResolvedValue(undefined),
+      pendingInputProjectionReviews: vi
+        .fn()
+        .mockRejectedValue(new Error('feedback unavailable')),
+    } as never);
+    await expect(
+      projections.prepare('default', [], { generate: vi.fn(), modelIds: [] }),
+    ).resolves.toBeUndefined();
+    await projections.close();
   });
 });
 

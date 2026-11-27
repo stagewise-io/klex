@@ -92,7 +92,6 @@ export interface ActivityHistory {
       tail?: boolean;
       firstSourceId?: string;
       view?: ActivityView;
-      raw?: boolean;
     },
   ): Promise<ActivityPage | null>;
   listNeighbors(id: string, count: number): Promise<ActivitySource[]>;
@@ -173,12 +172,6 @@ function activityRecordRenderer() {
 class ActivityHistoryModule implements ActivityHistory {
   constructor(private readonly history: SessionHistory) {}
 
-  private async prepareRows(
-    rows: ActivityMessage[],
-  ): Promise<ActivityMessage[]> {
-    return rows;
-  }
-
   isAvailable(): boolean {
     return this.history.activityAvailable();
   }
@@ -222,12 +215,10 @@ class ActivityHistoryModule implements ActivityHistory {
     const ordinal = activityOrdinal(after);
     const last = activityOrdinal(through);
     if (last === null || (after !== null && ordinal === null)) return null;
-    const rows = await this.prepareRows(
-      await this.history.readActivity({
-        after: ordinal ?? -1,
-        through: last,
-      }),
-    );
+    const rows = await this.history.readActivity({
+      after: ordinal ?? -1,
+      through: last,
+    });
     if (!rows.length) return null;
     const selected: ActivityMessage[] = [];
     const blocks: string[] = [];
@@ -302,9 +293,7 @@ class ActivityHistoryModule implements ActivityHistory {
     const ordinal = activityOrdinal(after);
     if (after !== null && ordinal === null)
       throw new Error('Legacy activity cursor requires cutover');
-    const rows = await this.prepareRows(
-      await this.history.readActivity({ after: ordinal ?? -1 }),
-    );
+    const rows = await this.history.readActivity({ after: ordinal ?? -1 });
     if (!rows.length) return null;
     const first = rows[0]!;
     const selected: ActivityMessage[] = [];
@@ -388,7 +377,6 @@ class ActivityHistoryModule implements ActivityHistory {
       tail?: boolean;
       firstSourceId?: string;
       view?: ActivityView;
-      raw?: boolean;
     },
   ): Promise<ActivityPage | null> {
     if (activityOrdinal(id) === null) {
@@ -403,15 +391,12 @@ class ActivityHistoryModule implements ActivityHistory {
         ? ordinal
         : activityOrdinal(options.firstSourceId);
     if (firstOrdinal === null || firstOrdinal > ordinal) return null;
-    const canonicalRows = await this.history.readActivity({
+    const rows = await this.history.readActivity({
       after: firstOrdinal - 1,
       through: ordinal,
       limit: options.firstSourceId === undefined ? 1 : 200,
       maxBytes: options.maxBytes,
     });
-    const rows = options.raw
-      ? canonicalRows
-      : await this.prepareRows(canonicalRows);
     const row = rows.at(-1);
     if (!row || row.id !== id) return null;
     const renderRecords = activityRecordRenderer();
@@ -524,7 +509,6 @@ class ActivityHistoryModule implements ActivityHistory {
           offset: 0,
           limit: 60_000,
           maxBytes: options.maxBytes - scannedBytes,
-          raw: true,
         });
       } catch (error) {
         // Preserve completed work and its byte charge when a later query fails.

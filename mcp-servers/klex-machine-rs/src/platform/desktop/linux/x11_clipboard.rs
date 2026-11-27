@@ -14,7 +14,8 @@ use x11rb::protocol::Event;
 use x11rb::protocol::xfixes::{ConnectionExt as _, SelectionEventMask};
 use x11rb::protocol::xproto::{
     Atom, AtomEnum, ConnectionExt as _, CreateWindowAux, EventMask, PropMode, Property,
-    SELECTION_NOTIFY_EVENT, SelectionNotifyEvent, SelectionRequestEvent, Window, WindowClass,
+    SELECTION_NOTIFY_EVENT, SelectionNotifyEvent, SelectionRequestEvent, Timestamp, Window,
+    WindowClass,
 };
 use x11rb::rust_connection::RustConnection;
 use x11rb::wrapper::ConnectionExt as _;
@@ -26,6 +27,9 @@ use crate::desktop::rfb::clipboard::MAX_CLIPBOARD_BYTES;
 
 const CONVERSION_TIMEOUT: Duration = Duration::from_secs(5);
 const TICK_MS: i32 = 50;
+/// Each conversion lands on the next of these properties, so replies to one
+/// that was given up on can't be taken for the current one.
+const PROPERTIES: usize = 8;
 
 struct Atoms {
     clipboard: Atom,
@@ -37,12 +41,12 @@ struct Atoms {
     plain: Atom,
     incr: Atom,
     /// Where converted text lands on this client's window.
-    property: Atom,
+    properties: Vec<Atom>,
 }
 
 impl Atoms {
     fn intern(conn: &RustConnection) -> Result<Self, String> {
-        let names: [&[u8]; 8] = [
+        let names: [&[u8]; 7] = [
             b"CLIPBOARD",
             b"TARGETS",
             b"UTF8_STRING",
@@ -50,10 +54,14 @@ impl Atoms {
             b"text/plain;charset=utf-8",
             b"text/plain",
             b"INCR",
-            b"KLEX_CLIPBOARD",
         ];
+        let properties: Vec<Vec<u8>> = (0..PROPERTIES)
+            .map(|index| format!("KLEX_CLIPBOARD_{index}").into_bytes())
+            .collect();
         let cookies = names
             .iter()
+            .copied()
+            .chain(properties.iter().map(Vec::as_slice))
             .map(|name| conn.intern_atom(false, name))
             .collect::<Result<Vec<_>, _>>()
             .map_err(|error| error.to_string())?;
@@ -70,7 +78,7 @@ impl Atoms {
             plain_utf8: atoms[4],
             plain: atoms[5],
             incr: atoms[6],
-            property: atoms[7],
+            properties: atoms[7..].to_vec(),
         })
     }
 }
@@ -78,6 +86,9 @@ impl Atoms {
 /// A conversion of the current selection that has not finished.
 struct Reading {
     target: Atom,
+    property: Atom,
+    /// When the selection got the owner this reads from.
+    time: Timestamp,
     started: Instant,
     /// Chunks so far of a transfer the owner sends in parts.
     incremental: Option<Vec<u8>>,
@@ -91,8 +102,10 @@ struct Clipboard<'a> {
     /// Text from a viewer while this client owns the selection.
     owned: Option<String>,
     reading: Option<Reading>,
-    /// The selection changed since the last conversion started.
-    changed: bool,
+    conversions: usize,
+    /// When the selection changed, if it did since the last conversion
+    /// started.
+    changed: Option<Timestamp>,
 }
 
 /// Shares the clipboard until `running` clears or the viewer side closes.
@@ -147,13 +160,14 @@ pub fn run(
         .map_err(|error| error.to_string())?
         .owner;
     let mut clipboard = Clipboard {
-        changed: watching && owner != NONE,
+        changed: (watching && owner != NONE).then_some(CURRENT_TIME),
         conn,
         atoms,
         window,
         sink,
         owned: None,
         reading: None,
+        conversions: 0,
     };
     clipboard
         .serve(texts, running)
@@ -183,9 +197,10 @@ impl Clipboard<'_> {
             {
                 self.reading = None;
             }
-            if self.changed && self.reading.is_none() {
-                self.changed = false;
-                self.convert(self.atoms.utf8)?;
+            if self.reading.is_none()
+                && let Some(time) = self.changed.take()
+            {
+                self.convert(self.atoms.utf8, time)?;
             }
             self.conn.flush().map_err(error)?;
             let mut poll = libc::pollfd {
@@ -206,22 +221,23 @@ impl Clipboard<'_> {
         self.owned = Some(text);
         // A conversion still running would report the text this replaced.
         self.reading = None;
-        self.changed = false;
+        self.changed = None;
         Ok(())
     }
 
-    fn convert(&mut self, target: Atom) -> Result<(), String> {
+    fn convert(&mut self, target: Atom, time: Timestamp) -> Result<(), String> {
+        let property = self.atoms.properties[self.conversions % PROPERTIES];
+        self.conversions = self.conversions.wrapping_add(1);
         self.conn
-            .convert_selection(
-                self.window,
-                self.atoms.clipboard,
-                target,
-                self.atoms.property,
-                CURRENT_TIME,
-            )
+            .delete_property(self.window, property)
+            .map_err(|error| error.to_string())?;
+        self.conn
+            .convert_selection(self.window, self.atoms.clipboard, target, property, time)
             .map_err(|error| error.to_string())?;
         self.reading = Some(Reading {
             target,
+            property,
+            time,
             started: Instant::now(),
             incremental: None,
         });
@@ -233,22 +249,36 @@ impl Clipboard<'_> {
         match event {
             Event::XfixesSelectionNotify(event) if event.selection == self.atoms.clipboard => {
                 if event.owner != self.window && event.owner != NONE {
-                    self.changed = true;
+                    self.changed = Some(event.selection_timestamp);
                 }
             }
             Event::SelectionNotify(event) if event.requestor == self.window => {
-                let Some(target) = self.reading.as_ref().map(|reading| reading.target) else {
+                let Some((target, property, time)) = self
+                    .reading
+                    .as_ref()
+                    .map(|reading| (reading.target, reading.property, reading.time))
+                else {
                     return Ok(true);
                 };
+                if event.target != target {
+                    return Ok(true);
+                }
                 if event.property == NONE {
+                    // Owners may answer with the current time instead of ours.
+                    if event.time != time && event.time != CURRENT_TIME {
+                        return Ok(true);
+                    }
                     self.reading = None;
                     // Owners without UTF8_STRING may still have Latin-1 text.
                     if target == self.atoms.utf8 {
-                        self.convert(self.atoms.string)?;
+                        self.convert(self.atoms.string, time)?;
                     }
                     return Ok(true);
                 }
-                let (kind, value) = self.take_property()?;
+                if event.property != property {
+                    return Ok(true);
+                }
+                let (kind, value) = self.take_property(property)?;
                 if kind == self.atoms.incr {
                     if let Some(reading) = &mut self.reading {
                         reading.incremental = Some(Vec::new());
@@ -260,14 +290,12 @@ impl Clipboard<'_> {
             }
             Event::PropertyNotify(event)
                 if event.window == self.window
-                    && event.atom == self.atoms.property
                     && event.state == Property::NEW_VALUE
-                    && self
-                        .reading
-                        .as_ref()
-                        .is_some_and(|reading| reading.incremental.is_some()) =>
+                    && self.reading.as_ref().is_some_and(|reading| {
+                        reading.incremental.is_some() && reading.property == event.atom
+                    }) =>
             {
-                let (kind, value) = self.take_property()?;
+                let (kind, value) = self.take_property(event.atom)?;
                 let Some(reading) = &mut self.reading else {
                     return Ok(true);
                 };
@@ -296,13 +324,13 @@ impl Clipboard<'_> {
 
     /// Reads and deletes the conversion property; deleting it asks an
     /// incremental owner for the next chunk.
-    fn take_property(&self) -> Result<(Atom, Vec<u8>), String> {
+    fn take_property(&self, property: Atom) -> Result<(Atom, Vec<u8>), String> {
         let reply = self
             .conn
             .get_property(
                 true,
                 self.window,
-                self.atoms.property,
+                property,
                 AtomEnum::ANY,
                 0,
                 (MAX_CLIPBOARD_BYTES / 4 + 1) as u32,

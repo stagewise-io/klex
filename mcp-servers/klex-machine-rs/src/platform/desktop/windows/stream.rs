@@ -5,7 +5,7 @@
 //! through SendInput as scan codes; the clipboard is polled on its own thread.
 
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::thread::sleep;
@@ -51,11 +51,30 @@ const INPUT_BLOCKED: &str =
 
 pub struct WindowsStreamBackend {
     warn: Warn,
+    captures: Arc<AtomicUsize>,
 }
 
 impl WindowsStreamBackend {
-    pub fn new(warn: Warn) -> Self {
-        Self { warn }
+    /// `captures` counts running capture loops.
+    pub fn new(warn: Warn, captures: Arc<AtomicUsize>) -> Self {
+        Self { warn, captures }
+    }
+}
+
+/// Counts one capture loop from `start` until the loop exits, or until its
+/// thread fails to spawn.
+struct Capturing(Arc<AtomicUsize>);
+
+impl Capturing {
+    fn new(count: &Arc<AtomicUsize>) -> Self {
+        count.fetch_add(1, Ordering::SeqCst);
+        Self(count.clone())
+    }
+}
+
+impl Drop for Capturing {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
@@ -132,18 +151,29 @@ impl StreamBackend for WindowsStreamBackend {
                 .map(drop)
                 .map_err(|error| format!("Could not start the stream {name}: {error}"))
         };
-        let capture = (shared.clone(), sink.clone());
+        // Threads that did start exit once `running` is cleared and the
+        // senders above are dropped.
+        let stop = |error: String| {
+            shared.running.store(false, Ordering::SeqCst);
+            error
+        };
+        let capture = (shared.clone(), sink.clone(), Capturing::new(&self.captures));
         spawn(
             "capture",
-            Box::new(move || capture_loop(&capture.0, &capture.1)),
-        )?;
+            Box::new(move || {
+                let (shared, sink, _capturing) = capture;
+                capture_loop(&shared, &sink);
+            }),
+        )
+        .map_err(stop)?;
         let clipboard_state = (shared.clone(), sink);
         spawn(
             "clipboard",
             Box::new(move || clipboard_loop(&clipboard_state.0, &clipboard_state.1, &clipboards)),
-        )?;
+        )
+        .map_err(stop)?;
         let input_state = shared.clone();
-        spawn("input", Box::new(move || input_loop(&input_state, &inputs)))?;
+        spawn("input", Box::new(move || input_loop(&input_state, &inputs))).map_err(stop)?;
         Ok(Box::new(WindowsCapture {
             shared,
             input: Some(input),
@@ -485,36 +515,43 @@ impl Drop for OpenClipboardGuard {
     }
 }
 
-/// `false` while another process holds the clipboard.
+/// `false` when the text did not reach the clipboard, as while another
+/// process holds it; the caller retries.
 fn write_clipboard(window: &ClipboardWindow, text: &str) -> bool {
-    let Some(_open) = window.open() else {
-        return false;
-    };
     let units: Vec<u16> = text.encode_utf16().chain(Some(0)).collect();
-    // SAFETY: the clipboard is open; the global block is sized for `units`,
-    // and ownership passes to the clipboard only when SetClipboardData
-    // succeeds.
+    // SAFETY: the global block is sized for `units`, and ownership passes to
+    // the clipboard only when SetClipboardData succeeds; it is freed on every
+    // other path.
     unsafe {
-        EmptyClipboard();
-        if text.is_empty() {
-            return true;
-        }
-        let memory = GlobalAlloc(GMEM_MOVEABLE, units.len() * 2);
-        if memory.is_null() {
-            return true;
-        }
-        let target = GlobalLock(memory).cast::<u16>();
-        if target.is_null() {
+        // Prepared before emptying, so a failure leaves the clipboard as it was.
+        let memory = if text.is_empty() {
+            std::ptr::null_mut()
+        } else {
+            let memory = GlobalAlloc(GMEM_MOVEABLE, units.len() * 2);
+            if memory.is_null() {
+                return false;
+            }
+            let target = GlobalLock(memory).cast::<u16>();
+            if target.is_null() {
+                GlobalFree(memory);
+                return false;
+            }
+            std::ptr::copy_nonoverlapping(units.as_ptr(), target, units.len());
+            GlobalUnlock(memory);
+            memory
+        };
+        let written = match window.open() {
+            Some(_open) => {
+                EmptyClipboard() != 0
+                    && (memory.is_null() || !SetClipboardData(CF_UNICODETEXT, memory).is_null())
+            }
+            None => false,
+        };
+        if !written && !memory.is_null() {
             GlobalFree(memory);
-            return true;
         }
-        std::ptr::copy_nonoverlapping(units.as_ptr(), target, units.len());
-        GlobalUnlock(memory);
-        if SetClipboardData(CF_UNICODETEXT, memory).is_null() {
-            GlobalFree(memory);
-        }
+        written
     }
-    true
 }
 
 /// The clipboard's text, empty without any, or `None` while another

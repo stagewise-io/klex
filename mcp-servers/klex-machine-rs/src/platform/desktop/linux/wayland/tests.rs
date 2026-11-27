@@ -162,6 +162,24 @@ async fn clicks_with_modifiers_and_releases_them_after_a_failure() {
     );
     let shift = keys::keysym("shift").unwrap();
     assert_eq!(taken(&remote).last(), Some(&Input::Keysym(shift, false)));
+
+    // A failed release is tried again rather than leaving the button down.
+    let (provider, remote) = ready(Some(Input::Button(BTN_LEFT, false))).await;
+    assert!(
+        provider
+            .click(Point { x: 0, y: 0 }, MouseButton::Left, 2, Vec::new())
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        taken(&remote),
+        [
+            Input::Motion(0.0, 0.0),
+            Input::Button(BTN_LEFT, true),
+            Input::Button(BTN_LEFT, false),
+            Input::Button(BTN_LEFT, false),
+        ]
+    );
 }
 
 #[tokio::test]

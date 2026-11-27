@@ -230,20 +230,27 @@ impl DesktopProvider for WaylandDesktopProvider {
                 pressed += 1;
             }
             if outcome.is_ok() {
+                let code = evdev_button(button);
+                let mut down = false;
                 outcome = async {
                     remote.input(motion(point)).await?;
-                    let code = evdev_button(button);
                     for index in 0..count {
                         if index > 0 {
                             tokio::time::sleep(CLICK_GAP).await;
                         }
                         remote.input(Input::Button(code, true)).await?;
+                        down = true;
                         tokio::time::sleep(CLICK_HOLD).await;
                         remote.input(Input::Button(code, false)).await?;
+                        down = false;
                     }
                     Ok(())
                 }
                 .await;
+                if down {
+                    let released = remote.input(Input::Button(code, false)).await;
+                    outcome = outcome.and(released);
+                }
             }
             for &keysym in held[..pressed].iter().rev() {
                 let released = remote.input(Input::Keysym(keysym, false)).await;

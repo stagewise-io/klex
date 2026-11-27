@@ -25,7 +25,7 @@ test('maps changes to each publishable package scope', () => {
     scopesForChangedFiles([
       'packages/agent-admin-api/src/index.ts',
       'packages/mcp-proxy-sdk/src/core/index.ts',
-      'mcp-servers/klex-machine/src/index.ts',
+      'mcp-servers/klex-machine/src/lib.rs',
       'README.md',
     ]),
     ['agent-admin-api', 'mcp-proxy-sdk', 'machine'],
@@ -51,23 +51,6 @@ test('ignores unrelated and path-prefix lookalike changes', () => {
       'apps/klex/src/index.ts',
     ]),
     [],
-  );
-});
-
-test('ignores unpublished paths inside a package', () => {
-  assert.deepEqual(
-    scopesForChangedFiles([
-      'mcp-servers/klex-machine/contract/tools/local.json',
-      'mcp-servers/klex-machine/contract/dump.mjs',
-    ]),
-    [],
-  );
-  assert.deepEqual(
-    scopesForChangedFiles([
-      'mcp-servers/klex-machine/contract/tools/local.json',
-      'mcp-servers/klex-machine/src/mcp.ts',
-    ]),
-    ['machine'],
   );
 });
 
@@ -108,7 +91,7 @@ test('reports missing scopes and rejects lookalikes', () => {
           message: 'fix(mcp-proxy-sdk-extra): repair proxy',
         },
         {
-          changedFiles: ['mcp-servers/klex-machine/src/index.ts'],
+          changedFiles: ['mcp-servers/klex-machine/src/lib.rs'],
           message: 'fix: repair machine',
         },
       ],

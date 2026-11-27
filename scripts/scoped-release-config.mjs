@@ -13,12 +13,15 @@ export function createScopedReleaseConfig({
   scope,
   tagFormat,
   mcpExtension = false,
+  // Plugins that must prepare and publish before @semantic-release/npm.
+  beforeNpm = [],
 }) {
   return {
     branches: ['main'],
     tagFormat,
     plugins: [
       [scopedReleasePlugin, { scope }],
+      ...beforeNpm,
       [
         '@semantic-release/npm',
         {

@@ -24,8 +24,6 @@ export const publishablePackages = [
   {
     path: 'mcp-servers/klex-machine/',
     scope: 'machine',
-    // Test fixtures shared with klex-machine-rs; never published.
-    unpublished: ['mcp-servers/klex-machine/contract/'],
   },
   ...[
     'mcp-extension-client',
@@ -37,13 +35,7 @@ export const publishablePackages = [
 export function scopesForChangedFiles(files) {
   const required = new Set(
     publishablePackages
-      .filter(({ path, unpublished = [] }) =>
-        files.some(
-          (file) =>
-            file.startsWith(path) &&
-            !unpublished.some((prefix) => file.startsWith(prefix)),
-        ),
-      )
+      .filter(({ path }) => files.some((file) => file.startsWith(path)))
       .map(({ scope }) => scope),
   );
   if (required.has('mcp-extension-client')) {

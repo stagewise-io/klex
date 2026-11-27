@@ -8,7 +8,7 @@ keeps the machine connected in the background.
 ## How it works
 
 The app is a Tauri v2 shell around the Rust `klex-machine` crate
-(`mcp-servers/klex-machine-rs`). It runs the machine itself in a child process:
+(`mcp-servers/klex-machine`). It runs the machine itself in a child process:
 the app re-executes its own binary with `--daemon` followed by normal
 `klex-machine` arguments, so one executable ships both.
 
@@ -19,7 +19,7 @@ the app re-executes its own binary with `--daemon` followed by normal
   and restarts it with backoff if it exits.
 - `--supervised` makes the daemon write newline-delimited JSON status events to
   stdout (`hello`, `enrolled`, `state`, `error`; see
-  `mcp-servers/klex-machine-rs/src/supervised.rs`). It reads commands from
+  `mcp-servers/klex-machine/src/supervised.rs`). It reads commands from
   stdin and shuts down on `{"type":"shutdown"}` or when stdin closes, so the
   daemon never outlives the app. Its stderr goes to the app's logs.
 
@@ -60,7 +60,7 @@ repository's Latest badge.
   `version` in `package.json` in one pull request. Merging it runs
   `.github/workflows/release-klex-desktop.yml`.
 - **Nightly:** `.github/workflows/nightly-klex-desktop.yml` runs daily at
-  02:47 UTC when the app, `klex-machine-rs` or the Cargo files changed since
+  02:47 UTC when the app, `klex-machine` or the Cargo files changed since
   the last nightly. Versions are `<next patch>-nightly.<YYYYMMDD>.<n>`.
 
 Both call `.github/workflows/_release-klex-desktop.yml`. It builds macOS

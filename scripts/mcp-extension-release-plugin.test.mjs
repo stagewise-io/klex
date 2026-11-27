@@ -167,8 +167,9 @@ test('workflow validates before publishing and releases the helper before consum
     'utf8',
   );
   assert.ok(setup.includes('pnpm install --frozen-lockfile'));
+  const release = workflow.slice(workflow.indexOf('\n  release:\n'));
   assert.ok(
-    !workflow.includes('install-filter'),
+    !release.includes('install-filter'),
     'Release must install the full workspace',
   );
   const order = [
@@ -184,7 +185,7 @@ test('workflow validates before publishing and releases the helper before consum
   ];
   let previous = -1;
   for (const step of order) {
-    const position = workflow.indexOf(step);
+    const position = release.indexOf(step);
     assert.ok(
       position > previous,
       `Missing or misordered release step: ${step}`,

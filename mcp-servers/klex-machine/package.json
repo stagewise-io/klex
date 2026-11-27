@@ -10,10 +10,10 @@
     "directory": "mcp-servers/klex-machine"
   },
   "bin": {
-    "klex-machine": "dist/index.js"
+    "klex-machine": "bin/klex-machine.js"
   },
   "files": [
-    "dist",
+    "bin",
     "LICENSE",
     "README.md"
   ],
@@ -25,15 +25,13 @@
     "node": ">=24"
   },
   "scripts": {
-    "build": "pnpm run generate:deps && pnpm --filter @klex/mcp-proxy-sdk build && node build.mjs",
-    "dev": "pnpm run generate:deps && tsx watch --tsconfig tsconfig.test.json src/index.ts serve --mode local",
-    "preview:stream": "tsx --tsconfig tsconfig.test.json test/stream-preview.ts",
-    "generate:deps": "node ensure-deps.mjs",
-    "start": "node dist/index.js",
-    "typecheck": "pnpm run generate:deps && tsc --noEmit -p tsconfig.test.json",
-    "test": "pnpm run generate:deps && vitest run",
-    "verify": "node verify-package.mjs",
-    "prepack": "pnpm build"
+    "build": "node build.mjs",
+    "test": "cargo test --locked --package klex-machine && node --test npm/",
+    "lint": "cargo clippy --locked --package klex-machine --all-targets -- -D warnings",
+    "typecheck": "cargo check --locked --package klex-machine --all-targets",
+    "format": "cargo fmt --package klex-machine",
+    "format:check": "cargo fmt --package klex-machine -- --check",
+    "verify": "node npm/verify.mjs"
   },
   "keywords": [
     "klex",
@@ -41,33 +39,5 @@
     "shell",
     "filesystem"
   ],
-  "packageManager": "pnpm@11.22.0",
-  "dependencies": {
-    "@hono/node-server": "2.0.10",
-    "@modelcontextprotocol/hono": "2.0.0-beta.4",
-    "@modelcontextprotocol/server": "2.0.0-beta.4",
-    "fast-glob": "3.3.3",
-    "hono": "4.12.30",
-    "ignore": "7.0.5",
-    "jose": "6.2.10",
-    "node-pty": "1.1.0",
-    "oauth4webapi": "3.8.7",
-    "safe-regex2": "5.1.1",
-    "zod": "4.4.3"
-  },
-  "devDependencies": {
-    "@klex/mcp-proxy-sdk": "workspace:*",
-    "@modelcontextprotocol/client": "2.0.0-beta.4",
-    "@stagewise/mcp-extension-push-notifications": "workspace:*",
-    "@stagewise/typescript-config": "workspace:*",
-    "@types/node": "26.1.1",
-    "@types/ws": "8.18.1",
-    "dbus-next": "0.10.2",
-    "esbuild": "0.28.1",
-    "tslog": "5.0.1",
-    "tsx": "4.23.1",
-    "typescript": "7.0.2",
-    "vitest": "4.1.10",
-    "ws": "8.18.1"
-  }
+  "packageManager": "pnpm@11.22.0"
 }

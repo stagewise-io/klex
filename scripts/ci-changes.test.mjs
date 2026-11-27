@@ -52,7 +52,6 @@ test('klex app changes affect only the executable group', () => {
 test('shared dependencies reach every package that depends on them', () => {
   assert.deepEqual(affected(['packages/mcp-extension-client/src/index.ts']), {
     ...none,
-    machine: true,
     executable: true,
   });
 });
@@ -60,13 +59,12 @@ test('shared dependencies reach every package that depends on them', () => {
 test('Rust changes affect the machine and desktop groups', () => {
   for (const file of [
     'Cargo.lock',
-    'mcp-servers/klex-machine-rs/src/lib.rs',
-    'mcp-servers/klex-machine/contract/server.json',
+    'mcp-servers/klex-machine/src/lib.rs',
+    'mcp-servers/klex-machine/definitions/server.json',
   ]) {
     assert.deepEqual(affected([file]), {
       ...none,
       machine: true,
-      'machine-rs': true,
       desktop: true,
     });
   }
@@ -94,17 +92,11 @@ test('the desktop release workflow affects the desktop group', () => {
   });
 });
 
-test('conformance fixtures affect only the machine group', () => {
-  assert.deepEqual(
-    affected(['packages/klex-machine-conformance/fixtures/fake-portal.py']),
-    { ...none, machine: true },
-  );
-});
-
-test('TypeScript klex-machine changes do not rebuild the Rust binaries', () => {
-  assert.deepEqual(affected(['mcp-servers/klex-machine/src/index.ts']), {
+test('npm launcher changes affect the machine and desktop groups', () => {
+  assert.deepEqual(affected(['mcp-servers/klex-machine/bin/klex-machine.js']), {
     ...none,
     machine: true,
+    desktop: true,
   });
 });
 

@@ -7,4 +7,4 @@ rustflags = ["-C", "target-feature=+crt-static"]
 [alias]
 lint = "clippy --workspace --all-targets --locked -- -D warnings"
 fmt-check = "fmt --all -- --check"
-machine = "run --package klex-machine --bin klex-machine-rs --"
+machine = "run --package klex-machine --bin klex-machine --"

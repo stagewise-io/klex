@@ -22,52 +22,42 @@
       "outputs": ["dist/**", ".vercel/output/**"]
     },
     "@klex/machine#build": {
-      "dependsOn": ["^build"],
-      "outputs": ["dist/**", "src/generated/**"],
-      "env": ["KLEX_MACHINE_MACOS_HELPER_PREBUILT"],
-      "cache": false
-    },
-    "@klex/machine-rs#build": {
       "inputs": [
         "src/**",
+        "definitions/**",
         "Cargo.toml",
         "build.mjs",
-        "$TURBO_ROOT$/mcp-servers/klex-machine/contract/**",
         "$TURBO_ROOT$/Cargo.toml",
         "$TURBO_ROOT$/Cargo.lock",
         "$TURBO_ROOT$/rust-toolchain.toml",
         "$TURBO_ROOT$/.cargo/config.toml"
       ],
       "outputs": ["dist/**"],
-      "env": ["KLEX_MACHINE_RS_PROFILE", "KLEX_MACHINE_RS_TARGET"]
+      "env": [
+        "KLEX_MACHINE_BUILD_PROFILE",
+        "KLEX_MACHINE_BUILD_TARGET",
+        "KLEX_MACHINE_VERSION"
+      ]
     },
-    "@klex/machine-rs#test": {
+    "@klex/machine#test": {
       "inputs": [
         "$TURBO_DEFAULT$",
-        "$TURBO_ROOT$/mcp-servers/klex-machine/contract/**",
+        "$TURBO_ROOT$/Cargo.toml",
+        "$TURBO_ROOT$/Cargo.lock",
+        "$TURBO_ROOT$/rust-toolchain.toml",
+        "$TURBO_ROOT$/.cargo/config.toml",
+        "$TURBO_ROOT$/scripts/scoped-release-config.mjs",
+        "$TURBO_ROOT$/scripts/scoped-release-plugin.mjs"
+      ]
+    },
+    "@klex/machine#typecheck": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
         "$TURBO_ROOT$/Cargo.toml",
         "$TURBO_ROOT$/Cargo.lock",
         "$TURBO_ROOT$/rust-toolchain.toml",
         "$TURBO_ROOT$/.cargo/config.toml"
       ]
-    },
-    "@klex/machine-rs#typecheck": {
-      "inputs": [
-        "$TURBO_DEFAULT$",
-        "$TURBO_ROOT$/mcp-servers/klex-machine/contract/**",
-        "$TURBO_ROOT$/Cargo.toml",
-        "$TURBO_ROOT$/Cargo.lock",
-        "$TURBO_ROOT$/rust-toolchain.toml",
-        "$TURBO_ROOT$/.cargo/config.toml"
-      ]
-    },
-    "@klex/machine-conformance#test": {
-      "dependsOn": ["@klex/machine#build", "@klex/machine-rs#build"],
-      "inputs": [
-        "$TURBO_DEFAULT$",
-        "$TURBO_ROOT$/mcp-servers/klex-machine/contract/**"
-      ],
-      "env": ["KLEX_MACHINE_BIN", "KLEX_MACHINE_IMPL"]
     },
     "build:admin-api-types": {
       "dependsOn": ["^build"],
@@ -130,11 +120,6 @@
     "verify": {
       "dependsOn": ["build"],
       "cache": false
-    },
-    "@klex/machine#verify": {
-      "dependsOn": ["build"],
-      "cache": false,
-      "env": ["KLEX_MACHINE_MACOS_HELPER_PREBUILT"]
     },
     "clean": {
       "cache": false

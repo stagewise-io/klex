@@ -180,3 +180,12 @@ async fn streams_the_screen_over_rfb() {
     let header = read(&mut stream, 3).await;
     assert!(u16::from_be_bytes([header[1], header[2]]) > 0);
 }
+
+#[test]
+fn recognizes_app_bundles_by_name() {
+    assert!(super::launch::is_bundle("Safari.app"));
+    assert!(super::launch::is_bundle("/Applications/Calculator.APP/"));
+    assert!(!super::launch::is_bundle("/bin/sleep"));
+    assert!(!super::launch::is_bundle("编辑器"));
+    assert!(!super::launch::is_bundle("é"));
+}

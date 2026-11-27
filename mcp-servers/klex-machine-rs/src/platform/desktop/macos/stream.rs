@@ -19,6 +19,7 @@ use super::super::macos_keys::{StreamKeyAction, stream_key_action, stream_modifi
 use super::capture::{self, Capture, Frame, MAX_DIMENSION, StreamSettings};
 use super::input::{Input, button_events};
 use super::system::{SCREEN_RECORDING_MISSING, require_accessibility, screen_recording_allowed};
+use super::threads::on_main_blocking;
 use crate::desktop::image::{RgbImage, encode_jpeg};
 use crate::desktop::provider::{MouseButton, ScrollDirection};
 use crate::desktop::rfb::clipboard::MAX_CLIPBOARD_BYTES;
@@ -369,7 +370,8 @@ struct StreamInput {
 
 impl StreamInput {
     fn new(shared: Arc<Shared>) -> Self {
-        let interval = NSEvent::doubleClickInterval();
+        let interval =
+            on_main_blocking(MAIN_THREAD_TIMEOUT, NSEvent::doubleClickInterval).unwrap_or(0.5);
         Self {
             shared,
             input: Input::new(),
@@ -531,34 +533,62 @@ impl StreamInput {
     }
 }
 
+const MAIN_THREAD_TIMEOUT: Duration = Duration::from_secs(2);
+
+fn pasteboard_change_count() -> Option<isize> {
+    on_main_blocking(MAIN_THREAD_TIMEOUT, || {
+        NSPasteboard::generalPasteboard().changeCount()
+    })
+}
+
+fn pasteboard_text() -> Option<String> {
+    on_main_blocking(MAIN_THREAD_TIMEOUT, || {
+        // SAFETY: a static NSString.
+        let kind = unsafe { NSPasteboardTypeString };
+        NSPasteboard::generalPasteboard()
+            .stringForType(kind)
+            .map(|text| text.to_string())
+    })
+    .flatten()
+}
+
+fn set_pasteboard_text(text: String) -> Option<isize> {
+    on_main_blocking(MAIN_THREAD_TIMEOUT, move || {
+        // SAFETY: a static NSString.
+        let kind = unsafe { NSPasteboardTypeString };
+        let pasteboard = NSPasteboard::generalPasteboard();
+        pasteboard.clearContents();
+        pasteboard.setString_forType(&NSString::from_str(&text), kind);
+        pasteboard.changeCount()
+    })
+}
+
 /// Reports clipboard text at start and on every change, and sets it for
-/// viewers without echoing it back. Owns all pasteboard access.
+/// viewers without echoing it back. AppKit runs each access on the main
+/// thread; this thread only polls.
 fn clipboard_loop(sink: StreamSink, texts: Receiver<String>) {
-    let pasteboard = NSPasteboard::generalPasteboard();
-    // SAFETY: a static NSString.
-    let kind = unsafe { NSPasteboardTypeString };
-    let report = |pasteboard: &NSPasteboard| {
-        if let Some(text) = pasteboard.stringForType(kind).map(|text| text.to_string())
+    let report = || {
+        if let Some(text) = pasteboard_text()
             && !text.is_empty()
             && text.len() <= MAX_CLIPBOARD_BYTES
         {
             sink.clipboard(text);
         }
     };
-    let mut change_count = pasteboard.changeCount();
-    report(&pasteboard);
+    let mut change_count = pasteboard_change_count();
+    report();
     loop {
         match texts.recv_timeout(CLIPBOARD_POLL) {
             Ok(text) => {
-                pasteboard.clearContents();
-                pasteboard.setString_forType(&NSString::from_str(&text), kind);
-                change_count = pasteboard.changeCount();
+                if let Some(count) = set_pasteboard_text(text) {
+                    change_count = Some(count);
+                }
             }
             Err(RecvTimeoutError::Timeout) => {
-                let current = pasteboard.changeCount();
-                if current != change_count {
+                let current = pasteboard_change_count();
+                if current.is_some() && current != change_count {
                     change_count = current;
-                    report(&pasteboard);
+                    report();
                 }
             }
             Err(RecvTimeoutError::Disconnected) => return,

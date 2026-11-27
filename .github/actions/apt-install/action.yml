@@ -1,0 +1,38 @@
+name: Install apt packages
+description: >-
+  Installs Ubuntu packages on a Linux runner, restoring the Ubuntu apt source
+  when the hosted image booted without it.
+
+inputs:
+  packages:
+    description: Space-separated package names.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        PACKAGES: ${{ inputs.packages }}
+      run: |
+        sudo apt-get update
+        # Hosted images sometimes boot without their Ubuntu apt source, so
+        # update reads only packages.microsoft.com.
+        origins=$(apt-get indextargets --format '$(ORIGIN)')
+        if ! grep -qx Ubuntu <<<"$origins"; then
+          . /etc/os-release
+          case "$(dpkg --print-architecture)" in
+            amd64) uri=http://archive.ubuntu.com/ubuntu ;;
+            *) uri=http://ports.ubuntu.com/ubuntu-ports ;;
+          esac
+          {
+            echo "Types: deb"
+            echo "URIs: $uri"
+            echo "Suites: $VERSION_CODENAME $VERSION_CODENAME-updates $VERSION_CODENAME-security"
+            echo "Components: main universe"
+            echo "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg"
+          } | sudo tee /etc/apt/sources.list.d/ci-ubuntu-fallback.sources
+          sudo apt-get update
+        fi
+        # shellcheck disable=SC2086
+        sudo apt-get install --yes $PACKAGES

@@ -105,6 +105,8 @@ class TelemetryModule implements Telemetry {
     const properties: CaptureResult['properties'] = {
       token: key,
       distinct_id: distinctId,
+      $host: location.host,
+      $current_url: `${location.origin}/`,
       $pathname: '/',
       $ip: null,
       $geoip_disable: true,

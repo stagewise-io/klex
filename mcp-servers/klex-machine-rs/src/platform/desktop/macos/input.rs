@@ -11,10 +11,13 @@ use objc2_core_graphics::{
 };
 
 use super::super::macos_keys::{KeyStroke, Modifier};
+use unicode_segmentation::UnicodeSegmentation;
+
 use crate::desktop::provider::{MouseButton, ScrollDirection};
 
 pub const RETURN: u16 = 36;
 pub const TAB: u16 = 48;
+const MAX_EVENT_UNITS: usize = 20;
 
 fn pause(milliseconds: u64) {
     sleep(Duration::from_millis(milliseconds));
@@ -173,8 +176,11 @@ impl Input {
 
     /// Types one character regardless of the layout.
     pub fn unicode_event(&self, character: char, down: bool, flags: u64) {
-        let mut units = [0u16; 2];
-        let units = character.encode_utf16(&mut units);
+        let mut buffer = [0u16; 2];
+        self.unicode_units_event(character.encode_utf16(&mut buffer), down, flags);
+    }
+
+    fn unicode_units_event(&self, units: &[u16], down: bool, flags: u64) {
         let event = CGEvent::new_keyboard_event(self.source.as_deref(), 0, down);
         if let Some(event) = &event {
             CGEvent::set_flags(Some(event), CGEventFlags(flags));
@@ -184,6 +190,22 @@ impl Input {
             }
         }
         Self::post(event);
+    }
+
+    /// Types a grapheme cluster as one event, so apps insert one glyph for
+    /// emoji sequences and combining marks. Quartz keeps only 20 UTF-16
+    /// units per event, so longer clusters go out scalar by scalar.
+    fn type_cluster(&self, cluster: &str) {
+        let units: Vec<u16> = cluster.encode_utf16().collect();
+        if units.len() <= MAX_EVENT_UNITS {
+            self.unicode_units_event(&units, true, 0);
+            self.unicode_units_event(&units, false, 0);
+        } else {
+            for character in cluster.chars() {
+                self.unicode_event(character, true, 0);
+                self.unicode_event(character, false, 0);
+            }
+        }
     }
 
     fn with_modifiers(&self, modifiers: &[Modifier], body: impl FnOnce(u64)) {
@@ -218,21 +240,11 @@ impl Input {
     }
 
     pub fn type_text(&self, text: &str) {
-        let mut characters = text.chars().peekable();
-        while let Some(character) = characters.next() {
-            match character {
-                '\r' => {
-                    if characters.peek() == Some(&'\n') {
-                        characters.next();
-                    }
-                    self.tap(RETURN, 0);
-                }
-                '\n' => self.tap(RETURN, 0),
-                '\t' => self.tap(TAB, 0),
-                _ => {
-                    self.unicode_event(character, true, 0);
-                    self.unicode_event(character, false, 0);
-                }
+        for cluster in text.graphemes(true) {
+            match cluster {
+                "\r\n" | "\r" | "\n" => self.tap(RETURN, 0),
+                "\t" => self.tap(TAB, 0),
+                _ => self.type_cluster(cluster),
             }
             pause(8);
         }

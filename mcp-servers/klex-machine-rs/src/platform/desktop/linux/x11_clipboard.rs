@@ -204,6 +204,9 @@ impl Clipboard<'_> {
             .set_selection_owner(self.window, self.atoms.clipboard, CURRENT_TIME)
             .map_err(|error| error.to_string())?;
         self.owned = Some(text);
+        // A conversion still running would report the text this replaced.
+        self.reading = None;
+        self.changed = false;
         Ok(())
     }
 

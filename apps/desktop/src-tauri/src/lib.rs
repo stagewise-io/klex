@@ -83,6 +83,7 @@ async fn set_enabled(desktop: State<'_>, enabled: bool) -> Result<AppStatus, Str
 #[tauri::command]
 async fn forget(desktop: State<'_>) -> Result<AppStatus, String> {
     let desktop = desktop.inner().clone();
+    lock(&desktop.pending_deep_link).take();
     desktop.forgetting.store(true, Ordering::SeqCst);
     desktop.stop().await;
     let removed = std::fs::remove_dir_all(&desktop.paths.data_dir);

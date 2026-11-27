@@ -135,10 +135,14 @@ export function Pairing({
       setCode(formatted);
       if (Date.now() >= blockedUntilRef.current) void preview(formatted);
     };
-    const unsubscribe = subscribe(onPairCode(accept));
-    void desktop.takePendingPairCode().then((pending) => {
-      if (pending) accept(pending);
-    });
+    // The backend keeps the latest link until it is taken, so every event
+    // drains it, including links that are ignored here.
+    const takePending = () =>
+      void desktop.takePendingPairCode().then((pending) => {
+        if (pending) accept(pending);
+      });
+    const unsubscribe = subscribe(onPairCode(takePending));
+    takePending();
     return unsubscribe;
   }, [preview]);
 

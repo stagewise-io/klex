@@ -26,6 +26,7 @@ use futures::FutureExt;
 use futures::future::BoxFuture;
 use objc2_core_foundation::CGPoint;
 use tokio::io::DuplexStream;
+use unicode_segmentation::UnicodeSegmentation;
 
 use super::macos_display::{Display, NO_SESSION_HINT, Permission, permission_hint, window_title};
 use super::macos_keys::{ChordKey, KeyStroke, parse_chord, to_modifiers};
@@ -300,10 +301,11 @@ impl DesktopProvider for MacosDesktopProvider {
 
     fn type_text(&self, text: String) -> DesktopFuture<'_, ()> {
         async move {
-            // CRLF pairs could straddle a chunk boundary and type twice.
-            let characters: Vec<char> = text.replace("\r\n", "\n").chars().collect();
-            for chunk in characters.chunks(TYPE_CHUNK_CHARACTERS) {
-                let chunk: String = chunk.iter().collect();
+            // Whole grapheme clusters, so CRLF pairs and emoji sequences
+            // never straddle a chunk boundary.
+            let clusters: Vec<&str> = text.graphemes(true).collect();
+            for chunk in clusters.chunks(TYPE_CHUNK_CHARACTERS) {
+                let chunk: String = chunk.concat();
                 self.input("Typing", move |input| input.type_text(&chunk))
                     .await?;
             }

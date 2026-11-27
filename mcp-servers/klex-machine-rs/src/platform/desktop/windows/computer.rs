@@ -152,6 +152,17 @@ impl Drop for HeldKeys {
 /// A mouse button that goes up on drop unless released first.
 struct HeldButton(Option<MOUSE_EVENT_FLAGS>);
 
+impl HeldButton {
+    /// Disarms only once the button is up, so a failed send is retried on drop.
+    fn release(mut self) -> DesktopResult<()> {
+        if let Some(up) = self.0 {
+            send(&[mouse(up, 0, 0, 0)])?;
+            self.0 = None;
+        }
+        Ok(())
+    }
+}
+
 impl Drop for HeldButton {
     fn drop(&mut self) {
         if let Some(up) = self.0.take() {
@@ -191,15 +202,14 @@ pub fn drag(from: Point, to: Point, button: MouseButton) -> DesktopResult<()> {
     );
     move_to(fx, fy)?;
     send(&[mouse(down, 0, 0, 0)])?;
-    let mut held = HeldButton(Some(up));
+    let held = HeldButton(Some(up));
     sleep(Duration::from_millis(50));
     for step in 1..=10 {
         move_to(fx + (tx - fx) * step / 10, fy + (ty - fy) * step / 10)?;
         sleep(Duration::from_millis(15));
     }
     sleep(Duration::from_millis(50));
-    held.0 = None;
-    send(&[mouse(up, 0, 0, 0)])
+    held.release()
 }
 
 pub fn move_pointer(point: Point) -> DesktopResult<()> {

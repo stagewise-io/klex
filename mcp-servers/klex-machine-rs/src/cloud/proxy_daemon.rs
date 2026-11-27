@@ -88,6 +88,18 @@ fn reconnect_delay(attempt: u32) -> Duration {
     Duration::from_millis(delay as u64)
 }
 
+/// What the daemon's link to the Cloud proxy is doing right now.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LinkState {
+    /// The first connection attempt is in flight.
+    Connecting,
+    Connected,
+    /// Disconnected and retrying with backoff; holds the last failure.
+    Offline(String),
+}
+
+pub type LinkStatus = watch::Sender<LinkState>;
+
 impl ProxyDaemon {
     /// Connects once and fails if that first connection cannot be opened.
     pub async fn start(
@@ -95,35 +107,71 @@ impl ProxyDaemon {
         handler: ProxyHandler,
     ) -> Result<Self, String> {
         let socket = connect(&connection).await?;
+        Ok(Self::spawn(connection, handler, Some(socket), None))
+    }
+
+    /// Never fails: retries the first connection like a reconnect and
+    /// reports every change of the link on `status`.
+    pub fn start_supervised(
+        connection: ConnectionProvider,
+        handler: ProxyHandler,
+        status: LinkStatus,
+    ) -> Self {
+        Self::spawn(connection, handler, None, Some(status))
+    }
+
+    fn spawn(
+        connection: ConnectionProvider,
+        handler: ProxyHandler,
+        first: Option<Socket>,
+        status: Option<LinkStatus>,
+    ) -> Self {
         let (shutdown, mut stopped) = watch::channel(false);
+        let report = move |state: LinkState| {
+            if let Some(status) = &status {
+                status.send_replace(state);
+            }
+        };
         let task = tokio::spawn(async move {
-            let mut socket = Some(socket);
+            let mut immediate = first.is_none();
+            let mut socket = first;
+            if immediate {
+                report(LinkState::Connecting);
+            }
             loop {
                 if let Some(current) = socket.take() {
+                    report(LinkState::Connected);
                     run_session(current, &handler, stopped.clone()).await;
-                }
-                let stopping = *stopped.borrow();
-                if stopping {
-                    return;
+                    let stopping = *stopped.borrow();
+                    if stopping {
+                        return;
+                    }
+                    report(LinkState::Offline("Proxy connection closed".into()));
                 }
                 let mut attempt = 0;
                 while socket.is_none() {
-                    tokio::select! {
-                        () = tokio::time::sleep(reconnect_delay(attempt)) => {}
-                        () = until_stopped(&mut stopped) => return,
+                    if !immediate {
+                        tokio::select! {
+                            () = tokio::time::sleep(reconnect_delay(attempt)) => {}
+                            () = until_stopped(&mut stopped) => return,
+                        }
+                        attempt += 1;
                     }
-                    attempt += 1;
+                    immediate = false;
                     tokio::select! {
-                        result = connect(&connection) => socket = result.ok(),
+                        result = connect(&connection) => match result {
+                            Ok(connected) => socket = Some(connected),
+                            Err(error) => report(LinkState::Offline(error)),
+                        },
                         () = until_stopped(&mut stopped) => return,
                     }
                 }
             }
         });
-        Ok(Self {
+        Self {
             shutdown,
             task: tokio::sync::Mutex::new(Some(task)),
-        })
+        }
     }
 
     pub async fn close(&self) {
@@ -518,6 +566,51 @@ mod tests {
         ] {
             assert_eq!(decode_frame(invalid), Err(()), "{invalid}");
         }
+    }
+
+    #[tokio::test]
+    async fn supervised_start_retries_and_reports_the_link() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!(
+            "ws://{}/machine-connections",
+            listener.local_addr().unwrap()
+        );
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+            while let Some(Ok(_)) = socket.next().await {}
+        });
+        let attempts = Arc::new(AtomicU64::new(0));
+        let counter = attempts.clone();
+        let connection: ConnectionProvider = Arc::new(move || {
+            let (counter, url) = (counter.clone(), url.clone());
+            Box::pin(async move {
+                if counter.fetch_add(1, Ordering::Relaxed) == 0 {
+                    return Err("fetch failed".to_string());
+                }
+                Ok(ProxyConnection {
+                    url,
+                    headers: Vec::new(),
+                })
+            })
+        });
+        let handler: ProxyHandler = Arc::new(|_| Box::pin(async { Response::new(Body::empty()) }));
+        let (status, mut states) = watch::channel(LinkState::Offline(String::new()));
+        let daemon = ProxyDaemon::start_supervised(connection, handler, status);
+        let mut seen = Vec::new();
+        while seen.last() != Some(&LinkState::Connected) {
+            states.changed().await.unwrap();
+            let state = states.borrow_and_update().clone();
+            if seen.last() != Some(&state) {
+                seen.push(state);
+            }
+        }
+        assert!(
+            seen.contains(&LinkState::Offline("fetch failed".into())),
+            "{seen:?}"
+        );
+        assert_eq!(attempts.load(Ordering::Relaxed), 2);
+        daemon.close().await;
     }
 
     #[test]

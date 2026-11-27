@@ -26,6 +26,9 @@ pub struct MachineEnrollment {
     pub oauth_protected_resource_url: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enrollment_code_sha256: Option<String>,
+    /// Display-only. `@klex/machine` ignores the key and drops it on rewrite.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub organization_name: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -80,6 +83,15 @@ fn non_empty(record: &Map<String, Value>, key: &str) -> Result<String, Enrollmen
     }
 }
 
+/// A non-empty string, or `None` for anything else, so a malformed
+/// display-only field never invalidates the enrollment.
+pub fn optional_string(record: &Map<String, Value>, key: &str) -> Option<String> {
+    match record.get(key) {
+        Some(Value::String(value)) if !value.trim().is_empty() => Some(value.clone()),
+        _ => None,
+    }
+}
+
 pub fn parse_machine_enrollment(value: &Value) -> Result<MachineEnrollment, EnrollmentError> {
     let Value::Object(record) = value else {
         return Err(EnrollmentError::Invalid(
@@ -121,6 +133,7 @@ pub fn parse_machine_enrollment(value: &Value) -> Result<MachineEnrollment, Enro
         mcp_resource_url: non_empty(record, "mcpResourceUrl")?,
         oauth_protected_resource_url: non_empty(record, "oauthProtectedResourceUrl")?,
         enrollment_code_sha256: code_hash,
+        organization_name: optional_string(record, "organizationName"),
     })
 }
 
@@ -243,5 +256,26 @@ mod tests {
         let mut value = record();
         value["enrollmentCodeSha256"] = json!("ABC");
         assert!(parse_machine_enrollment(&value).is_err());
+    }
+
+    #[test]
+    fn keeps_a_display_only_organization_name() {
+        let mut value = record();
+        value["organizationName"] = json!("Kanzlei Müller");
+        let enrollment = parse_machine_enrollment(&value).unwrap();
+        assert_eq!(
+            enrollment.organization_name.as_deref(),
+            Some("Kanzlei Müller")
+        );
+        assert_eq!(serde_json::to_value(&enrollment).unwrap(), value);
+        value["organizationName"] = json!(42);
+        let enrollment = parse_machine_enrollment(&value).unwrap();
+        assert_eq!(enrollment.organization_name, None);
+        assert!(
+            serde_json::to_value(&enrollment)
+                .unwrap()
+                .get("organizationName")
+                .is_none()
+        );
     }
 }

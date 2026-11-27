@@ -15,6 +15,10 @@ use super::identity::MachineIdentity;
 const REFRESH_SAFETY_MS: i64 = 60_000;
 const CLOSED: &str = "Machine token client is closed";
 
+/// The token endpoint refused the machine's credentials, which usually means
+/// the machine was deleted in Cloud.
+pub const OAUTH_ERROR_RESPONSE: &str = "server responded with an error in the response body";
+
 pub struct TokenClientOptions {
     pub client_id: String,
     pub identity: MachineIdentity,
@@ -198,7 +202,7 @@ impl TokenClient {
                         .is_some_and(|error| !error.is_empty())
                 });
             return Err(if oauth_error {
-                "server responded with an error in the response body".into()
+                OAUTH_ERROR_RESPONSE.into()
             } else {
                 "\"response\" is not a conform Token Endpoint response (unexpected HTTP status code)"
                     .into()

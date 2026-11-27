@@ -1,5 +1,8 @@
 //! Native desktop providers: screenshots, input and the RFB stream source.
 
+#[cfg(target_os = "linux")]
+mod linux;
+
 use std::sync::Arc;
 
 use crate::desktop::Warn;
@@ -32,7 +35,14 @@ pub fn provider(warn: Warn) -> Option<Arc<dyn DesktopProvider>> {
 
 /// The signed-in user's desktop on this platform, or `None` where
 /// klex-machine has no native desktop support.
-#[cfg(not(any(windows, target_os = "macos")))]
+#[cfg(target_os = "linux")]
+pub fn provider(_warn: Warn) -> Option<Arc<dyn DesktopProvider>> {
+    Some(linux::provider())
+}
+
+/// The signed-in user's desktop on this platform, or `None` where
+/// klex-machine has no native desktop support.
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
 pub fn provider(_warn: Warn) -> Option<Arc<dyn DesktopProvider>> {
     None
 }

@@ -85,6 +85,8 @@ export function Pairing({
   const busy = useRef(false);
   const blockedUntilRef = useRef(0);
   blockedUntilRef.current = blockedUntil;
+  const stepRef = useRef(step);
+  stepRef.current = step;
 
   const blocked = blockedUntil > now;
   useEffect(() => {
@@ -122,9 +124,13 @@ export function Pairing({
   );
 
   // A deep link fills in the code and checks it once. Nothing retries after
-  // a failure, because previews share Cloud's enrollment rate limit.
+  // a failure, because previews share Cloud's enrollment rate limit. Links
+  // that arrive while a code awaits consent or is connecting are ignored, so
+  // they cannot swap the code the person is agreeing to.
   useEffect(() => {
     const accept = (raw: string) => {
+      const current = stepRef.current.name;
+      if (current === 'confirm' || current === 'connecting') return;
       const formatted = formatCode(raw);
       setCode(formatted);
       if (Date.now() >= blockedUntilRef.current) void preview(formatted);

@@ -256,14 +256,10 @@ pub fn run() {
         .setup(setup)
         .build(tauri::generate_context!())
         .expect("Klex Desktop failed to start");
+    // Closing the window only hides it, so an exit request always means Quit
+    // (tray, Cmd+Q, or the Dock) and is allowed through.
     app.run(|app, event| {
-        if let RunEvent::ExitRequested {
-            code: None, api, ..
-        } = event
-        {
-            // The window only hides; keep running in the tray.
-            api.prevent_exit();
-        } else if let RunEvent::Exit = event
+        if let RunEvent::Exit = event
             && let Some(desktop) = app.try_state::<Arc<Desktop>>()
         {
             tauri::async_runtime::block_on(desktop.stop());

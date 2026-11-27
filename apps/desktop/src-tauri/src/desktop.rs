@@ -179,6 +179,11 @@ impl Desktop {
     fn set_link(&self, state: Option<DisplayState>, reason: Option<String>) {
         {
             let mut link = lock(&self.link);
+            if state.is_none() {
+                // Once the daemon stops, its organization name is no longer
+                // current; Forget relies on this to drop the previous one.
+                link.organization_name = None;
+            }
             link.state = state;
             link.reason = reason.map(|reason| describe_reason(&reason));
         }

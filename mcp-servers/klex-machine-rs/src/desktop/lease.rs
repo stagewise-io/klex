@@ -103,9 +103,28 @@ pub type Clock = Arc<dyn Fn() -> i64 + Send + Sync>;
 
 struct Inner {
     state: ControlState,
-    expiry: Option<JoinHandle<()>>,
-    grace: Option<JoinHandle<()>>,
+    expiry: Option<Timer>,
+    grace: Option<Timer>,
     sequence: u64,
+    timers: u64,
+}
+
+impl Inner {
+    fn next_timer(&mut self) -> u64 {
+        self.timers += 1;
+        self.timers
+    }
+}
+
+/// `JoinHandle::abort` cannot stop a task that already woke up and waits for
+/// the lock, so a timer task acts only while it is still the stored timer.
+struct Timer {
+    id: u64,
+    handle: JoinHandle<()>,
+}
+
+fn is_current(timer: &Option<Timer>, id: u64) -> bool {
+    timer.as_ref().is_some_and(|timer| timer.id == id)
 }
 
 struct Shared {
@@ -133,9 +152,9 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-fn abort(handle: &mut Option<JoinHandle<()>>) {
-    if let Some(handle) = handle.take() {
-        handle.abort();
+fn abort(timer: &mut Option<Timer>) {
+    if let Some(timer) = timer.take() {
+        timer.handle.abort();
     }
 }
 
@@ -152,6 +171,7 @@ impl DesktopControlLease {
                     expiry: None,
                     grace: None,
                     sequence: 0,
+                    timers: 0,
                 }),
                 listeners: Mutex::default(),
                 next_listener: AtomicU64::new(1),
@@ -194,6 +214,10 @@ impl DesktopControlLease {
     }
 
     pub fn apply(&self, update: LeaseUpdate) {
+        self.apply_locked(lock(&self.shared.inner), update);
+    }
+
+    fn apply_locked(&self, mut inner: std::sync::MutexGuard<'_, Inner>, update: LeaseUpdate) {
         let now = (self.shared.now)();
         let human = update.mode == ControlMode::Human;
         let expires_at = update
@@ -201,7 +225,6 @@ impl DesktopControlLease {
             .as_deref()
             .filter(|value| human && !value.is_empty())
             .map(parse_iso);
-        let mut inner = lock(&self.shared.inner);
         abort(&mut inner.grace);
         // A malformed expiry fails closed to the agent instead of an unbounded lease.
         if let Some(expiry) = expires_at
@@ -241,14 +264,19 @@ impl DesktopControlLease {
         };
         let weak = Arc::downgrade(&self.shared);
         let grace = self.shared.grace;
-        inner.grace = Some(runtime.spawn(async move {
+        let id = inner.next_timer();
+        let handle = runtime.spawn(async move {
             tokio::time::sleep(grace).await;
             if let Some(lease) = upgrade(&weak) {
                 let mut inner = lock(&lease.shared.inner);
+                if !is_current(&inner.grace, id) {
+                    return;
+                }
                 inner.grace = None;
                 lease.set(inner, ControlState::agent(), ChangeReason::Disconnected);
             }
-        }));
+        });
+        inner.grace = Some(Timer { id, handle });
     }
 
     /// Returns a function that removes the listener.
@@ -279,7 +307,7 @@ impl DesktopControlLease {
     ) {
         abort(&mut inner.expiry);
         if let Some(expires_at) = next.expires_at.as_deref().and_then(parse_iso) {
-            inner.expiry = self.schedule_expiry(expires_at);
+            inner.expiry = self.schedule_expiry(&mut inner, expires_at);
         }
         let previous = std::mem::replace(&mut inner.state, next.clone());
         if previous.mode == next.mode && previous.holder == next.holder {
@@ -303,10 +331,11 @@ impl DesktopControlLease {
         }
     }
 
-    fn schedule_expiry(&self, expires_at: i64) -> Option<JoinHandle<()>> {
+    fn schedule_expiry(&self, inner: &mut Inner, expires_at: i64) -> Option<Timer> {
         let runtime = tokio::runtime::Handle::try_current().ok()?;
         let weak = Arc::downgrade(&self.shared);
-        Some(runtime.spawn(async move {
+        let id = inner.next_timer();
+        let handle = runtime.spawn(async move {
             loop {
                 let Some(lease) = upgrade(&weak) else {
                     return;
@@ -320,11 +349,15 @@ impl DesktopControlLease {
             }
             if let Some(lease) = upgrade(&weak) {
                 let mut inner = lock(&lease.shared.inner);
+                if !is_current(&inner.expiry, id) {
+                    return;
+                }
                 inner.expiry = None;
                 abort(&mut inner.grace);
                 lease.set(inner, ControlState::agent(), ChangeReason::Expired);
             }
-        }))
+        });
+        Some(Timer { id, handle })
     }
 
     fn expire_if_due(&self) {
@@ -448,5 +481,36 @@ mod tests {
             *lock(&reasons),
             vec![ChangeReason::Cloud, ChangeReason::Disconnected]
         );
+    }
+
+    /// Holds the lock past the timer so its task is already waiting on the
+    /// mutex, where `abort` no longer reaches it, when the new lease lands.
+    fn renew_while_timer_waits(lease: &DesktopControlLease, update: LeaseUpdate) {
+        let inner = lock(&lease.shared.inner);
+        std::thread::sleep(Duration::from_millis(200));
+        lease.apply_locked(inner, update);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_stale_grace_task_does_not_revoke_a_renewed_lease() {
+        let (lease, _) = clocked(1_000_000);
+        lease.apply(human(Some("Ada"), None, None));
+        lease.disconnected();
+        renew_while_timer_waits(&lease, human(Some("Grace"), None, None));
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(lease.state().holder.as_deref(), Some("Grace"));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_stale_expiry_task_does_not_revoke_a_renewed_lease() {
+        let start = now_ms();
+        let lease = DesktopControlLease::with_clock(Arc::new(now_ms), Duration::from_secs(60));
+        lease.apply(human(Some("Ada"), None, Some(iso(start + 50))));
+        renew_while_timer_waits(
+            &lease,
+            human(Some("Grace"), None, Some(iso(start + 60_000))),
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(lease.state().holder.as_deref(), Some("Grace"));
     }
 }

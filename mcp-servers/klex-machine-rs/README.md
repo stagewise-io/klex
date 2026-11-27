@@ -48,6 +48,17 @@ Enrollment state lives under `identity/` in the data directory, in the same form
 
 In local mode, the MCP endpoint is `http://127.0.0.1:3123/mcp` and the health endpoint is `http://127.0.0.1:3123/health`. Run `klex-machine-rs --help` for every flag. Flags and `KLEX_MACHINE_*` environment variables match `@klex/machine`, except that the default data directory is `~/.klex-machine-rs`. Both servers can therefore run side by side without sharing notification state. Pointing `--data-dir` at an existing `~/.klex-machine` directory takes over its notification state.
 
+### Linux desktop
+
+On Linux the server picks a desktop from the session it runs in:
+
+- **Wayland** (`WAYLAND_DISPLAY` set or `XDG_SESSION_TYPE=wayland`): screenshots, input and the Cloud stream go through xdg-desktop-portal's RemoteDesktop and ScreenCast interfaces, with frames over PipeWire. The first start shows the desktop's screen sharing dialog. Once it is allowed, the portal's restore token is kept in `desktop-portal-token` in the data directory, so later starts do not ask again where the portal supports this (RemoteDesktop version 2). Otherwise the server logs that it will ask again. Until then, and after the dialog is declined or sharing is stopped from the desktop, the server instructions explain what to do. Wayland does not let clients see other windows, so the window list, window focus and the accessibility tree are unavailable. GNOME 46 and KDE Plasma 6 provide both portals.
+- **X11:** the display in `DISPLAY`, with XTEST for input and AT-SPI for the accessibility tree. The Cloud stream relays the VNC server at `KLEX_MACHINE_VNC_SOCKET` (default `/run/klex/vnc.sock`). Without a configured socket, if none answers, the server streams the display itself.
+
+Setting `KLEX_MACHINE_VNC_SOCKET` always selects X11, as in Klex Cloud sandboxes.
+
+The PipeWire client is written in Rust in `src/platform/desktop/linux/pipewire/`, because the released Linux binaries are static musl executables that cannot load `libpipewire`.
+
 Clients must speak MCP protocol `2026-07-28`, for example `@modelcontextprotocol/client` 2.4.0 or newer. Older clients fall back to the legacy `initialize` handshake and get no Push Notifications.
 
 ## Development
@@ -59,7 +70,10 @@ cargo test -p klex-machine
 cargo deny check   # advisories, licenses and sources (needs cargo-deny)
 pnpm --filter @klex/machine-conformance test   # both implementations
 KLEX_MACHINE_IMPL=rust pnpm --filter @klex/machine-conformance test
+KLEX_MACHINE_IMPL=rust KLEX_MACHINE_WAYLAND=1 pnpm --filter @klex/machine-conformance exec vitest run test/desktop-wayland.test.ts
 ```
+
+The Wayland test needs `dbus`, `pipewire`, `pipewire-bin`, `wireplumber`, `gstreamer1.0-tools`, `gstreamer1.0-plugins-base`, `gstreamer1.0-pipewire`, `python3-dbus` and `python3-gi`. It drives a scripted portal (`packages/klex-machine-conformance/fixtures/fake-portal.py`) and a real PipeWire daemon, with no compositor.
 
 OS-specific code lives only in `src/platform/`: `unix.rs` and `windows.rs` provide the same modules with the same signatures, `macos.rs` and `linux.rs` hold what differs between Unixes, and `pty.rs` defines the PTY traits. `tests/platform_boundary.rs` fails on OS `cfg`s, `libc`, `windows_sys`, `std::os` or `portable_pty` anywhere else in `src/` outside test modules.
 

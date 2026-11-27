@@ -201,8 +201,16 @@ class Portal(dbus.service.Object):
         return self.respond(sender, options, 0, results)
 
     def notify(name, signature):
-        def method(self, session, options, *values):
-            self.log(name, {"values": plain(list(values))})
+        # dbus-python needs one named parameter per signature argument.
+        if len(signature) - len("oa{sv}") == 3:
+
+            def method(self, session, options, first, second, third):
+                self.log(name, {"values": plain([first, second, third])})
+
+        else:
+
+            def method(self, session, options, first, second):
+                self.log(name, {"values": plain([first, second])})
 
         method.__name__ = name
         return dbus.service.method(REMOTE_DESKTOP, in_signature=signature)(method)

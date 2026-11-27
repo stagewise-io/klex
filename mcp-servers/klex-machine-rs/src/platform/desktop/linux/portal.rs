@@ -27,9 +27,14 @@ pub const TOKEN_FILE: &str = "desktop-portal-token";
 const FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(10);
 const RETRY_MISSING: Duration = Duration::from_secs(60);
 const RETRY_FAILED: Duration = Duration::from_secs(30);
+/// How long a lost stream waits before restarting with the saved token. A
+/// stop from the desktop can end the PipeWire stream before the portal's
+/// `Closed` signal arrives, and must not resume sharing.
+const LOST_GRACE: Duration = Duration::from_secs(2);
 
 pub const WAITING_HINT: &str = "Waiting for screen sharing to be allowed: choose Share in the dialog on this computer's screen. Once allowed, klex-machine remembers it.";
 pub const STARTING_HINT: &str = "Screen sharing is starting.";
+pub const RECONNECTING_HINT: &str = "Screen sharing was interrupted and is reconnecting.";
 pub const DECLINED_HINT: &str = "Screen sharing was declined in the dialog on this computer. Restart klex-machine to be asked again.";
 pub const STOPPED_HINT: &str =
     "Screen sharing was stopped on this computer. Restart klex-machine to share again.";
@@ -110,6 +115,11 @@ enum State {
     /// With the hint of the failure being retried, if any.
     Starting(Option<String>),
     Ready(Arc<dyn Remote>),
+    /// The stream ended without a stop from the desktop, as far as is known.
+    Lost {
+        remote: Arc<dyn Remote>,
+        at: Instant,
+    },
     Failed {
         failure: Failure,
         at: Instant,
@@ -121,6 +131,7 @@ pub struct Portal {
     connect: Connector,
     warn: Warn,
     state: Mutex<State>,
+    lost_grace: Duration,
     /// A token was found, so starting should not need the dialog.
     restoring: AtomicBool,
     warned_no_token: AtomicBool,
@@ -128,11 +139,21 @@ pub struct Portal {
 
 impl Portal {
     pub fn new(token_path: Option<PathBuf>, connect: Connector, warn: Warn) -> Arc<Self> {
+        Self::with_lost_grace(token_path, connect, warn, LOST_GRACE)
+    }
+
+    fn with_lost_grace(
+        token_path: Option<PathBuf>,
+        connect: Connector,
+        warn: Warn,
+        lost_grace: Duration,
+    ) -> Arc<Self> {
         Arc::new(Self {
             token_path,
             connect,
             warn,
             state: Mutex::new(State::Idle),
+            lost_grace,
             restoring: AtomicBool::new(false),
             warned_no_token: AtomicBool::new(false),
         })
@@ -148,24 +169,37 @@ impl Portal {
     /// when none is running or due, so this never waits on the dialog.
     pub fn remote(self: &Arc<Self>) -> Result<Arc<dyn Remote>, String> {
         let mut state = self.lock();
-        if let State::Ready(remote) = &*state {
-            match remote.ended() {
+        let ended = match &*state {
+            State::Ready(remote) => match remote.ended() {
                 None => return Ok(remote.clone()),
-                Some(Ended::Stopped) => {
-                    (self.warn)("Screen sharing was stopped on this computer.");
-                    *state = State::Failed {
-                        failure: Failure::new(STOPPED_HINT, Retry::Never),
-                        at: Instant::now(),
-                    };
-                }
-                Some(Ended::Lost(reason)) => {
-                    (self.warn)(&format!("Screen sharing ended: {reason}. Restarting it."));
-                    *state = State::Idle;
-                }
+                Some(ended) => Some((remote.clone(), ended)),
+            },
+            State::Lost { remote, .. } => remote
+                .ended()
+                .filter(|ended| *ended == Ended::Stopped)
+                .map(|ended| (remote.clone(), ended)),
+            _ => None,
+        };
+        match ended {
+            Some((_, Ended::Stopped)) => {
+                (self.warn)("Screen sharing was stopped on this computer.");
+                *state = State::Failed {
+                    failure: Failure::new(STOPPED_HINT, Retry::Never),
+                    at: Instant::now(),
+                };
             }
+            Some((remote, Ended::Lost(reason))) => {
+                (self.warn)(&format!("Screen sharing ended: {reason}. Reconnecting."));
+                *state = State::Lost {
+                    remote,
+                    at: Instant::now(),
+                };
+            }
+            None => {}
         }
         let due = match &*state {
             State::Idle => true,
+            State::Lost { at, .. } => at.elapsed() >= self.lost_grace,
             State::Failed { failure, at } => match failure.retry {
                 Retry::After(delay) => at.elapsed() >= delay,
                 Retry::Never => false,
@@ -181,6 +215,7 @@ impl Portal {
             self.spawn_start();
         }
         Err(match &*state {
+            State::Lost { .. } => RECONNECTING_HINT.into(),
             State::Failed { failure, .. } => failure.hint.clone(),
             State::Starting(Some(hint)) => hint.clone(),
             _ if self.restoring.load(Ordering::SeqCst) => STARTING_HINT.into(),
@@ -319,6 +354,7 @@ async fn establish(token: Option<String>) -> Result<Established, Failure> {
         .create_session(Default::default())
         .await
         .map_err(|error| portal_failure(error, "create a session", false))?;
+    let session = OpenSession(Arc::new(session));
     let mut devices =
         SelectDevicesOptions::default().set_devices(DeviceType::KEYBOARD | DeviceType::POINTER);
     // Version 2 added persistence.
@@ -338,7 +374,7 @@ async fn establish(token: Option<String>) -> Result<Established, Failure> {
     };
     screencast
         .select_sources(
-            &session,
+            &*session,
             SelectSourcesOptions::default()
                 .set_cursor_mode(cursor)
                 .set_sources(SourceType::MONITOR)
@@ -354,14 +390,12 @@ async fn establish(token: Option<String>) -> Result<Established, Failure> {
         .map_err(|error| portal_failure(error, "start", false))?;
     let missing = DeviceType::KEYBOARD | DeviceType::POINTER;
     if !selected.devices().contains(missing) {
-        let _ = session.close().await;
         return Err(Failure::new(
             "Screen sharing was allowed without keyboard and mouse control. Restart klex-machine and allow remote control in the dialog.",
             Retry::Never,
         ));
     }
     let Some(stream) = selected.streams().first() else {
-        let _ = session.close().await;
         return Err(Failure::new(
             "Screen sharing was allowed without choosing a screen. Restart klex-machine and choose one in the dialog.",
             Retry::Never,
@@ -373,7 +407,7 @@ async fn establish(token: Option<String>) -> Result<Established, Failure> {
         .filter(|&(width, height)| width > 0 && height > 0);
     let token = selected.restore_token().map(str::to_string);
     let fd = screencast
-        .open_pipe_wire_remote(&session, Default::default())
+        .open_pipe_wire_remote(&*session, Default::default())
         .await
         .map_err(|error| portal_failure(error, "open the screen stream", true))?;
     let video =
@@ -394,20 +428,17 @@ async fn establish(token: Option<String>) -> Result<Established, Failure> {
     match first {
         Ok(true) => {}
         Ok(false) => {
-            let _ = session.close().await;
             return Err(Failure::new(
                 "The screen stream sent no picture. Restart klex-machine to try again.",
                 Retry::Never,
             ));
         }
         Err(error) => {
-            let _ = session.close().await;
             return Err(Failure::new(error, Retry::Never));
         }
     }
-    let session = Arc::new(session);
     let stopped = Arc::new(AtomicBool::new(false));
-    let watched = (session.clone(), stopped.clone());
+    let watched = (session.0.clone(), stopped.clone());
     let watcher = tokio::spawn(async move {
         let (session, stopped) = watched;
         if let Ok(mut closed) = session.receive_closed().await
@@ -430,9 +461,32 @@ async fn establish(token: Option<String>) -> Result<Established, Failure> {
     })
 }
 
+/// Closes the portal session when dropped, so a failed start or a replaced
+/// share does not leave the desktop's sharing indicator on.
+struct OpenSession(Arc<Session<RemoteDesktop>>);
+
+impl std::ops::Deref for OpenSession {
+    type Target = Session<RemoteDesktop>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl Drop for OpenSession {
+    fn drop(&mut self) {
+        let session = self.0.clone();
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move {
+                let _ = session.close().await;
+            });
+        }
+    }
+}
+
 struct PortalRemote {
     proxy: RemoteDesktop,
-    session: Arc<Session<RemoteDesktop>>,
+    session: OpenSession,
     node: u32,
     /// The stream size in the compositor's logical pixels, which pointer
     /// positions are in. GNOME reports the frame size here; KDE reports the
@@ -607,10 +661,11 @@ mod tests {
         let remotes = Arc::default();
         let warnings = Arc::new(Mutex::new(Vec::<String>::new()));
         let log = warnings.clone();
-        let portal = Portal::new(
+        let portal = Portal::with_lost_grace(
             Some(path.clone()),
             connector(script, Arc::clone(&tokens), Arc::clone(&remotes)),
             Arc::new(move |message: &str| log.lock().unwrap().push(message.into())),
+            Duration::ZERO,
         );
         assert_eq!(portal.remote().err().unwrap(), WAITING_HINT);
         settle().await;
@@ -639,6 +694,31 @@ mod tests {
         settle().await;
         assert_eq!(portal.remote().err().unwrap(), STOPPED_HINT);
         assert_eq!(tokens.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn waits_before_reconnecting_so_a_stop_from_the_desktop_wins() {
+        let script: Script = Arc::new(Mutex::new(vec![Ok(Some("first".into()))]));
+        let tokens = Arc::new(Mutex::new(Vec::new()));
+        let remotes: Arc<Mutex<Vec<Arc<Fake>>>> = Arc::default();
+        let portal = Portal::new(
+            None,
+            connector(script, tokens.clone(), remotes.clone()),
+            Arc::new(|_: &str| {}),
+        );
+        assert!(portal.remote().is_err());
+        settle().await;
+        assert!(portal.remote().is_ok());
+
+        // The stream ends first; the portal's Closed signal follows.
+        let remote = remotes.lock().unwrap()[0].clone();
+        *remote.ended.lock().unwrap() = Some(Ended::Lost("stream ended".into()));
+        assert_eq!(portal.remote().err().unwrap(), RECONNECTING_HINT);
+        *remote.ended.lock().unwrap() = Some(Ended::Stopped);
+        assert_eq!(portal.remote().err().unwrap(), STOPPED_HINT);
+        settle().await;
+        assert_eq!(portal.remote().err().unwrap(), STOPPED_HINT);
+        assert_eq!(tokens.lock().unwrap().len(), 1);
     }
 
     #[tokio::test]

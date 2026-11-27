@@ -9,6 +9,13 @@ inputs:
       Extra cache key, for jobs on the same runner that build different
       targets or profiles.
     default: ''
+  parallel-codegen:
+    description: >-
+      "true" compiles the klex-machine crate with 16 codegen units in release
+      builds. Pull-request CI only: it roughly halves that crate's build, and
+      dependencies keep the release settings, so main's cache still applies.
+      Shipped binaries must keep the default.
+    default: 'false'
 
 runs:
   using: composite
@@ -31,3 +38,14 @@ runs:
       with:
         key: ${{ inputs.cache-key }}
         save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    # A user-level Cargo config reaches every cargo invocation, including the
+    # ones build scripts and turbo start. Turning off LTO instead would also
+    # be faster, but it changes every dependency's flags, so each pull request
+    # would rebuild all of them without main's cache.
+    - if: inputs.parallel-codegen == 'true'
+      shell: bash
+      run: |
+        config="${CARGO_HOME:-$HOME/.cargo}/config.toml"
+        mkdir -p "$(dirname "$config")"
+        printf '\n[profile.release.package.klex-machine]\ncodegen-units = 16\n' >> "$config"
+        cat "$config"

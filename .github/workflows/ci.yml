@@ -28,7 +28,6 @@ jobs:
     outputs:
       installer: ${{ steps.changes.outputs.installer }}
       machine: ${{ steps.changes.outputs.machine }}
-      machine-rs: ${{ steps.changes.outputs.machine-rs }}
       executable: ${{ steps.changes.outputs.executable }}
       desktop: ${{ steps.changes.outputs.desktop }}
     steps:
@@ -110,30 +109,6 @@ jobs:
           path: .turbo/cache
           key: turbo-v1-${{ github.job }}-${{ github.sha }}
 
-  # macOS runs these checks in its klex-machine conformance job.
-  klex-machine:
-    name: klex-machine (${{ matrix.os }})
-    needs: changes
-    if: needs.changes.outputs.machine == 'true'
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os:
-          - ubuntu-latest
-          - windows-latest
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      # Installs only the root and @klex/machine's dependency closure.
-      - uses: ./.github/actions/setup-workspace
-        with:
-          install-scope: machine
-          install-filter: --filter klex --filter @klex/machine...
-      - run: pnpm --filter @klex/machine... build
-      - run: pnpm --filter @klex/machine typecheck
-      - run: pnpm --filter @klex/machine test
-      - run: pnpm --filter @klex/machine verify
-
   rust:
     name: Rust
     runs-on: ubuntu-latest
@@ -154,19 +129,22 @@ jobs:
           tar -xzf "$RUNNER_TEMP/$archive.tar.gz" -C "$RUNNER_TEMP"
           "$RUNNER_TEMP/$archive/cargo-deny" check
 
-  klex-machine-rs:
-    name: klex-machine-rs (${{ matrix.name }}${{ matrix.cross-name && format(' + {0}', matrix.cross-name) || '' }})
+  # Builds and tests every release target, then installs the npm packages
+  # around each native build and runs them. Release builds come from
+  # release.yml with the same targets.
+  klex-machine:
+    name: klex-machine (${{ matrix.name }}${{ matrix.cross-name && format(' + {0}', matrix.cross-name) || '' }})
     needs: changes
-    if: needs.changes.outputs.machine-rs == 'true'
+    if: needs.changes.outputs.machine == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: linux-x64-musl
+          - name: linux-x64
             os: ubuntu-24.04
             target: x86_64-unknown-linux-musl
-          - name: linux-arm64-musl
+          - name: linux-arm64
             os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-musl
           # darwin-x64 is cross-compiled in the same job, so it is built but
@@ -185,58 +163,43 @@ jobs:
     defaults:
       run:
         shell: bash
+    env:
+      BINARY: target/${{ matrix.target }}/release/klex-machine${{ contains(matrix.target, 'windows') && '.exe' || '' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: ./.github/actions/setup-rust
         with:
           parallel-codegen: ${{ github.event_name == 'pull_request' }}
           cache-key: ${{ matrix.target }}${{ matrix.cross-target && format('+{0}', matrix.cross-target) || '' }}
-      # ring compiles C. cc-rs looks for <arch>-linux-musl-gcc, which
-      # musl-tools does not install under that name.
-      - if: runner.os == 'Linux'
-        uses: ./.github/actions/apt-install
+      - uses: ./.github/actions/setup-target-cc
         with:
-          packages: musl-tools
-      - if: runner.os == 'Linux'
-        name: Use musl-gcc for the target
-        run: |
-          target=${{ matrix.target }}
-          echo "CC_${target//-/_}=musl-gcc" >> "$GITHUB_ENV"
-      # ring needs clang for aarch64-pc-windows-msvc.
-      - if: runner.os == 'Windows' && runner.arch == 'ARM64'
-        name: Put clang on PATH
-        shell: pwsh
-        run: |
-          if (-not (Get-Command clang -ErrorAction SilentlyContinue)) {
-            $llvm = 'C:\Program Files\LLVM\bin'
-            if (-not (Test-Path (Join-Path $llvm 'clang.exe'))) {
-              winget install --id LLVM.LLVM --exact --silent --accept-package-agreements --accept-source-agreements
-              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            }
-            Add-Content $env:GITHUB_PATH $llvm
-          }
+          target: ${{ matrix.target }}
       - run: cargo test --locked --package klex-machine --target ${{ matrix.target }}
-      - run: cargo build --release --locked --package klex-machine --bin klex-machine-rs --target ${{ matrix.target }}
-      - run: target/${{ matrix.target }}/release/klex-machine-rs --version
+      - run: cargo build --release --locked --package klex-machine --bin klex-machine --target ${{ matrix.target }}
+      - run: '"$BINARY" --version'
       - if: matrix.cross-target
-        run: cargo build --release --locked --package klex-machine --bin klex-machine-rs --target ${{ matrix.cross-target }}
+        run: cargo build --release --locked --package klex-machine --bin klex-machine --target ${{ matrix.cross-target }}
       - if: matrix.cross-target
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: klex-machine-rs-${{ matrix.cross-name }}
-          path: target/${{ matrix.cross-target }}/release/klex-machine-rs
+          name: klex-machine-${{ matrix.cross-name }}
+          path: target/${{ matrix.cross-target }}/release/klex-machine
           retention-days: 14
           if-no-files-found: error
       - if: runner.os == 'Linux'
         name: Verify the binary is fully static
         run: |
-          binary=target/${{ matrix.target }}/release/klex-machine-rs
-          file "$binary"
-          file "$binary" | grep -Eq '(static-pie|statically) linked'
+          file "$BINARY"
+          file "$BINARY" | grep -Eq '(static-pie|statically) linked'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+      - name: Install and run the npm packages
+        run: node mcp-servers/klex-machine/npm/verify.mjs --binary "$BINARY"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: klex-machine-rs-${{ matrix.name }}
-          path: target/${{ matrix.target }}/release/klex-machine-rs${{ runner.os == 'Windows' && '.exe' || '' }}
+          name: klex-machine-${{ matrix.name }}
+          path: ${{ env.BINARY }}
           retention-days: 14
           if-no-files-found: error
 
@@ -308,131 +271,6 @@ jobs:
             target/debug/bundle/appimage/*.AppImage
           retention-days: 14
           if-no-files-found: error
-
-  # Linux runs the full conformance suite for both implementations in Unit
-  # Tests; this covers the platform-specific PTY and filesystem behaviour.
-  # macOS runners are scarce, so a single macOS job runs both implementations
-  # and the klex-machine checks. Its release build of klex-machine-rs
-  # dominates, so it uses a larger runner.
-  klex-machine-conformance:
-    name: klex-machine conformance (${{ matrix.name }})
-    needs: changes
-    if: needs.changes.outputs.machine == 'true'
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: ts + rust, macos-15-xlarge
-            os: macos-15-xlarge
-            ts: true
-            rust: true
-            machine-checks: true
-          - name: ts, windows-latest
-            os: windows-latest
-            ts: true
-          - name: rust, windows-latest
-            os: windows-latest
-            rust: true
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: ./.github/actions/setup-workspace
-        with:
-          install-scope: machine-conformance
-          install-filter: --filter klex --filter @klex/machine-conformance...
-      # The Rust run also needs the TypeScript server for takeover tests.
-      - run: pnpm --filter @klex/machine... build
-      - if: matrix.machine-checks
-        run: pnpm --filter @klex/machine typecheck
-      - if: matrix.machine-checks
-        run: pnpm --filter @klex/machine test
-      - if: matrix.machine-checks
-        run: pnpm --filter @klex/machine verify
-      - run: pnpm --filter @klex/machine-conformance typecheck
-      - id: conformance-ts
-        if: matrix.ts
-        name: Conformance tests (ts)
-        run: pnpm --filter @klex/machine-conformance test
-        env:
-          KLEX_MACHINE_IMPL: ts
-      # The Rust build and suite still run when the ts suite fails, so one run
-      # reports both implementations.
-      - id: setup-rust
-        if: matrix.rust && (success() || steps.conformance-ts.outcome == 'failure')
-        uses: ./.github/actions/setup-rust
-        with:
-          parallel-codegen: ${{ github.event_name == 'pull_request' }}
-      - id: build-rust
-        if: steps.setup-rust.outcome == 'success' && !cancelled()
-        run: pnpm --filter @klex/machine-rs build
-      - if: steps.build-rust.outcome == 'success' && !cancelled()
-        name: Conformance tests (rust)
-        run: pnpm --filter @klex/machine-conformance test
-        env:
-          KLEX_MACHINE_IMPL: rust
-
-  # Drives a real X server (Xvnc) through both implementations: input
-  # injection, window listing, capture and the VNC socket stream.
-  klex-machine-desktop-x11:
-    name: klex-machine desktop (x11, ${{ matrix.implementation }})
-    needs: changes
-    if: needs.changes.outputs.machine == 'true'
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        implementation:
-          - ts
-          - rust
-    env:
-      KLEX_MACHINE_IMPL: ${{ matrix.implementation }}
-      KLEX_MACHINE_X11: '1'
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: ./.github/actions/apt-install
-        with:
-          packages: tigervnc-standalone-server x11-xserver-utils x11-utils xdotool xclip imagemagick
-      - uses: ./.github/actions/setup-workspace
-        with:
-          install-scope: machine-conformance
-          install-filter: --filter klex --filter @klex/machine-conformance...
-      - run: pnpm --filter @klex/machine... build
-      - if: matrix.implementation == 'rust'
-        uses: ./.github/actions/setup-rust
-        with:
-          parallel-codegen: ${{ github.event_name == 'pull_request' }}
-      - if: matrix.implementation == 'rust'
-        run: pnpm --filter @klex/machine-rs build
-      - run: pnpm --filter @klex/machine-conformance exec vitest run test/desktop-x11.test.ts
-
-  # Drives the Rust server's Wayland desktop through a scripted
-  # xdg-desktop-portal on a private session bus and a real PipeWire daemon
-  # fed by a GStreamer test source: portal session, restore token, frames,
-  # input and the built-in stream. A real compositor's consent dialog cannot
-  # be answered headlessly, so GNOME and KDE are covered by the manual guide.
-  klex-machine-desktop-wayland:
-    name: klex-machine desktop (wayland, rust)
-    needs: changes
-    if: needs.changes.outputs.machine == 'true'
-    runs-on: ubuntu-24.04
-    env:
-      KLEX_MACHINE_IMPL: rust
-      KLEX_MACHINE_WAYLAND: '1'
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: ./.github/actions/apt-install
-        with:
-          packages: dbus pipewire pipewire-bin wireplumber gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-pipewire python3-dbus python3-gi
-      - uses: ./.github/actions/setup-workspace
-        with:
-          install-scope: machine-conformance
-          install-filter: --filter klex --filter @klex/machine-conformance...
-      - run: pnpm --filter @klex/machine... build
-      - uses: ./.github/actions/setup-rust
-        with:
-          parallel-codegen: ${{ github.event_name == 'pull_request' }}
-      - run: pnpm --filter @klex/machine-rs build
-      - run: pnpm --filter @klex/machine-conformance exec vitest run test/desktop-wayland.test.ts
 
   package-release-scopes:
     name: Package Release Scopes
@@ -591,13 +429,9 @@ jobs:
       - changes
       - test
       - build
-      - klex-machine
       - rust
-      - klex-machine-rs
+      - klex-machine
       - desktop
-      - klex-machine-conformance
-      - klex-machine-desktop-x11
-      - klex-machine-desktop-wayland
       - package-release-scopes
       - local-data-migrations
       - installers

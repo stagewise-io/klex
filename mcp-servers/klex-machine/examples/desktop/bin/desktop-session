@@ -1,9 +1,0 @@
-#!/bin/sh
-set -eu
-for _ in $(seq 1 100); do
-  xdpyinfo >/dev/null 2>&1 && break
-  sleep 0.1
-done
-# No screen locker or blanking: nobody is at the virtual console.
-xset s off -dpms 2>/dev/null || true
-exec dbus-launch --exit-with-session xfce4-session

@@ -18,36 +18,100 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # klex-machine's macOS desktop helper is Swift and builds only on macOS. The
-  # release job copies this universal binary into the package it publishes; if
-  # this job fails, the other packages still release and klex-machine waits.
-  macos-desktop-helper:
-    runs-on: macos-latest
-    timeout-minutes: 15
+  # The version semantic-release will give @klex/machine on this commit,
+  # which its binaries report. Empty when this push releases no machine
+  # change. A dry run still checks push access, hence contents: write.
+  machine-version:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-workspace
+        with:
+          install-scope: release-tools
+          install-filter: --filter klex
+      - id: version
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node mcp-servers/klex-machine/npm/next-version.mjs
+
+  # The executables in the @klex/machine-<platform> packages, built with the
+  # targets CI tests. If any build fails, the other packages still release
+  # and klex-machine waits for the next release run.
+  machine-binaries:
+    name: klex-machine binary (${{ matrix.name }}${{ matrix.cross-name && format(' + {0}', matrix.cross-name) || '' }})
+    needs: machine-version
+    if: needs.machine-version.outputs.version != ''
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     permissions:
       contents: read
+    strategy:
+      matrix:
+        include:
+          - name: linux-x64
+            os: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+          - name: linux-arm64
+            os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+          - name: darwin-arm64
+            os: macos-15-xlarge
+            target: aarch64-apple-darwin
+            cross-name: darwin-x64
+            cross-target: x86_64-apple-darwin
+          - name: win32-x64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - name: win32-arm64
+            os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+    defaults:
+      run:
+        shell: bash
+    env:
+      KLEX_MACHINE_VERSION: ${{ needs.machine-version.outputs.version }}
+      EXECUTABLE: klex-machine${{ contains(matrix.target, 'windows') && '.exe' || '' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: ./.github/actions/setup-rust
         with:
-          node-version-file: .nvmrc
-      - name: Build the universal helper
-        run: node mcp-servers/klex-machine/native/macos/build.mjs "$RUNNER_TEMP/macos-desktop-helper/klex-desktop-helper"
-      - name: Smoke-test the helper
-        run: |
-          "$RUNNER_TEMP/macos-desktop-helper/klex-desktop-helper" version
-          lipo "$RUNNER_TEMP/macos-desktop-helper/klex-desktop-helper" -verify_arch arm64 x86_64
+          cache-key: ${{ matrix.target }}${{ matrix.cross-target && format('+{0}', matrix.cross-target) || '' }}
+      - uses: ./.github/actions/setup-target-cc
+        with:
+          target: ${{ matrix.target }}
+      - run: cargo build --release --locked --package klex-machine --bin klex-machine --target ${{ matrix.target }}
+      - name: Check the reported version
+        run: test "$("target/${{ matrix.target }}/release/$EXECUTABLE" --version)" = "$KLEX_MACHINE_VERSION"
+      - if: runner.os == 'Linux'
+        name: Check the binary is fully static
+        run: file "target/${{ matrix.target }}/release/$EXECUTABLE" | grep -Eq '(static-pie|statically) linked'
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: klex-machine-macos-desktop-helper
-          path: ${{ runner.temp }}/macos-desktop-helper/klex-desktop-helper
+          name: klex-machine-${{ matrix.name }}
+          path: target/${{ matrix.target }}/release/${{ env.EXECUTABLE }}
+          if-no-files-found: error
+          retention-days: 1
+      - if: matrix.cross-target
+        run: cargo build --release --locked --package klex-machine --bin klex-machine --target ${{ matrix.cross-target }}
+      - if: matrix.cross-target
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: klex-machine-${{ matrix.cross-name }}
+          path: target/${{ matrix.cross-target }}/release/klex-machine
           if-no-files-found: error
           retention-days: 1
 
   release:
-    needs: macos-desktop-helper
+    needs: [machine-version, machine-binaries]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-22.04
     timeout-minutes: 30
@@ -58,26 +122,29 @@ jobs:
       - uses: ./.github/actions/setup-workspace
         with:
           registry-url: https://registry.npmjs.org
-      - if: needs.macos-desktop-helper.result == 'success'
+      - if: needs.machine-binaries.result == 'success'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: klex-machine-macos-desktop-helper
-          path: ${{ runner.temp }}/macos-desktop-helper
-      # Every later build, verify and prepack of @klex/machine copies it.
-      - name: Use the macOS desktop helper
-        if: needs.macos-desktop-helper.result == 'success'
-        run: echo "KLEX_MACHINE_MACOS_HELPER_PREBUILT=$RUNNER_TEMP/macos-desktop-helper/klex-desktop-helper" >> "$GITHUB_ENV"
-      - name: Report the missing macOS desktop helper
-        if: needs.macos-desktop-helper.result != 'success'
-        run: echo "::warning::The macOS desktop helper did not build; @klex/machine is not released from this commit and waits for the next release run."
+          pattern: klex-machine-*
+          path: ${{ runner.temp }}/klex-machine-binaries
+      # The klex-machine release step publishes these.
+      - name: Use the klex-machine binaries
+        if: needs.machine-binaries.result == 'success'
+        env:
+          VERSION: ${{ needs.machine-version.outputs.version }}
+        run: |
+          echo "KLEX_MACHINE_BINARIES=$RUNNER_TEMP/klex-machine-binaries" >> "$GITHUB_ENV"
+          echo "KLEX_MACHINE_BUILT_VERSION=$VERSION" >> "$GITHUB_ENV"
+      - name: Report the missing klex-machine binaries
+        if: needs.machine-version.outputs.version != '' && needs.machine-binaries.result != 'success'
+        run: echo "::warning::The klex-machine binaries did not build; @klex/machine is not released from this commit and waits for the next release run."
       - name: Build workspace
         run: pnpm build
       - name: Typecheck workspace
         run: pnpm typecheck
       - name: Test workspace
         run: pnpm test
-      # Run sequentially because klex-machine rebuilds the SDK while packing;
-      # concurrent package verification could clean the SDK dist directory.
+      # Run sequentially; each verification builds its package first.
       - name: Verify publishable packages
         run: |
           pnpm exec turbo run verify --filter @klex/agent-admin-api
@@ -117,9 +184,9 @@ jobs:
         run: >-
           pnpm exec semantic-release
           --extends ./packages/mcp-extension-realtime-media/.releaserc.js
-      # semantic-release picks these commits up on the next run with a helper.
+      # semantic-release picks these commits up on the next run with binaries.
       - name: Release klex-machine
-        if: env.KLEX_MACHINE_MACOS_HELPER_PREBUILT != ''
+        if: env.KLEX_MACHINE_BINARIES != ''
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN: "false"

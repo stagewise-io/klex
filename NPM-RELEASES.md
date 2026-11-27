@@ -1,6 +1,6 @@
 # npm releases
 
-The npm workflow publishes six packages independently on pushes to `main`. It does not publish the Klex executable. Calculator and the other private workspaces are excluded.
+The npm workflow publishes six packages independently on pushes to `main`, plus the platform packages of `@klex/machine`. It does not publish the Klex executable. Calculator and the other private workspaces are excluded.
 
 | Package | Commit scope | Release tag |
 | --- | --- | --- |
@@ -28,9 +28,17 @@ fix(mcp-extension-client,mcp-extension-push-notifications,mcp-extension-realtime
 
 The helper remains a runtime dependency. Bundling it separately into each extension would create separate WeakMaps and let the extensions overwrite each other's MCP acknowledgement handler.
 
+## klex-machine platform packages
+
+`@klex/machine` is a JavaScript launcher for a native executable. Each release also publishes `@klex/machine-darwin-arm64`, `-darwin-x64`, `-linux-arm64`, `-linux-x64`, `-win32-arm64` and `-win32-x64` at the same version, and the launcher pins all six as exact `optionalDependencies`. They have no release tags or commit scopes of their own; `machine` commits release them together.
+
+The `machine-version` job runs a semantic-release dry run to find the version, and the `machine-binaries` job builds every target with it. The release job then hands the executables to `mcp-servers/klex-machine/npm/release-plugin.mjs`, which runs before `@semantic-release/npm`: it checks the binaries and that every platform package already exists on npm, stages the platform packages, pins the launcher, and publishes the platform packages before the launcher. If any binary fails to build, klex-machine is skipped and its commits release with the next run.
+
+Every platform package must exist on npm, with trusted publishing configured, before the first release that includes it; trusted publishing cannot be configured for a package that does not exist yet. Publish a placeholder version (for example `0.0.0`) of each by hand once under the `@klex` organization, then configure trusted publishing for it as described below. The release fails before tagging while a platform package is missing.
+
 ## One-time setup before merging
 
-For each new Stagewise package, configure npm trusted publishing for the GitHub repository `stagewise-io/klex` and workflow `release.yml`. Confirm the npm organization owns the package. The workflow uses npm OIDC and GitHub's workflow token. Do not add an npm token secret. Existing provenance settings remain unchanged.
+For each new Stagewise package and each new `@klex/machine-<platform>` package, configure npm trusted publishing for the GitHub repository `stagewise-io/klex` and workflow `release.yml`. Confirm the npm organization owns the package. The workflow uses npm OIDC and GitHub's workflow token. Do not add an npm token secret. Existing provenance settings remain unchanged.
 
 The extension packages already existed on npm without scoped release tags. Artifact verification established these source baselines:
 
@@ -58,7 +66,7 @@ Never move an existing published tag or tag an unrelated implementation commit a
 
 ## Workflow and publication preparation
 
-The single release job installs with the frozen lockfile, builds, typechecks, tests, and verifies packed consumers before changing any release manifests. All extension baselines are checked before the first publication. Releases run sequentially: proxy SDK, shared client, push notifications, realtime media, machine, Admin API. The SDK remains before machine, and the shared client is released before its consumers and machine's packing step.
+The single release job installs with the frozen lockfile, builds, typechecks, tests, and verifies packed consumers before changing any release manifests. All extension baselines are checked before the first publication. Releases run sequentially: proxy SDK, shared client, push notifications, realtime media, machine, Admin API. The shared client is released before its consumers.
 
 The npm plugin prepares each package version. The extension plugin then rewrites runtime `workspace:` dependencies to exact registry versions in the disposable checkout. It selects the latest reachable helper release tag and confirms that exact version exists on npm, with three bounded attempts for propagation. It never falls back to the helper's stale authored version or an unverified npm dist-tag. Missing, private, or unknown workspace runtime dependencies stop preparation.
 

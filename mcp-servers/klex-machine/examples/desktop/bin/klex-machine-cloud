@@ -1,7 +1,0 @@
-#!/bin/sh
-set -eu
-enrollment="${HOME}/.klex-machine/identity/enrollment.json"
-while [ ! -f "$enrollment" ]; do
-  sleep 2
-done
-exec /usr/local/bin/klex-machine

@@ -1,57 +1,52 @@
-import { chmod, copyFile, mkdir, rm } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
+// Builds klex-machine with Cargo and copies the executable to dist/, where
+// bin/klex-machine.js finds it in a monorepo checkout. Only dist/ is a turbo
+// output; target/ is far too large for the cache.
+//
+// KLEX_MACHINE_BUILD_PROFILE selects the Cargo profile (default: release).
+// KLEX_MACHINE_BUILD_TARGET selects a target triple (default: the host).
 
-import { build } from 'esbuild';
+import { execFileSync } from 'node:child_process';
+import { copyFileSync, mkdirSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import process from 'node:process';
+import { fileURLToPath } from 'node:url';
 
-import { buildMacosHelper } from './native/macos/build.mjs';
+const packageRoot = fileURLToPath(new URL('.', import.meta.url));
+const profile = process.env.KLEX_MACHINE_BUILD_PROFILE || 'release';
+const target = process.env.KLEX_MACHINE_BUILD_TARGET || '';
 
-const packageRoot = import.meta.dirname;
-const outputFile = resolve(packageRoot, 'dist/index.js');
-await rm(resolve(packageRoot, 'dist'), { force: true, recursive: true });
-await build({
-  entryPoints: [resolve(packageRoot, 'src/index.ts')],
-  bundle: true,
-  platform: 'node',
-  format: 'esm',
-  target: 'node24',
-  outfile: outputFile,
-  // dbus-next loads these only for transports and bus discovery klex-machine
-  // never uses; it always connects to an explicit unix:socket address.
-  external: ['node-pty', 'usocket', 'x11'],
-  alias: {
-    '@stagewise/mcp-extension-client': resolve(
-      packageRoot,
-      '../../packages/mcp-extension-client/src/index.ts',
-    ),
-    '@stagewise/mcp-extension-push-notifications/server': resolve(
-      packageRoot,
-      '../../packages/mcp-extension-push-notifications/src/server/index.ts',
-    ),
-    '@stagewise/mcp-extension-push-notifications': resolve(
-      packageRoot,
-      '../../packages/mcp-extension-push-notifications/src/index.ts',
-    ),
-  },
-  banner: {
-    js: "#!/usr/bin/env node\nimport { createRequire as __klexCreateRequire } from 'node:module';\nconst require = __klexCreateRequire(import.meta.url);",
-  },
-  sourcemap: true,
-  legalComments: 'eof',
-});
-if (process.platform !== 'win32') await chmod(outputFile, 0o755);
+const cargoArgs = [
+  'build',
+  '--locked',
+  '--package',
+  'klex-machine',
+  '--bin',
+  'klex-machine',
+  '--profile',
+  profile,
+  ...(target ? ['--target', target] : []),
+];
+execFileSync('cargo', cargoArgs, { cwd: packageRoot, stdio: 'inherit' });
 
-// The macOS desktop helper is Swift and builds only on macOS. Other hosts,
-// such as the Linux release job, copy one built on a macOS runner.
-const macosHelper = resolve(packageRoot, 'dist/macos/klex-desktop-helper');
-const prebuiltMacosHelper = process.env.KLEX_MACHINE_MACOS_HELPER_PREBUILT;
-if (prebuiltMacosHelper) {
-  await mkdir(dirname(macosHelper), { recursive: true });
-  await copyFile(resolve(prebuiltMacosHelper), macosHelper);
-  await chmod(macosHelper, 0o755);
-  console.log('Copied prebuilt dist/macos/klex-desktop-helper');
-} else if (process.platform === 'darwin') {
-  await buildMacosHelper(macosHelper);
-  console.log('Built dist/macos/klex-desktop-helper');
-}
+const metadata = JSON.parse(
+  execFileSync('cargo', ['metadata', '--format-version', '1', '--no-deps'], {
+    cwd: packageRoot,
+    encoding: 'utf8',
+  }),
+);
+const windows = target
+  ? target.includes('windows')
+  : process.platform === 'win32';
+const executable = `klex-machine${windows ? '.exe' : ''}`;
+const source = join(
+  metadata.target_directory,
+  ...(target ? [target] : []),
+  profile === 'dev' ? 'debug' : profile,
+  executable,
+);
 
-console.log('Build complete: dist/index.js');
+const dist = join(packageRoot, 'dist');
+rmSync(dist, { force: true, recursive: true });
+mkdirSync(dist, { recursive: true });
+copyFileSync(source, join(dist, executable));
+console.log(`Copied ${executable} to ${dist}`);

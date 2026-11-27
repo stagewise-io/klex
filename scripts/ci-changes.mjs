@@ -60,17 +60,8 @@ export const groups = {
     ],
   },
   machine: {
-    // klex-machine's test tsconfig maps @stagewise/logger to its source.
-    packages: [
-      '@klex/machine',
-      '@klex/machine-conformance',
-      '@stagewise/logger',
-    ],
+    packages: ['@klex/machine'],
     paths: rustPaths,
-  },
-  'machine-rs': {
-    packages: ['@klex/machine-rs'],
-    paths: [...rustPaths, 'mcp-servers/klex-machine/contract/'],
   },
   executable: {
     packages: ['@stagewise/klex'],
@@ -78,12 +69,8 @@ export const groups = {
   // The Tauri crate links klex-machine through Cargo, not pnpm. The desktop
   // job runs the release workflow's install checks on debug bundles.
   desktop: {
-    packages: ['@klex/desktop', '@klex/machine-rs'],
-    paths: [
-      ...rustPaths,
-      '.github/workflows/_release-klex-desktop.yml',
-      'mcp-servers/klex-machine/contract/',
-    ],
+    packages: ['@klex/desktop', '@klex/machine'],
+    paths: [...rustPaths, '.github/workflows/_release-klex-desktop.yml'],
   },
 };
 

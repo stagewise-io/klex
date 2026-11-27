@@ -61,7 +61,7 @@ jobs:
           if [[ "$EVENT_NAME" == schedule && -n "$latest_tag" ]]; then
             if git diff --quiet "$latest_tag" HEAD -- \
               apps/desktop \
-              mcp-servers/klex-machine-rs \
+              mcp-servers/klex-machine \
               Cargo.toml \
               Cargo.lock \
               rust-toolchain.toml \

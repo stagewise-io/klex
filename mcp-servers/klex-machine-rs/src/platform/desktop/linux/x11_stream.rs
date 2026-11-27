@@ -1,6 +1,7 @@
 //! The built-in stream for an X display without a VNC server: `GetImage`
-//! frames through the tile sender, and viewer input through XTEST. Each runs
-//! on its own thread with its own connection.
+//! frames through the tile sender, viewer input through XTEST, and the
+//! clipboard through selections. Each runs on its own thread with its own
+//! connection.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
@@ -11,6 +12,7 @@ use std::time::{Duration, Instant};
 use x11rb::protocol::xproto::Keycode;
 
 use super::x11::{self, Session, XError};
+use super::x11_clipboard;
 use crate::desktop::Warn;
 use crate::desktop::provider::{MouseButton, ScrollDirection};
 use crate::desktop::rfb::tiles::{FrameRef, TileSender};
@@ -52,6 +54,7 @@ impl StreamBackend for X11StreamBackend {
             refresh: AtomicBool::new(false),
         });
         let (input, inputs) = channel();
+        let clipboard_sink = sink.clone();
         let capture = (shared.clone(), self.display.clone(), self.warn.clone());
         std::thread::Builder::new()
             .name("x11-capture".into())
@@ -62,6 +65,27 @@ impl StreamBackend for X11StreamBackend {
                 sink.ended(error);
             })
             .map_err(|error| format!("Could not start the stream capture: {error}"))?;
+        let (clipboard, texts) = channel();
+        let clipboard_state = (
+            shared.clone(),
+            self.display.clone(),
+            self.warn.clone(),
+            clipboard_sink,
+        );
+        let started = std::thread::Builder::new()
+            .name("x11-clipboard".into())
+            .spawn(move || {
+                let (shared, display, warn, sink) = clipboard_state;
+                if let Err(error) =
+                    x11_clipboard::run(&display, &sink, &texts, &shared.running, &warn)
+                {
+                    warn(&error);
+                }
+            });
+        if let Err(error) = started {
+            shared.running.store(false, Ordering::SeqCst);
+            return Err(format!("Could not start the stream clipboard: {error}"));
+        }
         let input_state = (self.display.clone(), self.warn.clone());
         let started = std::thread::Builder::new()
             .name("x11-input".into())
@@ -73,6 +97,7 @@ impl StreamBackend for X11StreamBackend {
         Ok(Box::new(X11Capture {
             shared,
             input: Some(input),
+            clipboard: Some(clipboard),
         }))
     }
 }
@@ -80,6 +105,7 @@ impl StreamBackend for X11StreamBackend {
 struct X11Capture {
     shared: Arc<Shared>,
     input: Option<Sender<Input>>,
+    clipboard: Option<Sender<String>>,
 }
 
 impl X11Capture {
@@ -117,13 +143,17 @@ impl StreamCapture for X11Capture {
         self.send(Input::Key(key));
     }
 
-    // X selections need an owner window answering requests; not supported yet.
-    fn set_clipboard(&mut self, _text: String) {}
+    fn set_clipboard(&mut self, text: String) {
+        if let Some(clipboard) = &self.clipboard {
+            let _ = clipboard.send(text);
+        }
+    }
 
     fn stop(&mut self) {
         self.shared.running.store(false, Ordering::SeqCst);
         // The input thread lets go of held keys and buttons once its channel closes.
         self.input = None;
+        self.clipboard = None;
     }
 }
 

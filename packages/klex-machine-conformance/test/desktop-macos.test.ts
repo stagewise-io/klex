@@ -141,7 +141,12 @@ describe.runIf(process.platform === 'darwin')('native macOS desktop', () => {
     );
     expect(await call(machine, 'desktop_focus_window', { id: 'abc' })).toEqual(
       expect.objectContaining({
-        content: [{ type: 'text', text: 'Error: Invalid window id: abc' }],
+        content: [
+          {
+            type: 'text',
+            text: 'Input validation error: Invalid arguments for tool desktop_focus_window: id: Invalid string: must match pattern /^\\d+$/',
+          },
+        ],
         isError: true,
       }),
     );

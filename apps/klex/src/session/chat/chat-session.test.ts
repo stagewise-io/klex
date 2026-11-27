@@ -33,6 +33,7 @@ import {
   type ChatSessionDependencies,
   createChatSession,
 } from './chat-session';
+import type { ModelHistoryProjection } from './extensions/extension-api';
 import { createDataPart } from './extensions/extension-api';
 import { createSoulExt } from './extensions/soul';
 import type { ExtendedUIMessage } from './message-types';
@@ -250,6 +251,109 @@ it.each(['standard', 'without-extension'] as const)(
       }
       await expect(session.waitForIdle(3_000)).resolves.toBe(true);
       expect(onIdle).not.toHaveBeenCalled();
+    } finally {
+      await session.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+it.each([true, false])(
+  'projects realtime bootstrap and live updates only when registered (%s)',
+  async (enabled) => {
+    const directory = await mkdtemp(join(tmpdir(), 'klex-model-projection-'));
+    const value = klexConfigSchema.parse({});
+    const scope = (): IntrospectionScope => ({
+      path: [],
+      introspect: vi.fn(),
+      child: scope,
+      removeChild: vi.fn(),
+    });
+    const project = vi.fn(
+      async (
+        history: ExtendedUIMessage[],
+        _options: ModelHistoryProjection,
+      ) => {
+        for (const message of history) {
+          for (const part of message.parts) {
+            if (part.type === 'data-context') {
+              part.data.metadata.secret = 'projected';
+              part.data.content = [{ type: 'text', text: 'projected' }];
+            }
+          }
+        }
+        return history;
+      },
+    );
+    const session = createChatSession({
+      logging: createLogger({ name: 'model-projection' }),
+      config: { get: () => value } as unknown as Config,
+      modelResolver: {} as never,
+      dataDirectory: directory,
+      mcp: null,
+      extensionFactories: enabled
+        ? [
+            {
+              identifier: 'test/projection',
+              create: () => ({ projectModelHistory: project }),
+            },
+          ]
+        : [],
+      introspectionScope: scope(),
+      sessionContext: { kind: 'default', name: 'main', sessionId: 'default' },
+      basePrompt: 'Test.',
+    });
+    try {
+      await session.start();
+      const lease = await session.acquireInteractionLease({
+        mode: 'realtime',
+        externalSessionId: 'test-call',
+        namespace: 'test',
+        signal: new AbortController().signal,
+        model: { modelId: 'test', contextSize: 32_000, inputCapabilities: {} },
+      });
+      try {
+        const send = (id: string) =>
+          session.inbox.send({
+            sourceEnv: 'fixture',
+            urgency: SessionInboxUrgency.Default,
+            context: {
+              sourceEnv: 'fixture',
+              metadata: { secret: id },
+              content: [{ type: 'text', text: id }],
+            },
+          });
+        send('bootstrap-secret');
+        const prepared = await lease.bootstrap();
+        const text = JSON.stringify(prepared.context.messages);
+        expect(text).toContain(enabled ? 'projected' : 'bootstrap-secret');
+        if (enabled) expect(text).not.toContain('bootstrap-secret');
+        prepared.commit();
+        send('live-secret');
+        const update = (await lease.updates[Symbol.asyncIterator]().next())
+          .value!;
+        const delivered = await lease.prepareUpdate!(update);
+        expect(delivered.event.context.metadata.secret).toBe('live-secret');
+        expect(delivered.sequence).toBe(update.sequence);
+        expect(delivered.eventId).toBe(update.eventId);
+        if (enabled) {
+          expect(delivered.modelText).toContain('projected');
+          expect(delivered.modelText).not.toContain('live-secret');
+          expect(
+            project.mock.calls.map(([, options]) => options.purpose),
+          ).toEqual(['inference', 'realtime-update']);
+        } else {
+          expect(delivered.modelText).toBeUndefined();
+          expect(project).not.toHaveBeenCalled();
+        }
+        expect(JSON.stringify(session.getMessages())).toContain('live-secret');
+        expect(JSON.stringify(session.getMessages())).not.toContain(
+          'projected',
+        );
+        lease.acknowledgeUpdate(update.sequence);
+      } finally {
+        await lease.release();
+      }
     } finally {
       await session.close();
       await rm(directory, { recursive: true, force: true });

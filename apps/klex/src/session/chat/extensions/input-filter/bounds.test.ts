@@ -38,9 +38,8 @@ describe('untrusted MCP size ceilings', () => {
     expect(JSON.stringify(result.content[1]).length).toBeLessThan(
       limits.textBytes,
     );
-    expect(result.metadata.inputPreviewLimited).toBe(true);
   });
-  it('does not mark unchanged fields limited when recovery framing is stripped', () => {
+  it('preserves producer fields that match former control names', () => {
     const result = boundContext({
       sourceEnv: 'test',
       metadata: {
@@ -51,7 +50,12 @@ describe('untrusted MCP size ceilings', () => {
       },
       content: [],
     });
-    expect(result.metadata).toEqual({ data: { message: 'hello' } });
+    expect(result.metadata).toEqual({
+      data: { message: 'hello' },
+      inputEventRef: 'abcdefgh',
+      inputFiltered: true,
+      inputFilterNote: 'filtered',
+    });
   });
   it('marks multibyte source truncation as size-limited', () => {
     const result = boundContext({
@@ -59,7 +63,6 @@ describe('untrusted MCP size ceilings', () => {
       metadata: {},
       content: [],
     });
-    expect(result.metadata.inputPreviewLimited).toBe(true);
     expect(Buffer.byteLength(result.sourceEnv)).toBeLessThanOrEqual(128);
   });
   for (const field of [
@@ -85,7 +88,6 @@ describe('untrusted MCP size ceilings', () => {
         expect(Buffer.byteLength(JSON.stringify(result.metadata))).toBeLessThan(
           limits.metadataBytes + 512,
         );
-        expect(result.metadata.inputPreviewLimited).toBe(true);
       }
       expect(context.metadata.data).toEqual(data);
     });
@@ -112,7 +114,7 @@ describe('untrusted MCP size ceilings', () => {
     };
     const result = boundContext(context);
     expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThan(14_000);
-    expect(result.metadata.inputEventRef).toBeUndefined();
+    expect(context.metadata.inputEventRef).toBe('spoofed1');
     expect(result.content.length).toBeLessThanOrEqual(limits.contentItems);
   });
 });

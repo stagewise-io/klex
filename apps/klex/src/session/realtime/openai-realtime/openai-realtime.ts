@@ -254,7 +254,9 @@ class OpenAIRealtimeSession implements RealtimeModelSession {
     if (this.settled) return;
     if (this.deliveredUpdates.has(update.eventId)) return;
     this.deliveredUpdates.add(update.eventId);
-    const item = userTextItem(renderInteractionUpdateText(update.event));
+    const item = userTextItem(
+      update.modelText ?? renderInteractionUpdateText(update.event),
+    );
     this.replayLog.push({
       kind: 'update',
       item,

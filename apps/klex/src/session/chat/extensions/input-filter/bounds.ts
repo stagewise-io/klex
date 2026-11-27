@@ -85,12 +85,7 @@ export function preview(
 
 /** No semantic field, identity plan, fallback, or transport string bypasses these limits. */
 export function boundContext(context: ContextDataUIPart): ContextDataUIPart {
-  const {
-    inputEventRef: _ref,
-    inputFiltered: _filtered,
-    inputFilterNote: _note,
-    ...fields
-  } = context.metadata;
+  const fields = context.metadata;
   const metadata = preview(fields) as ContextMetadataValue;
   let remaining = limits.textBytes as number;
   const content = context.content.slice(0, limits.contentItems).map((block) => {
@@ -115,10 +110,6 @@ export function boundContext(context: ContextDataUIPart): ContextDataUIPart {
     remaining = 0;
     return { type: 'text' as const, text: `${bounded}… ${omitted}` };
   });
-  const changed =
-    JSON.stringify(metadata) !== JSON.stringify(fields) ||
-    JSON.stringify(content) !== JSON.stringify(context.content) ||
-    Buffer.byteLength(context.sourceEnv) > 128;
   return {
     ...context,
     sourceEnv: prefix(context.sourceEnv, 128),
@@ -126,7 +117,6 @@ export function boundContext(context: ContextDataUIPart): ContextDataUIPart {
       ...(metadata && typeof metadata === 'object' && !Array.isArray(metadata)
         ? metadata
         : { preview: metadata }),
-      ...(changed ? { inputPreviewLimited: true } : {}),
     },
     content,
   };

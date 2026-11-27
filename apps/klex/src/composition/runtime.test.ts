@@ -76,36 +76,6 @@ describe('runtime composition', () => {
     expect(onRollbackError).toHaveBeenCalledOnce();
   });
 
-  it('owns projections between history startup and history shutdown', async () => {
-    const recorded = emptyRecord();
-    const modules = createModules({ recorded });
-    modules.inputProjections = {
-      start: async () => {
-        recorded.starts.push('input-projections');
-      },
-      close: async () => {
-        recorded.closes.push('input-projections');
-      },
-    };
-    const runtime = await startRuntime({
-      logging: createLoggingMock(),
-      modules,
-    });
-    await runtime.close();
-    expect(recorded.starts.indexOf('input-projections')).toBeGreaterThan(
-      recorded.starts.indexOf('session-history'),
-    );
-    expect(recorded.starts.indexOf('input-projections')).toBeLessThan(
-      recorded.starts.indexOf('session-host'),
-    );
-    expect(recorded.closes.indexOf('input-projections')).toBeGreaterThan(
-      recorded.closes.indexOf('session-host'),
-    );
-    expect(recorded.closes.indexOf('input-projections')).toBeLessThan(
-      recorded.closes.indexOf('session-history'),
-    );
-  });
-
   it('starts the session host before realtime and MCP', () => {
     const order = runtimeStartupOrder(
       createModules({ recorded: emptyRecord() }),

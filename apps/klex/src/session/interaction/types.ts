@@ -36,6 +36,7 @@ export interface PreparedInferenceContextHandle {
 }
 
 export interface InteractionUpdateEnvelope {
+  readonly modelText?: string;
   readonly sequence: number;
   readonly eventId: string;
   readonly event: SessionInboxEvent;

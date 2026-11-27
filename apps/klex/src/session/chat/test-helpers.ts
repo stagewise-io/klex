@@ -48,6 +48,10 @@ export function makeExtensionHandler() {
       Promise.resolve({ history: h, flags: {} }),
     ),
     runStepCompleteHooks: vi.fn(() => Promise.resolve()),
+    projectModelHistory: vi.fn(async (history: readonly ExtendedUIMessage[]) =>
+      structuredClone([...history]),
+    ),
+    getChildContextExtensions: vi.fn(() => []),
     getDataPartTransformers: vi.fn(() => ({})),
     getOwnedDataPartKeys: vi.fn(() => new Set<string>()),
     prepareHistoryAnnotations: vi.fn(() => Promise.resolve()),

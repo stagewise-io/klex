@@ -174,11 +174,47 @@ function factoryWith(
       onStepComplete: overrides.onStepComplete,
       dataPartTransformers: overrides.dataPartTransformers,
       introspect: overrides.introspect,
+      projectModelHistory: overrides.projectModelHistory,
+      getChildContextExtensions: overrides.getChildContextExtensions,
     }),
   };
 }
 
 // --- tests ---
+
+it('runs model projections on copies and leaves absent extensions inert', async () => {
+  const history = [makeMessage('raw')];
+  const baseline = structuredClone(history);
+  const absent = createExtensionHandler({ ...HANDLER_OPTS, factories: [] });
+  expect(
+    await absent.projectModelHistory(history, { purpose: 'inference' }),
+  ).toEqual(baseline);
+  expect(absent.getChildContextExtensions('anything')).toEqual([]);
+  const project = vi.fn(async (copy) => {
+    copy[0].parts = [{ type: 'text', text: 'projected' }];
+    return copy;
+  });
+  const enabled = createExtensionHandler({
+    ...HANDLER_OPTS,
+    factories: [factoryWith({ projectModelHistory: project })],
+  });
+  for (const purpose of [
+    'inference',
+    'transcript',
+    'realtime-update',
+  ] as const) {
+    expect(
+      (await enabled.projectModelHistory(history, { purpose }))[0]?.parts,
+    ).toEqual([{ type: 'text', text: 'projected' }]);
+  }
+  expect(history).toEqual(baseline);
+  expect(project).toHaveBeenCalledTimes(3);
+  await enabled.projectModelHistory(history, {
+    purpose: 'inference',
+    signal: AbortSignal.abort(),
+  });
+  expect(project).toHaveBeenCalledTimes(3);
+});
 
 it('runs full-idle hooks synchronously and isolates hook failures', () => {
   const idle = vi.fn();

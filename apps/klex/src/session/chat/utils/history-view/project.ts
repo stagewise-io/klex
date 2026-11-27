@@ -69,7 +69,7 @@ export function projectMessage(
   const skipped =
     (filter.roles && !filter.roles.includes(message.role)) ||
     filter.skipMessage?.(message);
-  for (const [partIndex, part] of message.parts.entries()) {
+  for (const part of message.parts) {
     const occurrence = dispatcher.consume(part);
     if (skipped) continue;
     const record = projectPart(
@@ -78,7 +78,6 @@ export function projectMessage(
       filter,
       dispatcher,
       occurrence,
-      { messageId: message.id, partIndex },
     );
     if (record) projected.records.push(record);
   }
@@ -91,7 +90,6 @@ function projectPart(
   filter: HistoryFilterOptions,
   dispatcher: ReturnType<typeof createDataPartDispatcher>,
   occurrence: number,
-  contextOccurrence: { messageId: string; partIndex: number },
 ): HistoryRecord | null {
   if (part.type === 'text') {
     const text = filter.text;
@@ -134,9 +132,7 @@ function projectPart(
 
   if (part.type === 'data-context') {
     if (!filter.context) return null;
-    const projected =
-      filter.projectContext?.(part.data, contextOccurrence) ?? part.data;
-    return projectContext(projected, filter.context, projected !== part.data);
+    return projectContext(part.data, filter.context);
   }
 
   if (part.type.startsWith('data-')) {
@@ -208,7 +204,6 @@ function toolStatus(state: string): ToolStatus {
 function projectContext(
   data: ContextDataUIPart,
   options: ContextOptions,
-  prepared: boolean,
 ): HistoryRecord | null {
   const record: Extract<HistoryRecord, { kind: 'context' }> = {
     kind: 'context',
@@ -223,18 +218,6 @@ function projectContext(
       : data.sourceEnv,
     items: [],
   };
-  const reference =
-    prepared &&
-    typeof data.metadata?.inputEventRef === 'string' &&
-    /^[a-z0-9]{8}$/.test(data.metadata.inputEventRef)
-      ? data.metadata.inputEventRef
-      : undefined;
-  if (reference) {
-    record.items.push({
-      kind: 'text',
-      text: `inputEventRef: ${reference}; ${data.metadata.inputFiltered === true ? 'filtered view may omit keys or limit values; ' : ''}use getUnfilteredInput for the original event`,
-    });
-  }
   if (options.metadata) {
     const metadata = serializeValue(data.metadata, options.metadata);
     if (metadata !== null && metadata !== '{}') record.metadata = metadata;
@@ -242,7 +225,7 @@ function projectContext(
   // Events carry their semantic body in metadata rather than MCP content
   // blocks. Transcript presets omit general metadata, but must retain Events
   // for compaction, consult and the classifier under the context text budget.
-  if (!options.metadata && (data.metadata?.origin === 'events' || reference)) {
+  if (!options.metadata && data.metadata?.origin === 'events') {
     // Occurrences are size/depth bounded at ingress. Serialize their JSON body
     // directly before applying the text budget: compactJson's node cap would
     // replace wide but valid payloads wholesale with [unserializable]. Keep
@@ -252,15 +235,6 @@ function projectContext(
         type: data.metadata.type,
         data: data.metadata.data,
         createdAt: data.metadata.createdAt,
-        ...(data.metadata.projectionStatus
-          ? { projectionStatus: data.metadata.projectionStatus }
-          : {}),
-        ...(reference
-          ? {
-              inputEventRef: reference,
-              inputFiltered: data.metadata.inputFiltered,
-            }
-          : {}),
       },
       {
         ...options.text,

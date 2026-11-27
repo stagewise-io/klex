@@ -84,11 +84,6 @@ export interface TurnDependencies {
    * reject.
    */
   atStepBoundary?: () => Promise<void>;
-  prepareInputs?: (signal: AbortSignal) => Promise<void>;
-  projectContext?: (
-    context: import('@/session/inbox').ContextDataUIPart,
-    occurrence?: { messageId: string; partIndex: number },
-  ) => import('@/session/inbox').ContextDataUIPart;
   /** Stops the turn after the current step reaches its commit boundary. */
   shouldYieldGenerationLane?: () => boolean;
   /**
@@ -298,8 +293,6 @@ class TurnModule implements Turn {
           }
 
           const step = createStep({
-            prepareInputs: this.deps.prepareInputs,
-            projectContext: this.deps.projectContext,
             logger: this.deps.logger,
             turnContext,
             messages: this.deps.messages,

@@ -34,10 +34,6 @@ export interface ValueLimit extends FieldLimit {
 
 /** Stage 1: decides which parts become records and how fields are bounded. */
 export interface HistoryFilterOptions {
-  projectContext?: (
-    context: import('@/session/inbox').ContextDataUIPart,
-    occurrence?: { messageId: string; partIndex: number },
-  ) => import('@/session/inbox').ContextDataUIPart;
   /** Messages with other roles project to zero records. Default: all. */
   roles?: readonly HistoryRole[];
   skipMessage?: (message: HistoryMessage) => boolean;

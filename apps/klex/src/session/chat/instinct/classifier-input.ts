@@ -17,10 +17,6 @@ export interface InstinctClassifierInputLimits {
 }
 
 export interface InstinctClassifierInputArgs {
-  projectContext?: (
-    context: import('@/session/inbox').ContextDataUIPart,
-    occurrence?: { messageId: string; partIndex: number },
-  ) => import('@/session/inbox').ContextDataUIPart;
   readonly entries: readonly InstinctClassifierEntry[];
   readonly history: readonly ExtendedUIMessage[];
   readonly dataPartTransformers: DataPartTransformers;
@@ -61,7 +57,6 @@ export function buildInstinctClassifierInput(
   const windowStart = Math.max(0, args.history.length - HISTORY_MESSAGE_COUNT);
   const view = createInstinctHistoryView({
     transformers: args.dataPartTransformers,
-    projectContext: args.projectContext,
   });
   const rendered = view
     .fit(args.history, {

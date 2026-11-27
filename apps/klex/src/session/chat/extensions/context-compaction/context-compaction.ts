@@ -516,9 +516,12 @@ class ContextCompactionExt implements Extension {
     const transcript = createTranscriptHistoryView(
       undefined,
       this.deps.getDataPartTransformers?.(),
-      ['time', 'timezone', 'todos', 'consult-report'],
-      this.deps.projectInputContext,
-    ).render(slice).text;
+      Object.keys(this.deps.getDataPartTransformers?.() ?? {}),
+    ).render(
+      (await this.deps.projectModelHistory?.(slice, {
+        purpose: 'transcript',
+      })) ?? slice,
+    ).text;
     span.setAttribute('compaction.transcriptLength', transcript.length);
 
     if (transcript.trim().length === 0) {

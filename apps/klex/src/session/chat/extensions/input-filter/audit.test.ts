@@ -1,7 +1,5 @@
 import { describe, expect, it } from 'vitest';
 
-import { createTranscriptHistoryView } from '@/session/chat/utils/history-view';
-
 import { catalog, compile } from './catalog';
 import { createInputProjections } from './input-projections';
 import { select } from './projection';
@@ -24,7 +22,6 @@ describe('input projection audit reproductions', () => {
     expect(result.context.metadata.data).toMatchObject({
       messages: data.messages,
     });
-    expect(result.context.metadata.inputFiltered).toBe(true);
   });
 
   it('fallback retains a bounded preview beyond 128 leaves', () => {
@@ -43,40 +40,6 @@ describe('input projection audit reproductions', () => {
         content: [],
       }).context.metadata.data,
     ).toMatchObject({ message: data.message });
-  });
-
-  it('transcript truncation preserves the recovery header', () => {
-    const text = createTranscriptHistoryView(
-      undefined,
-      undefined,
-      undefined,
-      (context) => ({ ...context }),
-    ).render([
-      {
-        id: 'audit',
-        role: 'user',
-        parts: [
-          {
-            type: 'data-context',
-            data: {
-              sourceEnv: 'audit',
-              metadata: {
-                origin: 'events',
-                type: 'message',
-                data: { message: 'Important conversational text '.repeat(30) },
-                projectionStatus: 'projected',
-                inputEventRef: 'abcdefgh',
-              },
-              content: [],
-            },
-          },
-        ],
-      },
-    ]).text;
-    expect(text).toContain('Important conversational text');
-    expect(text).not.toContain('Important conversational text '.repeat(30));
-    expect(text).toContain('abcdefgh');
-    expect(text).toContain('getUnfilteredInput');
   });
 
   it('helper selections cannot omit recognized conversational fields', () => {

@@ -182,7 +182,7 @@ class GPTLiveSession implements RealtimeModelSession {
     await this.ready.promise;
     if (!this.acceptingUpdates)
       throw new Error('GPT-Live session is no longer accepting updates');
-    const text = renderInteractionUpdateText(update.event);
+    const text = update.modelText ?? renderInteractionUpdateText(update.event);
     const item = {
       type: 'response.item.create',
       event_id: update.eventId,

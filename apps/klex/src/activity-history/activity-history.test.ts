@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createInputProjections } from '@/input-projections';
 import type { ExtendedUIMessage } from '@/session/chat/message-types';
 
 import {
@@ -70,14 +69,10 @@ describe('canonical activity view', () => {
     expect(page?.text).toMatch(/^12:00 #/);
   });
 
-  it('keeps canonical activity readable when projection storage fails', async () => {
+  it('reads canonical activity without projection dependencies', async () => {
     const { history, append } = await setup();
     const source = await append('canonical activity survives');
-    const projections = createInputProjections();
-    vi.spyOn(projections, 'prepare').mockRejectedValue(
-      new Error('storage unavailable'),
-    );
-    const activities = createActivityHistory(history, projections);
+    const activities = createActivityHistory(history);
     expect(
       await activities.readPage(source.id, {
         offset: 0,
@@ -88,7 +83,6 @@ describe('canonical activity view', () => {
       'text',
       expect.stringContaining('canonical activity survives'),
     );
-    await projections.close();
   });
   it('preserves exclusions and consumes filtered-only sources', async () => {
     const { activities, append, now } = await setup();

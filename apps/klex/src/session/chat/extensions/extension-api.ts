@@ -657,6 +657,11 @@ export function readInstinctClassification<
   return ctx.classification.answers as InstinctClassificationAnswers<K>;
 }
 
+export interface ModelHistoryProjection {
+  purpose: 'inference' | 'transcript' | 'realtime-update';
+  signal?: AbortSignal;
+}
+
 export interface Extension {
   /**
    * Checked before step-start hooks, history repair, or inference. Returning
@@ -872,6 +877,15 @@ export interface Extension {
    */
   onCheckpointApplied?: (event: CheckpointAppliedEvent) => void | Promise<void>;
 
+  /** Projects a model-facing copy after semantic matching. Preserve message IDs and part positions; never change canonical history. */
+  projectModelHistory?: (
+    history: ExtendedUIMessage[],
+    options: ModelHistoryProjection,
+  ) => Promise<ExtendedUIMessage[]>;
+
+  /** Delegates only extension capabilities present in the fitted child context. */
+  getChildContextExtensions?: (context: string) => ExtensionFactory[];
+
   dataPartTransformers?: DataPartTransformers;
 
   /**
@@ -894,16 +908,12 @@ export interface ExtensionDeps {
   getHistory: () => ExtendedUIMessage[];
   /** Shared projections for history consumers; resolved after extension initialization. */
   getDataPartTransformers?: () => DataPartTransformers;
-  /** Prepared model-facing projection only; internal matching must use getHistory. */
-  projectInputContext?: (
-    context: import('@/session/inbox').ContextDataUIPart,
-    occurrence?: { messageId: string; partIndex: number },
-  ) => import('@/session/inbox').ContextDataUIPart;
-
-  /** Delegate detail access to only the references explicitly supplied to a child. */
-  createInputInfoExtension?: (
-    references: ReadonlySet<string>,
-  ) => ExtensionFactory;
+  /** Extension projections for helper transcripts; internal matching uses getHistory. */
+  projectModelHistory?: (
+    history: readonly ExtendedUIMessage[],
+    options: ModelHistoryProjection,
+  ) => Promise<ExtendedUIMessage[]>;
+  getChildContextExtensions?: (context: string) => ExtensionFactory[];
 
   /** Core checkpoint API; see {@link CheckpointApi}. */
   checkpoints: CheckpointApi;

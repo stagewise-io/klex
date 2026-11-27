@@ -136,36 +136,6 @@ function structuredResponse(
 }
 
 describe('extension generation', () => {
-  it.each([true, false])(
-    'selects memory models for input filtering, falling back to chat when absent (memory=%s)',
-    async (hasMemory) => {
-      const memory = [{ providerId: 'test', modelId: 'memory' }];
-      const chat = [{ providerId: 'test', modelId: '0' }];
-      const prepare = vi.fn();
-      const { session } = await harness([], {
-        config: {
-          get: () => ({ modelSelection: { chat } }),
-          getModelSelection: (purpose: string) =>
-            purpose === 'memory' ? (hasMemory ? memory : []) : chat,
-        } as unknown as Config,
-        inputProjections: { prepare } as unknown as NonNullable<
-          ChatSessionDependencies['inputProjections']
-        >,
-      });
-      try {
-        await (
-          session as unknown as { prepareProjectedInputs(): Promise<void> }
-        ).prepareProjectedInputs();
-        expect(prepare).toHaveBeenCalledWith(
-          'default',
-          expect.any(Array),
-          expect.objectContaining({ modelIds: hasMemory ? memory : chat }),
-        );
-      } finally {
-        await session.close();
-      }
-    },
-  );
   it('executes one step and retains text, model and usage without a learning-result contract', async () => {
     const model = new MockLanguageModelV4({ doGenerate: [call('accepted')] });
     const { generate, session, args, submit } = await harness([model]);

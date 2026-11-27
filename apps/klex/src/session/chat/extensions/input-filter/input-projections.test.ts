@@ -116,7 +116,7 @@ describe('fallback policy', () => {
       pushEvent.content,
     );
   });
-  it('adds omission framing only when selection or size limits change the view', () => {
+  it('bounds identity selections without adding producer metadata', () => {
     const large = {
       sourceEnv: 'test',
       metadata: { origin: 'events', data: { message: 'x'.repeat(10_000) } },
@@ -128,11 +128,9 @@ describe('fallback policy', () => {
     });
     const bounded = service.project(large, { ...plan, identity: true });
     expect(bounded.status).toBe('unchanged');
-    expect(bounded.context.metadata.inputPreviewLimited).toBe(true);
-    expect(bounded.context.metadata.inputFiltered).toBe(true);
-    expect(bounded.context.metadata.inputFilterNote).toContain(
-      'getUnfilteredInput',
-    );
+    expect(bounded.context.metadata.inputFiltered).toBeUndefined();
+    expect(bounded.context.metadata.inputFilterNote).toBeUndefined();
+    expect(bounded.projectedBytes).toBeLessThan(bounded.originalBytes);
     expect(bounded.projectedBytes).toBe(
       Buffer.byteLength(JSON.stringify(bounded.context.metadata)),
     );
@@ -143,10 +141,7 @@ describe('fallback policy', () => {
     });
     const result = service.project(nestedEvent, plan);
     expect(result.status).toBe('fallback');
-    expect(result.context.metadata.inputFiltered).toBe(true);
-    expect(result.context.metadata.inputFilterNote).toContain(
-      'getUnfilteredInput',
-    );
+    expect(result.context.metadata.inputFilterNote).toBeUndefined();
     expect(result.projectedBytes).toBeLessThan(result.originalBytes / 2);
   });
 });

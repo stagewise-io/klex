@@ -68,7 +68,7 @@ describe('applyScope', () => {
 
 describe('projectMessage', () => {
   it.each(['events', 'push-notifications'])(
-    'uses prepared %s payloads in metadata-free model views without mutating canonical data',
+    'preserves baseline %s rendering without mutating canonical data',
     (origin) => {
       const message = msg(
         [
@@ -87,21 +87,12 @@ describe('projectMessage', () => {
           media: 'placeholder',
           resources: 'placeholder',
         },
-        projectContext: (input) => ({
-          ...input,
-          metadata: {
-            ...input.metadata,
-            data: { message: 'keep' },
-            inputEventRef: 'abcdefgh',
-            inputFiltered: true,
-          },
-        }),
       });
       const rendered = JSON.stringify(result);
-      expect(rendered).toContain('keep');
+      expect(rendered.includes('traceId')).toBe(origin === 'events');
       expect(rendered).toContain('native content');
-      expect(rendered).toContain('abcdefgh');
-      expect(rendered).not.toContain('hidden');
+      expect(rendered).not.toContain('abcdefgh');
+      expect(rendered.includes('hidden')).toBe(origin === 'events');
       expect(message).toEqual(before);
     },
   );

@@ -301,7 +301,6 @@ class ConsultExtension implements Extension {
     );
     // Capture exactly the bounded context sent to this child. Reference access
     // is delegated only when its framing survived transcript fitting.
-    const references = new Set<string>();
     let serializedContext: string;
     let child: ConsultEntry['child'];
     try {
@@ -313,23 +312,14 @@ class ConsultExtension implements Extension {
             this.config.maxContextMessages ?? CONSULT_DEFAULT_CONTEXT_MESSAGES,
         },
         this.deps.getDataPartTransformers?.(),
-        ['time', 'timezone', 'todos', CONSULT_REPORT_KEY],
-        (context, occurrence) => {
-          const projected =
-            this.deps.projectInputContext?.(context, occurrence) ?? context;
-          const reference = projected.metadata.inputEventRef;
-          // Only the trusted projector can mint delegated capabilities. Never
-          // extract authorization from payload strings or unchanged raw metadata.
-          if (projected !== context && typeof reference === 'string')
-            references.add(reference);
-          return projected;
-        },
-      ).render(this.deps.getHistory()).text;
-      for (const reference of references) {
-        if (!serializedContext.includes(`inputEventRef: ${reference}; `))
-          references.delete(reference);
-      }
-      const details = this.deps.createInputInfoExtension?.(references);
+        Object.keys(this.deps.getDataPartTransformers?.() ?? {}),
+      ).render(
+        (await this.deps.projectModelHistory?.(this.deps.getHistory(), {
+          purpose: 'transcript',
+        })) ?? this.deps.getHistory(),
+      ).text;
+      const delegated =
+        this.deps.getChildContextExtensions?.(serializedContext) ?? [];
       child = await this.deps.createChildSession({
         // Stable role name: it becomes the `session consult` span name and a
         // metric label. The handle ↔ session id mapping is logged below.
@@ -338,7 +328,7 @@ class ConsultExtension implements Extension {
         extensions: [
           ...this.config.childExtensionFactories,
           reporter,
-          ...(details ? [details] : []),
+          ...delegated,
         ],
         modelPurpose: 'consult',
         basePrompt: CONSULT_BASE_PROMPT,

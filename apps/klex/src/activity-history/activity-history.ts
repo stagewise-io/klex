@@ -1,4 +1,3 @@
-import type { InputProjections } from '@/input-projections';
 import {
   createActivityHistoryView,
   type FittedHistory,
@@ -172,38 +171,12 @@ function activityRecordRenderer() {
 }
 
 class ActivityHistoryModule implements ActivityHistory {
-  constructor(
-    private readonly history: SessionHistory,
-    private readonly projections?: InputProjections,
-  ) {}
+  constructor(private readonly history: SessionHistory) {}
 
   private async prepareRows(
     rows: ActivityMessage[],
   ): Promise<ActivityMessage[]> {
-    if (!this.projections) return rows;
-    const messages = rows.flatMap((row) => (row.message ? [row.message] : []));
-    try {
-      await this.projections.prepare('default', messages);
-    } catch {
-      // Projection storage is optional; canonical activity must remain available.
-      return rows;
-    }
-    return rows.map((row) => ({
-      ...row,
-      message: row.message
-        ? {
-            ...row.message,
-            parts: row.message.parts.map((part) =>
-              part.type === 'data-context'
-                ? {
-                    ...part,
-                    data: this.projections!.present('default', part.data),
-                  }
-                : part,
-            ),
-          }
-        : null,
-    }));
+    return rows;
   }
 
   isAvailable(): boolean {
@@ -590,7 +563,6 @@ class ActivityHistoryModule implements ActivityHistory {
 
 export function createActivityHistory(
   history: SessionHistory,
-  projections?: InputProjections,
 ): ActivityHistory {
-  return new ActivityHistoryModule(history, projections);
+  return new ActivityHistoryModule(history);
 }

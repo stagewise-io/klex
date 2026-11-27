@@ -21,6 +21,7 @@ import type {
   InstinctClassificationRequest,
   InstinctContext,
   InstinctInput,
+  ModelHistoryProjection,
   ProvisionalStepContext,
   ResolvedModel,
   StepCompleteEvent,
@@ -75,6 +76,12 @@ export interface InstinctReactionSettlement {
 }
 
 export interface ExtensionHandler {
+  projectModelHistory(
+    history: readonly ExtendedUIMessage[],
+    options: ModelHistoryProjection,
+  ): Promise<ExtendedUIMessage[]>;
+  getChildContextExtensions(context: string): ExtensionFactory[];
+
   /** All instantiated extensions. */
   readonly extensions: readonly Extension[];
 
@@ -757,6 +764,25 @@ class ExtensionHandlerModule implements ExtensionHandler {
       return;
     }
     throw new Error('History changed repeatedly during annotation preparation');
+  }
+
+  async projectModelHistory(
+    history: readonly ExtendedUIMessage[],
+    options: ModelHistoryProjection,
+  ): Promise<ExtendedUIMessage[]> {
+    let projected = structuredClone([...history]);
+    for (const extension of this.extensions) {
+      if (options.signal?.aborted) break;
+      if (extension.projectModelHistory)
+        projected = await extension.projectModelHistory(projected, options);
+    }
+    return projected;
+  }
+
+  getChildContextExtensions(context: string): ExtensionFactory[] {
+    return this.extensions.flatMap(
+      (extension) => extension.getChildContextExtensions?.(context) ?? [],
+    );
   }
 
   async runHistoryTransformers(

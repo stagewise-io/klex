@@ -834,7 +834,6 @@ describe('Step — extension handler hooks', () => {
       preProcessedHistory,
       expect.anything(),
       expect.any(Function),
-      undefined,
     );
   });
 

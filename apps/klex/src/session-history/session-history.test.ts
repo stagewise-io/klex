@@ -9,10 +9,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createLogger } from '@stagewise/logger';
 
 import { type KlexConfig, klexConfigSchema } from '@/config';
-import { createInputProjections } from '@/input-projections';
 import type { SqliteStoreDefinition } from '@/local-data';
 import { createLocalData } from '@/local-data';
 import { KLEX_VERSION } from '@/release';
+import type { ExtensionDeps } from '@/session/chat/extensions/extension-api';
+import {
+  createInputFilterExt,
+  createInputProjections,
+} from '@/session/chat/extensions/input-filter';
 import type { ExtendedUIMessage } from '@/session/chat/message-types';
 import { convertToModelMessagesExtended } from '@/session/chat/utils/convert-to-model-messages';
 import { createTranscriptHistoryView } from '@/session/chat/utils/history-view';
@@ -133,6 +137,102 @@ describe('input projection storage', () => {
     generate,
     modelIds: [{ providerId: 'test', modelId: 'chat' }],
   });
+  it.each([true, false])(
+    'projects collision-free wrappers with memory models (memory=%s)',
+    async (hasMemory) => {
+      const { history } = await setup();
+      const controls = {
+        inputEventRef: 'producer',
+        inputFiltered: false,
+        inputFilterNote: 'producer note',
+        inputPreviewLimited: false,
+        projectionStatus: 'producer status',
+      };
+      const context = {
+        sourceEnv: 'fixture',
+        metadata: {
+          origin: 'events',
+          ...controls,
+          data: { message: 'hello', ...controls, traceId: 'hidden' },
+        },
+        content: [{ type: 'text' as const, text: 'native text' }],
+      };
+      const messages = [event('wrapped', context)];
+      history.openRecorder(meta()).scheduleSync(() => messages);
+      const generate = vi.fn().mockResolvedValue({
+        success: true,
+        finishReason: 'stop',
+        output: {
+          keep: [['message'], ...Object.keys(controls).map((key) => [key])],
+        },
+      });
+      const memory = [{ providerId: 'test', modelId: 'memory' }];
+      const chat = [{ providerId: 'test', modelId: 'chat' }];
+      const deps = {
+        sessionId: 'default',
+        generateText: generate,
+        config: {
+          getModelSelection: (purpose: string) =>
+            purpose === 'memory' && hasMemory
+              ? memory
+              : purpose === 'memory'
+                ? []
+                : chat,
+        },
+      } as unknown as ExtensionDeps;
+      const extension = createInputFilterExt(history).create(deps);
+      await extension.onStart?.();
+      try {
+        const projected = await extension.projectModelHistory!(
+          structuredClone(messages),
+          { purpose: 'inference' },
+        );
+        const transformers = extension.dataPartTransformers!;
+        const converted = JSON.stringify(
+          await convertToModelMessagesExtended(projected, transformers),
+        );
+        const transcript = createTranscriptHistoryView(
+          undefined,
+          transformers,
+          Object.keys(transformers),
+        ).render(projected).text;
+        const wrapped = projected[0]!.parts[0] as unknown as {
+          data: { eventRef: string; event: ContextDataUIPart };
+        };
+        expect(wrapped.data.event.metadata).toMatchObject(controls);
+        expect(wrapped.data.event.metadata.data).toMatchObject(controls);
+        expect(wrapped.data.event.metadata.data).not.toHaveProperty('traceId');
+        for (const text of [converted, transcript]) {
+          expect(text).toContain(wrapped.data.eventRef);
+          expect(text).toContain('native text');
+          expect(text).not.toContain('getUnfilteredInput');
+          expect(text).not.toContain('traceId');
+        }
+        expect(generate.mock.calls[0]![0].modelIds).toEqual(
+          hasMemory ? memory : chat,
+        );
+        expect(
+          extension.getChildContextExtensions!(
+            `eventRef: ${wrapped.data.eventRef}`,
+          ),
+        ).toHaveLength(1);
+        expect(
+          extension.getChildContextExtensions!('eventRef: unknown0'),
+        ).toEqual([]);
+        const raw = JSON.stringify(
+          await convertToModelMessagesExtended(messages, {}),
+        );
+        expect(raw).toContain('traceId');
+        expect(context.metadata.data.traceId).toBe('hidden');
+        await extension.projectModelHistory!(structuredClone(messages), {
+          purpose: 'realtime-update',
+        });
+        expect(generate).toHaveBeenCalledTimes(1);
+      } finally {
+        await extension.onClose?.();
+      }
+    },
+  );
   it('binds identical payload occurrences independently across retention', async () => {
     const { history } = await setup();
     const recorder = history.openRecorder(meta());
@@ -142,34 +242,32 @@ describe('input projection storage', () => {
     recorder.scheduleSync(() => messages);
     const projections = createInputProjections(history);
     await projections.prepare('default', messages);
-    const a = projections.present('default', first).metadata.inputEventRef;
-    const b = projections.present('default', second).metadata.inputEventRef;
+    const a = projections.reference('default', first);
+    const b = projections.reference('default', second);
     expect(typeof a).toBe('string');
     expect(typeof b).toBe('string');
     expect(a).not.toBe(b);
     const clones = structuredClone(messages);
     for (const [index, reference] of [a, b].entries()) {
       expect(
-        projections.present('default', contextOf(clones[index]!), {
+        projections.reference('default', contextOf(clones[index]!), {
           messageId: clones[index]!.id,
           partIndex: 0,
-        }).metadata.inputEventRef,
+        }),
       ).toBe(reference);
     }
     const changed = structuredClone(clones[0]!);
     changed.parts[0]!.data.metadata.type = 'changed';
     expect(
-      projections.present('default', contextOf(changed), {
+      projections.reference('default', contextOf(changed), {
         messageId: changed.id,
         partIndex: 0,
-      }).metadata.inputEventRef,
+      }),
     ).toBeUndefined();
     messages = messages.slice(1);
     recorder.scheduleSync(() => messages);
     await projections.prepare('default', messages);
-    expect(projections.present('default', second).metadata.inputEventRef).toBe(
-      b,
-    );
+    expect(projections.reference('default', second)).toBe(b);
     expect(
       await projections.readUnfiltered('default', b as string),
     ).toHaveProperty('chunk');
@@ -195,13 +293,11 @@ describe('input projection storage', () => {
       }
       await projections.prepare('default', messages);
       expect(
-        projections.present('default', contextOf(messages[0]!)).metadata
-          .inputEventRef,
+        projections.reference('default', contextOf(messages[0]!)),
       ).toBeUndefined();
-      expect(
-        projections.present('default', contextOf(messages[1]!)).metadata
-          .inputEventRef,
-      ).toMatch(/^[a-z0-9]{8}$/);
+      expect(projections.reference('default', contextOf(messages[1]!))).toMatch(
+        /^[a-z0-9]{8}$/,
+      );
       await projections.close();
     },
   );
@@ -223,12 +319,12 @@ describe('input projection storage', () => {
     const projections = createInputProjections(history);
     await projections.prepare('default', messages);
     const presented = projections.present('default', context);
-    expect(presented.metadata.inputFiltered).toBe(true);
+    expect(presented).not.toEqual(context);
     expect(presented.metadata.moreInfoSections).toBeUndefined();
     expect(
       await projections.readUnfiltered(
         'default',
-        presented.metadata.inputEventRef as string,
+        projections.reference('default', context) as string,
       ),
     ).toHaveProperty('chunk');
     await projections.close();
@@ -242,7 +338,7 @@ describe('input projection storage', () => {
     await projections.prepare('default', messages);
     const context = contextOf(messages[0]!);
     const before = projections.present('default', context);
-    expect(before.metadata.projectionStatus).toBe('fallback');
+    expect(before.metadata.data).not.toHaveProperty('traceId');
     const generate = vi.fn().mockResolvedValue({ success: false });
     await projections.prepare('default', messages, generation(generate));
     expect(generate).toHaveBeenCalledTimes(1);
@@ -269,8 +365,10 @@ describe('input projection storage', () => {
     await projections.prepare('default', messages, generation(generate));
     expect(generate).toHaveBeenCalledTimes(2);
     for (const message of messages) {
-      const ref = projections.present('default', contextOf(message)).metadata
-        .inputEventRef as string;
+      const ref = projections.reference(
+        'default',
+        contextOf(message),
+      ) as string;
       expect(await history.readInputProjection('default', ref)).toBeDefined();
     }
     await projections.close();
@@ -286,8 +384,7 @@ describe('input projection storage', () => {
     const projections = createInputProjections(history);
     await projections.prepare('default', messages);
     const context = contextOf(source);
-    const reference = projections.present('default', context).metadata
-      .inputEventRef as string;
+    const reference = projections.reference('default', context) as string;
     expect(
       await history.readInputProjection('default', reference),
     ).toBeDefined();
@@ -297,9 +394,7 @@ describe('input projection storage', () => {
     expect(
       await history.readInputProjection('default', reference),
     ).toBeDefined();
-    expect(projections.present('default', context).metadata.inputEventRef).toBe(
-      reference,
-    );
+    expect(projections.reference('default', context)).toBe(reference);
     await projections.close();
   });
 
@@ -372,9 +467,9 @@ describe('input projection storage', () => {
     await projections.prepare('default', messages, generation);
     const context = contextOf(messages[0]!);
     const before = projections.present('default', context);
-    expect(before.metadata.inputFiltered).toBe(true);
+    expect(before.metadata.data).not.toHaveProperty('traceId');
     expect(before.metadata.moreInfoSections).toBeUndefined();
-    const ref = before.metadata.inputEventRef as string;
+    const ref = projections.reference('default', context) as string;
     for (let i = 0; i < 9; i++)
       await projections.readUnfiltered(
         'default',
@@ -512,28 +607,27 @@ describe('input projection storage', () => {
     const pinned = projections.present('default', first);
     expect(pinned.metadata.data).toEqual({ message: 'Fact first' });
     expect(pinned.metadata.type).toBe('message');
-    const projectContext = (
-      context: ContextDataUIPart,
-      occurrence?: { messageId: string; partIndex: number },
-    ) => projections.present('default', context, occurrence);
     const clonedHistory = structuredClone(messages);
+    const projectedHistory = clonedHistory.map((message) => ({
+      ...message,
+      parts: message.parts.map((part, partIndex) => ({
+        ...part,
+        data: projections.present('default', part.data, {
+          messageId: message.id,
+          partIndex,
+        }),
+      })),
+    }));
     const converted = JSON.stringify(
-      await convertToModelMessagesExtended(
-        clonedHistory,
-        {},
-        undefined,
-        projectContext,
-      ),
+      await convertToModelMessagesExtended(projectedHistory, {}),
     );
     const transcript = createTranscriptHistoryView(
       { keep: 'newest', maxCharacters: 20_000 },
       undefined,
       [],
-      projectContext,
-    ).render(clonedHistory).text;
+    ).render(projectedHistory).text;
     for (const rendered of [converted, transcript]) {
       expect(rendered).toContain('Fact first');
-      expect(rendered).toContain(pinned.metadata.inputEventRef);
       expect(rendered).not.toContain('traceId');
     }
     expect(clonedHistory).toEqual(messages);
@@ -557,7 +651,7 @@ describe('input projection storage', () => {
     expect(projections.present('default', first)).toEqual(pinned);
     const details = (await projections.readUnfiltered(
       'default',
-      pinned.metadata.inputEventRef as string,
+      projections.reference('default', first) as string,
     )) as { chunk: string; nextCursor: string | null };
     expect(details.nextCursor).toBeNull();
     expect(JSON.parse(details.chunk)).toEqual(first);
@@ -599,9 +693,7 @@ describe('input projection storage', () => {
       expect(projections.present('default', small).metadata.data).toEqual(
         keep ? small.metadata.data : { message: 'keep' },
       );
-      expect(projections.present('default', small).metadata.inputFiltered).toBe(
-        keep ? undefined : true,
-      );
+      expect(projections.reference('default', small)).toMatch(/^[a-z0-9]{8}$/);
       await projections.close();
       const restored = createInputProjections(history);
       messages.push(event('large', large));
@@ -632,10 +724,10 @@ describe('input projection storage', () => {
     await projections.prepare('default', [source]);
     const presented = projections.present('default', context);
     expect(presented.content).toEqual(context.content);
-    expect(presented.metadata.inputEventRef).toMatch(/^[a-z0-9]{8}$/);
+    expect(projections.reference('default', context)).toMatch(/^[a-z0-9]{8}$/);
     const result = (await projections.readUnfiltered(
       'default',
-      presented.metadata.inputEventRef as string,
+      projections.reference('default', context) as string,
     )) as { chunk: string };
     expect(JSON.parse(result.chunk)).toEqual(context);
   });

@@ -83,26 +83,19 @@ describe('consult extension', () => {
       const message = 'x'.repeat(length);
       const spawned = child();
       const detailFactory: ExtensionFactory = {
-        identifier: 'io.stagewise/input-info',
+        identifier: 'io.stagewise/test-recovery',
         create: () => ({}),
       };
-      const createInputInfoExtension = vi.fn(() => detailFactory);
+      const getChildContextExtensions = vi.fn(() => [detailFactory]);
       const createChildSession = vi.fn(async () => spawned);
       const deps = makeDeps({
         createChildSession,
-        createInputInfoExtension,
-        projectInputContext: (context) =>
-          context.sourceEnv === 'trusted'
-            ? {
-                ...context,
-                metadata: {
-                  origin: 'events',
-                  data: { message },
-                  inputEventRef: 'abcdefgh',
-                  inputFiltered: true,
-                },
-              }
-            : context,
+        getChildContextExtensions,
+        projectModelHistory: async (history) =>
+          history.map((entry) => ({
+            ...entry,
+            parts: [{ type: 'text', text: message }],
+          })),
         getHistory: (): ExtendedUIMessage[] => [
           {
             id: 'source',
@@ -137,8 +130,8 @@ describe('consult extension', () => {
       await toolExecute<{ task: string }>(getTools(extension).startConsult)({
         task: 'review',
       });
-      expect(createInputInfoExtension).toHaveBeenCalledWith(
-        new Set(['abcdefgh']),
+      expect(getChildContextExtensions).toHaveBeenCalledWith(
+        expect.stringContaining(message.slice(0, 100)),
       );
       expect(createChildSession).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -149,11 +142,7 @@ describe('consult extension', () => {
         vi.mocked(spawned.inbox.sendMessage).mock.calls,
       );
       expect(childContext).not.toContain('hidden');
-      expect(childContext).toContain('inputEventRef: abcdefgh; filtered view');
-      if (message.length > 200)
-        expect(childContext).not.toContain(
-          '\\"inputEventRef\\":\\"abcdefgh\\"',
-        );
+      expect(childContext).toContain(message.slice(0, 100));
     },
   );
 

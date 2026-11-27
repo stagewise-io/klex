@@ -15,6 +15,19 @@ export interface ProjectionResult {
   originalBytes: number;
   projectedBytes: number;
 }
+export type ProjectionRepository = Pick<
+  SessionHistory,
+  | 'flush'
+  | 'readInputProjection'
+  | 'findInputProjectionPlan'
+  | 'saveInputProjectionPlan'
+  | 'bindInputProjection'
+  | 'pendingInputProjectionReviews'
+  | 'completeInputProjectionReview'
+  | 'deferInputProjectionReview'
+  | 'recordInputProjectionFetch'
+>;
+
 export interface InputProjections {
   start(): Promise<void>;
   close(): Promise<void>;
@@ -29,6 +42,11 @@ export interface InputProjections {
     context: ContextDataUIPart,
     occurrence?: { messageId: string; partIndex: number },
   ): ContextDataUIPart;
+  reference(
+    sessionId: string,
+    context: ContextDataUIPart,
+    occurrence?: { messageId: string; partIndex: number },
+  ): string | undefined;
   readUnfiltered(
     sessionId: string,
     reference: string,
@@ -63,7 +81,7 @@ class InputProjectionsModule implements InputProjections {
     feedbackReviews: 0,
     feedbackUpdates: 0,
   };
-  constructor(private readonly history?: SessionHistory) {}
+  constructor(private readonly history?: ProjectionRepository) {}
   async start(): Promise<void> {}
   async close(): Promise<void> {
     this.shutdown.abort();
@@ -103,7 +121,8 @@ class InputProjectionsModule implements InputProjections {
         this.reviewFlight = undefined;
       });
     }
-    await this.reviewFlight;
+    // Realtime delivery and helper transcripts must never await helper-model work.
+    if (boundedGeneration) await this.reviewFlight;
     for (const message of messages) {
       for (const [partIndex, part] of message.parts.entries()) {
         if (part.type !== 'data-context') continue;
@@ -339,15 +358,23 @@ class InputProjectionsModule implements InputProjections {
       : this.occurrences.get(context)?.get(sessionId);
     const binding = key ? this.prepared.get(key) : undefined;
     // Never hide data until its canonical source and recovery binding are durable.
-    if (!binding) return boundContext(context);
-    const result = this.project(context, binding.plan);
-    return {
-      ...result.context,
-      metadata: {
-        ...result.context.metadata,
-        inputEventRef: binding.reference,
-      },
-    };
+    if (!binding) return context;
+    return this.project(context, binding.plan).context;
+  }
+  reference(
+    sessionId: string,
+    context: ContextDataUIPart,
+    occurrence?: { messageId: string; partIndex: number },
+  ): string | undefined {
+    const key = occurrence
+      ? JSON.stringify([
+          sessionId,
+          occurrence.messageId,
+          occurrence.partIndex,
+          digest(context),
+        ])
+      : this.occurrences.get(context)?.get(sessionId);
+    return key ? this.prepared.get(key)?.reference : undefined;
   }
   async readUnfiltered(
     sessionId: string,
@@ -415,18 +442,7 @@ class InputProjectionsModule implements InputProjections {
       status: ProjectionResult['status'],
     ): ProjectionResult => {
       const bounded = boundContext(source);
-      const filtered =
-        status !== 'unchanged' || bounded.metadata.inputPreviewLimited === true;
-      const metadata = {
-        ...bounded.metadata,
-        ...(filtered
-          ? {
-              inputFiltered: true,
-              inputFilterNote:
-                'Filtered event: keys or full values may be omitted. Use getUnfilteredInput with inputEventRef to retrieve the complete original event.',
-            }
-          : {}),
-      };
+      const metadata = bounded.metadata;
       return {
         context: { ...bounded, metadata },
         status,
@@ -459,7 +475,6 @@ class InputProjectionsModule implements InputProjections {
         metadata: {
           ...context.metadata,
           data: payload,
-          projectionStatus: status,
         },
       },
       status,
@@ -467,7 +482,7 @@ class InputProjectionsModule implements InputProjections {
   }
 }
 export function createInputProjections(
-  history?: SessionHistory,
+  history?: ProjectionRepository,
 ): InputProjections {
   return new InputProjectionsModule(history);
 }

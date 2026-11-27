@@ -97,13 +97,15 @@ export async function convertInferenceHistory(
   handler: ExtensionHandler,
   history: ExtendedUIMessage[],
   onMemoryMetrics?: Parameters<typeof convertToModelMessagesExtended>[2],
-  projectContext?: Parameters<typeof convertToModelMessagesExtended>[3],
+  signal?: AbortSignal,
 ): Promise<ModelMessage[]> {
   return convertToModelMessagesExtended(
-    history,
+    await handler.projectModelHistory(history, {
+      purpose: 'inference',
+      signal,
+    }),
     handler.getDataPartTransformers(),
     onMemoryMetrics,
-    projectContext,
   );
 }
 
@@ -120,7 +122,7 @@ export async function assembleInferenceContext(options: {
   extensionHandler: ExtensionHandler;
   model: ResolvedModel;
   baseInstructions: string;
-  projectContext?: Parameters<typeof convertToModelMessagesExtended>[3];
+  signal?: AbortSignal;
   onMemoryMetrics?: Parameters<typeof convertToModelMessagesExtended>[2];
 }): Promise<AssembledInferenceContext> {
   const historyResult = await runInferenceHistoryTransformers(
@@ -132,7 +134,7 @@ export async function assembleInferenceContext(options: {
     options.extensionHandler,
     historyResult.history,
     options.onMemoryMetrics,
-    options.projectContext,
+    options.signal,
   );
   const contextResult = await runInferenceContextTransformers(
     options.extensionHandler,

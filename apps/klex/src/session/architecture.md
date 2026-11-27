@@ -98,12 +98,12 @@ The composition root wires shared deps once and passes a `sessionFactory` to `Se
 ### Startup order
 
 ```
-model-call-logger → session-history → input-projections → skill-registry
+model-call-logger → session-history → skill-registry
   → admin-api → cloud-connectivity
   → session-host → realtime → mcp → telemetry-manager
 ```
 
-The application owns one shared input-projection service and injects it into sessions and activity readers. It starts after history and closes after session consumers but before history. Default sessions expose scoped `getUnfilteredInput`; consult children receive only delegated references and no MCP access. The shared realtime coordinator awaits projection preparation before provider dispatch.
+The optional input-filter extension owns projection lifecycle and policy, borrowing a narrow sessions-storage repository. Generic model-history projection hooks cover inference, helper transcripts and realtime delivery without feature-specific session dependencies. Removing its factory registration restores baseline rendering. Consult children receive only explicitly delegated recovery capabilities and no MCP access.
 
 ### Soul administration
 

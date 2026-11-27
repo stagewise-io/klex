@@ -108,7 +108,8 @@ fn pattern(source: &str) -> Option<Regex> {
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     cache
         .entry(source.to_string())
-        .or_insert_with(|| Regex::new(source).ok())
+        // JavaScript's `\d` is ASCII only; the regex crate's is Unicode.
+        .or_insert_with(|| Regex::new(&source.replace(r"\d", "[0-9]")).ok())
         .clone()
 }
 
@@ -143,11 +144,15 @@ fn check(schema: &Value, value: &Value, path: &mut Vec<String>, issues: &mut Vec
                 return value.clone();
             };
             check_length(schema, value, path, issues);
-            if schema.get("format").and_then(Value::as_str) == Some("uuid")
-                && let Some(source) = schema.get("pattern").and_then(Value::as_str)
+            if let Some(source) = schema.get("pattern").and_then(Value::as_str)
                 && !pattern(source).is_some_and(|regex| regex.is_match(text))
             {
-                push(issues, path, "Invalid UUID".into());
+                let message = if schema.get("format").and_then(Value::as_str) == Some("uuid") {
+                    "Invalid UUID".into()
+                } else {
+                    format!("Invalid string: must match pattern /{source}/")
+                };
+                push(issues, path, message);
             }
             value.clone()
         }
@@ -383,6 +388,42 @@ mod tests {
                 expected,
                 "{case}"
             );
+            checked += 1;
+        }
+        assert!(checked > 50);
+    }
+
+    #[test]
+    fn matches_the_typescript_desktop_messages() {
+        let contract: Value =
+            serde_json::from_str(include_str!("../../klex-machine/contract/desktop.json")).unwrap();
+        let cases: Vec<Value> = serde_json::from_str(include_str!(
+            "../../klex-machine/contract/desktop-validation.json"
+        ))
+        .unwrap();
+        let mut checked = 0;
+        for case in cases {
+            let Some(expected) = case["result"]["content"][0]["text"].as_str() else {
+                continue;
+            };
+            let Some(issues) =
+                expected.strip_prefix(&format!("Input validation error: Invalid arguments for tool {}: ", case["name"].as_str().unwrap()))
+            else {
+                continue;
+            };
+            let tools = if case["desktop"] == "fake" {
+                &contract["accessibilityTools"]
+            } else {
+                &contract["tools"]
+            };
+            let tool = tools
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|tool| tool["name"] == case["name"])
+                .unwrap();
+            let actual = validate(&tool["inputSchema"], &case["arguments"]).unwrap_err();
+            assert_eq!(actual, issues, "{case}");
             checked += 1;
         }
         assert!(checked > 50);

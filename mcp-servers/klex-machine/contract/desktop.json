@@ -1,0 +1,778 @@
+{
+  "capabilities": {
+    "extensions": {
+      "io.stagewise/push-notifications": {}
+    },
+    "resources": {
+      "listChanged": true
+    },
+    "tools": {
+      "listChanged": true
+    }
+  },
+  "instructions": {
+    "available": " A graphical desktop is available through the desktop_* tools.",
+    "accessibility": " For standard apps, read desktop_accessibility_tree before taking a screenshot and click elements by ref; use screenshots for canvas, video and visual checks.",
+    "unavailable": " The graphical desktop tools are unavailable. If the user asks for computer use, tell them: ${hint}"
+  },
+  "resources": [
+    {
+      "uri": "desktop://screen",
+      "name": "desktop-screen",
+      "title": "Desktop screen",
+      "description": "Current screenshot of the machine's graphical desktop. Coordinates are pixels in the latest desktop_screenshot image (origin top-left).",
+      "mimeType": "image/jpeg"
+    }
+  ],
+  "tools": [
+    {
+      "name": "desktop_screenshot",
+      "description": "Capture the machine's graphical desktop. Returns an image plus its width and height. Coordinates are pixels in the latest desktop_screenshot image (origin top-left). If your client cannot see images in tool results, open the MCP resource desktop://screen instead and reopen it to refresh.",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "format": {
+            "type": "string",
+            "enum": ["jpeg", "png"]
+          }
+        }
+      }
+    },
+    {
+      "name": "desktop_zoom",
+      "description": "Capture a region of the desktop at higher detail, for reading small text. The region uses screenshot coordinates; the returned image is magnified and its pixels are not click coordinates.",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "x": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "y": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "width": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "height": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "format": {
+            "type": "string",
+            "enum": ["jpeg", "png"]
+          }
+        },
+        "required": ["x", "y", "width", "height"]
+      }
+    },
+    {
+      "name": "desktop_click",
+      "description": "Move the pointer and click. Coordinates are pixels in the latest desktop_screenshot image (origin top-left). Use count 2 for a double click. Modifiers are held during the click (ctrl, shift, alt, super).",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "x": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "y": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "button": {
+            "type": "string",
+            "enum": ["left", "middle", "right"]
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3
+          },
+          "modifiers": {
+            "maxItems": 4,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 16
+            }
+          },
+          "screenshot": {
+            "description": "Return a screenshot after the action. Defaults to false.",
+            "type": "boolean"
+          },
+          "settleMs": {
+            "description": "Wait before the follow-up screenshot. Defaults to 300.",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 5000
+          }
+        },
+        "required": ["x", "y"]
+      }
+    },
+    {
+      "name": "desktop_drag",
+      "description": "Press a mouse button at one point, move to another and release. Coordinates are pixels in the latest desktop_screenshot image (origin top-left).",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "from": {
+            "type": "object",
+            "properties": {
+              "x": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "y": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": ["x", "y"]
+          },
+          "to": {
+            "type": "object",
+            "properties": {
+              "x": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "y": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": ["x", "y"]
+          },
+          "button": {
+            "type": "string",
+            "enum": ["left", "middle", "right"]
+          },
+          "screenshot": {
+            "description": "Return a screenshot after the action. Defaults to false.",
+            "type": "boolean"
+          },
+          "settleMs": {
+            "description": "Wait before the follow-up screenshot. Defaults to 300.",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 5000
+          }
+        },
+        "required": ["from", "to"]
+      }
+    },
+    {
+      "name": "desktop_move",
+      "description": "Move the pointer without clicking, for example to reveal hover menus. Coordinates are pixels in the latest desktop_screenshot image (origin top-left).",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "x": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "y": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "screenshot": {
+            "description": "Return a screenshot after the action. Defaults to false.",
+            "type": "boolean"
+          },
+          "settleMs": {
+            "description": "Wait before the follow-up screenshot. Defaults to 300.",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 5000
+          }
+        },
+        "required": ["x", "y"]
+      }
+    },
+    {
+      "name": "desktop_scroll",
+      "description": "Scroll with the mouse wheel at a point. Amount is wheel clicks (about 3 lines each). Coordinates are pixels in the latest desktop_screenshot image (origin top-left).",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "x": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "y": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "direction": {
+            "type": "string",
+            "enum": ["up", "down", "left", "right"]
+          },
+          "amount": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50
+          },
+          "screenshot": {
+            "description": "Return a screenshot after the action. Defaults to false.",
+            "type": "boolean"
+          },
+          "settleMs": {
+            "description": "Wait before the follow-up screenshot. Defaults to 300.",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 5000
+          }
+        },
+        "required": ["x", "y", "direction"]
+      }
+    },
+    {
+      "name": "desktop_type",
+      "description": "Type text into the focused window as keyboard input. Click the target field first. Use desktop_key for Enter, Tab and shortcuts.",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 10000
+          },
+          "screenshot": {
+            "description": "Return a screenshot after the action. Defaults to false.",
+            "type": "boolean"
+          },
+          "settleMs": {
+            "description": "Wait before the follow-up screenshot. Defaults to 300.",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 5000
+          }
+        },
+        "required": ["text"]
+      }
+    },
+    {
+      "name": "desktop_key",
+      "description": "Press keys or shortcuts in order, for example [\"ctrl+l\"], [\"Enter\"] or [\"ctrl+shift+t\"]. Names: letters, digits, Enter, Escape, Tab, Backspace, Delete, Space, Up, Down, Left, Right, Home, End, PageUp, PageDown, F1-F24, and modifiers ctrl, shift, alt, super joined with +.",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "keys": {
+            "minItems": 1,
+            "maxItems": 32,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            }
+          },
+          "screenshot": {
+            "description": "Return a screenshot after the action. Defaults to false.",
+            "type": "boolean"
+          },
+          "settleMs": {
+            "description": "Wait before the follow-up screenshot. Defaults to 300.",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 5000
+          }
+        },
+        "required": ["keys"]
+      }
+    },
+    {
+      "name": "desktop_list_windows",
+      "description": "List visible top-level windows with id, title, bounds in screenshot coordinates and focus.",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {}
+      }
+    },
+    {
+      "name": "desktop_focus_window",
+      "description": "Raise and focus a window by id from desktop_list_windows.",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^\\d+$"
+          },
+          "screenshot": {
+            "description": "Return a screenshot after the action. Defaults to false.",
+            "type": "boolean"
+          },
+          "settleMs": {
+            "description": "Wait before the follow-up screenshot. Defaults to 300.",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 5000
+          }
+        },
+        "required": ["id"]
+      }
+    },
+    {
+      "name": "desktop_launch",
+      "description": "Start a GUI application on the desktop, detached. Pass the executable and arguments separately; no shell is used. Example: {\"command\":\"google-chrome\",\"args\":[\"https://example.com\"]}. settleMs defaults to 2000 here, since applications take longer to appear.",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "command": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "args": {
+            "maxItems": 64,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 16384
+            }
+          },
+          "cwd": {
+            "type": "string",
+            "minLength": 1
+          },
+          "screenshot": {
+            "description": "Return a screenshot after the action. Defaults to false.",
+            "type": "boolean"
+          },
+          "settleMs": {
+            "description": "Wait before the follow-up screenshot. Defaults to 300.",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 5000
+          }
+        },
+        "required": ["command"]
+      }
+    }
+  ],
+  "accessibilityTools": [
+    {
+      "name": "desktop_screenshot",
+      "description": "Capture the machine's graphical desktop. Returns an image plus its width and height. Coordinates are pixels in the latest desktop_screenshot image (origin top-left). If your client cannot see images in tool results, open the MCP resource desktop://screen instead and reopen it to refresh.",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "format": {
+            "type": "string",
+            "enum": ["jpeg", "png"]
+          }
+        }
+      }
+    },
+    {
+      "name": "desktop_zoom",
+      "description": "Capture a region of the desktop at higher detail, for reading small text. The region uses screenshot coordinates; the returned image is magnified and its pixels are not click coordinates.",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "x": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "y": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "width": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "height": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "format": {
+            "type": "string",
+            "enum": ["jpeg", "png"]
+          }
+        },
+        "required": ["x", "y", "width", "height"]
+      }
+    },
+    {
+      "name": "desktop_click",
+      "description": "Move the pointer and click. Coordinates are pixels in the latest desktop_screenshot image (origin top-left). Use count 2 for a double click. Modifiers are held during the click (ctrl, shift, alt, super). Pass either x and y, or the ref of an element from desktop_accessibility_tree to click its centre; a ref fails if the element is gone or off screen.",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "x": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "y": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "ref": {
+            "type": "string",
+            "pattern": "^r\\d+$",
+            "description": "Element ref from desktop_accessibility_tree, such as \"r12\"."
+          },
+          "button": {
+            "type": "string",
+            "enum": ["left", "middle", "right"]
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3
+          },
+          "modifiers": {
+            "maxItems": 4,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 16
+            }
+          },
+          "screenshot": {
+            "description": "Return a screenshot after the action. Defaults to false.",
+            "type": "boolean"
+          },
+          "settleMs": {
+            "description": "Wait before the follow-up screenshot. Defaults to 300.",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 5000
+          }
+        }
+      }
+    },
+    {
+      "name": "desktop_accessibility_tree",
+      "description": "Read the accessibility tree of the focused window as text, one element per line: ref, role, quoted name, value, bounds as @x,y widthxheight in screenshot coordinates, and states. Pass window (from desktop_list_windows) for another window, or ref to read one subtree. For standard apps it is usually cheaper than a screenshot and gives refs that desktop_click accepts. Refs stay valid while their element exists. Canvas, video, games and some apps expose little or nothing; use desktop_screenshot there and to check visual results. Defaults: interactiveOnly true, maxDepth 30, maxNodes 300.",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "window": {
+            "type": "string",
+            "pattern": "^\\d+$"
+          },
+          "ref": {
+            "type": "string",
+            "pattern": "^r\\d+$",
+            "description": "Element ref from desktop_accessibility_tree, such as \"r12\"."
+          },
+          "interactiveOnly": {
+            "description": "Only controls you can act on. Set false to include labels, headings and text.",
+            "type": "boolean"
+          },
+          "maxDepth": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 60
+          },
+          "maxNodes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000
+          }
+        }
+      }
+    },
+    {
+      "name": "desktop_drag",
+      "description": "Press a mouse button at one point, move to another and release. Coordinates are pixels in the latest desktop_screenshot image (origin top-left).",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "from": {
+            "type": "object",
+            "properties": {
+              "x": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "y": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": ["x", "y"]
+          },
+          "to": {
+            "type": "object",
+            "properties": {
+              "x": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "y": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": ["x", "y"]
+          },
+          "button": {
+            "type": "string",
+            "enum": ["left", "middle", "right"]
+          },
+          "screenshot": {
+            "description": "Return a screenshot after the action. Defaults to false.",
+            "type": "boolean"
+          },
+          "settleMs": {
+            "description": "Wait before the follow-up screenshot. Defaults to 300.",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 5000
+          }
+        },
+        "required": ["from", "to"]
+      }
+    },
+    {
+      "name": "desktop_move",
+      "description": "Move the pointer without clicking, for example to reveal hover menus. Coordinates are pixels in the latest desktop_screenshot image (origin top-left).",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "x": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "y": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "screenshot": {
+            "description": "Return a screenshot after the action. Defaults to false.",
+            "type": "boolean"
+          },
+          "settleMs": {
+            "description": "Wait before the follow-up screenshot. Defaults to 300.",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 5000
+          }
+        },
+        "required": ["x", "y"]
+      }
+    },
+    {
+      "name": "desktop_scroll",
+      "description": "Scroll with the mouse wheel at a point. Amount is wheel clicks (about 3 lines each). Coordinates are pixels in the latest desktop_screenshot image (origin top-left).",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "x": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "y": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "direction": {
+            "type": "string",
+            "enum": ["up", "down", "left", "right"]
+          },
+          "amount": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50
+          },
+          "screenshot": {
+            "description": "Return a screenshot after the action. Defaults to false.",
+            "type": "boolean"
+          },
+          "settleMs": {
+            "description": "Wait before the follow-up screenshot. Defaults to 300.",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 5000
+          }
+        },
+        "required": ["x", "y", "direction"]
+      }
+    },
+    {
+      "name": "desktop_type",
+      "description": "Type text into the focused window as keyboard input. Click the target field first. Use desktop_key for Enter, Tab and shortcuts.",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 10000
+          },
+          "screenshot": {
+            "description": "Return a screenshot after the action. Defaults to false.",
+            "type": "boolean"
+          },
+          "settleMs": {
+            "description": "Wait before the follow-up screenshot. Defaults to 300.",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 5000
+          }
+        },
+        "required": ["text"]
+      }
+    },
+    {
+      "name": "desktop_key",
+      "description": "Press keys or shortcuts in order, for example [\"ctrl+l\"], [\"Enter\"] or [\"ctrl+shift+t\"]. Names: letters, digits, Enter, Escape, Tab, Backspace, Delete, Space, Up, Down, Left, Right, Home, End, PageUp, PageDown, F1-F24, and modifiers ctrl, shift, alt, super joined with +.",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "keys": {
+            "minItems": 1,
+            "maxItems": 32,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            }
+          },
+          "screenshot": {
+            "description": "Return a screenshot after the action. Defaults to false.",
+            "type": "boolean"
+          },
+          "settleMs": {
+            "description": "Wait before the follow-up screenshot. Defaults to 300.",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 5000
+          }
+        },
+        "required": ["keys"]
+      }
+    },
+    {
+      "name": "desktop_list_windows",
+      "description": "List visible top-level windows with id, title, bounds in screenshot coordinates and focus.",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {}
+      }
+    },
+    {
+      "name": "desktop_focus_window",
+      "description": "Raise and focus a window by id from desktop_list_windows.",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^\\d+$"
+          },
+          "screenshot": {
+            "description": "Return a screenshot after the action. Defaults to false.",
+            "type": "boolean"
+          },
+          "settleMs": {
+            "description": "Wait before the follow-up screenshot. Defaults to 300.",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 5000
+          }
+        },
+        "required": ["id"]
+      }
+    },
+    {
+      "name": "desktop_launch",
+      "description": "Start a GUI application on the desktop, detached. Pass the executable and arguments separately; no shell is used. Example: {\"command\":\"google-chrome\",\"args\":[\"https://example.com\"]}. settleMs defaults to 2000 here, since applications take longer to appear.",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "command": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "args": {
+            "maxItems": 64,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 16384
+            }
+          },
+          "cwd": {
+            "type": "string",
+            "minLength": 1
+          },
+          "screenshot": {
+            "description": "Return a screenshot after the action. Defaults to false.",
+            "type": "boolean"
+          },
+          "settleMs": {
+            "description": "Wait before the follow-up screenshot. Defaults to 300.",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 5000
+          }
+        },
+        "required": ["command"]
+      }
+    }
+  ]
+}

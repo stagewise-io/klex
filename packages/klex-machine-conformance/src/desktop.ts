@@ -228,37 +228,48 @@ export class RfbViewer {
   /** Reads server messages until a framebuffer update arrives. */
   async update(): Promise<FramebufferRect[]> {
     for (;;) {
-      const type = (await this.#read(1))[0]!;
-      if (type === 2) continue;
-      if (type === 3) {
-        const header = await this.#read(7);
-        const length = header.readUInt32BE(3);
-        this.clipboard.push((await this.#read(length)).toString('latin1'));
-        continue;
-      }
-      if (type !== 0) throw new Error(`Unexpected RFB message ${type}`);
-      const count = (await this.#read(3)).readUInt16BE(1);
-      const rects: FramebufferRect[] = [];
-      for (let index = 0; index < count; index++) {
-        const header = await this.#read(12);
-        const rect = {
-          x: header.readUInt16BE(0),
-          y: header.readUInt16BE(2),
-          width: header.readUInt16BE(4),
-          height: header.readUInt16BE(6),
-          encoding: header.readInt32BE(8),
-        };
-        rects.push(rect);
-        if (rect.encoding !== 0)
-          throw new Error(`Unexpected encoding ${rect.encoding}`);
-        const data = await this.#read(rect.width * rect.height * 4);
-        for (let row = 0; row < rect.height; row++)
-          for (let column = 0; column < rect.width; column++)
-            this.pixels[(rect.y + row) * this.width + rect.x + column] =
-              data.readUInt32LE((row * rect.width + column) * 4) & 0xffffff;
-      }
-      return rects;
+      const rects = await this.#message();
+      if (rects) return rects;
     }
+  }
+
+  /** Reads server messages until the clipboard text `text` has arrived. */
+  async clipboardReceived(text: string): Promise<void> {
+    while (!this.clipboard.includes(text)) await this.#message();
+  }
+
+  /** Reads one server message; a framebuffer update returns its rects. */
+  async #message(): Promise<FramebufferRect[] | undefined> {
+    const type = (await this.#read(1))[0]!;
+    if (type === 2) return undefined;
+    if (type === 3) {
+      const header = await this.#read(7);
+      const length = header.readUInt32BE(3);
+      this.clipboard.push((await this.#read(length)).toString('latin1'));
+      return undefined;
+    }
+    if (type !== 0) throw new Error(`Unexpected RFB message ${type}`);
+    const count = (await this.#read(3)).readUInt16BE(1);
+    const rects: FramebufferRect[] = [];
+    for (let index = 0; index < count; index++) {
+      const header = await this.#read(12);
+      const rect = {
+        x: header.readUInt16BE(0),
+        y: header.readUInt16BE(2),
+        width: header.readUInt16BE(4),
+        height: header.readUInt16BE(6),
+        encoding: header.readInt32BE(8),
+      };
+      rects.push(rect);
+      if (rect.encoding !== 0)
+        throw new Error(`Unexpected encoding ${rect.encoding}`);
+      const data = await this.#read(rect.width * rect.height * 4);
+      for (let row = 0; row < rect.height; row++)
+        for (let column = 0; column < rect.width; column++)
+          this.pixels[(rect.y + row) * this.width + rect.x + column] =
+            data.readUInt32LE((row * rect.width + column) * 4) & 0xffffff;
+    }
+    return rects;
   }
 
   pointer(mask: number, x: number, y: number): void {
@@ -268,6 +279,15 @@ export class RfbViewer {
     event.writeUInt16BE(x, 2);
     event.writeUInt16BE(y, 4);
     this.send(event);
+  }
+
+  /** ClientCutText: puts Latin-1 text on the desktop's clipboard. */
+  cutText(text: string): void {
+    const data = Buffer.from(text, 'latin1');
+    const header = Buffer.alloc(8);
+    header[0] = 6;
+    header.writeUInt32BE(data.length, 4);
+    this.send(Buffer.concat([header, data]));
   }
 
   key(down: boolean, keysym: number): void {

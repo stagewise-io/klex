@@ -183,6 +183,7 @@ interface PortalCall {
   call: string;
   options?: Record<string, unknown>;
   values?: number[];
+  text?: string | null;
 }
 
 async function portalCalls(session: Session): Promise<PortalCall[]> {
@@ -322,6 +323,13 @@ describe.skipIf(!enabled)('Wayland desktop through the portal', () => {
     const windows = await machine.call('desktop_list_windows');
     expect(windows.result?.isError).toBe(true);
 
+    // Clipboard access is requested before the session starts.
+    const calls = (await portalCalls(session)).map((entry) => entry.call);
+    expect(calls.indexOf('RequestClipboard')).toBeGreaterThan(-1);
+    expect(calls.indexOf('RequestClipboard')).toBeLessThan(
+      calls.indexOf('Start'),
+    );
+
     // The restore token is kept, and the next run hands it back.
     const tokenFile = join(dataDir, 'desktop-portal-token');
     const first = (await readFile(tokenFile, 'utf8')).trim();
@@ -369,6 +377,27 @@ describe.skipIf(!enabled)('Wayland desktop through the portal', () => {
       );
     } finally {
       await portal(session, 'SetDeny', 'boolean:false');
+    }
+  }, 60_000);
+
+  it('streams without the clipboard when the portal has none', async () => {
+    await portal(session, 'SetClipboard', 'boolean:false');
+    try {
+      const machine = await startMachine({ env: session.env });
+      await ready(machine);
+      await waitFor(
+        () =>
+          JSON.stringify(machine.logs).includes(
+            'Clipboard sharing is unavailable',
+          )
+            ? true
+            : undefined,
+        { timeout: 10_000, interval: 200 },
+      );
+      await act(machine, 'desktop_screenshot');
+      await machine.stop('SIGTERM');
+    } finally {
+      await portal(session, 'SetClipboard', 'boolean:true');
     }
   }, 60_000);
 
@@ -438,6 +467,48 @@ describe.skipIf(!enabled)('Wayland desktop through the portal', () => {
       );
       expect(events).toContain('PointerMotionAbsolute 20 10');
       expect(events).toContain(`PointerButton ${BTN_LEFT} 1`);
+
+      // Copies on the desktop reach the viewer, also in GNOME 46's shape.
+      for (const [text, gnome46] of [
+        ['copied on the desktop', false],
+        ['copied on GNOME 46', true],
+      ] as const) {
+        await portal(
+          session,
+          'SetHostClipboard',
+          `string:${text}`,
+          `boolean:${gnome46}`,
+        );
+        await viewer.clipboardReceived(text);
+      }
+
+      // A viewer's copy is offered, then written out when the desktop pastes.
+      viewer.cutText('copied in a viewer');
+      await waitFor(
+        async () =>
+          (await portalCalls(session)).some(
+            (entry) => entry.call === 'SetSelection',
+          )
+            ? true
+            : undefined,
+        { timeout: 10_000, interval: 100 },
+      );
+      await portal(
+        session,
+        'RequestTransfer',
+        'string:text/plain;charset=utf-8',
+      );
+      const pasted = await waitFor(
+        async () =>
+          (await portalCalls(session)).find(
+            (entry) => entry.call === 'SelectionWriteDone',
+          ),
+        { timeout: 10_000, interval: 100 },
+      );
+      expect(pasted).toMatchObject({
+        success: true,
+        text: 'copied in a viewer',
+      });
     } finally {
       await cloud.close();
     }

@@ -14,6 +14,7 @@ mod win32;
 use std::os::windows::process::CommandExt;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{Sender, channel};
 use std::sync::{Arc, Mutex};
 
@@ -87,6 +88,7 @@ pub struct WindowsDesktopProvider {
     warn: Warn,
     state: Mutex<ProbeState>,
     stream: Mutex<Option<Arc<RfbServer>>>,
+    captures: Arc<AtomicUsize>,
 }
 
 #[derive(Default)]
@@ -103,6 +105,7 @@ impl WindowsDesktopProvider {
             warn,
             state: Mutex::default(),
             stream: Mutex::new(None),
+            captures: Arc::default(),
         }
     }
 
@@ -208,7 +211,10 @@ impl WindowsDesktopProvider {
                 let warn = self.warn.clone();
                 Arc::new(
                     RfbServer::new(
-                        Arc::new(stream::WindowsStreamBackend::new(self.warn.clone())),
+                        Arc::new(stream::WindowsStreamBackend::new(
+                            self.warn.clone(),
+                            self.captures.clone(),
+                        )),
                         crate::platform::host::hostname(),
                     )
                     .on_error(Arc::new(move |error: &str| {
@@ -355,7 +361,10 @@ impl DesktopProvider for WindowsDesktopProvider {
     fn open_stream(&self) -> DesktopFuture<'_, DuplexStream> {
         async move {
             let capabilities = self.probe_now().await;
-            if !capabilities.stream {
+            // A running capture already shows a placeholder while the screen
+            // cannot be copied, as in a minimized Remote Desktop session, so
+            // more viewers may join it.
+            if !capabilities.stream && self.captures.load(Ordering::SeqCst) == 0 {
                 return Err(capabilities
                     .hint
                     .unwrap_or_else(|| "The Windows desktop cannot stream".into()));

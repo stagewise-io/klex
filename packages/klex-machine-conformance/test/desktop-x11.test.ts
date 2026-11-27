@@ -345,9 +345,38 @@ describe.skipIf(!enabled)('X11 desktop', () => {
             { env: { ...process.env, DISPLAY: xvnc.display } },
           );
         }
+
+        // The clipboard goes both ways through X selections.
+        await copy(xvnc.display, 'copied on the display');
+        await viewer.clipboardReceived('copied on the display');
+        viewer.cutText('copied in a viewer');
+        await waitFor(
+          async () => {
+            const { stdout } = await run(
+              'xclip',
+              ['-selection', 'clipboard', '-o'],
+              {
+                env: { ...process.env, DISPLAY: xvnc.display },
+                timeout: 5_000,
+              },
+            ).catch(() => ({ stdout: '' }));
+            return stdout === 'copied in a viewer' ? true : undefined;
+          },
+          { timeout: 10_000 },
+        );
       } finally {
         await cloud.close();
       }
     },
   );
 });
+
+/** Puts `text` on the display's clipboard; xclip keeps serving it. */
+async function copy(display: string, text: string): Promise<void> {
+  const child = spawn('xclip', ['-selection', 'clipboard'], {
+    env: { ...process.env, DISPLAY: display },
+    stdio: ['pipe', 'ignore', 'ignore'],
+  });
+  child.stdin.end(text);
+  await new Promise((done) => child.on('exit', done));
+}

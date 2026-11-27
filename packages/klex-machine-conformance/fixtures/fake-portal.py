@@ -7,6 +7,11 @@ one monitor stream, the PipeWire node named by --node-name, and a fresh
 restore token. OpenPipeWireRemote hands out a connection to the real
 PipeWire daemon. Every call is appended to --log as one JSON line, so the
 test can check the input klex-machine sent and the token it restored.
+
+The Clipboard interface works on sessions that asked for it: the test sets
+the desktop's text with SetHostClipboard, optionally in the struct-wrapped
+shape GNOME 46 sends, and pastes with RequestTransfer, which logs the text
+klex-machine writes. SetClipboard(false) removes the interface.
 """
 
 import argparse
@@ -27,6 +32,7 @@ BUS_NAME = "org.freedesktop.portal.Desktop"
 PATH = "/org/freedesktop/portal/desktop"
 REMOTE_DESKTOP = "org.freedesktop.portal.RemoteDesktop"
 SCREEN_CAST = "org.freedesktop.portal.ScreenCast"
+CLIPBOARD = "org.freedesktop.portal.Clipboard"
 REQUEST = "org.freedesktop.portal.Request"
 SESSION = "org.freedesktop.portal.Session"
 PROPERTIES = "org.freedesktop.DBus.Properties"
@@ -40,6 +46,9 @@ PROPERTY_VALUES = {
         "version": dbus.UInt32(5),
         "AvailableSourceTypes": dbus.UInt32(1),
         "AvailableCursorModes": dbus.UInt32(3),
+    },
+    CLIPBOARD: {
+        "version": dbus.UInt32(1),
     },
 }
 
@@ -102,6 +111,7 @@ class Session(dbus.service.Object):
     @dbus.service.method(SESSION)
     def Close(self):
         self.portal.log("Close", {})
+        self.portal.clipboard_sessions.discard(self.path)
         self.remove_from_connection()
 
     @dbus.service.signal(SESSION, signature="a{sv}")
@@ -116,6 +126,11 @@ class Portal(dbus.service.Object):
         self.options = options
         self.sessions = {}
         self.tokens = itertools.count(1)
+        self.clipboard = True
+        self.clipboard_sessions = set()
+        self.host_text = None
+        self.serials = itertools.count(1)
+        self.transfers = {}
 
     def log(self, call, fields):
         with open(self.options.log, "a", encoding="utf-8") as log:
@@ -140,7 +155,7 @@ class Portal(dbus.service.Object):
 
     @dbus.service.method(PROPERTIES, in_signature="ss", out_signature="v")
     def Get(self, interface, name):
-        values = PROPERTY_VALUES.get(str(interface))
+        values = self.properties(interface)
         if values is None or str(name) not in values:
             raise dbus.exceptions.DBusException(
                 f"No such interface “{interface}”",
@@ -150,7 +165,12 @@ class Portal(dbus.service.Object):
 
     @dbus.service.method(PROPERTIES, in_signature="s", out_signature="a{sv}")
     def GetAll(self, interface):
-        return dbus.Dictionary(PROPERTY_VALUES.get(str(interface), {}), signature="sv")
+        return dbus.Dictionary(self.properties(interface) or {}, signature="sv")
+
+    def properties(self, interface):
+        if str(interface) == CLIPBOARD and not self.clipboard:
+            return None
+        return PROPERTY_VALUES.get(str(interface))
 
     # MARK: RemoteDesktop
 
@@ -198,6 +218,8 @@ class Portal(dbus.service.Object):
             "streams": dbus.Array([stream], signature="(ua{sv})"),
             "restore_token": dbus.String(f"token-{next(self.tokens)}"),
         }
+        if str(session) in self.clipboard_sessions:
+            results["clipboard_enabled"] = dbus.Boolean(True)
         return self.respond(sender, options, 0, results)
 
     def notify(name, signature):
@@ -242,6 +264,105 @@ class Portal(dbus.service.Object):
         fd = dbus.types.UnixFd(connection.fileno())
         connection.close()
         return fd
+
+    # MARK: Clipboard
+
+    def require_clipboard(self):
+        if not self.clipboard:
+            raise dbus.exceptions.DBusException(
+                "No such interface", name="org.freedesktop.DBus.Error.UnknownMethod"
+            )
+
+    @dbus.service.method(CLIPBOARD, in_signature="oa{sv}")
+    def RequestClipboard(self, session, options):
+        self.require_clipboard()
+        self.log("RequestClipboard", {})
+        self.clipboard_sessions.add(str(session))
+
+    @dbus.service.method(CLIPBOARD, in_signature="oa{sv}")
+    def SetSelection(self, session, options):
+        self.require_clipboard()
+        self.log("SetSelection", {"options": plain(options)})
+        self.SelectionOwnerChanged(
+            session,
+            dbus.Dictionary(
+                {
+                    "mime_types": options.get("mime_types", dbus.Array([], signature="s")),
+                    "session_is_owner": dbus.Boolean(True),
+                },
+                signature="sv",
+            ),
+        )
+
+    @dbus.service.method(CLIPBOARD, in_signature="ou", out_signature="h")
+    def SelectionWrite(self, session, serial):
+        self.require_clipboard()
+        read, write = os.pipe()
+        self.transfers[int(serial)] = read
+        fd = dbus.types.UnixFd(write)
+        os.close(write)
+        return fd
+
+    @dbus.service.method(CLIPBOARD, in_signature="oub")
+    def SelectionWriteDone(self, session, serial, success):
+        read = self.transfers.pop(int(serial))
+        with os.fdopen(read, "rb") as pipe:
+            text = pipe.read().decode("utf-8", "replace") if success else None
+        self.log("SelectionWriteDone", {"success": bool(success), "text": text})
+
+    @dbus.service.method(CLIPBOARD, in_signature="os", out_signature="h")
+    def SelectionRead(self, session, mime_type):
+        self.require_clipboard()
+        self.log("SelectionRead", {"mime_type": str(mime_type)})
+        if self.host_text is None:
+            raise dbus.exceptions.DBusException(
+                "No selection", name="org.freedesktop.portal.Error.Failed"
+            )
+        read, write = os.pipe()
+        os.write(write, self.host_text.encode("utf-8"))
+        os.close(write)
+        fd = dbus.types.UnixFd(read)
+        os.close(read)
+        return fd
+
+    @dbus.service.signal(CLIPBOARD, signature="oa{sv}")
+    def SelectionOwnerChanged(self, session, details):
+        pass
+
+    @dbus.service.signal(CLIPBOARD, signature="osu")
+    def SelectionTransfer(self, session, mime_type, serial):
+        pass
+
+    # MARK: Test controls
+
+    @dbus.service.method("org.klex.FakePortal", in_signature="b")
+    def SetClipboard(self, available):
+        """Adds or removes the Clipboard interface for later sessions."""
+        self.clipboard = bool(available)
+
+    @dbus.service.method("org.klex.FakePortal", in_signature="sb")
+    def SetHostClipboard(self, text, gnome46):
+        """Copies `text` on the desktop. GNOME 46 wraps the mime list in a struct."""
+        self.host_text = str(text)
+        types = dbus.Array(["text/plain;charset=utf-8", "text/plain"], signature="s")
+        if gnome46:
+            types = dbus.Struct((types,), signature="as")
+        for session in self.clipboard_sessions:
+            self.SelectionOwnerChanged(
+                dbus.ObjectPath(session),
+                dbus.Dictionary(
+                    {"mime_types": types, "session_is_owner": dbus.Boolean(False)},
+                    signature="sv",
+                ),
+            )
+
+    @dbus.service.method("org.klex.FakePortal", in_signature="s")
+    def RequestTransfer(self, mime_type):
+        """Pastes on the desktop, asking the owning session for its text."""
+        for session in self.clipboard_sessions:
+            self.SelectionTransfer(
+                dbus.ObjectPath(session), mime_type, dbus.UInt32(next(self.serials))
+            )
 
     @dbus.service.method("org.klex.FakePortal", in_signature="b")
     def SetDeny(self, deny):

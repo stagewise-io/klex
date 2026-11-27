@@ -290,7 +290,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: ./.github/actions/apt-install
         with:
-          packages: tigervnc-standalone-server x11-xserver-utils x11-utils xdotool imagemagick
+          packages: tigervnc-standalone-server x11-xserver-utils x11-utils xdotool xclip imagemagick
       - uses: ./.github/actions/setup-workspace
         with:
           install-scope: machine-conformance

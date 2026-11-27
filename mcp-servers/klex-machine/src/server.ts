@@ -86,17 +86,6 @@ export async function startMachineServer(
   const address = listener.address();
   const port =
     typeof address === 'object' && address ? address.port : config.port;
-  if (config.warnsAboutRemoteAccess) {
-    logger.warn(
-      { host: config.host, port },
-      'UNRESTRICTED, UNAUTHENTICATED machine access is exposed on a non-loopback interface',
-    );
-  }
-  logger.info(
-    { cwd: config.cwd, host: config.host, port },
-    'klex-machine MCP server listening',
-  );
-
   let closing: Promise<void> | undefined;
   const signalHandlers = new Map<NodeJS.Signals, () => void>();
   const close = (): Promise<void> => {
@@ -142,6 +131,19 @@ export async function startMachineServer(
       process.once(signal, handler);
     }
   }
+
+  // After the handlers: whoever waits for this line may signal right away,
+  // and a signal without a listener kills the process outright.
+  if (config.warnsAboutRemoteAccess) {
+    logger.warn(
+      { host: config.host, port },
+      'UNRESTRICTED, UNAUTHENTICATED machine access is exposed on a non-loopback interface',
+    );
+  }
+  logger.info(
+    { cwd: config.cwd, host: config.host, port },
+    'klex-machine MCP server listening',
+  );
 
   return {
     host: config.host,

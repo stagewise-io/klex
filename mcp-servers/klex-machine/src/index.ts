@@ -138,9 +138,6 @@ async function main(): Promise<void> {
         }
       }
     })());
-  if (result.action !== 'managed-bootstrap') {
-    process.stdout.write(`${machineLiveMessage(enrollment.machineId)}\n`);
-  }
   for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     process.once(signal, () => {
       void close().then(
@@ -152,6 +149,10 @@ async function main(): Promise<void> {
         },
       );
     });
+  }
+  // After the handlers, so a signal sent on this line is handled.
+  if (result.action !== 'managed-bootstrap') {
+    process.stdout.write(`${machineLiveMessage(enrollment.machineId)}\n`);
   }
 }
 

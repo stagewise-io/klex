@@ -300,7 +300,8 @@ impl DesktopProvider for MacosDesktopProvider {
 
     fn type_text(&self, text: String) -> DesktopFuture<'_, ()> {
         async move {
-            let characters: Vec<char> = text.chars().collect();
+            // CRLF pairs could straddle a chunk boundary and type twice.
+            let characters: Vec<char> = text.replace("\r\n", "\n").chars().collect();
             for chunk in characters.chunks(TYPE_CHUNK_CHARACTERS) {
                 let chunk: String = chunk.iter().collect();
                 self.input("Typing", move |input| input.type_text(&chunk))

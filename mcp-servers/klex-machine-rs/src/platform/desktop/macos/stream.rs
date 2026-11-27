@@ -360,6 +360,8 @@ struct StreamInput {
     input: Input,
     double_click: Duration,
     held_keys: Vec<u16>,
+    /// Characters without a key code; their events still carry code 0.
+    held_characters: Vec<char>,
     held_buttons: Vec<MouseButton>,
     last_point: CGPoint,
     last_down: Option<(MouseButton, Instant, CGPoint, i64)>,
@@ -377,6 +379,7 @@ impl StreamInput {
                 0.5
             }),
             held_keys: Vec::new(),
+            held_characters: Vec::new(),
             held_buttons: Vec::new(),
             last_point: CGPoint::new(0.0, 0.0),
             last_down: None,
@@ -407,6 +410,9 @@ impl StreamInput {
         }
         for button in self.held_buttons.clone() {
             self.button(button, false, self.last_point);
+        }
+        for character in std::mem::take(&mut self.held_characters) {
+            self.input.unicode_event(character, false, self.flags());
         }
         for code in self.held_keys.clone().into_iter().rev() {
             self.key_code(code, false);
@@ -510,6 +516,13 @@ impl StreamInput {
             Some(StreamKeyAction::Code(code)) => self.key_code(code, key.down),
             Some(StreamKeyAction::Unicode(code_point)) => {
                 if let Some(character) = char::from_u32(code_point) {
+                    if key.down {
+                        if !self.held_characters.contains(&character) {
+                            self.held_characters.push(character);
+                        }
+                    } else {
+                        self.held_characters.retain(|held| *held != character);
+                    }
                     self.input.unicode_event(character, key.down, self.flags());
                 }
             }

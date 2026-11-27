@@ -1,5 +1,10 @@
 import type { DesktopProvider } from '../provider.js';
 import { DesktopService, type DesktopServiceOptions } from '../service.js';
+import {
+  FAKE_DESKTOP_MODES,
+  FakeDesktopProvider,
+  type FakeDesktopMode,
+} from './fake.js';
 import { MacosDesktopProvider } from './macos.js';
 import { WindowsDesktopProvider } from './windows.js';
 import { X11DesktopProvider } from './x11.js';
@@ -28,7 +33,9 @@ export function createDesktopProvider(
   platform: NodeJS.Platform = process.platform,
   { warn }: DesktopProviderOptions = {},
 ): DesktopProvider | undefined {
-  if (env.KLEX_MACHINE_DESKTOP?.toLowerCase() === 'off') return undefined;
+  const mode = env.KLEX_MACHINE_DESKTOP?.toLowerCase();
+  if (mode === 'off') return undefined;
+  if (isFakeMode(mode)) return new FakeDesktopProvider(mode, env);
   switch (platform) {
     case 'darwin':
       return new MacosDesktopProvider({ env, ...(warn ? { warn } : {}) });
@@ -47,6 +54,10 @@ export function createDesktopProvider(
   }
 }
 
+function isFakeMode(mode: string | undefined): mode is FakeDesktopMode {
+  return (FAKE_DESKTOP_MODES as readonly (string | undefined)[]).includes(mode);
+}
+
 const shared = new Map<string, DesktopService>();
 
 /**
@@ -61,6 +72,7 @@ export function desktopFromEnvironment(
 ): DesktopService | undefined {
   const key = [
     platform,
+    env.KLEX_MACHINE_DESKTOP?.toLowerCase() ?? '',
     env.DISPLAY?.trim() ?? '',
     env.KLEX_MACHINE_VNC_SOCKET ?? '',
   ].join('\0');

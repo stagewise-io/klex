@@ -230,31 +230,42 @@ describe('cloud traffic through the proxy', () => {
       shell: process.execPath,
       args: ['-e', 'setInterval(() => {}, 1000)'],
     });
-    await new Promise((done) => setTimeout(done, 300));
-    const { cursor } = await agent.tool<{ cursor: number }>(
-      'readShellSession',
-      { id: shell.id },
-    );
+    // Output ends a waiting read, and ConPTY writes escape sequences while the
+    // child starts, so wait for quiet before the read that gets cancelled.
+    let { cursor } = await agent.tool<{ cursor: number }>('readShellSession', {
+      id: shell.id,
+    });
+    for (;;) {
+      const next = await agent.tool<{ cursor: number }>('readShellSession', {
+        id: shell.id,
+        cursor,
+        waitMs: 500,
+      });
+      if (next.cursor === cursor) break;
+      cursor = next.cursor;
+    }
+    // Long enough that a stalled runner still cancels before the wait ends.
     const poll = new AbortController();
     const reading = agent
       .call(
         'readShellSession',
-        { id: shell.id, cursor, waitMs: 1_500 },
+        { id: shell.id, cursor, waitMs: 3_000 },
         { signal: poll.signal },
       )
       .catch(() => undefined);
-    const polled = await waitFor(() => exchangeFrames('"waitMs":1500'));
+    const polled = await waitFor(() => exchangeFrames('"waitMs":3000'));
     await new Promise((done) => setTimeout(done, 300));
     poll.abort();
     await reading;
     await waitFor(() =>
-      exchangeFrames('"waitMs":1500')!.some(
+      exchangeFrames('"waitMs":3000')!.some(
         (frame) => frame.to === 'machine' && frame.type === 'exchange.close',
       )
         ? true
         : undefined,
     );
-    await new Promise((done) => setTimeout(done, 2_000));
+    // Past the end of the cancelled wait, so a late answer would show up.
+    await new Promise((done) => setTimeout(done, 3_000));
 
     expect(sentAfterCancel(exchangeId)).toEqual([]);
     expect(sentAfterCancel(polled[0]!.exchangeId)).toEqual([]);

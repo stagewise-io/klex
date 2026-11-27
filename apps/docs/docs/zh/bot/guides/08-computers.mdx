@@ -1,0 +1,73 @@
+---
+title: 连接计算机
+description: 为 Klex Bot 提供托管计算机，或使用 @klex/machine 连接自己的计算机。
+related:
+  - /zh/bot/concepts/brain-and-computers
+  - /zh/bot/concepts/mcp
+  - /zh/bot/guides/control-and-limits
+---
+
+Klex Bot 可以使用已连接的计算机处理文件、运行命令，并在有桌面可用时使用图形应用。Bot 是大脑，计算机是它使用的工具。一个 Bot 可以使用多台计算机，一台计算机也可以分配给多个 Bot。
+
+在 Klex Cloud 中选择托管计算机，或通过 MCP 服务器 `@klex/machine` 连接自己的计算机。Bot 可用的工具取决于计算机及其配置。
+
+<a id="before-you-connect"></a>
+
+## 连接之前
+
+连接计算机会向 Bot 授予广泛访问权限。`@klex/machine` 可以使用运行它的操作系统用户的权限读取和修改文件、运行 shell 命令。工作目录不是沙箱：绝对路径仍可访问。桌面可能暴露该用户能够查看或使用的所有内容。
+
+尽可能使用专用的非特权账户或隔离的计算机。删除不必要的凭据和敏感数据，只向信任的 Bot 和人员授予访问权限。独立检查重要操作。请参阅[控制与限制](/zh/bot/guides/control-and-limits)。
+
+<a id="use-a-managed-computer"></a>
+
+## 使用托管计算机
+
+在 Bot 的 **Computers** 部分，选择 **Add computer**，然后选择 **Set up a computer**。选择 **Cloud computer**，选择规格和互联网访问设置，查看价格后选择 **Create computer**。在 Cloud 中检查状态和连接错误：仅完成分配并不能保证计算机已连接。
+
+托管计算机除了提供文件和 shell 工具，也可以提供用于图形操作的桌面。有可用屏幕时，可以在 Cloud 中查看。管理员可以接管控制，然后将控制权交还给 Bot。人员控制期间，Bot 的桌面输入会被阻止。屏幕和工具是否可用取决于计算机是否可用以及桌面支持是否启用。
+
+<a id="connect-your-own-computer-to-cloud"></a>
+
+## 将自己的计算机连接到 Cloud
+
+计算机需要 Node.js 24 或更高版本。组织管理员可以在 Cloud 中设置计算机，并将其分配给已注册的 Bot。
+
+1. 在 Cloud 中打开 Bot 的 **Computers** 部分，选择 **Add computer**，然后选择 **Set up a computer**。
+2. 选择 **Your own computer** 并按照设置说明操作。Cloud 会提供安装和注册命令。将注册代码视为秘密，不要在聊天中分享或提交到代码仓库。
+3. 在要连接的计算机上运行该命令。注册会启动 machine 进程，请保持其运行。
+4. 检查计算机是否已连接并分配给 Bot。如果尚未分配，请从 Bot 的 **Computers** 部分添加。也可以分别将同一台计算机分配给其他 Bot。
+
+该进程会向 Cloud 建立出站连接。进程停止时，计算机显示为离线。注册不会安装后台服务：关闭终端或重启计算机会停止进程。注册后，以同一个操作系统用户运行 `klex-machine`，即可使用保存的身份重新启动。请保护身份目录的私密性，其默认路径为 `~/.klex-machine`。
+
+自己的计算机上也可能提供兼容桌面。macOS 需要已登录的会话以及屏幕录制和辅助功能权限。Windows 需要已登录的交互式会话。Linux 桌面支持取决于正常工作的显示环境和所需的桌面工具。没有桌面的计算机仍可提供文件和 shell 工具。
+
+<a id="keep-a-linux-computer-connected"></a>
+
+### 保持 Linux 计算机连接
+
+Linux 管理员可以配置 systemd 服务，在开机时启动 `klex-machine` 并在失败时重启。服务必须以指定的非特权用户身份运行，并使用该用户现有的 machine 身份。后台服务本身不会提供桌面会话。
+
+启用服务前请先检查配置。保护身份目录，除非有具体原因，否则不要以 root 身份运行服务。
+
+<a id="connect-locally-without-cloud"></a>
+
+## 不使用 Cloud 进行本地连接
+
+对于同一台计算机上的独立 Bot，以本地模式运行服务器：
+
+```sh
+# 使用 npm 或 pnpm 安装一次。需要 Node.js 24 或更高版本。
+npm install -g @klex/machine
+klex-machine serve --mode local --cwd /path/to/workspace --port 3123
+```
+
+在 Bot 的 MCP 服务器设置中添加本地服务器 URL `http://127.0.0.1:3123/mcp`。Bot 使用期间请保持进程运行。
+
+本地模式不进行身份验证，默认使用 loopback 接口。不要将监听端口暴露给网络：任何能够访问它的人都可以使用操作系统用户的权限操作服务器。`--cwd` 只改变起始目录，不改变访问边界。
+
+<a id="disconnect-a-computer"></a>
+
+## 断开计算机连接
+
+在 Cloud 中，在 Bot 的计算机连接上使用 **Disconnect**，撤销该 Bot 的分配。计算机仍保留在组织中，其他已分配的 Bot 仍可访问。要停止通过自己计算机上的 machine 进程进行访问，请停止 `klex-machine`，并检查 Cloud 分配和本地凭据。

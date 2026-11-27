@@ -1,0 +1,73 @@
+---
+title: Connecter un ordinateur
+description: Fournissez à un Klex Bot un ordinateur géré ou connectez le vôtre avec @klex/machine.
+related:
+  - /fr/bot/concepts/brain-and-computers
+  - /fr/bot/concepts/mcp
+  - /fr/bot/guides/control-and-limits
+---
+
+Un Klex Bot peut utiliser un ordinateur connecté pour travailler avec des fichiers, exécuter des commandes et, si un bureau est disponible, utiliser des applications graphiques. Le Bot est le cerveau ; l'ordinateur est un outil qu'il utilise. Un Bot peut utiliser plusieurs ordinateurs et un ordinateur peut être attribué à plusieurs Bots.
+
+Choisissez un ordinateur géré dans Klex Cloud ou connectez le vôtre avec le serveur MCP `@klex/machine`. Les outils accessibles au Bot dépendent de l'ordinateur et de sa configuration.
+
+<a id="before-you-connect"></a>
+
+## Avant de connecter un ordinateur
+
+La connexion donne au Bot un accès étendu. `@klex/machine` peut lire et modifier des fichiers et exécuter des commandes shell avec les permissions de l'utilisateur du système d'exploitation qui l'exécute. Son répertoire de travail n'est pas un bac à sable : les chemins absolus restent accessibles. Un bureau peut exposer tout ce que cet utilisateur peut voir ou utiliser.
+
+Dans la mesure du possible, utilisez un compte dédié sans privilèges ou un ordinateur isolé. Supprimez les identifiants et données sensibles inutiles, et ne donnez accès qu'aux Bots et aux personnes en qui vous avez confiance. Vérifiez les actions importantes de manière indépendante. Consultez [Contrôle et limites](/fr/bot/guides/control-and-limits).
+
+<a id="use-a-managed-computer"></a>
+
+## Utiliser un ordinateur géré
+
+Dans la section **Computers** de votre Bot, sélectionnez **Add computer**, puis **Set up a computer**. Choisissez **Cloud computer**, une taille et un paramètre d'accès à Internet, vérifiez le prix, puis sélectionnez **Create computer**. Vérifiez son état et toute erreur de connexion dans Cloud : une attribution ne garantit pas à elle seule que l'ordinateur est connecté.
+
+Les ordinateurs gérés peuvent fournir un bureau pour le travail graphique ainsi que des outils de fichiers et de shell. Lorsqu'un écran est disponible, vous pouvez le regarder dans Cloud. Un administrateur peut en prendre le contrôle, puis le rendre au Bot. Tant qu'une personne contrôle le bureau, les entrées du Bot sont bloquées. L'écran et les outils dépendent de la disponibilité de l'ordinateur et de l'activation de sa prise en charge du bureau.
+
+<a id="connect-your-own-computer-to-cloud"></a>
+
+## Connecter votre ordinateur à Cloud
+
+Node.js 24 ou version ultérieure est nécessaire sur l'ordinateur. Un administrateur de l'organisation peut configurer un ordinateur dans Cloud et l'attribuer à un Bot enregistré.
+
+1. Dans Cloud, ouvrez la section **Computers** du Bot et sélectionnez **Add computer**, puis **Set up a computer**.
+2. Choisissez **Your own computer** et suivez les instructions. Cloud fournit une commande d'installation et d'enregistrement. Traitez le code d'enregistrement comme un secret : ne le partagez pas dans une conversation et ne le commitez pas dans un dépôt.
+3. Exécutez la commande sur l'ordinateur à connecter. L'enregistrement démarre le processus machine ; laissez-le actif.
+4. Vérifiez que l'ordinateur est connecté et attribué au Bot. Sinon, ajoutez-le depuis la section **Computers** du Bot. Vous pouvez attribuer le même ordinateur à d'autres Bots séparément.
+
+Le processus établit une connexion sortante vers Cloud. Lorsque le processus s'arrête, l'ordinateur apparaît hors ligne. L'enregistrement n'installe pas de service en arrière-plan : fermer le terminal ou redémarrer l'ordinateur arrête le processus. Après l'enregistrement, exécutez `klex-machine` sous le même utilisateur du système d'exploitation pour le redémarrer avec son identité enregistrée. Gardez le répertoire d'identité privé : il s'agit par défaut de `~/.klex-machine`.
+
+Un bureau compatible peut aussi être disponible sur votre ordinateur. Sur macOS, il faut une session ouverte et les autorisations d'enregistrement de l'écran et d'accessibilité. Sur Windows, il faut une session interactive ouverte. Sur Linux, la prise en charge dépend d'un affichage fonctionnel et des outils de bureau requis. Un ordinateur sans bureau peut toujours fournir des outils de fichiers et de shell.
+
+<a id="keep-a-linux-computer-connected"></a>
+
+### Garder un ordinateur Linux connecté
+
+Un administrateur Linux peut configurer un service systemd pour démarrer `klex-machine` au démarrage et le redémarrer en cas d'échec. Le service doit être exécuté sous l'utilisateur prévu, sans privilèges, et utiliser son identité machine existante. Un service en arrière-plan ne fournit pas à lui seul une session de bureau.
+
+Vérifiez le service avant de l'activer. Protégez le répertoire d'identité et évitez d'exécuter le service en tant que root sans raison précise.
+
+<a id="connect-locally-without-cloud"></a>
+
+## Connecter localement sans Cloud
+
+Pour un Bot autonome sur le même ordinateur, lancez le serveur en mode local :
+
+```sh
+# Installer une fois avec npm ou pnpm. Node.js 24 ou version ultérieure est requis.
+npm install -g @klex/machine
+klex-machine serve --mode local --cwd /path/to/workspace --port 3123
+```
+
+Dans les paramètres des serveurs MCP du Bot, ajoutez l'URL locale `http://127.0.0.1:3123/mcp`. Laissez le processus actif pendant que le Bot l'utilise.
+
+Le mode local ne nécessite pas d'authentification et utilise par défaut l'interface loopback. N'exposez pas son écouteur au réseau : toute personne pouvant l'atteindre peut utiliser le serveur avec les permissions de l'utilisateur du système d'exploitation. L'option `--cwd` change le répertoire de départ, pas la limite d'accès.
+
+<a id="disconnect-a-computer"></a>
+
+## Déconnecter un ordinateur
+
+Dans Cloud, utilisez **Disconnect** sur la connexion de l'ordinateur du Bot pour révoquer son attribution à ce Bot. L'ordinateur reste dans l'organisation et les autres Bots auxquels il est attribué conservent leur accès. Pour arrêter l'accès via le processus machine sur votre ordinateur, arrêtez `klex-machine` ; vérifiez aussi les attributions dans Cloud et les identifiants locaux.

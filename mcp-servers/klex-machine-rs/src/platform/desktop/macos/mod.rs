@@ -411,7 +411,9 @@ impl DesktopProvider for MacosDesktopProvider {
             .strip_suffix('/')
             .unwrap_or(&options.command)
             .to_string();
-        on_main("Opening the app", LAUNCH_TIMEOUT, move || {
+        // Launch Services takes calls from any thread; waiting on the main
+        // thread would stall AppKit work such as the stream clipboard.
+        blocking("Opening the app", LAUNCH_TIMEOUT, move || {
             launch::open_application(&target, &options.args)
         })
         .boxed()

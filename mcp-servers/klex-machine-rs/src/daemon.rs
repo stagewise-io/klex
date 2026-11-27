@@ -2,7 +2,7 @@
 //! crate, such as Klex Desktop, can run it by re-executing themselves.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::Duration;
@@ -89,7 +89,7 @@ async fn run(command: CliResult) -> Result<ExitCode, String> {
             ..
         } => {
             let logger = Logger::stderr(config.log_level);
-            let desktop = desktop_from_environment(&logger);
+            let desktop = desktop_from_environment(&logger, &data_dir);
             serve(
                 ServeOptions {
                     config,
@@ -228,7 +228,7 @@ async fn serve_cloud(
     announce: bool,
 ) -> Result<ExitCode, String> {
     let logger = Logger::stderr(config.log_level);
-    let desktop = desktop_from_environment(&logger);
+    let desktop = desktop_from_environment(&logger, &data_dir);
     let enrollment = load_machine_enrollment(&data_dir)?;
     let protected_resource = load_protected_resource(
         &enrollment.oauth_protected_resource_url,
@@ -296,7 +296,7 @@ async fn serve_supervised(
     omit_host_details: bool,
 ) -> Result<ExitCode, String> {
     let logger = Logger::stderr(config.log_level);
-    let desktop = desktop_from_environment(&logger);
+    let desktop = desktop_from_environment(&logger, &data_dir);
     let mut commands = supervised::commands();
     let stop = async move {
         tokio::select! {
@@ -393,11 +393,14 @@ async fn serve_supervised(
     Ok(served.close().await)
 }
 
-fn desktop_from_environment(logger: &Logger) -> Option<Arc<DesktopService>> {
+fn desktop_from_environment(logger: &Logger, data_dir: &Path) -> Option<Arc<DesktopService>> {
     let logger = logger.clone();
-    desktop::desktop_from_environment(Arc::new(move |message: &str| {
-        logger.warn(serde_json::json!({ "source": "desktop" }), message);
-    }))
+    desktop::desktop_from_environment(
+        Arc::new(move |message: &str| {
+            logger.warn(serde_json::json!({ "source": "desktop" }), message);
+        }),
+        Some(data_dir),
+    )
 }
 
 /// Logs the facts each connection reports, so a Cloud that shows no OS can be

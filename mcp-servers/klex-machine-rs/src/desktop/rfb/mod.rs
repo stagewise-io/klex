@@ -6,6 +6,7 @@ pub mod filter;
 mod framebuffer;
 mod server;
 mod session;
+pub mod tiles;
 
 use serde::Serialize;
 use tokio::sync::mpsc::UnboundedSender;

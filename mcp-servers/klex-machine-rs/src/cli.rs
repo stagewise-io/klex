@@ -12,15 +12,24 @@ pub enum MachineMode {
     Managed,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum EnrollmentCode {
+    Argument(String),
+    /// `--code-stdin`: the first line of stdin, so the code stays out of
+    /// process listings.
+    Stdin,
+}
+
 #[derive(Debug)]
 pub enum CliResult {
     Help,
     Version,
     Enroll {
         cloud_base_url: String,
-        code: String,
+        code: EnrollmentCode,
         data_dir: PathBuf,
         serve: Option<(RuntimeConfig, bool)>,
+        supervised: bool,
     },
     ManagedBootstrap {
         cloud_base_url: String,
@@ -34,6 +43,7 @@ pub enum CliResult {
         data_dir: PathBuf,
         mode: MachineMode,
         omit_host_details: bool,
+        supervised: bool,
     },
 }
 
@@ -47,7 +57,14 @@ const STRING_OPTIONS: [&str; 8] = [
     "cloud-base-url",
     "enrollment-code-file",
 ];
-const BOOLEAN_OPTIONS: [&str; 4] = ["serve", "omit-host-details", "help", "version"];
+const BOOLEAN_OPTIONS: [&str; 6] = [
+    "serve",
+    "omit-host-details",
+    "help",
+    "version",
+    "code-stdin",
+    "supervised",
+];
 
 #[derive(Default)]
 struct Parsed {
@@ -174,22 +191,34 @@ pub fn parse_cli(
         log_level: string("log-level").or_else(|| env_var("KLEX_MACHINE_LOG_LEVEL")),
     };
     let serve = parsed.booleans.get("serve").copied();
-
-    if command.map(String::as_str) == Some("cloud")
+    let code_stdin = parsed.booleans.get("code-stdin") == Some(&true);
+    let supervised = parsed.booleans.get("supervised") == Some(&true);
+    let enroll = command.map(String::as_str) == Some("cloud")
         && subcommand.map(String::as_str) == Some("enroll")
-        && value.is_some_and(|value| !value.is_empty())
-        && !extra
-    {
+        && !extra;
+    let code_argument = value.filter(|value| !value.is_empty());
+
+    if enroll && code_stdin && code_argument.is_some() {
+        return Err("--code-stdin cannot be used with a code argument".into());
+    }
+    if code_stdin && !enroll {
+        return Err("--code-stdin is only valid with cloud enroll".into());
+    }
+    if enroll && (code_stdin || code_argument.is_some()) {
         if parsed.strings.contains_key("mode") {
             return Err("--mode cannot be used with cloud enroll".into());
         }
-        let code = value.cloned().unwrap_or_default();
+        let code = match code_argument {
+            Some(code) => EnrollmentCode::Argument(code.clone()),
+            None => EnrollmentCode::Stdin,
+        };
         if serve == Some(false) {
             return Ok(CliResult::Enroll {
                 cloud_base_url,
                 code,
                 data_dir,
                 serve: None,
+                supervised,
             });
         }
         let local_only: Vec<String> = ["host", "port", "log-level"]
@@ -215,10 +244,14 @@ pub fn parse_cli(
             code,
             data_dir,
             serve: Some((config, omit_host_details)),
+            supervised,
         });
     }
     if serve.is_some() {
         return Err("--serve and --no-serve are only valid with cloud enroll".into());
+    }
+    if supervised && command.map(String::as_str) == Some("cloud") {
+        return Err("--supervised is only valid with serve and cloud enroll".into());
     }
     if command.map(String::as_str) == Some("cloud")
         && subcommand.map(String::as_str) == Some("bootstrap")
@@ -258,11 +291,15 @@ pub fn parse_cli(
         "managed" => MachineMode::Managed,
         _ => return Err("Invalid mode. Expected local, enrolled, or managed.".into()),
     };
+    if supervised && mode != MachineMode::Enrolled {
+        return Err("--supervised only applies to --mode enrolled".into());
+    }
     Ok(CliResult::Serve {
         config: resolve_runtime_config(&raw, process_cwd)?,
         data_dir,
         mode,
         omit_host_details,
+        supervised,
     })
 }
 
@@ -284,6 +321,7 @@ pub fn help_text() -> String {
 Usage:
   {BIN_NAME} serve [options]
   {BIN_NAME} cloud enroll <code> [--no-serve] [options]
+  {BIN_NAME} cloud enroll --code-stdin [--no-serve] [options]
   {BIN_NAME} cloud bootstrap --enrollment-code-file <path|-> [options]
 
 Options:
@@ -295,7 +333,10 @@ Options:
   --data-dir <path>   Identity and notification state directory (default: ~/.klex-machine-rs)
   --cloud-base-url <url> Cloud API URL used for enrollment
   --enrollment-code-file <path|-> Read and remove a one-time code file, or read stdin with -
+  --code-stdin        Read the enrollment code from the first line of stdin
   --no-serve          Enroll only; do not start serving
+  --supervised        Report status as JSON lines on stdout and accept
+                      commands on stdin, for a supervising app
   --omit-host-details Omit hostname, workspace path and disk size from Cloud facts.
                       Otherwise these are visible to organization members through the API.
                       Removes stored host details on the next accepted report.
@@ -377,6 +418,53 @@ mod tests {
             parse(&["cloud", "bootstrap"]).unwrap_err(),
             "Managed bootstrap requires --enrollment-code-file <path|->"
         );
+        assert_eq!(
+            parse(&["cloud", "enroll", "c", "--code-stdin"]).unwrap_err(),
+            "--code-stdin cannot be used with a code argument"
+        );
+        assert_eq!(
+            parse(&["serve", "--code-stdin"]).unwrap_err(),
+            "--code-stdin is only valid with cloud enroll"
+        );
+        assert_eq!(
+            parse(&["serve", "--mode", "local", "--supervised"]).unwrap_err(),
+            "--supervised only applies to --mode enrolled"
+        );
+        assert_eq!(
+            parse(&["cloud", "bootstrap", "--supervised"]).unwrap_err(),
+            "--supervised is only valid with serve and cloud enroll"
+        );
+        assert!(matches!(
+            parse(&[
+                "cloud",
+                "enroll",
+                "--code-stdin",
+                "--no-serve",
+                "--supervised"
+            ]),
+            Ok(CliResult::Enroll {
+                code: EnrollmentCode::Stdin,
+                serve: None,
+                supervised: true,
+                ..
+            })
+        ));
+        assert!(matches!(
+            parse(&["cloud", "enroll", "ABCD"]),
+            Ok(CliResult::Enroll {
+                code: EnrollmentCode::Argument(_),
+                serve: Some(_),
+                supervised: false,
+                ..
+            })
+        ));
+        assert!(matches!(
+            parse(&["serve", "--supervised"]),
+            Ok(CliResult::Serve {
+                supervised: true,
+                ..
+            })
+        ));
         assert!(matches!(
             parse(&["serve", "--mode", "local"]),
             Ok(CliResult::Serve {

@@ -10,7 +10,7 @@ use super::http;
 use super::identity::{MachineIdentity, load_machine_identity, save_machine_identity};
 use super::state::{
     MachineEnrollment, enrollment_path, hash_enrollment_code, identity_path,
-    load_machine_enrollment, save_machine_enrollment,
+    load_machine_enrollment, optional_string, save_machine_enrollment,
 };
 use crate::{BIN_NAME, fs_error};
 
@@ -72,6 +72,7 @@ fn parse_response(
         mcp_resource_url: required(record, "mcpResourceUrl")?,
         oauth_protected_resource_url: required(record, "oauthProtectedResourceUrl")?,
         enrollment_code_sha256: None,
+        organization_name: optional_string(record, "organizationName"),
     })
 }
 
@@ -128,6 +129,94 @@ pub async fn enroll_machine(
     enrollment.enrollment_code_sha256 = Some(hash_enrollment_code(code));
     save_machine_enrollment(data_dir, &enrollment)?;
     Ok(enrollment)
+}
+
+/// What Cloud says a code would enroll this machine into, without redeeming it.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnrollmentPreview {
+    pub organization_name: String,
+    pub machine_name: String,
+    pub expires_at: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "kind", content = "message", rename_all = "camelCase")]
+pub enum PreviewError {
+    /// Cloud answers invalid, expired and used codes with one generic error.
+    InvalidCode,
+    /// Shares enrollment's per-IP limit; callers must not retry on their own.
+    RateLimited,
+    Unreachable(String),
+    Failed(String),
+}
+
+impl std::fmt::Display for PreviewError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidCode => formatter.write_str(
+                "Enrollment code is invalid, expired, or already used. Generate a new code in Cloud.",
+            ),
+            Self::RateLimited => {
+                formatter.write_str("Too many attempts. Wait a minute, then try again.")
+            }
+            Self::Unreachable(message) | Self::Failed(message) => formatter.write_str(message),
+        }
+    }
+}
+
+fn parse_preview(value: &Value) -> Result<EnrollmentPreview, PreviewError> {
+    let invalid = || PreviewError::Failed("Enrollment preview response is invalid".into());
+    let Value::Object(record) = value else {
+        return Err(invalid());
+    };
+    let field = |key: &str| optional_string(record, key).ok_or_else(invalid);
+    Ok(EnrollmentPreview {
+        organization_name: field("organizationName")?,
+        machine_name: field("machineName")?,
+        expires_at: field("expiresAt")?,
+    })
+}
+
+/// `POST /api/machines/enrollment-preview`: shows the person at the machine
+/// which organization a code belongs to before it is redeemed, so a code
+/// handed over by someone else can be refused.
+pub async fn preview_enrollment(
+    cloud_base_url: &str,
+    code: &str,
+) -> Result<EnrollmentPreview, PreviewError> {
+    let cloud_base_url = normalize_base_url(cloud_base_url);
+    let code = code.trim();
+    if code.is_empty() {
+        return Err(PreviewError::InvalidCode);
+    }
+    let response = http::client()
+        .post(format!("{cloud_base_url}/api/machines/enrollment-preview"))
+        .header("content-type", "application/json")
+        .body(json!({ "enrollmentCode": code }).to_string())
+        .send()
+        .await
+        .map_err(|error| PreviewError::Unreachable(http::fetch_failed(error)))?;
+    let status = response.status().as_u16();
+    match status {
+        200 => {}
+        // 401 for every unusable code; 400 only for a missing code.
+        400 | 401 => return Err(PreviewError::InvalidCode),
+        429 => return Err(PreviewError::RateLimited),
+        _ => {
+            return Err(PreviewError::Failed(format!(
+                "Enrollment preview failed with HTTP {status}"
+            )));
+        }
+    }
+    let body = response
+        .bytes()
+        .await
+        .map_err(|error| PreviewError::Unreachable(http::fetch_failed(error)))?;
+    let value: Value = serde_json::from_slice(&body).map_err(|_| {
+        PreviewError::Failed("Enrollment preview response is not valid JSON".into())
+    })?;
+    parse_preview(&value)
 }
 
 pub fn validate_enrollment_identity(
@@ -244,4 +333,82 @@ pub async fn bootstrap_managed_machine(
         .map_err(|error| error.message)?;
     validate_enrollment_identity(data_dir, &enrollment)?;
     Ok(enrollment)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::Json;
+    use axum::http::StatusCode;
+    use axum::routing::post;
+
+    async fn cloud(status: StatusCode, body: Value) -> String {
+        let app = axum::Router::new().route(
+            "/api/machines/enrollment-preview",
+            post(move |Json(request): Json<Value>| async move {
+                assert_eq!(request, json!({ "enrollmentCode": "ABCD-EFGH-JKLM" }));
+                (status, Json(body))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        format!("http://{address}/")
+    }
+
+    #[tokio::test]
+    async fn previews_an_enrollment_code() {
+        let base = cloud(
+            StatusCode::OK,
+            json!({
+                "organizationName": "Kanzlei Müller",
+                "machineName": "DATEV-PC",
+                "expiresAt": "2026-11-27T08:00:00.000Z",
+            }),
+        )
+        .await;
+        assert_eq!(
+            preview_enrollment(&base, " ABCD-EFGH-JKLM\n").await,
+            Ok(EnrollmentPreview {
+                organization_name: "Kanzlei Müller".into(),
+                machine_name: "DATEV-PC".into(),
+                expires_at: "2026-11-27T08:00:00.000Z".into(),
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn maps_preview_failures() {
+        let error = json!({ "error": "Invalid or expired enrollment code" });
+        for status in [StatusCode::BAD_REQUEST, StatusCode::UNAUTHORIZED] {
+            let base = cloud(status, error.clone()).await;
+            assert_eq!(
+                preview_enrollment(&base, "ABCD-EFGH-JKLM").await,
+                Err(PreviewError::InvalidCode)
+            );
+        }
+        let base = cloud(StatusCode::NOT_FOUND, error.clone()).await;
+        assert_eq!(
+            preview_enrollment(&base, "ABCD-EFGH-JKLM").await,
+            Err(PreviewError::Failed(
+                "Enrollment preview failed with HTTP 404".into()
+            ))
+        );
+        let base = cloud(StatusCode::TOO_MANY_REQUESTS, error.clone()).await;
+        assert_eq!(
+            preview_enrollment(&base, "ABCD-EFGH-JKLM").await,
+            Err(PreviewError::RateLimited)
+        );
+        let base = cloud(StatusCode::OK, json!({ "organizationName": "Org" })).await;
+        assert_eq!(
+            preview_enrollment(&base, "ABCD-EFGH-JKLM").await,
+            Err(PreviewError::Failed(
+                "Enrollment preview response is invalid".into()
+            ))
+        );
+        assert_eq!(
+            preview_enrollment("http://127.0.0.1:9", " ").await,
+            Err(PreviewError::InvalidCode)
+        );
+    }
 }

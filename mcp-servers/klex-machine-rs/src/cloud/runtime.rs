@@ -11,7 +11,9 @@ use super::facts::{
     MACHINE_FACTS_HEADER, MachineFactsCollector, MachineFactsOptions, encode_machine_facts_header,
 };
 use super::identity::load_machine_identity;
-use super::proxy_daemon::{ConnectionProvider, ProxyConnection, ProxyDaemon, ProxyHandler};
+use super::proxy_daemon::{
+    ConnectionProvider, LinkStatus, ProxyConnection, ProxyDaemon, ProxyHandler,
+};
 use super::state::{identity_path, load_machine_enrollment};
 use super::token_client::{TokenClient, TokenClientOptions};
 use crate::desktop::service::DesktopService;
@@ -29,6 +31,30 @@ pub async fn start_cloud_runtime(
     facts: Option<MachineFactsOptions>,
     desktop: Option<Arc<DesktopService>>,
     logger: Logger,
+) -> Result<CloudRuntime, String> {
+    start(data_dir, handler, facts, desktop, logger, None).await
+}
+
+/// Like [`start_cloud_runtime`], but keeps retrying an unreachable Cloud and
+/// reports the link on `status`. Fails only on local state errors.
+pub async fn start_supervised_cloud_runtime(
+    data_dir: &Path,
+    handler: ProxyHandler,
+    facts: Option<MachineFactsOptions>,
+    desktop: Option<Arc<DesktopService>>,
+    logger: Logger,
+    status: LinkStatus,
+) -> Result<CloudRuntime, String> {
+    start(data_dir, handler, facts, desktop, logger, Some(status)).await
+}
+
+async fn start(
+    data_dir: &Path,
+    handler: ProxyHandler,
+    facts: Option<MachineFactsOptions>,
+    desktop: Option<Arc<DesktopService>>,
+    logger: Logger,
+    status: Option<LinkStatus>,
 ) -> Result<CloudRuntime, String> {
     let machine_version = facts
         .as_ref()
@@ -69,29 +95,31 @@ pub async fn start_cloud_runtime(
             Ok(ProxyConnection { url, headers })
         })
     });
-    match ProxyDaemon::start(connection, handler).await {
-        Ok(daemon) => {
-            let desktop = desktop.map(|service| {
-                let link = DesktopLink::start(DesktopLinkOptions {
-                    cloud_base_url: enrollment.cloud_base_url.clone(),
-                    tokens: token_client.clone(),
-                    desktop: service.clone(),
-                    machine_version,
-                    logger: link_logger,
-                });
-                (service, link)
-            });
-            Ok(CloudRuntime {
-                daemon,
-                token_client,
-                desktop,
-            })
-        }
-        Err(error) => {
-            token_client.close();
-            Err(error)
-        }
-    }
+    let daemon = match status {
+        Some(status) => ProxyDaemon::start_supervised(connection, handler, status),
+        None => match ProxyDaemon::start(connection, handler).await {
+            Ok(daemon) => daemon,
+            Err(error) => {
+                token_client.close();
+                return Err(error);
+            }
+        },
+    };
+    let desktop = desktop.map(|service| {
+        let link = DesktopLink::start(DesktopLinkOptions {
+            cloud_base_url: enrollment.cloud_base_url.clone(),
+            tokens: token_client.clone(),
+            desktop: service.clone(),
+            machine_version,
+            logger: link_logger,
+        });
+        (service, link)
+    });
+    Ok(CloudRuntime {
+        daemon,
+        token_client,
+        desktop,
+    })
 }
 
 impl CloudRuntime {

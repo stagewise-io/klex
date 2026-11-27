@@ -1,0 +1,73 @@
+---
+title: Conectar um computador
+description: Forneça um computador gerenciado a um Klex Bot ou conecte o seu com @klex/machine.
+related:
+  - /pt/bot/concepts/brain-and-computers
+  - /pt/bot/concepts/mcp
+  - /pt/bot/guides/control-and-limits
+---
+
+Um Klex Bot pode usar um computador conectado para trabalhar com arquivos, executar comandos e, quando há uma área de trabalho disponível, usar aplicativos gráficos. O Bot é o cérebro; o computador é uma ferramenta que ele usa. Um Bot pode usar mais de um computador, e você pode atribuir um computador a mais de um Bot.
+
+Escolha um computador gerenciado no Klex Cloud ou conecte o seu com o servidor MCP `@klex/machine`. As ferramentas disponíveis para o Bot dependem do computador e da sua configuração.
+
+<a id="before-you-connect"></a>
+
+## Antes de conectar
+
+Uma conexão com o computador dá ao Bot acesso amplo. O `@klex/machine` pode ler e alterar arquivos e executar comandos de shell com as permissões do usuário do sistema operacional que o executa. Seu diretório de trabalho não é uma sandbox: caminhos absolutos continuam acessíveis. Uma área de trabalho pode expor tudo o que esse usuário pode ver ou usar.
+
+Sempre que possível, use uma conta dedicada sem privilégios ou um computador isolado. Remova credenciais e dados sensíveis desnecessários e conceda acesso apenas a Bots e pessoas em quem você confia. Verifique ações importantes de forma independente. Consulte [Controle e limites](/pt/bot/guides/control-and-limits).
+
+<a id="use-a-managed-computer"></a>
+
+## Usar um computador gerenciado
+
+Na seção **Computers** do Bot, selecione **Add computer** e depois **Set up a computer**. Escolha **Cloud computer**, selecione um tamanho e uma configuração de acesso à internet, confira o preço e selecione **Create computer**. Verifique o status e possíveis erros de conexão no Cloud: uma atribuição, por si só, não garante que o computador esteja conectado.
+
+Computadores gerenciados podem fornecer uma área de trabalho para tarefas gráficas, além de ferramentas de arquivos e shell. Quando uma tela estiver disponível, você poderá visualizá-la no Cloud. Um administrador pode assumir o controle e depois devolvê-lo ao Bot. Enquanto uma pessoa controla a área de trabalho, a entrada do Bot nela fica bloqueada. A tela e as ferramentas dependem da disponibilidade do computador e da ativação do suporte à área de trabalho.
+
+<a id="connect-your-own-computer-to-cloud"></a>
+
+## Conectar seu computador ao Cloud
+
+O computador precisa de Node.js 24 ou posterior. Um administrador da organização pode configurar um computador no Cloud e atribuí-lo a um Bot registrado.
+
+1. No Cloud, abra a seção **Computers** do Bot e selecione **Add computer** e depois **Set up a computer**.
+2. Escolha **Your own computer** e siga as instruções de configuração. O Cloud fornece um comando de instalação e registro. Trate o código de registro como um segredo e não o compartilhe em conversas nem o adicione a um repositório.
+3. Execute o comando no computador que deseja conectar. O registro inicia o processo machine; mantenha-o em execução.
+4. Verifique se o computador está conectado e atribuído ao Bot. Se não estiver atribuído, adicione-o pela seção **Computers** do Bot. Você pode atribuir o mesmo computador a outros Bots separadamente.
+
+O processo estabelece uma conexão de saída com o Cloud. Quando o processo para, o computador aparece offline. O registro não instala um serviço em segundo plano: fechar o terminal ou reiniciar o computador interrompe o processo. Após o registro, execute `klex-machine` como o mesmo usuário do sistema operacional para reiniciá-lo com a identidade salva. Mantenha privado o diretório de identidade, que por padrão é `~/.klex-machine`.
+
+Uma área de trabalho compatível também pode estar disponível no seu computador. No macOS, seu uso exige uma sessão iniciada e permissões de gravação de tela e acessibilidade. No Windows, exige uma sessão interativa iniciada. No Linux, o suporte depende de uma tela funcional e das ferramentas de desktop necessárias. Um computador sem área de trabalho ainda pode fornecer ferramentas de arquivos e shell.
+
+<a id="keep-a-linux-computer-connected"></a>
+
+### Manter um computador Linux conectado
+
+Um administrador Linux pode configurar um serviço systemd para iniciar `klex-machine` na inicialização e reiniciá-lo em caso de falha. O serviço deve ser executado pelo usuário previsto, sem privilégios, e usar a identidade machine existente desse usuário. Um serviço em segundo plano não fornece, por si só, uma sessão de área de trabalho.
+
+Revise o serviço antes de ativá-lo. Proteja o diretório de identidade e evite executar o serviço como root sem um motivo específico.
+
+<a id="connect-locally-without-cloud"></a>
+
+## Conectar localmente sem Cloud
+
+Para um Bot independente no mesmo computador, execute o servidor no modo local:
+
+```sh
+# Instale uma vez com npm ou pnpm. É necessário Node.js 24 ou posterior.
+npm install -g @klex/machine
+klex-machine serve --mode local --cwd /path/to/workspace --port 3123
+```
+
+Nas configurações de servidor MCP do Bot, adicione a URL do servidor local `http://127.0.0.1:3123/mcp`. Mantenha o processo em execução enquanto o Bot o utiliza.
+
+O modo local não é autenticado e usa a interface loopback por padrão. Não exponha o listener à rede: qualquer pessoa que possa acessá-lo pode usar o servidor com as permissões do usuário do sistema operacional. A opção `--cwd` altera o diretório inicial, não o limite de acesso.
+
+<a id="disconnect-a-computer"></a>
+
+## Desconectar um computador
+
+No Cloud, use **Disconnect** na conexão do computador do Bot para revogar a atribuição desse Bot. O computador permanece na organização, e outros Bots atribuídos mantêm o acesso. Para interromper o acesso pelo processo machine do seu computador, pare `klex-machine`; revise também as atribuições no Cloud e as credenciais locais.

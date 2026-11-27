@@ -1,0 +1,73 @@
+---
+title: Computer verbinden
+description: Stellen Sie einem Klex Bot einen verwalteten Computer bereit oder verbinden Sie Ihren eigenen mit @klex/machine.
+related:
+  - /de/bot/concepts/brain-and-computers
+  - /de/bot/concepts/mcp
+  - /de/bot/guides/control-and-limits
+---
+
+Ein Klex Bot kann auf einem verbundenen Computer mit Dateien arbeiten, Befehle ausführen und, falls ein Desktop verfügbar ist, grafische Anwendungen nutzen. Der Bot ist das Gehirn; der Computer ist ein Werkzeug. Ein Bot kann mehrere Computer nutzen und ein Computer kann mehreren Bots zugewiesen werden.
+
+Wählen Sie einen verwalteten Computer in Klex Cloud oder verbinden Sie Ihren eigenen Computer mit dem MCP-Server `@klex/machine`. Welche Werkzeuge der Bot nutzen kann, hängt vom Computer und seiner Konfiguration ab.
+
+<a id="before-you-connect"></a>
+
+## Vor dem Verbinden
+
+Eine Computerverbindung gewährt dem Bot weitreichenden Zugriff. `@klex/machine` kann mit den Berechtigungen des Betriebssystembenutzers, unter dem der Prozess läuft, Dateien lesen und ändern sowie Shell-Befehle ausführen. Das Arbeitsverzeichnis ist keine Sandbox: Absolute Pfade bleiben zugänglich. Über einen Desktop kann alles offengelegt werden, was dieser Benutzer sehen oder nutzen kann.
+
+Verwenden Sie nach Möglichkeit ein separates Konto ohne Administratorrechte oder einen isolierten Computer. Entfernen Sie unnötige Zugangsdaten und sensible Daten und gewähren Sie nur Bots und Personen Zugriff, denen Sie vertrauen. Prüfen Sie wichtige Aktionen unabhängig. Siehe [Kontrolle und Grenzen](/de/bot/guides/control-and-limits).
+
+<a id="use-a-managed-computer"></a>
+
+## Verwalteten Computer nutzen
+
+Wählen Sie im Bereich **Computers** Ihres Bots **Add computer** und anschließend **Set up a computer**. Wählen Sie **Cloud computer**, eine Größe und eine Einstellung für den Internetzugang. Prüfen Sie den Preis und wählen Sie **Create computer**. Prüfen Sie den Status und mögliche Verbindungsfehler in Cloud: Eine Zuweisung allein garantiert keine Verbindung.
+
+Verwaltete Computer können neben Datei- und Shell-Werkzeugen auch einen Desktop für grafische Aufgaben bereitstellen. Ist ein Bildschirm verfügbar, können Sie ihn in Cloud ansehen. Ein Administrator kann die Kontrolle übernehmen und sie anschließend an den Bot zurückgeben. Solange eine Person die Kontrolle hat, sind Desktop-Eingaben des Bots blockiert. Bildschirm und Werkzeuge stehen nur zur Verfügung, wenn der Computer erreichbar und seine Desktop-Unterstützung aktiv ist.
+
+<a id="connect-your-own-computer-to-cloud"></a>
+
+## Eigenen Computer mit Cloud verbinden
+
+Auf dem Computer ist Node.js 24 oder neuer erforderlich. Ein Organisationsadministrator kann in Cloud einen Computer einrichten und ihn einem registrierten Bot zuweisen.
+
+1. Öffnen Sie in Cloud den Bereich **Computers** Ihres Bots und wählen Sie **Add computer** und dann **Set up a computer**.
+2. Wählen Sie **Your own computer** und folgen Sie den Einrichtungsanweisungen. Cloud stellt einen Installations- und Registrierungsbefehl bereit. Behandeln Sie den Registrierungscode als Geheimnis und teilen Sie ihn weder im Chat noch in einem Repository.
+3. Führen Sie den Befehl auf dem Computer aus, den Sie verbinden möchten. Die Registrierung startet den Machine-Prozess; lassen Sie ihn laufen.
+4. Prüfen Sie, ob der Computer verbunden und dem Bot zugewiesen ist. Falls nicht, fügen Sie ihn im Bereich **Computers** des Bots hinzu. Sie können denselben Computer weiteren Bots separat zuweisen.
+
+Der Prozess baut eine ausgehende Verbindung zu Cloud auf. Wenn er stoppt, erscheint der Computer offline. Die Registrierung installiert keinen Hintergrunddienst: Das Schließen des Terminals oder ein Neustart des Computers beendet den Prozess. Starten Sie nach der Registrierung `klex-machine` als derselbe Betriebssystembenutzer, um ihn mit seiner gespeicherten Identität erneut auszuführen. Halten Sie das Identitätsverzeichnis, standardmäßig `~/.klex-machine`, privat.
+
+Auf Ihrem eigenen Computer kann ebenfalls ein kompatibler Desktop verfügbar sein. Unter macOS sind dafür eine angemeldete Sitzung sowie Berechtigungen für Bildschirmaufnahme und Bedienungshilfen erforderlich. Unter Windows ist eine interaktive angemeldete Sitzung erforderlich. Unter Linux hängt die Desktop-Unterstützung von einer funktionierenden Anzeige und den benötigten Desktop-Werkzeugen ab. Ein Computer ohne Desktop kann weiterhin Datei- und Shell-Werkzeuge bereitstellen.
+
+<a id="keep-a-linux-computer-connected"></a>
+
+### Linux-Computer verbunden halten
+
+Ein Linux-Administrator kann einen systemd-Dienst so konfigurieren, dass er `klex-machine` beim Hochfahren startet und bei einem Fehler neu startet. Der Dienst muss unter dem vorgesehenen Benutzer ohne Administratorrechte laufen und dessen bestehende Machine-Identität verwenden. Ein Hintergrunddienst stellt nicht automatisch eine Desktop-Sitzung bereit.
+
+Prüfen Sie den Dienst vor dem Aktivieren. Schützen Sie das Identitätsverzeichnis und führen Sie den Dienst nur dann als root aus, wenn Sie einen konkreten Grund dafür haben.
+
+<a id="connect-locally-without-cloud"></a>
+
+## Lokal ohne Cloud verbinden
+
+Führen Sie für einen eigenständig betriebenen Bot auf demselben Computer den Server im lokalen Modus aus:
+
+```sh
+# Einmalig mit npm oder pnpm installieren. Node.js 24 oder neuer ist erforderlich.
+npm install -g @klex/machine
+klex-machine serve --mode local --cwd /path/to/workspace --port 3123
+```
+
+Fügen Sie in den MCP-Server-Einstellungen des Bots die lokale Server-URL `http://127.0.0.1:3123/mcp` hinzu. Lassen Sie den Prozess laufen, solange der Bot ihn nutzt.
+
+Der lokale Modus ist nicht authentifiziert und verwendet standardmäßig die Loopback-Schnittstelle. Geben Sie den Listener nicht im Netzwerk frei: Wer ihn erreichen kann, kann den Server mit den Berechtigungen des Betriebssystembenutzers nutzen. `--cwd` ändert das Startverzeichnis, nicht die Zugriffsgrenze.
+
+<a id="disconnect-a-computer"></a>
+
+## Computer trennen
+
+Verwenden Sie in Cloud **Disconnect** an der Computerverbindung des Bots, um dessen Zuweisung zu widerrufen. Der Computer bleibt in der Organisation und andere zugewiesene Bots behalten ihren Zugriff. Um den Zugriff über den Machine-Prozess auf Ihrem eigenen Computer zu stoppen, beenden Sie `klex-machine`; prüfen Sie außerdem die Cloud-Zuweisungen und lokalen Zugangsdaten.

@@ -42,7 +42,7 @@ For chat, you can configure an ordered list of models. Klex can fall back to ano
 
 ## Instincts and model usage
 
-Klex can use an **Instincts** model to classify context before a generation step. If no Instincts model is configured, it uses available Chat models for classification. These calls can add model usage and cost. Check its price and monitor usage.
+Klex does not automatically classify context before each generation step. When an extension explicitly requests a decision, Klex can use the **Quick Decisions** model, called **Instincts** in the self-hosted app. If no decision model is configured, Klex falls back to available Memory, Compaction, or Chat models. These calls can add model usage and cost. Check provider pricing and monitor usage.
 
 <Tabs syncKey="hosting" hash={false}>
 <Tab title="Cloud-hosted">
@@ -56,8 +56,6 @@ Select an Instincts model in **Settings → Model Selection**.
 
 </Tab>
 </Tabs>
-
-By default, dynamic effort runs in shadow mode: it evaluates a suggested reasoning effort without changing the main model’s settings. Shadow classification can still use a model and incur cost.
 
 <noscript><link rel="stylesheet" href="/hosting-noscript.css" /></noscript>
 <script src="/hosting-tabs.js" defer></script>

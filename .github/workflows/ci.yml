@@ -276,13 +276,28 @@ jobs:
       - run: pnpm --filter @klex/desktop test
       - run: cargo test --locked --package klex-desktop
       - run: pnpm --filter @klex/desktop tauri build --debug --ci
-      - name: Smoke-test the daemon entry point
+        env:
+          # Builds the Windows app as a GUI-subsystem executable, like release.
+          KLEX_DESKTOP_GUI_SUBSYSTEM: '1'
+      # The release workflow's install checks, minus signatures.
+      - if: runner.os == 'Linux'
+        name: Run the AppImage and install the .deb in clean containers
         run: |
-          case "$RUNNER_OS" in
-            Windows) app=target/debug/klex-desktop.exe ;;
-            *) app=target/debug/klex-desktop ;;
-          esac
-          "$app" --daemon --version
+          version="$(node -p "require('./apps/desktop/package.json').version")"
+          apps/desktop/scripts/release/verify-linux.sh \
+            target/debug/bundle/appimage/*.AppImage target/debug/bundle/deb/*.deb "$version"
+      - if: runner.os == 'macOS'
+        name: Verify the disk image
+        run: |
+          version="$(node -p "require('./apps/desktop/package.json').version")"
+          apps/desktop/scripts/release/verify-macos.sh target/debug/bundle/dmg/*.dmg "$version"
+      - if: runner.os == 'Windows'
+        name: Install, verify, and uninstall
+        shell: pwsh
+        run: |
+          $installer = @(Get-ChildItem target/debug/bundle/nsis/*-setup.exe)
+          if ($installer.Count -ne 1) { throw "Expected one NSIS installer, found $($installer.Count)" }
+          ./apps/desktop/scripts/release/verify-windows.ps1 -Installer $installer[0].FullName
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: klex-desktop-${{ matrix.name }}

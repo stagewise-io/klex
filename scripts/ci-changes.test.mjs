@@ -81,6 +81,17 @@ test('desktop app changes affect only the desktop group', () => {
     ...none,
     desktop: true,
   });
+  assert.deepEqual(
+    affected(['apps/desktop/scripts/release/verify-windows.ps1']),
+    { ...none, desktop: true },
+  );
+});
+
+test('the desktop release workflow affects the desktop group', () => {
+  assert.deepEqual(affected(['.github/workflows/_release-klex-desktop.yml']), {
+    ...none,
+    desktop: true,
+  });
 });
 
 test('conformance fixtures affect only the machine group', () => {

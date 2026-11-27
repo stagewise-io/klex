@@ -67,7 +67,12 @@ Both call `.github/workflows/_release-klex-desktop.yml`. It builds macOS
 (arm64, x64), Windows (x64) and Linux (x64, arm64: AppImage and .deb) on
 native runners. It signs and notarizes with the `Release` environment's Apple
 and Azure Artifact Signing secrets, then installs and checks each build on
-its platform before publishing anything.
+its platform before publishing anything. The checks live in
+`scripts/release/verify-{macos,linux}.sh` and `verify-windows.ps1`; CI runs
+them without signatures on debug bundles in pull requests that touch the app.
+Linux builds are checked in clean Ubuntu 22.04 and 24.04 containers. The
+AppImage gets only the libraries linuxdeploy leaves to the host (the GL stack,
+fontconfig, X11 and Wayland clients); the .deb gets nothing but its Depends.
 
 Release builds add `plugins.updater` through a generated config overlay
 (`scripts/release/release-config.ts`); development and CI builds have no

@@ -75,10 +75,15 @@ export const groups = {
   executable: {
     packages: ['@stagewise/klex'],
   },
-  // The Tauri crate links klex-machine through Cargo, not pnpm.
+  // The Tauri crate links klex-machine through Cargo, not pnpm. The desktop
+  // job runs the release workflow's install checks on debug bundles.
   desktop: {
     packages: ['@klex/desktop', '@klex/machine-rs'],
-    paths: [...rustPaths, 'mcp-servers/klex-machine/contract/'],
+    paths: [
+      ...rustPaths,
+      '.github/workflows/_release-klex-desktop.yml',
+      'mcp-servers/klex-machine/contract/',
+    ],
   },
 };
 

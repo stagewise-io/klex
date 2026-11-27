@@ -338,86 +338,41 @@ jobs:
           - runner: windows-2022
             target: windows-x64
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
       PREFIX: klex-desktop-${{ inputs.version }}-${{ matrix.target }}
       VERSION: ${{ inputs.version }}
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.commit }}
+          sparse-checkout: apps/desktop/scripts/release
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: klex-desktop-${{ matrix.target }}
           path: release-output
 
+      # CI runs the same scripts unsigned on every pull request that touches
+      # the desktop app (ci.yml, desktop job).
       - name: Verify the macOS disk image and update
         if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          set -euo pipefail
-          dmg="release-output/$PREFIX.dmg"
-          codesign --verify --strict --verbose=2 "$dmg"
-          spctl --assess --type open --context context:primary-signature --verbose=2 "$dmg"
-          xcrun stapler validate "$dmg"
-          mount="$(mktemp -d)"
-          hdiutil attach -nobrowse -readonly -mountpoint "$mount" "$dmg"
-          trap 'hdiutil detach "$mount" -force >/dev/null || true' EXIT
-          app="$mount/Klex Desktop.app"
-          codesign --verify --deep --strict --verbose=2 "$app"
-          spctl --assess --type execute --verbose=2 "$app"
-          xcrun stapler validate "$app"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" = "$VERSION"
-          "$app/Contents/MacOS/klex-desktop" --daemon --version
-          update="$(mktemp -d)"
-          tar -xzf "release-output/$PREFIX.app.tar.gz" -C "$update"
-          codesign --verify --deep --strict --verbose=2 "$update/Klex Desktop.app"
-          xcrun stapler validate "$update/Klex Desktop.app"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$update/Klex Desktop.app/Contents/Info.plist")" = "$VERSION"
+        run: >-
+          apps/desktop/scripts/release/verify-macos.sh --signed
+          "release-output/$PREFIX.dmg" "$VERSION" "release-output/$PREFIX.app.tar.gz"
 
-      - name: Install, verify, and uninstall (Linux)
+      - name: Run the AppImage and install the .deb in clean containers
         if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          set -euo pipefail
-          appimage="release-output/$PREFIX.AppImage"
-          chmod +x "$appimage"
-          APPIMAGE_EXTRACT_AND_RUN=1 "$appimage" --daemon --version
-          sudo apt-get update
-          sudo apt-get install --yes "./release-output/$PREFIX.deb"
-          test "$(dpkg-query --show --showformat='${Version}' klex-desktop)" = "$VERSION"
-          /usr/bin/klex-desktop --daemon --version
-          sudo apt-get remove --yes klex-desktop
-          test ! -e /usr/bin/klex-desktop
+        run: >-
+          apps/desktop/scripts/release/verify-linux.sh
+          "release-output/$PREFIX.AppImage" "release-output/$PREFIX.deb" "$VERSION"
 
       - name: Install, verify, and uninstall (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          function Assert-Signed([string] $Path) {
-            $signature = Get-AuthenticodeSignature -LiteralPath $Path
-            if ($signature.Status -ne 'Valid') {
-              throw "$Path signature is $($signature.Status): $($signature.StatusMessage)"
-            }
-          }
-          $installer = Join-Path 'release-output' "$env:PREFIX-setup.exe"
-          Assert-Signed $installer
-          Start-Process -FilePath $installer -ArgumentList '/S' -Wait
-          $root = Join-Path $env:LOCALAPPDATA 'Klex Desktop'
-          $app = Join-Path $root 'klex-desktop.exe'
-          if (-not (Test-Path -LiteralPath $app)) {
-            throw "The installer did not create $app"
-          }
-          Assert-Signed $app
-          $version = & $app --daemon --version
-          if ($LASTEXITCODE -ne 0) { throw "klex-desktop --daemon --version exited with $LASTEXITCODE" }
-          Write-Host "Daemon version: $version"
-          $uninstaller = Join-Path $root 'uninstall.exe'
-          Assert-Signed $uninstaller
-          Start-Process -FilePath $uninstaller -ArgumentList '/S' -Wait
-          $deadline = (Get-Date).AddMinutes(2)
-          while ((Test-Path -LiteralPath $app) -and (Get-Date) -lt $deadline) {
-            Start-Sleep -Seconds 2
-          }
-          if (Test-Path -LiteralPath $app) { throw "$app remains after uninstall" }
+        run: >-
+          ./apps/desktop/scripts/release/verify-windows.ps1 -Signed
+          -Installer (Join-Path 'release-output' "$env:PREFIX-setup.exe")
 
   aggregate:
     needs: [prepare, build]

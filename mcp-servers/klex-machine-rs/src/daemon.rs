@@ -2,6 +2,7 @@
 //! crate, such as Klex Desktop, can run it by re-executing themselves.
 
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -43,14 +44,8 @@ pub fn main(argv: Vec<String>) -> ExitCode {
         Err(message) => return fail(&message, supervised),
     };
     match result {
-        CliResult::Help => {
-            println!("{}", help_text());
-            ExitCode::SUCCESS
-        }
-        CliResult::Version => {
-            println!("{VERSION}");
-            ExitCode::SUCCESS
-        }
+        CliResult::Help => print_line(&help_text()),
+        CliResult::Version => print_line(VERSION),
         command => {
             if supervised {
                 supervised::emit(&supervised::hello());
@@ -69,13 +64,31 @@ pub fn main(argv: Vec<String>) -> ExitCode {
     }
 }
 
-/// Prints to stdout unless stdout is the supervised status channel.
-fn say(supervised: bool, message: &str) {
-    if supervised {
-        eprintln!("{message}");
-    } else {
-        println!("{message}");
+/// Writes `text` to stdout. Unlike `println!`, a reader that has gone away
+/// ends the command quietly instead of panicking; on Windows that includes
+/// PowerShell capturing a GUI-subsystem executable such as Klex Desktop.
+fn print_line(text: &str) -> ExitCode {
+    match writeln!(std::io::stdout().lock(), "{text}") {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => ExitCode::SUCCESS,
+        Err(error) => {
+            let _ = writeln!(
+                std::io::stderr(),
+                "{BIN_NAME}: cannot write to stdout: {error}"
+            );
+            ExitCode::FAILURE
+        }
     }
+}
+
+/// Prints to stdout unless stdout is the supervised status channel. A closed
+/// stream drops the message rather than taking the daemon down.
+fn say(supervised: bool, message: &str) {
+    let _ = if supervised {
+        writeln!(std::io::stderr(), "{message}")
+    } else {
+        writeln!(std::io::stdout(), "{message}")
+    };
 }
 
 async fn run(command: CliResult) -> Result<ExitCode, String> {

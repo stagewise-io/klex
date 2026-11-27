@@ -12,6 +12,7 @@ mod settings;
 mod tray;
 
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use klex_machine::cloud::enrollment::EnrollmentPreview;
 use tauri::{AppHandle, Emitter, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent};
@@ -82,11 +83,15 @@ async fn set_enabled(desktop: State<'_>, enabled: bool) -> Result<AppStatus, Str
 #[tauri::command]
 async fn forget(desktop: State<'_>) -> Result<AppStatus, String> {
     let desktop = desktop.inner().clone();
+    desktop.forgetting.store(true, Ordering::SeqCst);
     desktop.stop().await;
-    match std::fs::remove_dir_all(&desktop.paths.data_dir) {
+    let removed = std::fs::remove_dir_all(&desktop.paths.data_dir);
+    desktop.forgetting.store(false, Ordering::SeqCst);
+    match removed {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => {
+            lock(&desktop.pending_deep_link).take();
             return Err(format!(
                 "Could not remove this computer’s identity: {error}"
             ));
@@ -102,7 +107,6 @@ async fn forget(desktop: State<'_>) -> Result<AppStatus, String> {
             &format!("Could not turn off start at sign-in: {error}"),
         );
     }
-    lock(&desktop.pending_deep_link).take();
     desktop.log(Source::App, "Forgot this computer’s identity");
     Ok(desktop.broadcast())
 }
@@ -142,7 +146,7 @@ fn handle_deep_links(app: &AppHandle, urls: impl IntoIterator<Item = url::Url>) 
         return;
     };
     let desktop = app.state::<Arc<Desktop>>();
-    if desktop.is_paired() {
+    if desktop.is_paired() && !desktop.forgetting.load(Ordering::SeqCst) {
         desktop.log(
             Source::App,
             "Ignored a pairing link: this computer is already connected. Forget it first to pair again.",

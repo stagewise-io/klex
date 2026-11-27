@@ -2,6 +2,7 @@
 //! shown in the window and the tray.
 
 use std::process::Stdio;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
@@ -73,6 +74,9 @@ pub struct Desktop {
     pub settings: Mutex<Settings>,
     pub pending: Mutex<Option<PendingPairing>>,
     pub pending_deep_link: Mutex<Option<String>>,
+    /// Set while Forget runs, so pairing links that arrive during the
+    /// daemon's shutdown are kept for the pairing screen.
+    pub forgetting: AtomicBool,
     link: Mutex<Link>,
     running: tokio::sync::Mutex<Option<Running>>,
 }
@@ -124,6 +128,7 @@ impl Desktop {
             settings: Mutex::new(settings),
             pending: Mutex::new(None),
             pending_deep_link: Mutex::new(None),
+            forgetting: AtomicBool::new(false),
             link: Mutex::new(Link::default()),
             running: tokio::sync::Mutex::new(None),
         }

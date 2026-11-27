@@ -461,7 +461,12 @@ impl Canvas {
             let error = last_error();
             ReleaseDC(std::ptr::null_mut(), screen);
             if ok == 0 {
-                return Err(error_message(error));
+                // BitBlt often fails without setting an error code.
+                return Err(if error == 0 {
+                    "Windows could not copy the screen".into()
+                } else {
+                    error_message(error)
+                });
             }
         }
         Ok(())

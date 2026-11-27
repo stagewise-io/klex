@@ -9,10 +9,45 @@ on:
 permissions:
   contents: read
 
+# A new push to a pull request cancels its older run, which would otherwise
+# keep holding scarce macOS runners. Pushes to main get one group per commit
+# and are never cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 # Dependency setup lives in .github/actions/setup-workspace. Only pushes to main
 # write caches; pull requests read main's entries and never write their own.
 
 jobs:
+  # Pull requests run platform-matrix jobs only for the groups their changes
+  # can affect (scripts/ci-changes.mjs). Pushes to main run every group.
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      installer: ${{ steps.changes.outputs.installer }}
+      machine: ${{ steps.changes.outputs.machine }}
+      machine-rs: ${{ steps.changes.outputs.machine-rs }}
+      executable: ${{ steps.changes.outputs.executable }}
+      desktop: ${{ steps.changes.outputs.desktop }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # The pull request merge commit and its base parent.
+          fetch-depth: 2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+      - run: node --test scripts/ci-changes.test.mjs
+      - id: changes
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            git diff --name-only --no-renames HEAD^1 HEAD | node scripts/ci-changes.mjs
+          else
+            node scripts/ci-changes.mjs --all
+          fi
+
   test:
     name: Unit Tests
     runs-on: ubuntu-latest
@@ -71,15 +106,17 @@ jobs:
           path: .turbo/cache
           key: turbo-v1-${{ github.job }}-${{ github.sha }}
 
+  # macOS runs these checks in its klex-machine conformance job.
   klex-machine:
     name: klex-machine (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.machine == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os:
           - ubuntu-latest
-          - macos-latest
           - windows-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -114,7 +151,9 @@ jobs:
           "$RUNNER_TEMP/$archive/cargo-deny" check
 
   klex-machine-rs:
-    name: klex-machine-rs (${{ matrix.name }})
+    name: klex-machine-rs (${{ matrix.name }}${{ matrix.cross-name && format(' + {0}', matrix.cross-name) || '' }})
+    needs: changes
+    if: needs.changes.outputs.machine-rs == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -126,14 +165,13 @@ jobs:
           - name: linux-arm64-musl
             os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-musl
+          # darwin-x64 is cross-compiled in the same job, so it is built but
+          # not run.
           - name: darwin-arm64
             os: macos-latest
             target: aarch64-apple-darwin
-          # Cross-compiled on the arm64 runner, so it is built but not run.
-          - name: darwin-x64
-            os: macos-latest
-            target: x86_64-apple-darwin
-            cross: true
+            cross-name: darwin-x64
+            cross-target: x86_64-apple-darwin
           - name: win32-x64
             os: windows-latest
             target: x86_64-pc-windows-msvc
@@ -147,7 +185,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: ./.github/actions/setup-rust
         with:
-          cache-key: ${{ matrix.target }}
+          cache-key: ${{ matrix.target }}${{ matrix.cross-target && format('+{0}', matrix.cross-target) || '' }}
       # ring compiles C. cc-rs looks for <arch>-linux-musl-gcc, which
       # musl-tools does not install under that name.
       - if: runner.os == 'Linux'
@@ -172,11 +210,18 @@ jobs:
             }
             Add-Content $env:GITHUB_PATH $llvm
           }
-      - if: ${{ !matrix.cross }}
-        run: cargo test --locked --package klex-machine --target ${{ matrix.target }}
+      - run: cargo test --locked --package klex-machine --target ${{ matrix.target }}
       - run: cargo build --release --locked --package klex-machine --bin klex-machine-rs --target ${{ matrix.target }}
-      - if: ${{ !matrix.cross }}
-        run: target/${{ matrix.target }}/release/klex-machine-rs --version
+      - run: target/${{ matrix.target }}/release/klex-machine-rs --version
+      - if: matrix.cross-target
+        run: cargo build --release --locked --package klex-machine --bin klex-machine-rs --target ${{ matrix.cross-target }}
+      - if: matrix.cross-target
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: klex-machine-rs-${{ matrix.cross-name }}
+          path: target/${{ matrix.cross-target }}/release/klex-machine-rs
+          retention-days: 14
+          if-no-files-found: error
       - if: runner.os == 'Linux'
         name: Verify the binary is fully static
         run: |
@@ -194,6 +239,8 @@ jobs:
   # app and its installers build. Signed releases: _release-klex-desktop.yml.
   desktop:
     name: Klex Desktop (${{ matrix.name }})
+    needs: changes
+    if: needs.changes.outputs.desktop == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -243,20 +290,28 @@ jobs:
 
   # Linux runs the full conformance suite for both implementations in Unit
   # Tests; this covers the platform-specific PTY and filesystem behaviour.
+  # macOS runners are scarce, so a single macOS job runs both implementations
+  # and the klex-machine checks.
   klex-machine-conformance:
-    name: klex-machine conformance (${{ matrix.implementation }}, ${{ matrix.os }})
+    name: klex-machine conformance (${{ matrix.name }})
+    needs: changes
+    if: needs.changes.outputs.machine == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - macos-latest
-          - windows-latest
-        implementation:
-          - ts
-          - rust
-    env:
-      KLEX_MACHINE_IMPL: ${{ matrix.implementation }}
+        include:
+          - name: ts + rust, macos-latest
+            os: macos-latest
+            ts: true
+            rust: true
+            machine-checks: true
+          - name: ts, windows-latest
+            os: windows-latest
+            ts: true
+          - name: rust, windows-latest
+            os: windows-latest
+            rust: true
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: ./.github/actions/setup-workspace
@@ -265,17 +320,36 @@ jobs:
           install-filter: --filter klex --filter @klex/machine-conformance...
       # The Rust run also needs the TypeScript server for takeover tests.
       - run: pnpm --filter @klex/machine... build
-      - if: matrix.implementation == 'rust'
+      - if: matrix.machine-checks
+        run: pnpm --filter @klex/machine typecheck
+      - if: matrix.machine-checks
+        run: pnpm --filter @klex/machine test
+      - if: matrix.machine-checks
+        run: pnpm --filter @klex/machine verify
+      - if: matrix.rust
         uses: ./.github/actions/setup-rust
-      - if: matrix.implementation == 'rust'
+      - if: matrix.rust
         run: pnpm --filter @klex/machine-rs build
       - run: pnpm --filter @klex/machine-conformance typecheck
-      - run: pnpm --filter @klex/machine-conformance test
+      - id: conformance-ts
+        if: matrix.ts
+        name: Conformance tests (ts)
+        run: pnpm --filter @klex/machine-conformance test
+        env:
+          KLEX_MACHINE_IMPL: ts
+      # Still runs when the ts suite fails, so one run reports both.
+      - if: matrix.rust && (success() || steps.conformance-ts.outcome == 'failure')
+        name: Conformance tests (rust)
+        run: pnpm --filter @klex/machine-conformance test
+        env:
+          KLEX_MACHINE_IMPL: rust
 
   # Drives a real X server (Xvnc) through both implementations: input
   # injection, window listing, capture and the VNC socket stream.
   klex-machine-desktop-x11:
     name: klex-machine desktop (x11, ${{ matrix.implementation }})
+    needs: changes
+    if: needs.changes.outputs.machine == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -309,6 +383,8 @@ jobs:
   # be answered headlessly, so GNOME and KDE are covered by the manual guide.
   klex-machine-desktop-wayland:
     name: klex-machine desktop (wayland, rust)
+    needs: changes
+    if: needs.changes.outputs.machine == 'true'
     runs-on: ubuntu-24.04
     env:
       KLEX_MACHINE_IMPL: rust
@@ -393,6 +469,8 @@ jobs:
 
   installer-lock-windows:
     name: Installer Lock End-to-End (Windows)
+    needs: changes
+    if: needs.changes.outputs.installer == 'true'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -402,6 +480,8 @@ jobs:
 
   installer-e2e:
     name: Installer End-to-End (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.installer == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -418,6 +498,8 @@ jobs:
 
   executable:
     name: Packaged Executable
+    needs: changes
+    if: needs.changes.outputs.executable == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -438,6 +520,8 @@ jobs:
 
   container:
     name: Container Image (${{ matrix.runner }})
+    needs: changes
+    if: needs.changes.outputs.executable == 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
@@ -466,3 +550,35 @@ jobs:
             -f apps/klex/container/Dockerfile apps/klex/container/context
       - name: Smoke-test image
         run: sh apps/klex/container/smoke-image.sh klex:ci "$(node -p "require('./apps/klex/package.json').version")"
+
+  # One stable check for branch protection: skipped jobs count as passing, so
+  # path filtering never blocks a merge.
+  ci-result:
+    name: CI Result
+    if: ${{ !cancelled() }}
+    needs:
+      - changes
+      - test
+      - build
+      - klex-machine
+      - rust
+      - klex-machine-rs
+      - desktop
+      - klex-machine-conformance
+      - klex-machine-desktop-x11
+      - klex-machine-desktop-wayland
+      - package-release-scopes
+      - local-data-migrations
+      - installers
+      - installer-lock-windows
+      - installer-e2e
+      - executable
+      - container
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check job results
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          echo "$NEEDS" | jq -e 'all(.[]; .result == "success" or .result == "skipped")' > /dev/null

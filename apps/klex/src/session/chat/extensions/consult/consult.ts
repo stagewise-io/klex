@@ -299,11 +299,14 @@ class ConsultExtension implements Extension {
     const reporter = createReporterFactory((content, final) =>
       this.receiveReport(handle, generationId, content, final),
     );
-    // Capture exactly the bounded context sent to this child. Reference access
-    // is delegated only when its framing survived transcript fitting.
+    // Delegate recovery from structured, recent parent history only. Never
+    // interpret producer-controlled transcript text as authorization.
     let serializedContext: string;
     let child: ConsultEntry['child'];
     try {
+      const history =
+        (await this.deps.transformHistory?.(this.deps.getHistory())) ??
+        this.deps.getHistory();
       serializedContext = createTranscriptHistoryView(
         {
           keep: 'newest',
@@ -313,13 +316,15 @@ class ConsultExtension implements Extension {
         },
         this.deps.getDataPartTransformers?.(),
         Object.keys(this.deps.getDataPartTransformers?.() ?? {}),
-      ).render(
-        (await this.deps.projectModelHistory?.(this.deps.getHistory(), {
-          purpose: 'transcript',
-        })) ?? this.deps.getHistory(),
-      ).text;
+      ).render(history).text;
       const delegated =
-        this.deps.getChildContextExtensions?.(serializedContext) ?? [];
+        this.deps.getChildContextExtensions?.(
+          history.slice(
+            -(
+              this.config.maxContextMessages ?? CONSULT_DEFAULT_CONTEXT_MESSAGES
+            ),
+          ),
+        ) ?? [];
       child = await this.deps.createChildSession({
         // Stable role name: it becomes the `session consult` span name and a
         // metric label. The handle ↔ session id mapping is logged below.

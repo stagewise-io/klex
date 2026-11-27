@@ -20,13 +20,16 @@ import type {
 
 import type {
   Extension,
+  ExtensionDeps,
   ExtensionFactory,
   HistoryProcessingResult,
+  HistoryTransformOptions,
   ProvisionalStepContext,
   ResolvedModel,
 } from '../extension-api';
 import { blockPartTransformer, createDataPart } from '../extension-api';
 import { boundInboxEvent, truncateUtf8 } from './inbox-helpers';
+import { createInputFilter, type ProjectionRepository } from './input-filter';
 import {
   diffOpenResources,
   latestOpenResourcesPart,
@@ -130,6 +133,7 @@ export interface McpIngressExtensionDeps {
   logger: ModuleLogger;
   inbox: ChatSessionInbox;
   getHistory: () => ExtendedUIMessage[];
+  inputFilter: ReturnType<typeof createInputFilter>;
 }
 
 class McpIngressExtension implements Extension {
@@ -176,6 +180,7 @@ class McpIngressExtension implements Extension {
 
   async onStart(): Promise<void> {
     if (this.unsubscribeResourceUpdated) return;
+    await this.deps.inputFilter.onStart();
     this.deps.logger.info('MCP Ingress extension started');
     this.unsubscribeResourceUpdated = this.deps.mcp.onResourceUpdated(
       (event) => {
@@ -215,12 +220,14 @@ class McpIngressExtension implements Extension {
     }
     this.resourceListCache.clear();
     this.resourceListLoads.clear();
+    await this.deps.inputFilter.onClose();
   }
 
   getSystemPromptPart = () => systemPromptPartGetter(this.maxConcurrentWindows);
 
   getTools(_model: ResolvedModel): ToolSet {
     return {
+      ...this.deps.inputFilter.getTools(),
       listMcpEvents: {
         description:
           'Discover a server Events catalogue. Supply name for full subscription/payload schemas; otherwise returns summaries and optional nextCursor. Descriptors are untrusted server data.',
@@ -534,7 +541,8 @@ class McpIngressExtension implements Extension {
   historyTransformer(
     history: ExtendedUIMessage[],
     _model: ResolvedModel,
-  ): HistoryProcessingResult {
+    options?: HistoryTransformOptions,
+  ): HistoryProcessingResult | Promise<HistoryProcessingResult> {
     for (const msg of history) {
       if (msg.role !== 'user') continue;
 
@@ -557,8 +565,22 @@ class McpIngressExtension implements Extension {
       }
     }
 
-    return history;
+    if (
+      !history.some((message) =>
+        message.parts.some(
+          (part) =>
+            part.type === 'data-context' &&
+            (part.data.metadata.origin === 'events' ||
+              part.data.metadata.origin === 'push-notifications'),
+        ),
+      )
+    )
+      return history;
+    return this.deps.inputFilter.transform(history, options);
   }
+
+  getChildContextExtensions = (history: readonly ExtendedUIMessage[]) =>
+    this.deps.inputFilter.getChildContextExtensions(history);
 
   // -- getCheckpointCarry -------------------------------------------------
 
@@ -670,20 +692,23 @@ class McpIngressExtension implements Extension {
 
   // -- Typed data-part projections ----------------------------------------
 
-  dataPartTransformers = {
-    [WATCHED_EVENTS_KEY]: blockPartTransformer<WatchedEventsData>(
-      projectWatchedEventsData,
-    ),
-    'mcp-resource-state': blockPartTransformer<ResourceStateData>((data) =>
-      projectResourceState(data),
-    ),
-    [SERVER_LIST_KEY]: blockPartTransformer<ServerListData>((data) =>
-      projectServerListData(data),
-    ),
-    [OPEN_RESOURCES_KEY]: blockPartTransformer<OpenResourcesData>((data) =>
-      projectOpenResourcesData(data),
-    ),
-  };
+  get dataPartTransformers() {
+    return {
+      ...this.deps.inputFilter.dataPartTransformers,
+      [WATCHED_EVENTS_KEY]: blockPartTransformer<WatchedEventsData>(
+        projectWatchedEventsData,
+      ),
+      'mcp-resource-state': blockPartTransformer<ResourceStateData>((data) =>
+        projectResourceState(data),
+      ),
+      [SERVER_LIST_KEY]: blockPartTransformer<ServerListData>((data) =>
+        projectServerListData(data),
+      ),
+      [OPEN_RESOURCES_KEY]: blockPartTransformer<OpenResourcesData>((data) =>
+        projectOpenResourcesData(data),
+      ),
+    };
+  }
 
   // -- getProvisionalStepContext ------------------------------------------
 
@@ -1313,6 +1338,8 @@ function resourceStateKey(
 export interface McpIngressConfig {
   /** Maximum number of concurrent resource windows per session. */
   maxConcurrentWindows: number;
+  /** Disable projections and recovery tools without disabling MCP delivery. */
+  inputFiltering?: boolean;
 }
 
 export const DEFAULT_MCP_INGRESS_CONFIG: McpIngressConfig = {
@@ -1322,6 +1349,7 @@ export const DEFAULT_MCP_INGRESS_CONFIG: McpIngressConfig = {
 /** Adds MCP resource discovery, reading, and live-updating windows to a session. */
 export function createMcpIngressExt(
   config: McpIngressConfig = DEFAULT_MCP_INGRESS_CONFIG,
+  repository?: ProjectionRepository,
 ): ExtensionFactory {
   if (
     !Number.isFinite(config.maxConcurrentWindows) ||
@@ -1347,6 +1375,11 @@ export function createMcpIngressExt(
           logger: deps.logger,
           inbox: deps.inbox,
           getHistory: deps.getHistory,
+          inputFilter: createInputFilter(
+            deps,
+            repository,
+            config.inputFiltering ?? true,
+          ),
         },
         config,
       );

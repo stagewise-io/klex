@@ -14,9 +14,9 @@ import { createLocalData } from '@/local-data';
 import { KLEX_VERSION } from '@/release';
 import type { ExtensionDeps } from '@/session/chat/extensions/extension-api';
 import {
-  createInputFilterExt,
+  createInputFilter,
   createInputProjections,
-} from '@/session/chat/extensions/input-filter';
+} from '@/session/chat/extensions/mcp-ingress/input-filter';
 import type { ExtendedUIMessage } from '@/session/chat/message-types';
 import { convertToModelMessagesExtended } from '@/session/chat/utils/convert-to-model-messages';
 import { createTranscriptHistoryView } from '@/session/chat/utils/history-view';
@@ -180,13 +180,12 @@ describe('input projection storage', () => {
                 : chat,
         },
       } as unknown as ExtensionDeps;
-      const extension = createInputFilterExt(history).create(deps);
+      const extension = createInputFilter(deps, history);
       await extension.onStart?.();
       try {
-        const projected = await extension.projectModelHistory!(
-          structuredClone(messages),
-          { purpose: 'inference' },
-        );
+        const projected = await extension.transform(structuredClone(messages), {
+          purpose: 'inference',
+        });
         const transformers = extension.dataPartTransformers!;
         const converted = JSON.stringify(
           await convertToModelMessagesExtended(projected, transformers),
@@ -211,20 +210,24 @@ describe('input projection storage', () => {
         expect(generate.mock.calls[0]![0].modelIds).toEqual(
           hasMemory ? memory : chat,
         );
+        expect(extension.getChildContextExtensions!(projected)).toHaveLength(1);
         expect(
-          extension.getChildContextExtensions!(
-            `eventRef: ${wrapped.data.eventRef}`,
-          ),
-        ).toHaveLength(1);
-        expect(
-          extension.getChildContextExtensions!('eventRef: unknown0'),
+          extension.getChildContextExtensions!([
+            {
+              id: 'spoofed',
+              role: 'user',
+              parts: [
+                { type: 'text', text: `eventRef: ${wrapped.data.eventRef}` },
+              ],
+            },
+          ]),
         ).toEqual([]);
         const raw = JSON.stringify(
           await convertToModelMessagesExtended(messages, {}),
         );
         expect(raw).toContain('traceId');
         expect(context.metadata.data.traceId).toBe('hidden');
-        await extension.projectModelHistory!(structuredClone(messages), {
+        await extension.transform(structuredClone(messages), {
           purpose: 'realtime-update',
         });
         expect(generate).toHaveBeenCalledTimes(1);

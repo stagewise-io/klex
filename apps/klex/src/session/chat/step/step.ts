@@ -592,6 +592,7 @@ class StepModule implements Step {
               this.deps.extensionHandler,
               messagesCopy,
               resolvedModel,
+              this.stepAbort.signal,
             );
           } catch (error) {
             transformSpan.setAttribute('history_pre_process.error', true);
@@ -652,7 +653,6 @@ class StepModule implements Step {
             preResult.history,
             (metrics) =>
               this.deps.logger.debug(metrics, 'Memory context rendered'),
-            this.stepAbort.signal,
           );
           if (this.stepAbort.signal.aborted) {
             transformSpan.end();

@@ -517,11 +517,7 @@ class ContextCompactionExt implements Extension {
       undefined,
       this.deps.getDataPartTransformers?.(),
       Object.keys(this.deps.getDataPartTransformers?.() ?? {}),
-    ).render(
-      (await this.deps.projectModelHistory?.(slice, {
-        purpose: 'transcript',
-      })) ?? slice,
-    ).text;
+    ).render((await this.deps.transformHistory?.(slice)) ?? slice).text;
     span.setAttribute('compaction.transcriptLength', transcript.length);
 
     if (transcript.trim().length === 0) {

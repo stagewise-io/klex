@@ -18,10 +18,10 @@ import type {
   ExtensionDeps,
   ExtensionFactory,
   GenerateTextResult,
+  HistoryTransformOptions,
   InstinctClassificationRequest,
   InstinctContext,
   InstinctInput,
-  ModelHistoryProjection,
   ProvisionalStepContext,
   ResolvedModel,
   StepCompleteEvent,
@@ -76,11 +76,9 @@ export interface InstinctReactionSettlement {
 }
 
 export interface ExtensionHandler {
-  projectModelHistory(
+  getChildContextExtensions(
     history: readonly ExtendedUIMessage[],
-    options: ModelHistoryProjection,
-  ): Promise<ExtendedUIMessage[]>;
-  getChildContextExtensions(context: string): ExtensionFactory[];
+  ): ExtensionFactory[];
 
   /** All instantiated extensions. */
   readonly extensions: readonly Extension[];
@@ -207,6 +205,7 @@ export interface ExtensionHandler {
   runHistoryTransformers: (
     history: ExtendedUIMessage[],
     model: ResolvedModel,
+    options?: HistoryTransformOptions,
   ) => Promise<{ history: ExtendedUIMessage[]; flags: TransformationFlags }>;
 
   /**
@@ -766,28 +765,18 @@ class ExtensionHandlerModule implements ExtensionHandler {
     throw new Error('History changed repeatedly during annotation preparation');
   }
 
-  async projectModelHistory(
+  getChildContextExtensions(
     history: readonly ExtendedUIMessage[],
-    options: ModelHistoryProjection,
-  ): Promise<ExtendedUIMessage[]> {
-    let projected = structuredClone([...history]);
-    for (const extension of this.extensions) {
-      if (options.signal?.aborted) break;
-      if (extension.projectModelHistory)
-        projected = await extension.projectModelHistory(projected, options);
-    }
-    return projected;
-  }
-
-  getChildContextExtensions(context: string): ExtensionFactory[] {
+  ): ExtensionFactory[] {
     return this.extensions.flatMap(
-      (extension) => extension.getChildContextExtensions?.(context) ?? [],
+      (extension) => extension.getChildContextExtensions?.(history) ?? [],
     );
   }
 
   async runHistoryTransformers(
     history: ExtendedUIMessage[],
     model: ResolvedModel,
+    options: HistoryTransformOptions = { purpose: 'inference' },
   ): Promise<{ history: ExtendedUIMessage[]; flags: TransformationFlags }> {
     let currentHistory = history;
     let flags: TransformationFlags = {};
@@ -795,7 +784,11 @@ class ExtensionHandlerModule implements ExtensionHandler {
     for (const ext of this.extensions) {
       if (!ext.historyTransformer) continue;
       try {
-        const result = await ext.historyTransformer(currentHistory, model);
+        const result = await ext.historyTransformer(
+          currentHistory,
+          model,
+          options,
+        );
         const normalized = normalizeResult(result);
         currentHistory = normalized.history;
         flags = mergeFlags(flags, normalized.flags);

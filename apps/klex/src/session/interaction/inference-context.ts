@@ -84,11 +84,15 @@ export async function runInferenceHistoryTransformers(
   handler: ExtensionHandler,
   history: ExtendedUIMessage[],
   model: ResolvedModel,
+  signal?: AbortSignal,
 ): Promise<{ history: ExtendedUIMessage[]; flags: TransformationFlags }> {
   // A checkpoint header at the window start means older history was
   // replaced by a summary; read it before transformers can reshape the view.
   const startsWithCheckpoint = isCheckpointHeader(history[0]);
-  const result = await handler.runHistoryTransformers(history, model);
+  const result = await handler.runHistoryTransformers(history, model, {
+    purpose: 'inference',
+    signal,
+  });
   if (!startsWithCheckpoint) return result;
   return { ...result, flags: { ...result.flags, hasCompacted: true } };
 }
@@ -97,13 +101,9 @@ export async function convertInferenceHistory(
   handler: ExtensionHandler,
   history: ExtendedUIMessage[],
   onMemoryMetrics?: Parameters<typeof convertToModelMessagesExtended>[2],
-  signal?: AbortSignal,
 ): Promise<ModelMessage[]> {
   return convertToModelMessagesExtended(
-    await handler.projectModelHistory(history, {
-      purpose: 'inference',
-      signal,
-    }),
+    history,
     handler.getDataPartTransformers(),
     onMemoryMetrics,
   );
@@ -129,12 +129,12 @@ export async function assembleInferenceContext(options: {
     options.extensionHandler,
     [...structuredClone(options.history)],
     options.model,
+    options.signal,
   );
   const converted = await convertInferenceHistory(
     options.extensionHandler,
     historyResult.history,
     options.onMemoryMetrics,
-    options.signal,
   );
   const contextResult = await runInferenceContextTransformers(
     options.extensionHandler,

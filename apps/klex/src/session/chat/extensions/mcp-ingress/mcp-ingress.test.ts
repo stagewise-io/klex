@@ -216,12 +216,86 @@ describe('MCP Ingress extension', () => {
     expect(Object.keys(tools).sort()).toEqual([
       'addMcpServer',
       'closeResource',
+      'getUnfilteredInput',
       'listMcpEvents',
       'listResources',
       'openResource',
       'unwatchMcpEvents',
       'watchMcpEvents',
     ]);
+  });
+
+  it('disables filtering and recovery without disabling ingress', async () => {
+    const deps = createMockDeps();
+    const ext = createMcpIngressExt({
+      maxConcurrentWindows: 5,
+      inputFiltering: false,
+    }).create(deps);
+    await ext.onStart?.();
+    try {
+      expect(deps.mcp.onPushNotification).toHaveBeenCalledOnce();
+      expect(ext.getTools?.({} as never)).not.toHaveProperty(
+        'getUnfilteredInput',
+      );
+      const history: ExtendedUIMessage[] = [
+        {
+          id: 'raw-event',
+          role: 'user',
+          parts: [
+            {
+              type: 'data-context',
+              data: {
+                sourceEnv: 'test',
+                metadata: {
+                  origin: 'events',
+                  data: { text: 'hello', traceId: 'retained' },
+                },
+                content: [],
+              },
+            },
+          ],
+        },
+      ];
+      expect(await ext.historyTransformer?.(history, {} as never)).toBe(
+        history,
+      );
+      expect(deps.generateText).not.toHaveBeenCalled();
+      expect(ext.getChildContextExtensions?.(history)).toEqual([]);
+    } finally {
+      await ext.onClose?.();
+    }
+  });
+
+  it('aborts preparation when storage cannot establish safe recovery bindings', async () => {
+    const flush = vi.fn().mockRejectedValue(new Error('storage unavailable'));
+    const ext = createMcpIngressExt(undefined, { flush } as never).create(
+      createMockDeps(),
+    );
+    const history: ExtendedUIMessage[] = [
+      {
+        id: 'raw-event',
+        role: 'user',
+        parts: [
+          {
+            type: 'data-context',
+            data: {
+              sourceEnv: 'test',
+              metadata: {
+                origin: 'events',
+                data: { text: 'x'.repeat(20_000) },
+              },
+              content: [],
+            },
+          },
+        ],
+      },
+    ];
+    await expect(
+      ext.historyTransformer?.(history, {} as never, {
+        purpose: 'realtime-update',
+      }),
+    ).rejects.toThrow('storage unavailable');
+    expect(flush).toHaveBeenCalledOnce();
   });
 
   it.each([

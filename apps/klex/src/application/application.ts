@@ -60,7 +60,6 @@ import {
 } from '@/session/chat/extensions/episode-summary';
 import type { ExtensionFactory } from '@/session/chat/extensions/extension-api';
 import { createImageInputOptimizerExt } from '@/session/chat/extensions/image-input-optimizer';
-import { createInputFilterExt } from '@/session/chat/extensions/input-filter';
 import { createJsReplSandboxExt } from '@/session/chat/extensions/js-repl-sandbox';
 import { createMcpIngressExt } from '@/session/chat/extensions/mcp-ingress';
 import {
@@ -729,7 +728,6 @@ class ApplicationModule implements Application {
     // Default session: full extension set + MCP access.
     const defaultSessionFactory = makeSessionFactory([
       createEffortExt,
-      createInputFilterExt(sessionHistory),
       createNameLoaderExt,
       createSoulExt,
       createJsReplSandboxExt,
@@ -740,7 +738,7 @@ class ApplicationModule implements Application {
       createReadAttachmentExt,
       todosExt,
       createSkillsExt(skillRegistry),
-      createMcpIngressExt(),
+      createMcpIngressExt(undefined, sessionHistory),
       createVoiceCapabilityExt({
         hasVoiceModel: () =>
           providerRegistry.resolveRealtimeProvider() !== undefined,

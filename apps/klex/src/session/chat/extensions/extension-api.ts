@@ -657,7 +657,7 @@ export function readInstinctClassification<
   return ctx.classification.answers as InstinctClassificationAnswers<K>;
 }
 
-export interface ModelHistoryProjection {
+export interface HistoryTransformOptions {
   purpose: 'inference' | 'transcript' | 'realtime-update';
   signal?: AbortSignal;
 }
@@ -810,6 +810,7 @@ export interface Extension {
   historyTransformer?: (
     history: ExtendedUIMessage[],
     model: ResolvedModel,
+    options?: HistoryTransformOptions,
   ) => HistoryProcessingResult | Promise<HistoryProcessingResult>;
 
   /**
@@ -877,14 +878,10 @@ export interface Extension {
    */
   onCheckpointApplied?: (event: CheckpointAppliedEvent) => void | Promise<void>;
 
-  /** Projects a model-facing copy after semantic matching. Preserve message IDs and part positions; never change canonical history. */
-  projectModelHistory?: (
-    history: ExtendedUIMessage[],
-    options: ModelHistoryProjection,
-  ) => Promise<ExtendedUIMessage[]>;
-
-  /** Delegates only extension capabilities present in the fitted child context. */
-  getChildContextExtensions?: (context: string) => ExtensionFactory[];
+  /** Delegates capabilities from trusted structured parent history, never rendered text. */
+  getChildContextExtensions?: (
+    history: readonly ExtendedUIMessage[],
+  ) => ExtensionFactory[];
 
   dataPartTransformers?: DataPartTransformers;
 
@@ -908,12 +905,13 @@ export interface ExtensionDeps {
   getHistory: () => ExtendedUIMessage[];
   /** Shared projections for history consumers; resolved after extension initialization. */
   getDataPartTransformers?: () => DataPartTransformers;
-  /** Extension projections for helper transcripts; internal matching uses getHistory. */
-  projectModelHistory?: (
+  /** Runs the existing history transformers on a copy for helper transcripts. */
+  transformHistory?: (
     history: readonly ExtendedUIMessage[],
-    options: ModelHistoryProjection,
   ) => Promise<ExtendedUIMessage[]>;
-  getChildContextExtensions?: (context: string) => ExtensionFactory[];
+  getChildContextExtensions?: (
+    history: readonly ExtendedUIMessage[],
+  ) => ExtensionFactory[];
 
   /** Core checkpoint API; see {@link CheckpointApi}. */
   checkpoints: CheckpointApi;

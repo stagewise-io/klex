@@ -91,7 +91,7 @@ describe('consult extension', () => {
       const deps = makeDeps({
         createChildSession,
         getChildContextExtensions,
-        projectModelHistory: async (history) =>
+        transformHistory: async (history) =>
           history.map((entry) => ({
             ...entry,
             parts: [{ type: 'text', text: message }],
@@ -131,7 +131,12 @@ describe('consult extension', () => {
         task: 'review',
       });
       expect(getChildContextExtensions).toHaveBeenCalledWith(
-        expect.stringContaining(message.slice(0, 100)),
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: 'source',
+            parts: [{ type: 'text', text: message }],
+          }),
+        ]),
       );
       expect(createChildSession).toHaveBeenCalledWith(
         expect.objectContaining({

@@ -17,6 +17,7 @@ import type {
   ExtensionFactory,
   GenerateTextArgs,
   GenerateTextResult,
+  HistoryTransformOptions,
   ProvisionalStepContext,
   ResolvedModel,
   StepCompleteEvent,
@@ -174,7 +175,6 @@ function factoryWith(
       onStepComplete: overrides.onStepComplete,
       dataPartTransformers: overrides.dataPartTransformers,
       introspect: overrides.introspect,
-      projectModelHistory: overrides.projectModelHistory,
       getChildContextExtensions: overrides.getChildContextExtensions,
     }),
   };
@@ -182,21 +182,33 @@ function factoryWith(
 
 // --- tests ---
 
-it('runs model projections on copies and leaves absent extensions inert', async () => {
+it('passes history-transform options through existing hooks', async () => {
   const history = [makeMessage('raw')];
   const baseline = structuredClone(history);
   const absent = createExtensionHandler({ ...HANDLER_OPTS, factories: [] });
   expect(
-    await absent.projectModelHistory(history, { purpose: 'inference' }),
+    (
+      await absent.runHistoryTransformers(
+        structuredClone(history),
+        mockResolvedModel,
+        { purpose: 'inference' },
+      )
+    ).history,
   ).toEqual(baseline);
-  expect(absent.getChildContextExtensions('anything')).toEqual([]);
-  const project = vi.fn(async (copy) => {
-    copy[0].parts = [{ type: 'text', text: 'projected' }];
-    return copy;
-  });
+  expect(absent.getChildContextExtensions(history)).toEqual([]);
+  const project = vi.fn(
+    async (
+      copy: ExtendedUIMessage[],
+      _model: ResolvedModel,
+      _options?: HistoryTransformOptions,
+    ) => {
+      copy[0]!.parts = [{ type: 'text', text: 'projected' }];
+      return copy;
+    },
+  );
   const enabled = createExtensionHandler({
     ...HANDLER_OPTS,
-    factories: [factoryWith({ projectModelHistory: project })],
+    factories: [factoryWith({ historyTransformer: project })],
   });
   for (const purpose of [
     'inference',
@@ -204,16 +216,22 @@ it('runs model projections on copies and leaves absent extensions inert', async 
     'realtime-update',
   ] as const) {
     expect(
-      (await enabled.projectModelHistory(history, { purpose }))[0]?.parts,
+      (
+        await enabled.runHistoryTransformers(
+          structuredClone(history),
+          mockResolvedModel,
+          { purpose },
+        )
+      ).history[0]?.parts,
     ).toEqual([{ type: 'text', text: 'projected' }]);
   }
   expect(history).toEqual(baseline);
   expect(project).toHaveBeenCalledTimes(3);
-  await enabled.projectModelHistory(history, {
-    purpose: 'inference',
-    signal: AbortSignal.abort(),
-  });
-  expect(project).toHaveBeenCalledTimes(3);
+  expect(project.mock.calls.map((call) => call[2]?.purpose)).toEqual([
+    'inference',
+    'transcript',
+    'realtime-update',
+  ]);
 });
 
 it('runs full-idle hooks synchronously and isolates hook failures', () => {
@@ -718,10 +736,12 @@ describe('ExtensionHandler — runHistoryTransformers', () => {
     expect(hook1).toHaveBeenCalledExactlyOnceWith(
       [makeMessage('orig')],
       mockResolvedModel,
+      { purpose: 'inference' },
     );
     expect(hook2).toHaveBeenCalledExactlyOnceWith(
       [makeMessage('orig'), makeMessage('ext1')],
       mockResolvedModel,
+      { purpose: 'inference' },
     );
     expect(result.history).toEqual([
       makeMessage('orig'),
@@ -859,6 +879,7 @@ describe('ExtensionHandler — runHistoryTransformers', () => {
     expect(hook).toHaveBeenCalledExactlyOnceWith(
       [makeMessage('a')],
       mockResolvedModel,
+      { purpose: 'inference' },
     );
   });
 });

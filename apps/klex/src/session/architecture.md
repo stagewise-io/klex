@@ -103,7 +103,7 @@ model-call-logger → session-history → skill-registry
   → session-host → realtime → mcp → telemetry-manager
 ```
 
-The optional input-filter extension owns projection lifecycle and policy, borrowing a narrow sessions-storage repository. Generic model-history projection hooks cover inference, helper transcripts and realtime delivery without feature-specific session dependencies. Removing its factory registration restores baseline rendering. Consult children receive only explicitly delegated recovery capabilities and no MCP access.
+MCP ingress owns filtering lifecycle, policy and recovery tools, borrowing a narrow sessions-storage repository. Its existing history-transform hook covers inference, helper transcripts and realtime delivery on copies, with no separate model-projection dispatch. Ingress factory configuration can disable filtering while keeping ingestion active. Consult children receive only explicitly delegated recovery capabilities and no MCP access.
 
 ### Soul administration
 

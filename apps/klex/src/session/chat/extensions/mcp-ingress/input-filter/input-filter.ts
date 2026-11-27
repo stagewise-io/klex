@@ -1,6 +1,13 @@
 import { type ToolSet, tool } from 'ai';
 import z from 'zod';
 
+import {
+  blockPartTransformer,
+  createDataPart,
+  type ExtensionDeps,
+  type ExtensionFactory,
+  type HistoryTransformOptions,
+} from '@/session/chat/extensions/extension-api';
 import type { ExtendedUIMessage } from '@/session/chat/message-types';
 import {
   contextBlock,
@@ -9,14 +16,6 @@ import {
 } from '@/session/chat/utils/history-view';
 import type { ContextDataUIPart } from '@/session/inbox';
 
-import {
-  blockPartTransformer,
-  createDataPart,
-  type Extension,
-  type ExtensionDeps,
-  type ExtensionFactory,
-  type ModelHistoryProjection,
-} from '../extension-api';
 import {
   createInputProjections,
   type InputProjections,
@@ -46,42 +45,45 @@ function blocks({ eventRef, event }: FilteredInput): DataBlock[] {
   ];
 }
 
-class InputFilterExtension implements Extension {
+class InputFilterModule {
   private readonly projections: InputProjections;
-  private readonly references = new Set<string>();
+  private readonly references = new Map<string, string>();
   constructor(
     private readonly deps: ExtensionDeps,
-    repository: ProjectionRepository,
+    repository?: ProjectionRepository,
+    private readonly enabled = true,
   ) {
     this.projections = createInputProjections(repository);
   }
   onStart = () => this.projections.start();
-  onClose = () => this.projections.close();
+  onClose = async () => {
+    this.references.clear();
+    await this.projections.close();
+  };
   introspect = () => this.projections.diagnostics();
   dataPartTransformers = { [KEY]: blockPartTransformer<FilteredInput>(blocks) };
 
-  async projectModelHistory(
+  async transform(
     history: ExtendedUIMessage[],
-    options: ModelHistoryProjection,
+    options: HistoryTransformOptions = { purpose: 'inference' },
   ): Promise<ExtendedUIMessage[]> {
-    const memory = this.deps.config.getModelSelection('memory');
-    try {
-      await this.projections.prepare(
-        this.deps.sessionId,
-        history,
-        options.purpose === 'inference'
-          ? {
-              generate: this.deps.generateText,
-              modelIds: memory.length
-                ? memory
-                : this.deps.config.getModelSelection('chat'),
-              signal: options.signal,
-            }
-          : undefined,
-      );
-    } catch {
-      return history;
-    }
+    if (!this.enabled) return history;
+    const memory = this.deps.config.getModelSelection?.('memory') ?? [];
+    // A storage failure cannot safely produce a bounded preview with recovery.
+    // Propagate it so the consumer aborts preparation rather than sending raw data.
+    await this.projections.prepare(
+      this.deps.sessionId,
+      history,
+      options.purpose === 'inference'
+        ? {
+            generate: this.deps.generateText,
+            modelIds: memory.length
+              ? memory
+              : (this.deps.config.getModelSelection?.('chat') ?? []),
+            signal: options.signal,
+          }
+        : undefined,
+    );
     return history.map((message) => ({
       ...message,
       parts: message.parts.map((part, partIndex) => {
@@ -93,7 +95,9 @@ class InputFilterExtension implements Extension {
           occurrence,
         );
         if (!eventRef) return part;
-        this.references.add(eventRef);
+        this.references.set(JSON.stringify([message.id, partIndex]), eventRef);
+        if (this.references.size > 2_048)
+          this.references.delete(this.references.keys().next().value!);
         return createDataPart(KEY, {
           eventRef,
           event: this.projections.present(
@@ -106,13 +110,24 @@ class InputFilterExtension implements Extension {
     }));
   }
   getTools = (): ToolSet =>
-    recoveryTools(this.projections, this.deps.sessionId);
-  getChildContextExtensions(context: string): ExtensionFactory[] {
-    const allowed = new Set(
-      [...this.references].filter((reference) =>
-        context.includes(`eventRef: ${reference}`),
-      ),
-    );
+    this.enabled ? recoveryTools(this.projections, this.deps.sessionId) : {};
+  getChildContextExtensions(
+    history: readonly ExtendedUIMessage[],
+  ): ExtensionFactory[] {
+    if (!this.enabled) return [];
+    const allowed = new Set<string>();
+    for (const message of history) {
+      for (const part of message.parts) {
+        if ((part.type as string) !== `data-${KEY}`) continue;
+        const data = (part as unknown as { data: FilteredInput }).data;
+        if (
+          this.references.get(
+            JSON.stringify([message.id, message.parts.indexOf(part)]),
+          ) === data.eventRef
+        )
+          allowed.add(data.eventRef);
+      }
+    }
     if (!allowed.size) return [];
     return [
       {
@@ -148,11 +163,10 @@ function recoveryTools(
   };
 }
 
-export function createInputFilterExt(
-  repository: ProjectionRepository,
-): ExtensionFactory {
-  return {
-    identifier: 'io.stagewise/input-filter',
-    create: (deps) => new InputFilterExtension(deps, repository),
-  };
+export function createInputFilter(
+  deps: ExtensionDeps,
+  repository?: ProjectionRepository,
+  enabled = true,
+) {
+  return new InputFilterModule(deps, repository, enabled);
 }

@@ -33,7 +33,10 @@ import {
   type ChatSessionDependencies,
   createChatSession,
 } from './chat-session';
-import type { ModelHistoryProjection } from './extensions/extension-api';
+import type {
+  HistoryTransformOptions,
+  ResolvedModel,
+} from './extensions/extension-api';
 import { createDataPart } from './extensions/extension-api';
 import { createSoulExt } from './extensions/soul';
 import type { ExtendedUIMessage } from './message-types';
@@ -272,13 +275,19 @@ it.each([true, false])(
     const project = vi.fn(
       async (
         history: ExtendedUIMessage[],
-        _options: ModelHistoryProjection,
+        _model: ResolvedModel,
+        _options?: HistoryTransformOptions,
       ) => {
         for (const message of history) {
           for (const part of message.parts) {
             if (part.type === 'data-context') {
               part.data.metadata.secret = 'projected';
-              part.data.content = [{ type: 'text', text: 'projected' }];
+              part.data.content = [
+                {
+                  type: 'text',
+                  text: `projected ${'x'.repeat(1_000)} tail-preserved`,
+                },
+              ];
             }
           }
         }
@@ -295,7 +304,7 @@ it.each([true, false])(
         ? [
             {
               identifier: 'test/projection',
-              create: () => ({ projectModelHistory: project }),
+              create: () => ({ historyTransformer: project }),
             },
           ]
         : [],
@@ -338,9 +347,10 @@ it.each([true, false])(
         expect(delivered.eventId).toBe(update.eventId);
         if (enabled) {
           expect(delivered.modelText).toContain('projected');
+          expect(delivered.modelText).toContain('tail-preserved');
           expect(delivered.modelText).not.toContain('live-secret');
           expect(
-            project.mock.calls.map(([, options]) => options.purpose),
+            project.mock.calls.map(([, , options]) => options?.purpose),
           ).toEqual(['inference', 'realtime-update']);
         } else {
           expect(delivered.modelText).toBeUndefined();

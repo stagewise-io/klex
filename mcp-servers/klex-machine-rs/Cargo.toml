@@ -51,6 +51,19 @@ webpki-roots = "1.0.12"
 [target."cfg(unix)".dependencies]
 libc = "0.2.191"
 
+[target."cfg(target_os = \"macos\")".dependencies]
+block2 = "0.6.2"
+dispatch2 = "0.3.1"
+objc2 = "0.6.5"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSPasteboard", "NSRunningApplication", "NSWorkspace", "NSEvent", "block2", "libc"] }
+objc2-application-services = { version = "0.3.2", default-features = false, features = ["std", "HIServices", "AXUIElement", "AXValue", "AXError", "libc"] }
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFArray", "CFDictionary", "CFString", "CFNumber", "CFRunLoop", "CFDate", "CFData", "CFCGTypes", "objc2"] }
+objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["std", "CGDirectDisplay", "CGDisplayConfiguration", "CGEvent", "CGEventSource", "CGEventTypes", "CGGeometry", "CGRemoteOperation", "CGSession", "CGWindow", "CGColorSpace", "CGError", "libc"] }
+objc2-core-media = { version = "0.3.2", default-features = false, features = ["std", "CMSampleBuffer", "CMTime", "objc2-core-video"] }
+objc2-core-video = { version = "0.3.2", default-features = false, features = ["std", "CVPixelBuffer", "CVImageBuffer", "CVBuffer", "CVReturn", "CVBase"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSString", "NSArray", "NSDictionary", "NSError", "NSURL", "NSValue", "NSEnumerator", "block2"] }
+objc2-screen-capture-kit = { version = "0.3.2", default-features = false, features = ["std", "block2", "dispatch2", "objc2-core-foundation", "objc2-core-media", "objc2-core-graphics", "SCStream", "SCShareableContent"] }
+
 [target."cfg(windows)".dependencies]
 windows-sys = { version = "0.61.2", features = [
   "Win32_Foundation",

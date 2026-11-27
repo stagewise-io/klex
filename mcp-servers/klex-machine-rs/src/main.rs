@@ -15,6 +15,7 @@ use klex_machine::config::RuntimeConfig;
 use klex_machine::desktop::{self, service::DesktopService};
 use klex_machine::logger::Logger;
 use klex_machine::notifications::NotificationStore;
+use klex_machine::platform::desktop::host_main_thread;
 use klex_machine::platform::signals;
 use klex_machine::server::{ServeOptions, serve};
 use klex_machine::{BIN_NAME, VERSION};
@@ -39,19 +40,16 @@ fn main() -> ExitCode {
             println!("{VERSION}");
             ExitCode::SUCCESS
         }
-        command => {
-            let runtime = match tokio::runtime::Builder::new_multi_thread()
+        command => match host_main_thread(move || {
+            tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .build()
-            {
-                Ok(runtime) => runtime,
-                Err(error) => return fail(&error.to_string()),
-            };
-            match runtime.block_on(run(command)) {
-                Ok(code) => code,
-                Err(message) => fail(&message),
-            }
-        }
+                .map_err(|error| error.to_string())?
+                .block_on(run(command))
+        }) {
+            Ok(code) => code,
+            Err(message) => fail(&message),
+        },
     }
 }
 

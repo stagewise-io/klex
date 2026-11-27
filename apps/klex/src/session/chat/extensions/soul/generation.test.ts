@@ -10,7 +10,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { generateText } from 'ai';
+import { APICallError, generateText } from 'ai';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { getSoulGenerationSystemPrompt } from './generation-system-prompt';
@@ -69,6 +69,75 @@ afterEach(() => {
 });
 
 describe('Soul admin generation', () => {
+  it.each([
+    [401, 'auth'],
+    [429, 'rate_limit'],
+    [404, 'configuration'],
+    [400, 'request_rejected'],
+    [500, 'server_error'],
+  ] as const)(
+    'persists safe HTTP %i diagnosis across reload and clears on recovery',
+    async (statusCode, category) => {
+      const { soul, soulDirectory } = setup();
+      generate.mockRejectedValue(
+        new APICallError({
+          message: 'private upstream detail',
+          url: 'https://private.example',
+          requestBodyValues: { secret: 'private' },
+          statusCode,
+          responseBody: 'private',
+        }),
+      );
+      await expect(soul.create('private instructions')).rejects.toMatchObject({
+        failure: {
+          category,
+          providerId: 'provider-one',
+          modelId: 'chat-one',
+          statusCode,
+        },
+      });
+      expect(generate).toHaveBeenCalledTimes(3);
+      const persisted = readFileSync(join(soulDirectory, 'state.json'), 'utf8');
+      expect(persisted).not.toContain('private');
+      expect((await soul.getStatus()).failure?.category).toBe(category);
+      generate.mockResolvedValue(output());
+      await soul.create('Recover');
+      expect(await soul.getStatus()).toEqual({ failure: null });
+    },
+  );
+
+  it.each([
+    ['insufficient_quota', 'quota'],
+    ['fetch failed', 'connectivity'],
+    ['unrecognized private detail', 'unknown'],
+  ] as const)(
+    'classifies %s without forwarding provider prose',
+    async (message, category) => {
+      const { soul } = setup();
+      generate.mockRejectedValue(new Error(message));
+      await expect(soul.create('Create')).rejects.toMatchObject({
+        failure: { category },
+      });
+      expect(JSON.stringify(await soul.getStatus())).not.toContain(message);
+    },
+  );
+
+  it.each([
+    ['', 'stop', 'empty_output'],
+    ['Partial', 'length', 'length'],
+    ['```markdown\nNo\n```', 'stop', 'rejected_format'],
+  ] as const)(
+    'persists invalid output reason %s',
+    async (text, finishReason, reason) => {
+      const { soul } = setup();
+      generate.mockResolvedValue(output(text, finishReason));
+      await expect(soul.create('Create')).rejects.toMatchObject({
+        failure: { category: 'invalid_output', reason },
+      });
+      expect(generate).toHaveBeenCalledTimes(3);
+      expect((await soul.getStatus()).failure?.reason).toBe(reason);
+    },
+  );
   it('GET returns null without creating files, POST creates cleanly with the chat model and no tools', async () => {
     const { soul, soulDirectory, config, modelResolver } = setup();
     expect(soul.get()).toBeNull();
@@ -226,7 +295,8 @@ describe('Soul admin generation', () => {
       code: 'generation_failed',
     });
     expect(generate).toHaveBeenCalledTimes(3);
-    expect(existsSync(soulDirectory)).toBe(false);
+    expect(existsSync(join(soulDirectory, 'SOUL.md'))).toBe(false);
+    expect((await soul.getStatus()).failure).not.toBeNull();
     generate.mockResolvedValue(output());
     await expect(soul.create('Retry')).resolves.toBe('Direct, not rude.');
   });
@@ -254,7 +324,7 @@ describe('Soul admin generation', () => {
       expect(readFileSync(join(soulDirectory, 'SOUL.md'), 'utf8')).toBe(
         'Direct, not rude.',
       );
-      expect(readdirSync(soulDirectory)).toEqual(['SOUL.md']);
+      expect(readdirSync(soulDirectory)).toEqual(['SOUL.md', 'state.json']);
     },
   );
 

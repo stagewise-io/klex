@@ -7,3 +7,4 @@ export {
   SoulError,
   type SoulErrorCode,
 } from './soul';
+export { SOUL_STATE_STORE_DEFINITION } from './state';

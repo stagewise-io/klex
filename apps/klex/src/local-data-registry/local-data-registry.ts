@@ -14,6 +14,7 @@ import {
   MEMORY_CONSOLIDATOR_STORE_DEFINITION,
   MEMORY_WRITER_STORE_DEFINITION,
 } from '@/session/chat/extensions/memory';
+import { SOUL_STATE_STORE_DEFINITION } from '@/session/chat/extensions/soul';
 import { TODOS_STORE_DEFINITION } from '@/session/chat/extensions/todos';
 import { SESSION_HISTORY_STORE_DEFINITION } from '@/session-history';
 import { SKILL_REGISTRY_STORE_DEFINITION } from '@/skills';
@@ -33,4 +34,5 @@ export const KLEX_LOCAL_DATA_STORES = [
   SKILL_REGISTRY_STORE_DEFINITION,
   MEMORY_WRITER_STORE_DEFINITION,
   MEMORY_CONSOLIDATOR_STORE_DEFINITION,
+  SOUL_STATE_STORE_DEFINITION,
 ] as const satisfies readonly LocalDataStoreDefinition[];

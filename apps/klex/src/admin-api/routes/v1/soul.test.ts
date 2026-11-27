@@ -5,12 +5,18 @@ import {
   SoulError,
   type SoulErrorCode,
 } from '@/session/chat/extensions/soul';
+import {
+  type SoulFailure,
+  soulFailureMessages,
+} from '@/session/chat/extensions/soul/failure';
 
 import {
   createSoul,
   createSoulRoute,
   getSoul,
   getSoulRoute,
+  getSoulStatus,
+  getSoulStatusRoute,
   patchSoul,
   patchSoulRoute,
 } from './soul';
@@ -18,12 +24,14 @@ import { setupTestApp } from './test-utils';
 
 function setup() {
   const soul = {
+    getStatus: vi.fn<Soul['getStatus']>(async () => ({ failure: null })),
     get: vi.fn<Soul['get']>(() => null),
     create: vi.fn<Soul['create']>(async () => 'Created soul'),
     update: vi.fn<Soul['update']>(async () => 'Updated soul'),
   };
   const app = setupTestApp((app) => {
     app.openapi(getSoulRoute, getSoul({ soul }));
+    app.openapi(getSoulStatusRoute, getSoulStatus({ soul }));
     app.openapi(createSoulRoute, createSoul({ soul }));
     app.openapi(patchSoulRoute, patchSoul({ soul }));
   });
@@ -41,6 +49,31 @@ function setup() {
 }
 
 describe('Soul admin routes', () => {
+  it('exposes the same safe failure in POST, PATCH and durable status', async () => {
+    const { app, soul, mutate } = setup();
+    const failure: SoulFailure = {
+      kind: 'soul_generation_failed',
+      category: 'auth',
+      reason: 'provider_error',
+      providerId: 'provider',
+      providerType: 'openai',
+      modelId: 'model',
+      statusCode: 401,
+      message: soulFailureMessages.auth,
+    };
+    soul.getStatus.mockResolvedValue({ failure });
+    soul.create.mockRejectedValue(
+      new SoulError('generation_failed', failure.message, failure),
+    );
+    soul.update.mockRejectedValue(
+      new SoulError('generation_failed', failure.message, failure),
+    );
+    for (const method of ['POST', 'PATCH'] as const)
+      expect(await (await mutate(method)).json()).toMatchObject({ failure });
+    expect(await (await app.request('/v1/soul/status')).json()).toEqual({
+      failure,
+    });
+  });
   it('GET returns JSON null when no soul exists', async () => {
     const { app, soul } = setup();
     const response = await app.request('/v1/soul');

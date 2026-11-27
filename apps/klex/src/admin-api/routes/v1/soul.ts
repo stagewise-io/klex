@@ -1,8 +1,16 @@
 import { createRoute, type RouteHandler, z } from '@hono/zod-openapi';
 
 import { type Soul, SoulError } from '@/session/chat/extensions/soul';
+import {
+  soulFailureSchema,
+  soulStatusSchema,
+} from '@/session/chat/extensions/soul/failure';
 
 import { errorResponseSchema } from './schemas';
+
+const soulErrorSchema = errorResponseSchema.extend({
+  failure: soulFailureSchema.optional(),
+});
 
 export interface SoulRouteDependencies {
   soul: Soul;
@@ -34,12 +42,12 @@ const failureResponses = {
       'Another operation is in progress or the soul changed during generation',
   },
   502: {
-    content: { 'application/json': { schema: errorResponseSchema } },
+    content: { 'application/json': { schema: soulErrorSchema } },
     description:
       'Soul generation failed after three attempts; saved soul is unchanged',
   },
   503: {
-    content: { 'application/json': { schema: errorResponseSchema } },
+    content: { 'application/json': { schema: soulErrorSchema } },
     description: 'No chat model configured or request cancelled',
   },
   500: {
@@ -61,6 +69,25 @@ export const getSoulRoute = createRoute({
     500: failureResponses[500],
   },
 });
+
+export const getSoulStatusRoute = createRoute({
+  method: 'get',
+  path: '/v1/soul/status',
+  tags: ['Soul'],
+  summary: 'Read the unresolved soul generation failure',
+  responses: {
+    200: {
+      content: { 'application/json': { schema: soulStatusSchema } },
+      description: 'Latest failure, cleared by a successful soul write',
+    },
+    500: failureResponses[500],
+  },
+});
+export function getSoulStatus(
+  deps: SoulRouteDependencies,
+): RouteHandler<typeof getSoulStatusRoute> {
+  return async (c) => c.json(await deps.soul.getStatus(), 200);
+}
 
 export const createSoulRoute = createRoute({
   method: 'post',
@@ -145,7 +172,13 @@ export function createSoul(
     } catch (error) {
       if (error instanceof SoulError)
         return c.json(
-          { error: error.message, code: error.code },
+          {
+            error: error.message,
+            code: error.code,
+            ...(error.failure
+              ? { failure: soulFailureSchema.parse(error.failure) }
+              : {}),
+          },
           statusFor(error),
         );
       throw error;
@@ -168,7 +201,13 @@ export function patchSoul(
     } catch (error) {
       if (error instanceof SoulError)
         return c.json(
-          { error: error.message, code: error.code },
+          {
+            error: error.message,
+            code: error.code,
+            ...(error.failure
+              ? { failure: soulFailureSchema.parse(error.failure) }
+              : {}),
+          },
           statusFor(error),
         );
       throw error;

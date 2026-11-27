@@ -33,7 +33,7 @@ import {
   jwtVerify,
   SignJWT,
 } from 'jose';
-import { type WebSocket, WebSocketServer } from 'ws';
+import { type RawData, WebSocket, WebSocketServer } from 'ws';
 
 import {
   type MachineReportedFacts,
@@ -196,8 +196,38 @@ export interface CloudPeer {
   remotePort: number | undefined;
 }
 
+/** A machine's desktop control socket, seen from Cloud. */
+export interface DesktopControl {
+  readonly machineId: string;
+  readonly socket: WebSocket;
+  /** JSON messages from the machine, in arrival order. */
+  readonly messages: Record<string, unknown>[];
+  /** Resolves with the close code once the socket closes. */
+  readonly closed: Promise<number>;
+  send(message: Record<string, unknown>): void;
+  /** The first message of `type` after the first `skip` of them. */
+  next(type: string, skip?: number): Promise<Record<string, unknown>>;
+}
+
+/** A desktop stream socket the machine opened for a viewer. */
+export interface DesktopStream {
+  readonly streamId: string;
+  readonly socket: WebSocket;
+  /** Binary RFB bytes from the machine, concatenated. */
+  readonly received: () => Buffer;
+  readonly closed: Promise<number>;
+}
+
+export interface FakeDesktopCloud {
+  readonly controls: DesktopControl[];
+  /** The latest open control socket of a machine. */
+  control(machineId: string): Promise<DesktopControl>;
+  stream(streamId: string): Promise<DesktopStream>;
+}
+
 export interface FakeCloud {
   readonly baseUrl: string;
+  readonly desktop: FakeDesktopCloud;
   readonly caFile: string;
   readonly machines: Map<string, EnrolledMachine>;
   readonly tokenRequests: TokenRequest[];
@@ -282,6 +312,29 @@ async function serveProxyHttp(
   } catch {}
   response.end();
 }
+
+async function poll<T>(check: () => T | undefined, what: string): Promise<T> {
+  const deadline = Date.now() + 20_000;
+  for (;;) {
+    const value = check();
+    if (value !== undefined) return value;
+    if (Date.now() > deadline) throw new Error(`Timed out waiting for ${what}`);
+    await new Promise((done) => setTimeout(done, 20));
+  }
+}
+
+const closedCode = (socket: WebSocket) =>
+  new Promise<number>((done) => socket.once('close', (code) => done(code)));
+
+const toBuffer = (data: RawData): Buffer =>
+  Buffer.isBuffer(data)
+    ? data
+    : Array.isArray(data)
+      ? Buffer.concat(data)
+      : Buffer.from(data);
+
+const DESKTOP_CONTROL_PATH = '/api/machine-desktop/control';
+const DESKTOP_STREAM_PATH = /^\/api\/machine-desktop\/streams\/([^/]+)$/;
 
 async function listen(server: Server): Promise<number> {
   server.listen(0, '127.0.0.1');
@@ -483,6 +536,44 @@ export async function startFakeCloud(directory: string): Promise<FakeCloud> {
       return void handlers.handleHttp(request, response);
     json(response, 404, { error: 'not_found' });
   });
+  const controls: DesktopControl[] = [];
+  const streams = new Map<string, DesktopStream>();
+  const acceptDesktop = (
+    webSocket: WebSocket,
+    machineId: string,
+    path: string,
+  ) => {
+    const streamId = DESKTOP_STREAM_PATH.exec(path)?.[1];
+    if (streamId) {
+      const chunks: Buffer[] = [];
+      webSocket.on('message', (data, isBinary) => {
+        if (isBinary) chunks.push(toBuffer(data));
+      });
+      streams.set(streamId, {
+        streamId,
+        socket: webSocket,
+        received: () => Buffer.concat(chunks),
+        closed: closedCode(webSocket),
+      });
+      return;
+    }
+    const messages: Record<string, unknown>[] = [];
+    webSocket.on('message', (data, isBinary) => {
+      if (!isBinary) messages.push(JSON.parse(data.toString()));
+    });
+    controls.push({
+      machineId,
+      socket: webSocket,
+      messages,
+      closed: closedCode(webSocket),
+      send: (message) => webSocket.send(JSON.stringify(message)),
+      next: (type, skip = 0) =>
+        poll(
+          () => messages.filter((message) => message.type === type)[skip],
+          `a ${type} desktop control message`,
+        ),
+    });
+  };
   const sockets = new Set<Duplex>();
   httpsServer.on('upgrade', (request, socket, head) => {
     peers.push({
@@ -492,6 +583,21 @@ export async function startFakeCloud(directory: string): Promise<FakeCloud> {
     });
     sockets.add(socket);
     socket.once('close', () => sockets.delete(socket));
+    const path = new URL(request.url ?? '/', baseUrl).pathname;
+    if (path === DESKTOP_CONTROL_PATH || DESKTOP_STREAM_PATH.test(path)) {
+      const token = /^Bearer (.+)$/.exec(
+        request.headers.authorization ?? '',
+      )?.[1];
+      const machineId = token ? tokens.get(token) : undefined;
+      if (!machineId) {
+        socket.end('HTTP/1.1 401 Unauthorized\r\nconnection: close\r\n\r\n');
+        return;
+      }
+      rawSockets.handleUpgrade(request, socket, head, (webSocket) =>
+        acceptDesktop(webSocket, machineId, path),
+      );
+      return;
+    }
     const accept = intercept;
     if (!accept || request.url !== '/machine-connections')
       return void handlers.handleEnvironmentUpgrade(request, socket, head);
@@ -520,6 +626,21 @@ export async function startFakeCloud(directory: string): Promise<FakeCloud> {
 
   return {
     baseUrl,
+    desktop: {
+      controls,
+      control: (machineId) =>
+        poll(
+          () =>
+            controls.findLast(
+              (control) =>
+                control.machineId === machineId &&
+                control.socket.readyState === WebSocket.OPEN,
+            ),
+          `the desktop control socket of ${machineId}`,
+        ),
+      stream: (streamId) =>
+        poll(() => streams.get(streamId), `desktop stream ${streamId}`),
+    },
     caFile,
     machines,
     tokenRequests,

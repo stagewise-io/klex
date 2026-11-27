@@ -7,12 +7,14 @@ use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::watch;
+use tokio::sync::mpsc;
 
 use crate::cli::{CliResult, EnrollmentCode, MachineMode, help_text, parse_cli};
 use crate::cloud::auth::{Authenticator, ProtectedResource, load_protected_resource};
 use crate::cloud::enrollment::{bootstrap_managed_machine, connect_machine};
-use crate::cloud::facts::MachineFactsOptions;
+use crate::cloud::facts::{
+    MachineFactsCollector, MachineFactsOptions, encode_machine_facts_header,
+};
 use crate::cloud::machine_live_message;
 use crate::cloud::principal_router::{PrincipalRouter, PrincipalRouterOptions};
 use crate::cloud::proxy_daemon::LinkState;
@@ -347,7 +349,14 @@ async fn serve_supervised(
     )
     .await?;
     let handler_router = served.router.clone();
-    let (status, mut links) = watch::channel(LinkState::Connecting);
+    if let Some(options) = facts(&config, omit_host_details) {
+        describe_facts(MachineFactsCollector::new(options)).await;
+    }
+    eprintln!(
+        "Machine {} connects to {}",
+        enrollment.machine_id, enrollment.proxy_connection_url
+    );
+    let (status, mut links) = mpsc::unbounded_channel();
     let runtime = start_supervised_cloud_runtime(
         &data_dir,
         Arc::new(move |request| {
@@ -370,11 +379,8 @@ async fn serve_supervised(
     let mut last = LinkState::Connecting;
     loop {
         tokio::select! {
-            changed = links.changed() => {
-                if changed.is_err() {
-                    break;
-                }
-                let link = links.borrow_and_update().clone();
+            link = links.recv() => {
+                let Some(link) = link else { break };
                 if link != last {
                     report(&link);
                     last = link;
@@ -392,6 +398,27 @@ fn desktop_from_environment(logger: &Logger) -> Option<Arc<DesktopService>> {
     desktop::desktop_from_environment(Arc::new(move |message: &str| {
         logger.warn(serde_json::json!({ "source": "desktop" }), message);
     }))
+}
+
+/// Logs the facts each connection reports, so a Cloud that shows no OS can be
+/// told apart from a daemon that sends none.
+async fn describe_facts(collector: MachineFactsCollector) {
+    let facts = collector.collect().await;
+    match encode_machine_facts_header(&facts) {
+        Some(header) => eprintln!(
+            "Reporting machine facts: {} {}{} ({} byte header)",
+            facts.os.name.as_deref().unwrap_or(&facts.os.platform),
+            facts.os.arch,
+            facts
+                .os
+                .release
+                .as_deref()
+                .map(|release| format!(", release {release}"))
+                .unwrap_or_default(),
+            header.len()
+        ),
+        None => eprintln!("Machine facts exceed the header size limit and are not reported"),
+    }
 }
 
 fn fail(message: &str, supervised: bool) -> ExitCode {

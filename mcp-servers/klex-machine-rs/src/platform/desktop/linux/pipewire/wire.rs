@@ -12,6 +12,9 @@ const HEADER: usize = 16;
 const MAX_FDS: usize = 28;
 const MAX_MESSAGE: usize = 1 << 24;
 const READ_CHUNK: usize = 64 * 1024;
+/// A PipeWire daemon that takes no data for this long is stuck; giving up
+/// lets the stream thread end, which `VideoStream::drop` joins.
+const SEND_TIMEOUT_MS: i32 = 5000;
 
 pub struct Message {
     pub id: u32,
@@ -83,7 +86,7 @@ impl Connection {
                     continue;
                 }
                 if error.kind() == io::ErrorKind::WouldBlock {
-                    wait_writable(self.socket.as_raw_fd())?;
+                    wait_writable(self.socket.as_raw_fd(), SEND_TIMEOUT_MS)?;
                     continue;
                 }
                 return Err(error);
@@ -191,23 +194,45 @@ impl Connection {
     }
 }
 
-fn wait_writable(fd: RawFd) -> io::Result<()> {
+fn wait_writable(fd: RawFd, timeout_ms: i32) -> io::Result<()> {
     let mut poll = libc::pollfd {
         fd,
         events: libc::POLLOUT,
         revents: 0,
     };
     // SAFETY: one valid pollfd.
-    if unsafe { libc::poll(&mut poll, 1, 1000) } < 0 {
-        return Err(io::Error::last_os_error());
+    match unsafe { libc::poll(&mut poll, 1, timeout_ms) } {
+        0 => Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "PipeWire stopped reading from the connection",
+        )),
+        ready if ready > 0 => Ok(()),
+        _ => {
+            let error = io::Error::last_os_error();
+            if error.kind() == io::ErrorKind::Interrupted {
+                Ok(())
+            } else {
+                Err(error)
+            }
+        }
     }
-    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
     use std::os::unix::net::UnixStream;
+
+    #[test]
+    fn gives_up_waiting_on_a_peer_that_reads_nothing() {
+        let (ours, _theirs) = UnixStream::pair().unwrap();
+        ours.set_nonblocking(true).unwrap();
+        let chunk = [0u8; 4096];
+        while (&ours).write(&chunk).is_ok() {}
+        let error = wait_writable(ours.as_raw_fd(), 10).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+    }
 
     #[test]
     fn frames_messages_and_passes_descriptors() {

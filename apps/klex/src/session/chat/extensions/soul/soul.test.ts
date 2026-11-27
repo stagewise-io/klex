@@ -19,6 +19,7 @@ import {
   createSoulExt,
   readSoul,
   type SoulDependencies,
+  SoulError,
 } from './soul';
 import * as state from './state';
 
@@ -80,7 +81,14 @@ describe('Soul failure status', () => {
       text: 'Saved soul',
       finishReason: 'stop',
     } as Awaited<ReturnType<typeof generateText>>);
-    return { soul, directory, path, logger, reload: () => createSoul(deps) };
+    return {
+      soul,
+      directory,
+      path,
+      logger,
+      deps,
+      reload: () => createSoul(deps),
+    };
   }
 
   it('clears persisted failure status after saving a soul', async () => {
@@ -90,6 +98,50 @@ describe('Soul failure status', () => {
     expect(soul.get()).toBe('Saved soul');
     expect((await state.readSoulState(directory))?.payload.failure).toBeNull();
     expect(await soul.getStatus()).toEqual({ failure: null });
+  });
+
+  describe.each(['create', 'update'] as const)('%s', (mode) => {
+    it.each(['no_chat_models', 'generation_failed'] as const)(
+      'preserves the classified %s error when failure persistence rejects',
+      async (code) => {
+        const { soul, directory, logger, deps } = await setup('Existing soul');
+        if (code === 'no_chat_models') {
+          vi.spyOn(deps.config, 'getModelSelection').mockReturnValue([]);
+        } else {
+          vi.mocked(generateText).mockRejectedValue(
+            new Error('Provider failed'),
+          );
+        }
+        const error = new Error('State write failed');
+        const persist = vi
+          .spyOn(state, 'writeSoulFailure')
+          .mockRejectedValueOnce(error);
+        const failure = {
+          kind: 'soul_generation_failed',
+          category: code === 'no_chat_models' ? 'configuration' : 'unknown',
+          reason:
+            code === 'no_chat_models' ? 'no_chat_models' : 'provider_error',
+          providerId: code === 'no_chat_models' ? null : 'provider',
+          providerType: code === 'no_chat_models' ? null : 'openai',
+          modelId: code === 'no_chat_models' ? null : 'model',
+          statusCode: null,
+          message:
+            code === 'no_chat_models'
+              ? soulFailureMessages.configuration
+              : soulFailureMessages.unknown,
+        };
+
+        const result = soul[mode]('Try again');
+        await expect(result).rejects.toBeInstanceOf(SoulError);
+        await expect(result).rejects.toMatchObject({ code, failure });
+        expect(persist).toHaveBeenCalledExactlyOnceWith(directory, failure);
+        expect(logger.warn).toHaveBeenCalledWith(
+          { error },
+          'Failed to persist soul generation failure status',
+        );
+        expect(soul.get()).toBe('Existing soul');
+      },
+    );
   });
 
   it.each([undefined, 'Old soul', 'Saved soul'])(

@@ -222,7 +222,7 @@ class SoulModule implements Soul {
         statusCode: null,
         message: soulFailureMessages.configuration,
       };
-      await writeSoulFailure(this.deps.soulDirectory, failure);
+      await this.persistFailure(failure);
       throw new SoulError(
         'no_chat_models',
         'Configure a chat model before generating a soul',
@@ -323,12 +323,23 @@ class SoulModule implements Soul {
         clearTimeout(timer);
       }
     }
-    await writeSoulFailure(this.deps.soulDirectory, failure!);
+    await this.persistFailure(failure!);
     throw new SoulError(
       'generation_failed',
       'Soul generation failed after 3 attempts',
       failure,
     );
+  }
+
+  private async persistFailure(failure: SoulFailure): Promise<void> {
+    try {
+      await writeSoulFailure(this.deps.soulDirectory, failure);
+    } catch (error) {
+      this.deps.logger.warn(
+        { error },
+        'Failed to persist soul generation failure status',
+      );
+    }
   }
 }
 

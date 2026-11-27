@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use ashpd::desktop::remote_desktop::{
-    Axis, DeviceType, KeyState, RemoteDesktop, SelectDevicesOptions, StartOptions,
+    Axis, DeviceType, KeyState, RemoteDesktop, SelectDevicesOptions, SelectedDevices, StartOptions,
 };
 use ashpd::desktop::screencast::{CursorMode, Screencast, SelectSourcesOptions, SourceType};
 use ashpd::desktop::{PersistMode, ResponseError, Session};
@@ -90,6 +90,9 @@ pub enum Retry {
 pub struct Failure {
     pub hint: String,
     pub retry: Retry,
+    /// `Some` once the portal started the session, which spends the saved
+    /// restore token: holds the token it issued in exchange, if any.
+    pub token: Option<Option<String>>,
 }
 
 impl Failure {
@@ -97,7 +100,13 @@ impl Failure {
         Self {
             hint: hint.into(),
             retry,
+            token: None,
         }
+    }
+
+    fn after_start(mut self, token: Option<String>) -> Self {
+        self.token = Some(token);
+        self
     }
 }
 
@@ -237,6 +246,9 @@ impl Portal {
                     State::Ready(established.remote)
                 }
                 Err(failure) => {
+                    if let Some(token) = &failure.token {
+                        portal.save_token(token.as_deref());
+                    }
                     (portal.warn)(&failure.hint);
                     State::Failed {
                         failure,
@@ -354,7 +366,10 @@ async fn establish(token: Option<String>) -> Result<Established, Failure> {
         .create_session(Default::default())
         .await
         .map_err(|error| portal_failure(error, "create a session", false))?;
-    let session = OpenSession(Arc::new(session));
+    let session = OpenSession {
+        session: Arc::new(session),
+        runtime: tokio::runtime::Handle::current(),
+    };
     let mut devices =
         SelectDevicesOptions::default().set_devices(DeviceType::KEYBOARD | DeviceType::POINTER);
     // Version 2 added persistence.
@@ -388,6 +403,19 @@ async fn establish(token: Option<String>) -> Result<Established, Failure> {
         .await
         .and_then(|request| request.response())
         .map_err(|error| portal_failure(error, "start", false))?;
+    let token = selected.restore_token().map(str::to_string);
+    let remote = connect_stream(proxy, screencast, session, &selected)
+        .await
+        .map_err(|failure| failure.after_start(token.clone()))?;
+    Ok(Established { remote, token })
+}
+
+async fn connect_stream(
+    proxy: RemoteDesktop,
+    screencast: Screencast,
+    session: OpenSession,
+    selected: &SelectedDevices,
+) -> Result<Arc<dyn Remote>, Failure> {
     let missing = DeviceType::KEYBOARD | DeviceType::POINTER;
     if !selected.devices().contains(missing) {
         return Err(Failure::new(
@@ -405,7 +433,6 @@ async fn establish(token: Option<String>) -> Result<Established, Failure> {
     let logical = stream
         .size()
         .filter(|&(width, height)| width > 0 && height > 0);
-    let token = selected.restore_token().map(str::to_string);
     let fd = screencast
         .open_pipe_wire_remote(&*session, Default::default())
         .await
@@ -438,7 +465,7 @@ async fn establish(token: Option<String>) -> Result<Established, Failure> {
         }
     }
     let stopped = Arc::new(AtomicBool::new(false));
-    let watched = (session.0.clone(), stopped.clone());
+    let watched = (session.session.clone(), stopped.clone());
     let watcher = tokio::spawn(async move {
         let (session, stopped) = watched;
         if let Ok(mut closed) = session.receive_closed().await
@@ -447,40 +474,40 @@ async fn establish(token: Option<String>) -> Result<Established, Failure> {
             stopped.store(true, Ordering::SeqCst);
         }
     });
-    Ok(Established {
-        remote: Arc::new(PortalRemote {
-            proxy,
-            session,
-            node,
-            logical,
-            video,
-            stopped,
-            watcher,
-        }),
-        token,
-    })
+    Ok(Arc::new(PortalRemote {
+        proxy,
+        session,
+        node,
+        logical,
+        video,
+        stopped,
+        watcher,
+    }))
 }
 
 /// Closes the portal session when dropped, so a failed start or a replaced
 /// share does not leave the desktop's sharing indicator on.
-struct OpenSession(Arc<Session<RemoteDesktop>>);
+/// The last share can be dropped on a capture thread, so closing uses the
+/// runtime it was opened on.
+struct OpenSession {
+    session: Arc<Session<RemoteDesktop>>,
+    runtime: tokio::runtime::Handle,
+}
 
 impl std::ops::Deref for OpenSession {
     type Target = Session<RemoteDesktop>;
 
     fn deref(&self) -> &Self::Target {
-        &self.0
+        &self.session
     }
 }
 
 impl Drop for OpenSession {
     fn drop(&mut self) {
-        let session = self.0.clone();
-        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-            runtime.spawn(async move {
-                let _ = session.close().await;
-            });
-        }
+        let session = self.session.clone();
+        self.runtime.spawn(async move {
+            let _ = session.close().await;
+        });
     }
 }
 
@@ -719,6 +746,27 @@ mod tests {
         settle().await;
         assert_eq!(portal.remote().err().unwrap(), STOPPED_HINT);
         assert_eq!(tokens.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn keeps_the_token_issued_by_a_start_whose_stream_then_failed() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join(TOKEN_FILE);
+        std::fs::write(&path, "spent").unwrap();
+        let script: Script = Arc::new(Mutex::new(vec![Err(Failure::new(
+            "no picture",
+            Retry::Never,
+        )
+        .after_start(Some("issued".into())))]));
+        let portal = Portal::new(
+            Some(path.clone()),
+            connector(script, Arc::default(), Arc::default()),
+            Arc::new(|_: &str| {}),
+        );
+        assert!(portal.remote().is_err());
+        settle().await;
+        assert_eq!(portal.remote().err().unwrap(), "no picture");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "issued");
     }
 
     #[tokio::test]

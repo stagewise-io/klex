@@ -636,12 +636,19 @@ pub mod pty {
 }
 
 pub mod signals {
-    /// Waits for Ctrl+C and reports it as SIGINT, like Node.
-    pub async fn shutdown() -> &'static str {
-        if tokio::signal::ctrl_c().await.is_err() {
-            return std::future::pending().await;
+    /// Waits for Ctrl+C and reports it as SIGINT, like Node. The handler is
+    /// installed by this call, before the future is first polled.
+    pub fn shutdown() -> impl Future<Output = &'static str> + Send + 'static {
+        let ctrl_c = tokio::signal::windows::ctrl_c();
+        async move {
+            let Ok(mut ctrl_c) = ctrl_c else {
+                return std::future::pending().await;
+            };
+            if ctrl_c.recv().await.is_none() {
+                return std::future::pending().await;
+            }
+            "SIGINT"
         }
-        "SIGINT"
     }
 
     /// The default Ctrl+C action Node falls back to once no listener remains.

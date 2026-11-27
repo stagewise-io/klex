@@ -142,6 +142,8 @@ pub async fn serve(options: ServeOptions, logger: Logger) -> Result<ExitCode, St
         .layer(middleware::from_fn_with_state(state.clone(), hono_checks))
         .with_state(state);
 
+    // Before the ready log: whoever waits for it may signal right away.
+    let first_signal = signals::shutdown();
     if config.warns_about_remote_access {
         logger.warn(
             json!({ "host": config.host, "port": port }),
@@ -158,7 +160,7 @@ pub async fn serve(options: ServeOptions, logger: Logger) -> Result<ExitCode, St
     let (closed_tx, closed_rx) =
         tokio::sync::oneshot::channel::<(&'static str, Result<(), String>)>();
     let shutdown = async move {
-        let signal = signals::shutdown().await;
+        let signal = first_signal.await;
         shutdown_logger.info(
             json!({ "signal": signal }),
             "Shutting down klex-machine MCP server",

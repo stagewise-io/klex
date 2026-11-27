@@ -475,17 +475,22 @@ pub mod pty {
 pub mod signals {
     use tokio::signal::unix::{SignalKind, signal};
 
-    /// Waits for SIGINT or SIGTERM and returns its name.
-    pub async fn shutdown() -> &'static str {
-        let (Ok(mut interrupt), Ok(mut terminate)) = (
+    /// Waits for SIGINT or SIGTERM and returns its name. The handlers are
+    /// installed by this call, before the future is first polled, so a signal
+    /// right after it no longer takes the default action.
+    pub fn shutdown() -> impl Future<Output = &'static str> + Send + 'static {
+        let signals = (
             signal(SignalKind::interrupt()),
             signal(SignalKind::terminate()),
-        ) else {
-            return std::future::pending().await;
-        };
-        tokio::select! {
-            _ = interrupt.recv() => "SIGINT",
-            _ = terminate.recv() => "SIGTERM",
+        );
+        async move {
+            let (Ok(mut interrupt), Ok(mut terminate)) = signals else {
+                return std::future::pending().await;
+            };
+            tokio::select! {
+                _ = interrupt.recv() => "SIGINT",
+                _ = terminate.recv() => "SIGTERM",
+            }
         }
     }
 

@@ -11,7 +11,8 @@
       "!**/pnpm-lock.yaml",
       "!**/*.gen.ts",
       "!.agents",
-      "!.impeccable"
+      "!.impeccable",
+      "!apps/desktop/src-tauri/gen"
     ]
   },
   "vcs": {

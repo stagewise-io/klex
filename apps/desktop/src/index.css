@@ -1,0 +1,49 @@
+/* Theme copied from @stagewise/ui (stagewise-io/cloud packages/ui), minus the
+   fonts and effects this app does not use. Keep in sync by copying again. */
+
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@import "./styles/fonts.css";
+@import "./styles/palette.css";
+@import "./styles/theme.css";
+@import "./styles/derived-utilities.css";
+@import "./styles/animations.css";
+@import "./styles/bridge.css";
+@import "./styles/tailwind-tokens.css";
+
+@plugin "./styles/plugin/color-modifiers.ts";
+
+@custom-variant dark (&:is(.dark *));
+@custom-variant data-horizontal (&[data-orientation="horizontal"]);
+@custom-variant data-vertical (&[data-orientation="vertical"]);
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased select-none;
+    font-family: var(--font-sans);
+  }
+
+  :root {
+    color-scheme: light;
+  }
+
+  :root.dark {
+    color-scheme: dark;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-primary-solid);
+    outline-offset: 0px;
+  }
+}

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["mcp-servers/klex-machine-rs"]
+members = ["mcp-servers/klex-machine-rs", "apps/desktop/src-tauri"]
 
 [workspace.package]
 edition = "2024"

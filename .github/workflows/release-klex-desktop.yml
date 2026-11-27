@@ -60,8 +60,15 @@ jobs:
               echo 'Cannot verify the package-version delta for this push.' >&2
               exit 1
             fi
-            previous="$(git show "$BEFORE:$package" 2>/dev/null | read_version || true)"
-            if [ "$previous" = "$version" ]; then
+            # A push that introduces the app (or the file) never releases:
+            # the first stable release takes a version bump or a dispatch.
+            previous=''
+            if git cat-file -e "$BEFORE:$package" 2>/dev/null; then
+              previous="$(git show "$BEFORE:$package" | read_version)"
+            fi
+            if [ -z "$previous" ]; then
+              echo "$package is new in this push; skipping. Bump the version or dispatch this workflow to release."
+            elif [ "$previous" = "$version" ]; then
               echo "Package version did not change ($version); skipping."
             else
               should_release=true

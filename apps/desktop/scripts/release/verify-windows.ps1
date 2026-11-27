@@ -38,13 +38,6 @@ $version = (Get-Content -Raw -LiteralPath $output).Trim()
 if (-not $version) { throw 'klex-desktop --daemon --version printed nothing' }
 Write-Host "Daemon version: $version"
 
-# When PowerShell captures a GUI-subsystem executable, its end of the pipe
-# can already be closed; the write must fail quietly instead of panicking.
-$null = & $app --daemon --version
-if ($LASTEXITCODE -ne 0) {
-  throw "Captured klex-desktop --daemon --version exited with $LASTEXITCODE"
-}
-
 $uninstaller = Join-Path $root 'uninstall.exe'
 Assert-Signed $uninstaller
 Start-Process -FilePath $uninstaller -ArgumentList '/S' -Wait

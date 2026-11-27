@@ -246,8 +246,10 @@ impl Portal {
                     State::Ready(established.remote)
                 }
                 Err(failure) => {
-                    if let Some(token) = &failure.token {
-                        portal.save_token(token.as_deref());
+                    match &failure.token {
+                        Some(Some(token)) => portal.save_token(Some(token)),
+                        Some(None) => portal.forget_token(),
+                        None => {}
                     }
                     (portal.warn)(&failure.hint);
                     State::Failed {
@@ -267,13 +269,19 @@ impl Portal {
             .filter(|token| !token.is_empty())
     }
 
+    fn forget_token(&self) {
+        if let Some(path) = &self.token_path {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+
     /// Tokens are single-use, so each start replaces the saved one.
     fn save_token(&self, token: Option<&str>) {
         let Some(path) = &self.token_path else {
             return;
         };
         let Some(token) = token else {
-            let _ = std::fs::remove_file(path);
+            self.forget_token();
             if !self.warned_no_token.swap(true, Ordering::SeqCst) {
                 (self.warn)(
                     "The screen sharing portal did not offer to remember this permission, so it will ask again next time klex-machine starts.",
@@ -403,6 +411,22 @@ async fn establish(token: Option<String>) -> Result<Established, Failure> {
         .await
         .and_then(|request| request.response())
         .map_err(|error| portal_failure(error, "start", false))?;
+    // An incomplete grant forgets its token, so a restart asks again.
+    let missing = DeviceType::KEYBOARD | DeviceType::POINTER;
+    if !selected.devices().contains(missing) {
+        return Err(Failure::new(
+            "Screen sharing was allowed without keyboard and mouse control. Restart klex-machine and allow remote control in the dialog.",
+            Retry::Never,
+        )
+        .after_start(None));
+    }
+    if selected.streams().is_empty() {
+        return Err(Failure::new(
+            "Screen sharing was allowed without choosing a screen. Restart klex-machine and choose one in the dialog.",
+            Retry::Never,
+        )
+        .after_start(None));
+    }
     let token = selected.restore_token().map(str::to_string);
     let remote = connect_stream(proxy, screencast, session, &selected)
         .await
@@ -416,18 +440,8 @@ async fn connect_stream(
     session: OpenSession,
     selected: &SelectedDevices,
 ) -> Result<Arc<dyn Remote>, Failure> {
-    let missing = DeviceType::KEYBOARD | DeviceType::POINTER;
-    if !selected.devices().contains(missing) {
-        return Err(Failure::new(
-            "Screen sharing was allowed without keyboard and mouse control. Restart klex-machine and allow remote control in the dialog.",
-            Retry::Never,
-        ));
-    }
     let Some(stream) = selected.streams().first() else {
-        return Err(Failure::new(
-            "Screen sharing was allowed without choosing a screen. Restart klex-machine and choose one in the dialog.",
-            Retry::Never,
-        ));
+        return Err(Failure::new("The portal offered no screen", Retry::Never));
     };
     let node = stream.pipe_wire_node_id();
     let logical = stream
@@ -767,6 +781,21 @@ mod tests {
         settle().await;
         assert_eq!(portal.remote().err().unwrap(), "no picture");
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "issued");
+
+        // An incomplete grant forgets the token instead.
+        let script: Script = Arc::new(Mutex::new(vec![Err(Failure::new(
+            "no keyboard",
+            Retry::Never,
+        )
+        .after_start(None))]));
+        let portal = Portal::new(
+            Some(path.clone()),
+            connector(script, Arc::default(), Arc::default()),
+            Arc::new(|_: &str| {}),
+        );
+        assert!(portal.remote().is_err());
+        settle().await;
+        assert!(!path.exists());
     }
 
     #[tokio::test]

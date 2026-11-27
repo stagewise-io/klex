@@ -31,6 +31,16 @@ allow = [
   "Unicode-3.0",
   "Zlib",
 ]
+# Klex Desktop's Tauri dependency tree only; used unmodified.
+exceptions = [
+  { name = "cssparser", allow = ["MPL-2.0"] },
+  { name = "cssparser-macros", allow = ["MPL-2.0"] },
+  { name = "dtoa-short", allow = ["MPL-2.0"] },
+  { name = "option-ext", allow = ["MPL-2.0"] },
+  { name = "selectors", allow = ["MPL-2.0"] },
+  { name = "target-lexicon", allow = ["Apache-2.0 WITH LLVM-exception"] },
+  { name = "tiny-keccak", allow = ["CC0-1.0"] },
+]
 
 [bans]
 multiple-versions = "allow"

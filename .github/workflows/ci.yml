@@ -99,6 +99,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: ./.github/actions/setup-rust
+      - uses: ./.github/actions/setup-tauri-linux
       - run: cargo fmt-check
       - run: cargo lint
       - run: cargo test --workspace --locked
@@ -186,6 +187,57 @@ jobs:
         with:
           name: klex-machine-rs-${{ matrix.name }}
           path: target/${{ matrix.target }}/release/klex-machine-rs${{ runner.os == 'Windows' && '.exe' || '' }}
+          retention-days: 14
+          if-no-files-found: error
+
+  # Unsigned debug bundles of Klex Desktop on every desktop OS. Signing and
+  # releases come later; this proves the app and its installers build.
+  desktop:
+    name: Klex Desktop (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x64
+            os: ubuntu-22.04
+          - name: darwin-arm64
+            os: macos-latest
+          - name: win32-x64
+            os: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: ./.github/actions/setup-workspace
+        with:
+          install-scope: desktop
+          install-filter: --filter klex --filter @klex/desktop...
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache-key: desktop
+      - if: runner.os == 'Linux'
+        uses: ./.github/actions/setup-tauri-linux
+      - run: pnpm --filter @klex/desktop typecheck
+      - run: pnpm --filter @klex/desktop test
+      - run: cargo test --locked --package klex-desktop
+      - run: pnpm --filter @klex/desktop tauri build --debug --ci
+      - name: Smoke-test the daemon entry point
+        run: |
+          case "$RUNNER_OS" in
+            Windows) app=target/debug/klex-desktop.exe ;;
+            *) app=target/debug/klex-desktop ;;
+          esac
+          "$app" --daemon --version
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: klex-desktop-${{ matrix.name }}
+          path: |
+            target/debug/bundle/nsis/*.exe
+            target/debug/bundle/dmg/*.dmg
+            target/debug/bundle/deb/*.deb
+            target/debug/bundle/appimage/*.AppImage
           retention-days: 14
           if-no-files-found: error
 

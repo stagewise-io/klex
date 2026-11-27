@@ -1,0 +1,13 @@
+name: Set up Tauri on Linux
+description: >-
+  Installs the GTK, WebKitGTK and app indicator development libraries that
+  Klex Desktop (apps/desktop/src-tauri) links on Linux.
+
+runs:
+  using: composite
+  steps:
+    - uses: ./.github/actions/apt-install
+      with:
+        packages: >-
+          libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
+          libgtk-3-dev libsoup-3.0-dev patchelf

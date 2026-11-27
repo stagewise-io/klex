@@ -9,8 +9,7 @@ use indexmap::IndexMap;
 use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, CustomRequest, CustomResult,
     DiscoverResult, ErrorCode, InitializeRequestParams, InitializeResult,
-    ListResourceTemplatesRequestMethod, ListResourceTemplatesResult, ListResourcesRequestMethod,
-    ListResourcesResult, ListToolsResult, PaginatedRequestParams, ReadResourceRequestMethod,
+    ListResourceTemplatesResult, ListResourcesResult, ListToolsResult, PaginatedRequestParams,
     ReadResourceRequestParams, ReadResourceResponse, ReadResourceResult, ServerConfig,
 };
 use rmcp::service::RequestContext;
@@ -83,6 +82,10 @@ struct DesktopView {
     computer_use: bool,
     accessibility: bool,
     hint: Option<String>,
+}
+
+fn method_not_found() -> McpError {
+    McpError::new(ErrorCode::METHOD_NOT_FOUND, "Method not found", None)
 }
 
 impl DesktopView {
@@ -681,7 +684,7 @@ impl ServerHandler for MachineHandler {
         _context: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, McpError> {
         if !self.machine.desktop_view().await.computer_use {
-            return Err(McpError::method_not_found::<ListResourcesRequestMethod>());
+            return Err(method_not_found());
         }
         Ok(serde_json::from_value(
             json!({ "resources": desktop_tools::resources(), "resultType": "complete" }),
@@ -695,9 +698,7 @@ impl ServerHandler for MachineHandler {
         _context: RequestContext<RoleServer>,
     ) -> Result<ListResourceTemplatesResult, McpError> {
         if !self.machine.desktop_view().await.computer_use {
-            return Err(McpError::method_not_found::<
-                ListResourceTemplatesRequestMethod,
-            >());
+            return Err(method_not_found());
         }
         Ok(
             serde_json::from_value(json!({ "resourceTemplates": [], "resultType": "complete" }))
@@ -712,12 +713,12 @@ impl ServerHandler for MachineHandler {
     ) -> Result<ReadResourceResponse, McpError> {
         let desktop = match &self.machine.desktop {
             Some(desktop) if self.machine.desktop_view().await.computer_use => desktop,
-            _ => return Err(McpError::method_not_found::<ReadResourceRequestMethod>()),
+            _ => return Err(method_not_found()),
         };
         if request.uri != desktop_tools::DESKTOP_SCREEN_RESOURCE_URI {
             return Err(McpError::resource_not_found(
-                format!("Resource {} not found", request.uri),
-                None,
+                format!("Resource not found: {}", request.uri),
+                Some(json!({ "uri": request.uri })),
             ));
         }
         let mut contents = desktop_tools::read_screen(desktop)
@@ -783,11 +784,7 @@ impl ServerHandler for MachineHandler {
     ) -> Result<CustomResult, McpError> {
         let method = request.method.as_str();
         if method != GET_METHOD && method != ACK_METHOD {
-            return Err(McpError::new(
-                ErrorCode::METHOD_NOT_FOUND,
-                "Method not found",
-                None,
-            ));
+            return Err(method_not_found());
         }
         let params = request.params.unwrap_or_else(|| Value::Object(Map::new()));
         let schema = if method == GET_METHOD {

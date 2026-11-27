@@ -411,32 +411,23 @@ impl Session {
     }
 
     fn process(&mut self, host: &mut Host<'_>) -> Result<(), RfbProtocolError> {
-        let mut start = 0;
-        let result = loop {
-            let data = &self.buffer[start..];
+        loop {
             let length = match self.phase {
                 Phase::Version => Some(12),
                 Phase::Security | Phase::Init => Some(1),
                 Phase::Waiting | Phase::Closed => None,
-                Phase::Messages => match message_length(data) {
-                    Ok(length) => length,
-                    Err(error) => break Err(error),
-                },
+                Phase::Messages => message_length(&self.buffer)?,
             };
-            let Some(length) = length.filter(|length| data.len() >= *length) else {
-                break Ok(());
+            let Some(length) = length.filter(|length| self.buffer.len() >= *length) else {
+                return Ok(());
             };
-            let message = data[..length].to_vec();
-            start += length;
-            if let Err(error) = self.accept(host, &message) {
-                break Err(error);
-            }
+            // Drained first: accepting a message can re-enter `process`.
+            let message: Vec<u8> = self.buffer.drain(..length).collect();
+            self.accept(host, &message)?;
             if matches!(self.phase, Phase::Waiting | Phase::Closed) {
-                break Ok(());
+                return Ok(());
             }
-        };
-        self.buffer.drain(..start.min(self.buffer.len()));
-        result
+        }
     }
 
     fn accept(&mut self, host: &mut Host<'_>, message: &[u8]) -> Result<(), RfbProtocolError> {

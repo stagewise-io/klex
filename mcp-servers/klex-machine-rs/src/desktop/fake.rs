@@ -209,7 +209,8 @@ impl Recorder {
             .append(true)
             .open(path)
         {
-            let _ = writeln!(file, "{entry}");
+            // One write per line, so readers never see half an entry.
+            let _ = file.write_all(format!("{entry}\n").as_bytes());
         }
     }
 }
@@ -574,5 +575,69 @@ impl StreamCapture for FakeCapture {
 
     fn stop(&mut self) {
         self.stopped.store(true, Ordering::SeqCst);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    use super::*;
+
+    async fn read(stream: &mut tokio::io::DuplexStream, count: usize) -> Vec<u8> {
+        let mut data = vec![0; count];
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            stream.read_exact(&mut data),
+        )
+        .await
+        .expect("RFB bytes arrive")
+        .expect("stream stays open");
+        data
+    }
+
+    #[tokio::test]
+    async fn stream_serves_a_full_raw_frame() {
+        let provider = FakeDesktopProvider::new(FakeDesktopMode::Full, None);
+        let mut stream = provider.open_stream().await.unwrap();
+        assert_eq!(read(&mut stream, 12).await, b"RFB 003.008\n");
+        stream.write_all(b"RFB 003.008\n").await.unwrap();
+        assert_eq!(read(&mut stream, 2).await, [1, 1]);
+        stream.write_all(&[1]).await.unwrap();
+        assert_eq!(read(&mut stream, 4).await, [0; 4]);
+        stream.write_all(&[1]).await.unwrap();
+        let init = read(&mut stream, 24).await;
+        let name = read(
+            &mut stream,
+            u32::from_be_bytes([init[20], init[21], init[22], init[23]]) as usize,
+        )
+        .await;
+        assert_eq!(name, b"klex-machine fake desktop");
+        let mut format = vec![0u8; 20];
+        format[4] = 32;
+        format[5] = 24;
+        format[7] = 1;
+        format[8..14].copy_from_slice(&[0, 255, 0, 255, 0, 255]);
+        format[14] = 16;
+        format[15] = 8;
+        stream.write_all(&format).await.unwrap();
+        stream.write_all(&[2, 0, 0, 1, 0, 0, 0, 0]).await.unwrap();
+        let mut request = vec![3, 0, 0, 0, 0, 0];
+        request.extend_from_slice(&1600u16.to_be_bytes());
+        request.extend_from_slice(&1000u16.to_be_bytes());
+        stream.write_all(&request).await.unwrap();
+        let mut types = Vec::new();
+        loop {
+            let kind = read(&mut stream, 1).await[0];
+            types.push(kind);
+            if kind == 3 {
+                let header = read(&mut stream, 7).await;
+                let length = u32::from_be_bytes([header[3], header[4], header[5], header[6]]);
+                read(&mut stream, length as usize).await;
+                continue;
+            }
+            assert_eq!(kind, 0, "{types:?}");
+            break;
+        }
     }
 }

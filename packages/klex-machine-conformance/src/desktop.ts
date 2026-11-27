@@ -17,13 +17,17 @@ export interface DecodedImage {
   pixel(x: number, y: number): number;
 }
 
-/** Decodes an 8-bit RGB or RGBA PNG. */
+const PNG_CHANNELS: Record<number, number> = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 };
+
+/** Decodes a non-interlaced PNG: 8-bit grey, RGB or RGBA, or a palette. */
 export function decodePng(png: Buffer): DecodedImage {
   if (png.readUInt32BE(0) !== 0x89504e47) throw new Error('Not a PNG');
   let offset = 8;
   let width = 0;
   let height = 0;
-  let channels = 3;
+  let depth = 8;
+  let colourType = 2;
+  let palette = Buffer.alloc(0);
   const data: Buffer[] = [];
   while (offset < png.length) {
     const length = png.readUInt32BE(offset);
@@ -32,14 +36,21 @@ export function decodePng(png: Buffer): DecodedImage {
     if (type === 'IHDR') {
       width = body.readUInt32BE(0);
       height = body.readUInt32BE(4);
-      if (body[8] !== 8) throw new Error('Unsupported PNG bit depth');
-      if (body[9] === 6) channels = 4;
-      else if (body[9] !== 2) throw new Error('Unsupported PNG colour type');
-    } else if (type === 'IDAT') data.push(body);
+      depth = body[8]!;
+      colourType = body[9]!;
+      if (PNG_CHANNELS[colourType] === undefined)
+        throw new Error('Unsupported PNG colour type');
+      if (depth !== 8 && !(depth < 8 && (colourType === 0 || colourType === 3)))
+        throw new Error('Unsupported PNG bit depth');
+      if (body[12] !== 0) throw new Error('Unsupported PNG interlacing');
+    } else if (type === 'PLTE') palette = Buffer.from(body);
+    else if (type === 'IDAT') data.push(body);
     offset += 12 + length;
   }
+  const channels = PNG_CHANNELS[colourType]!;
   const raw = inflateSync(Buffer.concat(data));
-  const stride = width * channels;
+  const bytesPerPixel = Math.max(1, (channels * depth) / 8);
+  const stride = Math.ceil((width * channels * depth) / 8);
   const pixels = Buffer.alloc(stride * height);
   for (let y = 0; y < height; y++) {
     const filter = raw[y * (stride + 1)]!;
@@ -48,9 +59,10 @@ export function decodePng(png: Buffer): DecodedImage {
     const previous =
       y > 0 ? pixels.subarray((y - 1) * stride, y * stride) : undefined;
     for (let i = 0; i < stride; i++) {
-      const left = i >= channels ? out[i - channels]! : 0;
+      const left = i >= bytesPerPixel ? out[i - bytesPerPixel]! : 0;
       const up = previous?.[i] ?? 0;
-      const corner = i >= channels ? (previous?.[i - channels] ?? 0) : 0;
+      const corner =
+        i >= bytesPerPixel ? (previous?.[i - bytesPerPixel] ?? 0) : 0;
       let predicted = 0;
       if (filter === 1) predicted = left;
       else if (filter === 2) predicted = up;
@@ -67,12 +79,28 @@ export function decodePng(png: Buffer): DecodedImage {
       out[i] = (line[i]! + predicted) & 0xff;
     }
   }
+  const sample = (x: number, y: number, channel: number) => {
+    const bit = (x * channels + channel) * depth;
+    const byte = pixels[y * stride + (bit >> 3)]!;
+    return depth === 8
+      ? byte
+      : (byte >> (8 - depth - (bit & 7))) & ((1 << depth) - 1);
+  };
   return {
     width,
     height,
     pixel: (x, y) => {
-      const at = (y * width + x) * channels;
-      return (pixels[at]! << 16) | (pixels[at + 1]! << 8) | pixels[at + 2]!;
+      if (colourType === 3) {
+        const at = sample(x, y, 0) * 3;
+        return (
+          (palette[at]! << 16) | (palette[at + 1]! << 8) | palette[at + 2]!
+        );
+      }
+      if (colourType === 0 || colourType === 4) {
+        const grey = Math.round((sample(x, y, 0) * 255) / ((1 << depth) - 1));
+        return (grey << 16) | (grey << 8) | grey;
+      }
+      return (sample(x, y, 0) << 16) | (sample(x, y, 1) << 8) | sample(x, y, 2);
     },
   };
 }

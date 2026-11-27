@@ -150,28 +150,12 @@ jobs:
       # ring compiles C. cc-rs looks for <arch>-linux-musl-gcc, which
       # musl-tools does not install under that name.
       - if: runner.os == 'Linux'
-        name: Install the musl C toolchain
+        uses: ./.github/actions/apt-install
+        with:
+          packages: musl-tools
+      - if: runner.os == 'Linux'
+        name: Use musl-gcc for the target
         run: |
-          sudo apt-get update
-          # Hosted images sometimes boot without their Ubuntu apt source, so
-          # update reads only packages.microsoft.com.
-          origins=$(apt-get indextargets --format '$(ORIGIN)')
-          if ! grep -qx Ubuntu <<<"$origins"; then
-            . /etc/os-release
-            case "$(dpkg --print-architecture)" in
-              amd64) uri=http://archive.ubuntu.com/ubuntu ;;
-              *) uri=http://ports.ubuntu.com/ubuntu-ports ;;
-            esac
-            {
-              echo "Types: deb"
-              echo "URIs: $uri"
-              echo "Suites: $VERSION_CODENAME $VERSION_CODENAME-updates $VERSION_CODENAME-security"
-              echo "Components: main universe"
-              echo "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg"
-            } | sudo tee /etc/apt/sources.list.d/ci-ubuntu-fallback.sources
-            sudo apt-get update
-          fi
-          sudo apt-get install --yes musl-tools
           target=${{ matrix.target }}
           echo "CC_${target//-/_}=musl-gcc" >> "$GITHUB_ENV"
       # ring needs clang for aarch64-pc-windows-msvc.
@@ -235,6 +219,36 @@ jobs:
         run: pnpm --filter @klex/machine-rs build
       - run: pnpm --filter @klex/machine-conformance typecheck
       - run: pnpm --filter @klex/machine-conformance test
+
+  # Drives a real X server (Xvnc) through both implementations: input
+  # injection, window listing, capture and the VNC socket stream.
+  klex-machine-desktop-x11:
+    name: klex-machine desktop (x11, ${{ matrix.implementation }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        implementation:
+          - ts
+          - rust
+    env:
+      KLEX_MACHINE_IMPL: ${{ matrix.implementation }}
+      KLEX_MACHINE_X11: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: ./.github/actions/apt-install
+        with:
+          packages: tigervnc-standalone-server x11-xserver-utils x11-utils xdotool imagemagick
+      - uses: ./.github/actions/setup-workspace
+        with:
+          install-scope: machine-conformance
+          install-filter: --filter klex --filter @klex/machine-conformance...
+      - run: pnpm --filter @klex/machine... build
+      - if: matrix.implementation == 'rust'
+        uses: ./.github/actions/setup-rust
+      - if: matrix.implementation == 'rust'
+        run: pnpm --filter @klex/machine-rs build
+      - run: pnpm --filter @klex/machine-conformance exec vitest run test/desktop-x11.test.ts
 
   package-release-scopes:
     name: Package Release Scopes

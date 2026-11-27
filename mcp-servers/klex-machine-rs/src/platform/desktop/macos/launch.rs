@@ -18,7 +18,8 @@ pub const OPEN_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub fn is_bundle(command: &str) -> bool {
     let trimmed = command.strip_suffix('/').unwrap_or(command);
-    trimmed.len() >= 4 && trimmed[trimmed.len() - 4..].eq_ignore_ascii_case(".app")
+    let bytes = trimmed.as_bytes();
+    bytes.len() >= 4 && bytes[bytes.len() - 4..].eq_ignore_ascii_case(b".app")
 }
 
 /// Spawns in its own session, like Node's `detached: true`, and reaps the

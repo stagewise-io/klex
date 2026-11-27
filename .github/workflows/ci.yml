@@ -166,9 +166,9 @@ jobs:
             os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-musl
           # darwin-x64 is cross-compiled in the same job, so it is built but
-          # not run.
+          # not run. Release builds dominate, so this uses a larger runner.
           - name: darwin-arm64
-            os: macos-latest
+            os: macos-15-xlarge
             target: aarch64-apple-darwin
             cross-name: darwin-x64
             cross-target: x86_64-apple-darwin
@@ -248,8 +248,9 @@ jobs:
         include:
           - name: linux-x64
             os: ubuntu-22.04
+          # Tauri compilation dominates, so macOS uses a larger runner.
           - name: darwin-arm64
-            os: macos-latest
+            os: macos-15-xlarge
           - name: win32-x64
             os: windows-latest
     defaults:
@@ -291,7 +292,8 @@ jobs:
   # Linux runs the full conformance suite for both implementations in Unit
   # Tests; this covers the platform-specific PTY and filesystem behaviour.
   # macOS runners are scarce, so a single macOS job runs both implementations
-  # and the klex-machine checks.
+  # and the klex-machine checks. Its release build of klex-machine-rs
+  # dominates, so it uses a larger runner.
   klex-machine-conformance:
     name: klex-machine conformance (${{ matrix.name }})
     needs: changes
@@ -301,8 +303,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: ts + rust, macos-latest
-            os: macos-latest
+          - name: ts + rust, macos-15-xlarge
+            os: macos-15-xlarge
             ts: true
             rust: true
             machine-checks: true

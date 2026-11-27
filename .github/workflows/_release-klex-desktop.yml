@@ -113,9 +113,6 @@ jobs:
           persist-credentials: false
           ref: ${{ needs.prepare.outputs.commit }}
       - uses: ./.github/actions/setup-workspace
-        with:
-          install-scope: desktop
-          install-filter: --filter klex --filter @klex/desktop...
       - run: pnpm --filter @klex/desktop typecheck
       - run: pnpm --filter @klex/desktop test
 
@@ -148,9 +145,6 @@ jobs:
           persist-credentials: false
           ref: ${{ needs.prepare.outputs.commit }}
       - uses: ./.github/actions/setup-workspace
-        with:
-          install-scope: desktop
-          install-filter: --filter klex --filter @klex/desktop...
       - uses: ./.github/actions/setup-rust
         with:
           cache-key: desktop-release

@@ -100,6 +100,7 @@ pub async fn install(app: &AppHandle) -> Result<(), String> {
     if let Err(error) = ready.update.install(&ready.bytes) {
         let message = format!("Could not install the update: {error}");
         desktop.log(Source::App, &message);
+        lock(&desktop.ready_update).get_or_insert(ready);
         let enabled = lock(&desktop.settings).enabled;
         if enabled && desktop.is_paired() {
             desktop.start().await;

@@ -78,7 +78,7 @@ function background(
 }
 
 async function startSession(): Promise<Session> {
-  const directory = await temporaryDirectory('klex wayland ', true);
+  const directory = await temporaryDirectory('klex-wayland-', true);
   const runtime = join(directory, 'run');
   await run('mkdir', ['-p', runtime]);
   await chmod(runtime, 0o700);

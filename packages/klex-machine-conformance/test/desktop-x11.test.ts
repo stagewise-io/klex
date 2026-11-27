@@ -10,6 +10,7 @@ import { startFakeCloud } from '../src/cloud.js';
 import { decodePng, RfbViewer } from '../src/desktop.js';
 import {
   contractDir,
+  implementation,
   type Machine,
   spawnCli,
   startMachine,
@@ -268,4 +269,85 @@ describe.skipIf(!enabled)('X11 desktop', () => {
       await cloud.close();
     }
   });
+
+  // Only the Rust server streams a display itself when no VNC server runs.
+  it.runIf(implementation === 'rust')(
+    'streams the display itself without a VNC socket',
+    async () => {
+      const cloud = await startFakeCloud(await temporaryDirectory());
+      const env = { ...xvnc.env, KLEX_MACHINE_VNC_SOCKET: '' };
+      try {
+        const machine = spawnCli(
+          [
+            'cloud',
+            'enroll',
+            cloud.issueCode(),
+            '--cloud-base-url',
+            cloud.baseUrl,
+            '--data-dir',
+            await temporaryDirectory(),
+            '--cwd',
+            await temporaryDirectory(),
+          ],
+          { env: { NODE_EXTRA_CA_CERTS: cloud.caFile, ...env } },
+        );
+        await machine.stdoutContains('is live');
+        const control = await cloud.desktop.control('machine-1');
+        expect(await control.next('hello')).toMatchObject({
+          screen: SCREEN,
+        });
+        const streamId = crypto.randomUUID();
+        control.send({
+          type: 'lease',
+          revision: 1,
+          mode: 'human',
+          holder: { name: 'Julian', streamId },
+          expiresAt: new Date(Date.now() + 600_000).toISOString(),
+        });
+        await control.next('lease.applied');
+        control.send({ type: 'stream.open', streamId });
+        const stream = await cloud.desktop.stream(streamId);
+        const viewer = new RfbViewer(stream.received, (data) =>
+          stream.socket.send(data),
+        );
+        await viewer.handshake();
+        expect({ width: viewer.width, height: viewer.height }).toEqual(SCREEN);
+        viewer.requestUpdate(false);
+        await viewer.update();
+        expect(viewer.pixels[SCREEN.width * 300 + 900]).toBe(BACKGROUND);
+
+        viewer.pointer(0, 321, 234);
+        await waitFor(async () => {
+          const { stdout } = await run('xdotool', ['getmouselocation'], {
+            env: { ...process.env, DISPLAY: xvnc.display },
+          });
+          return stdout.startsWith('x:321 y:234 ') ? true : undefined;
+        });
+
+        await run('xsetroot', ['-solid', '#00ff00'], {
+          env: { ...process.env, DISPLAY: xvnc.display },
+        });
+        try {
+          await waitFor(
+            async () => {
+              viewer.requestUpdate(true);
+              await viewer.update();
+              return viewer.pixels[SCREEN.width * 300 + 900] === 0x00ff00
+                ? true
+                : undefined;
+            },
+            { timeout: 10_000 },
+          );
+        } finally {
+          await run(
+            'xsetroot',
+            ['-solid', `#${BACKGROUND.toString(16).padStart(6, '0')}`],
+            { env: { ...process.env, DISPLAY: xvnc.display } },
+          );
+        }
+      } finally {
+        await cloud.close();
+      }
+    },
+  );
 });

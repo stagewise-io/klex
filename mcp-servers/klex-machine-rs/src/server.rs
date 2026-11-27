@@ -19,6 +19,7 @@ use serde_json::{Value, json};
 use tower::ServiceExt;
 
 use crate::config::RuntimeConfig;
+use crate::desktop::service::DesktopService;
 use crate::logger::Logger;
 use crate::mcp::{Machine, MachineHandler, MachineOptions};
 use crate::notifications::NotificationStore;
@@ -29,6 +30,7 @@ pub struct ServeOptions {
     pub config: RuntimeConfig,
     pub data_dir: PathBuf,
     pub omit_host_details: bool,
+    pub desktop: Option<Arc<DesktopService>>,
 }
 
 type McpService = StreamableHttpService<MachineHandler, LocalSessionManager>;
@@ -102,6 +104,7 @@ pub async fn serve(options: ServeOptions, logger: Logger) -> Result<ExitCode, St
         config,
         data_dir,
         omit_host_details,
+        desktop,
     } = options;
     let store = Arc::new(NotificationStore::new(Some(&data_dir), logger.clone()));
     store.ready().await.map_err(|error| error.0)?;
@@ -112,6 +115,7 @@ pub async fn serve(options: ServeOptions, logger: Logger) -> Result<ExitCode, St
         owns_store: false,
         logger: logger.clone(),
         omit_host_details,
+        desktop,
     });
 
     let listener = match tokio::net::TcpListener::bind((config.host.as_str(), config.port)).await {

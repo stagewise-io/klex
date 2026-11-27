@@ -406,9 +406,10 @@ mod tests {
             let Some(expected) = case["result"]["content"][0]["text"].as_str() else {
                 continue;
             };
-            let Some(issues) =
-                expected.strip_prefix(&format!("Input validation error: Invalid arguments for tool {}: ", case["name"].as_str().unwrap()))
-            else {
+            let Some(issues) = expected.strip_prefix(&format!(
+                "Input validation error: Invalid arguments for tool {}: ",
+                case["name"].as_str().unwrap()
+            )) else {
                 continue;
             };
             let tools = if case["desktop"] == "fake" {

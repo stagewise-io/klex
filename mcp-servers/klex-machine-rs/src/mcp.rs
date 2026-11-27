@@ -8,8 +8,10 @@ use futures::FutureExt;
 use indexmap::IndexMap;
 use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, CustomRequest, CustomResult,
-    DiscoverResult, ErrorCode, InitializeRequestParams, InitializeResult, ListToolsResult,
-    PaginatedRequestParams, ServerConfig,
+    DiscoverResult, ErrorCode, InitializeRequestParams, InitializeResult,
+    ListResourceTemplatesRequestMethod, ListResourceTemplatesResult, ListResourcesRequestMethod,
+    ListResourcesResult, ListToolsResult, PaginatedRequestParams, ReadResourceRequestMethod,
+    ReadResourceRequestParams, ReadResourceResponse, ReadResourceResult, ServerConfig,
 };
 use rmcp::service::RequestContext;
 use rmcp::{ErrorData as McpError, RoleServer, ServerHandler};
@@ -17,11 +19,13 @@ use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
 use tokio::sync::OnceCell;
 
+use crate::desktop::service::DesktopService;
+use crate::desktop::tools as desktop_tools;
 use crate::filesystem::FilesystemService;
 use crate::logger::Logger;
 use crate::notifications::{
-    NotificationStore, RecordKind, ShellExit, TrackedItem, shell_exited_event,
-    watcher_completed_event,
+    NotificationStore, RecordKind, ShellExit, TrackedItem, desktop_control_changed_event,
+    shell_exited_event, watcher_completed_event,
 };
 use crate::paths::{MachinePathResolver, display};
 use crate::push::{
@@ -56,6 +60,40 @@ fn list_result(tools: &[Value]) -> ListToolsResult {
 static LOCAL_LIST: LazyLock<ListToolsResult> = LazyLock::new(|| list_result(&LOCAL_TOOLS));
 static PUSH_LIST: LazyLock<ListToolsResult> = LazyLock::new(|| list_result(&PUSH_TOOLS));
 
+fn with_desktop(accessibility: bool, base: &[Value]) -> Vec<Value> {
+    desktop_tools::tools(accessibility)
+        .iter()
+        .chain(base)
+        .cloned()
+        .collect()
+}
+
+static DESKTOP_LISTS: LazyLock<[Vec<Value>; 4]> = LazyLock::new(|| {
+    [
+        with_desktop(false, &LOCAL_TOOLS),
+        with_desktop(false, &PUSH_TOOLS),
+        with_desktop(true, &LOCAL_TOOLS),
+        with_desktop(true, &PUSH_TOOLS),
+    ]
+});
+
+/// What the desktop offers for one request.
+#[derive(Clone, Default)]
+struct DesktopView {
+    computer_use: bool,
+    accessibility: bool,
+    hint: Option<String>,
+}
+
+impl DesktopView {
+    fn tools(&self, push: bool) -> &'static [Value] {
+        if !self.computer_use {
+            return if push { &PUSH_TOOLS } else { &LOCAL_TOOLS };
+        }
+        &DESKTOP_LISTS[usize::from(self.accessibility) * 2 + usize::from(push)]
+    }
+}
+
 pub struct MachineOptions {
     pub default_cwd: std::path::PathBuf,
     pub principal_id: String,
@@ -63,6 +101,8 @@ pub struct MachineOptions {
     pub owns_store: bool,
     pub logger: Logger,
     pub omit_host_details: bool,
+    /// Shared by every principal so their actions serialize against one screen.
+    pub desktop: Option<Arc<DesktopService>>,
 }
 
 pub struct Machine {
@@ -76,9 +116,11 @@ pub struct Machine {
     owns_store: bool,
     shell_tracking: Arc<Mutex<HashSet<String>>>,
     subscriptions: Arc<SubscriptionManager>,
-    unsubscribe: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    unsubscribe: Mutex<Vec<Box<dyn FnOnce() + Send>>>,
     omit_host_details: bool,
     icons: OnceCell<Value>,
+    desktop: Option<Arc<DesktopService>>,
+    paths: MachinePathResolver,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -178,7 +220,23 @@ impl Machine {
         );
 
         let subscriptions = SubscriptionManager::new();
-        let unsubscribe = {
+        let mut unsubscribe: Vec<Box<dyn FnOnce() + Send>> = Vec::new();
+        if let Some(desktop) = &options.desktop {
+            let store = store.clone();
+            let principal = principal_id.clone();
+            let logger = logger.clone();
+            let runtime = tokio::runtime::Handle::current();
+            unsubscribe.push(Box::new(desktop.lease.on_change(Arc::new(move |change| {
+                let event = desktop_control_changed_event(change);
+                let (store, principal, logger) = (store.clone(), principal.clone(), logger.clone());
+                runtime.spawn(async move {
+                    if let Err(error) = store.publish(&principal, event).await {
+                        logger.error(json!({ "error": error.0 }), "Desktop notification failed");
+                    }
+                });
+            }))));
+        }
+        let store_unsubscribe = {
             let subscriptions = subscriptions.clone();
             let principal = principal_id.clone();
             store.on_event(
@@ -186,21 +244,24 @@ impl Machine {
                 Arc::new(move |event| subscriptions.publish(&principal, event)),
             )
         };
+        unsubscribe.push(Box::new(store_unsubscribe));
 
         Arc::new(Self {
             principal_id,
             default_cwd: display(&options.default_cwd),
             filesystem: FilesystemService::new(paths.clone()),
-            search: SearchService::new(paths),
+            search: SearchService::new(paths.clone()),
             shell,
             watchers,
             store,
             owns_store: options.owns_store,
             shell_tracking,
             subscriptions,
-            unsubscribe: Mutex::new(Some(Box::new(unsubscribe))),
+            unsubscribe: Mutex::new(unsubscribe),
             omit_host_details: options.omit_host_details,
             icons: OnceCell::new(),
+            desktop: options.desktop,
+            paths,
         })
     }
 
@@ -225,11 +286,33 @@ impl Machine {
             .await;
     }
 
-    fn instructions(&self, push: bool) -> String {
+    /// Re-read per request so a desktop that appears or goes away is noticed.
+    async fn desktop_view(&self) -> DesktopView {
+        let Some(desktop) = &self.desktop else {
+            return DesktopView::default();
+        };
+        let capabilities = desktop.capabilities().await;
+        DesktopView {
+            computer_use: capabilities.computer_use,
+            accessibility: capabilities.computer_use && capabilities.accessibility,
+            hint: capabilities.hint,
+        }
+    }
+
+    fn instructions(&self, push: bool, desktop: &DesktopView) -> String {
         let template = SERVER_CONTRACT["instructions"].as_str().unwrap_or_default();
         let mut instructions = template
             .replace("${cwd}", &self.default_cwd)
             .replace("${platform}", crate::platform::host::PLATFORM);
+        if desktop.computer_use {
+            instructions.push_str(desktop_tools::instruction("available"));
+        } else if let Some(hint) = desktop.hint.as_deref().filter(|hint| !hint.is_empty()) {
+            instructions
+                .push_str(&desktop_tools::instruction("unavailable").replace("${hint}", hint));
+        }
+        if desktop.accessibility {
+            instructions.push_str(desktop_tools::instruction("accessibility"));
+        }
         if push {
             instructions.push_str(
                 SERVER_CONTRACT["pushInstructionsSuffix"]
@@ -240,7 +323,7 @@ impl Machine {
         instructions
     }
 
-    fn server_info(&self, push: bool) -> ServerConfig {
+    fn server_info(&self, push: bool, desktop: &DesktopView) -> ServerConfig {
         let icons = self
             .icons
             .get()
@@ -248,15 +331,19 @@ impl Machine {
             .unwrap_or_else(|| crate::icons::machine_icons(None));
         serde_json::from_value(json!({
             "protocolVersion": rmcp::model::ProtocolVersion::LATEST,
-            "capabilities": SERVER_CONTRACT["capabilities"],
+            "capabilities": if desktop.computer_use {
+                desktop_tools::capabilities()
+            } else {
+                &SERVER_CONTRACT["capabilities"]
+            },
             "serverInfo": { "name": crate::SERVICE_NAME, "version": "0.1.0", "icons": icons },
-            "instructions": self.instructions(push),
+            "instructions": self.instructions(push, desktop),
         }))
         .expect("valid server info")
     }
 
     pub async fn close(&self) -> Result<(), String> {
-        if let Some(unsubscribe) = lock(&self.unsubscribe).take() {
+        for unsubscribe in std::mem::take(&mut *lock(&self.unsubscribe)) {
             unsubscribe();
         }
         self.subscriptions.close();
@@ -538,7 +625,7 @@ impl MachineHandler {
 
 impl ServerHandler for MachineHandler {
     fn get_info(&self) -> ServerConfig {
-        self.machine.server_info(false)
+        self.machine.server_info(false, &DesktopView::default())
     }
 
     async fn initialize(
@@ -547,8 +634,16 @@ impl ServerHandler for MachineHandler {
         context: RequestContext<RoleServer>,
     ) -> Result<InitializeResult, McpError> {
         context.peer.set_peer_info(request.clone());
+        let desktop = self.machine.desktop_view().await;
         let mut result = self.negotiate_initialize(&request)?;
-        result.instructions = Some(self.machine.instructions(request_has_push(&context)));
+        result.instructions = Some(
+            self.machine
+                .instructions(request_has_push(&context), &desktop),
+        );
+        if desktop.computer_use {
+            result.capabilities = serde_json::from_value(desktop_tools::capabilities().clone())
+                .expect("valid desktop capabilities");
+        }
         Ok(result)
     }
 
@@ -556,9 +651,11 @@ impl ServerHandler for MachineHandler {
         &self,
         context: RequestContext<RoleServer>,
     ) -> Result<DiscoverResult, McpError> {
+        let desktop = self.machine.desktop_view().await;
         Ok(DiscoverResult::from_server_info(
             self.supported_protocol_versions().into_owned(),
-            self.machine.server_info(request_has_push(&context)),
+            self.machine
+                .server_info(request_has_push(&context), &desktop),
         ))
     }
 
@@ -567,11 +664,69 @@ impl ServerHandler for MachineHandler {
         _request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
-        Ok(if request_has_push(&context) {
+        let push = request_has_push(&context);
+        let desktop = self.machine.desktop_view().await;
+        Ok(if desktop.computer_use {
+            list_result(desktop.tools(push))
+        } else if push {
             PUSH_LIST.clone()
         } else {
             LOCAL_LIST.clone()
         })
+    }
+
+    async fn list_resources(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListResourcesResult, McpError> {
+        if !self.machine.desktop_view().await.computer_use {
+            return Err(McpError::method_not_found::<ListResourcesRequestMethod>());
+        }
+        Ok(serde_json::from_value(
+            json!({ "resources": desktop_tools::resources(), "resultType": "complete" }),
+        )
+        .expect("valid resource list"))
+    }
+
+    async fn list_resource_templates(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListResourceTemplatesResult, McpError> {
+        if !self.machine.desktop_view().await.computer_use {
+            return Err(McpError::method_not_found::<
+                ListResourceTemplatesRequestMethod,
+            >());
+        }
+        Ok(
+            serde_json::from_value(json!({ "resourceTemplates": [], "resultType": "complete" }))
+                .expect("valid resource template list"),
+        )
+    }
+
+    async fn read_resource(
+        &self,
+        request: ReadResourceRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ReadResourceResponse, McpError> {
+        let desktop = match &self.machine.desktop {
+            Some(desktop) if self.machine.desktop_view().await.computer_use => desktop,
+            _ => return Err(McpError::method_not_found::<ReadResourceRequestMethod>()),
+        };
+        if request.uri != desktop_tools::DESKTOP_SCREEN_RESOURCE_URI {
+            return Err(McpError::resource_not_found(
+                format!("Resource {} not found", request.uri),
+                None,
+            ));
+        }
+        let mut contents = desktop_tools::read_screen(desktop)
+            .await
+            .map_err(|error| McpError::internal_error(error, None))?;
+        contents["resultType"] = json!("complete");
+        let result: ReadResourceResult =
+            serde_json::from_value(contents).expect("valid resource contents");
+        Ok(result.into())
     }
 
     async fn call_tool(
@@ -580,7 +735,8 @@ impl ServerHandler for MachineHandler {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, McpError> {
         let push = request_has_push(&context);
-        let tools: &[Value] = if push { &PUSH_TOOLS } else { &LOCAL_TOOLS };
+        let desktop = self.machine.desktop_view().await;
+        let tools = desktop.tools(push);
         let name = request.name.to_string();
         let Some(tool) = tools.iter().find(|tool| tool["name"] == name.as_str()) else {
             return Err(McpError::new(
@@ -599,6 +755,20 @@ impl ServerHandler for MachineHandler {
                 ));
             }
         };
+        if desktop.computer_use
+            && let Some(service) = &self.machine.desktop
+        {
+            let paths = &self.machine.paths;
+            let resolve = |path: &str| paths.resolve(path).map(|path| display(&path));
+            if let Some(mut result) =
+                desktop_tools::call(service, &name, &args, desktop.accessibility, resolve).await
+            {
+                result["resultType"] = json!("complete");
+                let result: CallToolResult =
+                    serde_json::from_value(result).expect("valid desktop tool result");
+                return Ok(result.into());
+            }
+        }
         Ok(match self.machine.execute(&name, args, push).await {
             Ok(Value::Null) => tool_result(json!({ "ok": true }).to_string(), false),
             Ok(value) => tool_result(value.to_string(), false),

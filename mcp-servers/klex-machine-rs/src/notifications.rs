@@ -93,6 +93,32 @@ fn notification(
     })
 }
 
+static DESKTOP_BOOT_ID: LazyLock<String> = LazyLock::new(|| uuid::Uuid::new_v4().to_string());
+
+pub fn desktop_control_changed_event(change: &crate::desktop::lease::ControlChange) -> Value {
+    use crate::desktop::lease::ControlMode;
+    let state = &change.state;
+    let text = match state.mode {
+        ControlMode::Human => format!(
+            "{} took control of the desktop. Desktop input tools are paused until control returns; screenshots still work.",
+            state.holder.as_deref().unwrap_or("A person")
+        ),
+        ControlMode::Agent => "Control of the desktop returned to you. Take a fresh screenshot before acting; the screen may have changed.".to_string(),
+    };
+    notification(
+        format!("desktop:control:{}:{}", *DESKTOP_BOOT_ID, change.sequence),
+        "desktop.control_changed",
+        &change.changed_at,
+        text,
+        json!({
+            "mode": state.mode.as_str(),
+            "holder": state.holder,
+            "expiresAt": state.expires_at,
+            "reason": change.reason.as_str(),
+        }),
+    )
+}
+
 fn field<'a>(info: &'a Value, name: &str) -> &'a str {
     info.get(name).and_then(Value::as_str).unwrap_or_default()
 }

@@ -12,6 +12,7 @@ use klex_machine::cloud::principal_router::{PrincipalRouter, PrincipalRouterOpti
 use klex_machine::cloud::runtime::start_cloud_runtime;
 use klex_machine::cloud::state::load_machine_enrollment;
 use klex_machine::config::RuntimeConfig;
+use klex_machine::desktop::{self, service::DesktopService};
 use klex_machine::logger::Logger;
 use klex_machine::notifications::NotificationStore;
 use klex_machine::platform::signals;
@@ -64,11 +65,13 @@ async fn run(command: CliResult) -> Result<ExitCode, String> {
             omit_host_details,
         } => {
             let logger = Logger::stderr(config.log_level);
+            let desktop = desktop_from_environment(&logger);
             serve(
                 ServeOptions {
                     config,
                     data_dir,
                     omit_host_details,
+                    desktop,
                 },
                 logger,
             )
@@ -122,6 +125,7 @@ async fn serve_cloud(
     announce: bool,
 ) -> Result<ExitCode, String> {
     let logger = Logger::stderr(config.log_level);
+    let desktop = desktop_from_environment(&logger);
     let enrollment = load_machine_enrollment(&data_dir)?;
     let protected_resource = load_protected_resource(
         &enrollment.oauth_protected_resource_url,
@@ -141,6 +145,7 @@ async fn serve_cloud(
         store: store.clone(),
         logger: logger.clone(),
         omit_host_details,
+        desktop: desktop.clone(),
     }));
     let handler_router = router.clone();
     let runtime = start_cloud_runtime(
@@ -154,6 +159,7 @@ async fn serve_cloud(
             omit_host_details,
             version: VERSION.into(),
         }),
+        desktop,
         logger,
     )
     .await;
@@ -189,6 +195,13 @@ async fn serve_cloud(
     } else {
         ExitCode::FAILURE
     })
+}
+
+fn desktop_from_environment(logger: &Logger) -> Option<Arc<DesktopService>> {
+    let logger = logger.clone();
+    desktop::desktop_from_environment(Arc::new(move |message: &str| {
+        logger.warn(serde_json::json!({ "source": "desktop" }), message);
+    }))
 }
 
 fn fail(message: &str) -> ExitCode {

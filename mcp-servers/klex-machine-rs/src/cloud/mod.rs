@@ -2,6 +2,7 @@
 //! through the Cloud proxy.
 
 pub mod auth;
+pub mod desktop_link;
 pub mod enrollment;
 pub mod facts;
 pub mod http;

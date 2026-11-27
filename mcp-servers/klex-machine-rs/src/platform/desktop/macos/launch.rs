@@ -55,17 +55,14 @@ pub fn spawn(options: &LaunchOptions) -> Result<u32, String> {
     Ok(pid)
 }
 
+/// `target` is a bundle path or a bundle name such as `Safari.app`, found
+/// in the standard application folders.
 fn application_url(target: &str) -> Option<objc2::rc::Retained<NSURL>> {
     if target.contains('/') {
         return Path::new(target)
             .exists()
             .then(|| NSURL::fileURLWithPath(&NSString::from_str(target)));
     }
-    let name = if target.ends_with(".app") {
-        target.to_string()
-    } else {
-        format!("{target}.app")
-    };
     let home = std::env::var("HOME").unwrap_or_default();
     let directories = [
         "/Applications".to_string(),
@@ -75,13 +72,12 @@ fn application_url(target: &str) -> Option<objc2::rc::Retained<NSURL>> {
         format!("{home}/Applications"),
     ];
     for directory in directories {
-        let path = format!("{directory}/{name}");
+        let path = format!("{directory}/{target}");
         if Path::new(&path).exists() {
             return Some(NSURL::fileURLWithPath(&NSString::from_str(&path)));
         }
     }
-    NSWorkspace::sharedWorkspace()
-        .URLForApplicationWithBundleIdentifier(&NSString::from_str(target))
+    None
 }
 
 /// Opens an app bundle and returns its PID. Blocking.

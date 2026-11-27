@@ -160,7 +160,9 @@ async fn atspi_address_of(
         bus.a11y_address(),
         "The accessibility bus launcher did not answer",
     )
-    .await?;
+    .await;
+    bus.close().await;
+    let address = address?;
     if address.is_empty() {
         return Err("The accessibility bus launcher returned no address".into());
     }
@@ -563,6 +565,9 @@ mod tests {
             }
             fn closed(&self) -> bool {
                 false
+            }
+            fn close(&self) -> futures::future::BoxFuture<'static, ()> {
+                futures::future::ready(()).boxed()
             }
         }
         let connect: AtspiConnector = Arc::new(|_| {

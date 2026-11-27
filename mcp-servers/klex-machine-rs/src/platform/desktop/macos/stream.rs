@@ -19,7 +19,7 @@ use super::super::macos_keys::{StreamKeyAction, stream_key_action, stream_modifi
 use super::capture::{self, Capture, Frame, MAX_DIMENSION, StreamSettings};
 use super::input::{Input, button_events};
 use super::system::{SCREEN_RECORDING_MISSING, require_accessibility, screen_recording_allowed};
-use super::threads::on_main_blocking;
+use super::threads::{main_async, on_main_blocking};
 use crate::desktop::image::{RgbImage, encode_jpeg};
 use crate::desktop::provider::{MouseButton, ScrollDirection};
 use crate::desktop::rfb::clipboard::MAX_CLIPBOARD_BYTES;
@@ -535,61 +535,66 @@ impl StreamInput {
 
 const MAIN_THREAD_TIMEOUT: Duration = Duration::from_secs(2);
 
-fn pasteboard_change_count() -> Option<isize> {
-    on_main_blocking(MAIN_THREAD_TIMEOUT, || {
-        NSPasteboard::generalPasteboard().changeCount()
-    })
+/// The pasteboard change count last reported or written. Only main-thread
+/// blocks touch it, so writes and polls apply in order even when the main
+/// thread is slow.
+type LastChange = Arc<Mutex<Option<isize>>>;
+
+fn poll_pasteboard(sink: &StreamSink, last: &LastChange, initial: bool) {
+    let pasteboard = NSPasteboard::generalPasteboard();
+    let count = pasteboard.changeCount();
+    let mut last = lock(last);
+    if !initial && *last == Some(count) {
+        return;
+    }
+    *last = Some(count);
+    // SAFETY: a static NSString.
+    let kind = unsafe { NSPasteboardTypeString };
+    if let Some(text) = pasteboard.stringForType(kind).map(|text| text.to_string())
+        && !text.is_empty()
+        && text.len() <= MAX_CLIPBOARD_BYTES
+    {
+        sink.clipboard(text);
+    }
 }
 
-fn pasteboard_text() -> Option<String> {
-    on_main_blocking(MAIN_THREAD_TIMEOUT, || {
-        // SAFETY: a static NSString.
-        let kind = unsafe { NSPasteboardTypeString };
-        NSPasteboard::generalPasteboard()
-            .stringForType(kind)
-            .map(|text| text.to_string())
-    })
-    .flatten()
-}
-
-fn set_pasteboard_text(text: String) -> Option<isize> {
-    on_main_blocking(MAIN_THREAD_TIMEOUT, move || {
-        // SAFETY: a static NSString.
-        let kind = unsafe { NSPasteboardTypeString };
-        let pasteboard = NSPasteboard::generalPasteboard();
-        pasteboard.clearContents();
-        pasteboard.setString_forType(&NSString::from_str(&text), kind);
-        pasteboard.changeCount()
-    })
+fn write_pasteboard(text: &str, last: &LastChange) {
+    // SAFETY: a static NSString.
+    let kind = unsafe { NSPasteboardTypeString };
+    let pasteboard = NSPasteboard::generalPasteboard();
+    pasteboard.clearContents();
+    pasteboard.setString_forType(&NSString::from_str(text), kind);
+    *lock(last) = Some(pasteboard.changeCount());
 }
 
 /// Reports clipboard text at start and on every change, and sets it for
-/// viewers without echoing it back. AppKit runs each access on the main
-/// thread; this thread only polls.
+/// viewers without echoing it back. Pasteboard access runs on the main
+/// thread, as AppKit requires; this thread only paces it.
 fn clipboard_loop(sink: StreamSink, texts: Receiver<String>) {
-    let report = || {
-        if let Some(text) = pasteboard_text()
-            && !text.is_empty()
-            && text.len() <= MAX_CLIPBOARD_BYTES
-        {
-            sink.clipboard(text);
+    let last = LastChange::default();
+    let polling = Arc::new(AtomicBool::new(true));
+    main_async({
+        let (sink, last, polling) = (sink.clone(), last.clone(), polling.clone());
+        move || {
+            poll_pasteboard(&sink, &last, true);
+            polling.store(false, Ordering::SeqCst);
         }
-    };
-    let mut change_count = pasteboard_change_count();
-    report();
+    });
     loop {
         match texts.recv_timeout(CLIPBOARD_POLL) {
             Ok(text) => {
-                if let Some(count) = set_pasteboard_text(text) {
-                    change_count = Some(count);
-                }
+                let last = last.clone();
+                main_async(move || write_pasteboard(&text, &last));
             }
             Err(RecvTimeoutError::Timeout) => {
-                let current = pasteboard_change_count();
-                if current.is_some() && current != change_count {
-                    change_count = current;
-                    report();
+                if polling.swap(true, Ordering::SeqCst) {
+                    continue;
                 }
+                let (sink, last, polling) = (sink.clone(), last.clone(), polling.clone());
+                main_async(move || {
+                    poll_pasteboard(&sink, &last, false);
+                    polling.store(false, Ordering::SeqCst);
+                });
             }
             Err(RecvTimeoutError::Disconnected) => return,
         }

@@ -126,6 +126,16 @@ pub async fn on_main<T: Send + 'static>(
     finish(what, timeout, receiver).await
 }
 
+/// Queues `work` on the main thread without waiting, or runs it here when
+/// nothing serves the main run loop. Queued work runs in order.
+pub fn main_async(work: impl FnOnce() + Send + 'static) {
+    if main_thread_hosted() {
+        DispatchQueue::main().exec_async(work);
+    } else {
+        work();
+    }
+}
+
 /// `on_main` for a synchronous caller on a worker thread.
 pub fn on_main_blocking<T: Send + 'static>(
     timeout: Duration,

@@ -29,6 +29,10 @@ afterEach(() => {
 
 function setup(signals = {}) {
   vi.stubGlobal('navigator', { doNotTrack: null, ...signals });
+  vi.stubGlobal(
+    'location',
+    new URL('https://www.klex.bot/?email=private@example.com#secret'),
+  );
   return sdk.init;
 }
 
@@ -226,6 +230,8 @@ describe('website telemetry privacy boundary', () => {
     const expectedProperties = {
       token: config.key,
       distinct_id: options.bootstrap?.distinctID,
+      $host: 'www.klex.bot',
+      $current_url: 'https://www.klex.bot/',
       $pathname: '/',
       $ip: null,
       $geoip_disable: true,
@@ -268,6 +274,40 @@ describe('website telemetry privacy boundary', () => {
         }),
       ).toBeNull();
   });
+
+  it.each([
+    'https://www.klex.bot',
+    'https://klex.bot',
+    'https://website-preview.vercel.app',
+    'http://localhost:5173',
+  ])(
+    'includes the actual origin for pageviews and clicks on %s without URL secrets',
+    async (origin) => {
+      const init = setup();
+      vi.stubGlobal(
+        'location',
+        new URL(`${origin}/?email=private@example.com#secret`),
+      );
+      await createTelemetry(config).initialize();
+      const sanitize = init.mock.calls[0][1].before_send;
+      for (const event of ['$pageview', '$autocapture']) {
+        const result = sanitize({
+          event,
+          properties: {
+            $event_type: 'click',
+            $host: 'untrusted.example',
+            $current_url: 'https://untrusted.example/private?secret=value',
+          },
+        });
+        expect(result.properties).toMatchObject({
+          $host: new URL(origin).host,
+          $current_url: `${origin}/`,
+          $pathname: '/',
+        });
+        expect(JSON.stringify(result)).not.toMatch(/private|secret|untrusted/);
+      }
+    },
+  );
 
   it('wires telemetry into the current homepage without tracking resource pages or mounting analytics UI', () => {
     expect(main).toContain("import { createTelemetry } from './telemetry';");

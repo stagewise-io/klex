@@ -45,9 +45,11 @@ random ID shared by its pageview and clicks; unique IDs count page loads, not
 unique people. No cookies or persistent visitor identity are used, and person
 profiles are disabled. All text and element attributes are masked. A fail-closed
 `before_send` hook allows only pageviews and click autocapture: outgoing properties
-contain the project token, document-local ID, fixed `/` page label, and privacy
-flags, plus element tag names and sibling positions for clicks. Browser URLs,
-query strings, referrers, titles, text, classes, IDs, link destinations, device
+contain the project token, document-local ID, actual page host (`$host`), origin
+plus `/` (`$current_url`), fixed `/` page label, and privacy flags, plus element
+tag names and sibling positions for clicks. This preserves domain attribution
+without forwarding raw browser URLs. Query strings, fragments, referrers, titles,
+text, classes, IDs, link destinations, device
 properties, session/window IDs, and person updates are stripped. This means click
 actions must use structural selectors rather than button text or link URLs;
 selectors may need updating when the markup changes.

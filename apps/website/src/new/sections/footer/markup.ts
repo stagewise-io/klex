@@ -46,6 +46,10 @@ export function createFooterMarkup({
         <a href="https://company.stagewise.io/careers">${html('Careers')}</a>
         <a href="/press">${html('Press')}</a>
       </nav>
+      <nav aria-label="Compare Klex Bots to..." lang="en" dir="ltr">
+        <h3>Compare Klex Bots to...</h3>
+        <a href="/compare/rerun">Rerun</a>
+      </nav>
       <nav aria-label="${html('Company')}">
         <h3>${html('Company')}</h3>
         <a href="https://company.stagewise.io">stagewise</a>

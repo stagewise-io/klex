@@ -1,0 +1,115 @@
+.resource-heading.comparison-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(16rem, 0.8fr);
+  align-items: center;
+  gap: clamp(3rem, 7vw, 7rem);
+  max-width: none;
+}
+.comparison-heading-copy {
+  max-width: 52rem;
+}
+.comparison-heading-copy > p:not(.comparison-eyebrow) {
+  max-width: 39rem;
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 1.25rem;
+  line-height: 1.6;
+}
+.comparison-heading-copy > p:not(.comparison-eyebrow) + p {
+  margin-top: 1.5rem;
+}
+.comparison-heading-copy > .comparison-eyebrow {
+  margin: 0 0 1.5rem;
+  color: var(--foreground);
+  font-size: 0.875rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.resource-heading.comparison-heading h1 {
+  font-size: clamp(2.75rem, 5vw, 4.5rem);
+}
+.comparison-hero-art {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 1.5rem;
+}
+.comparison-at-a-glance {
+  margin-block: 2rem;
+  padding: clamp(1.5rem, 3vw, 2.5rem);
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  background: var(--background);
+}
+.comparison-at-a-glance .comparison-card-label {
+  margin: 0 0 1rem;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.comparison-at-a-glance > div {
+  padding-block: 1.25rem;
+  border-top: 1px solid var(--border);
+}
+.comparison-at-a-glance > div:last-child {
+  padding-bottom: 0;
+}
+.comparison-at-a-glance h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1.125rem;
+}
+.comparison-at-a-glance div p {
+  margin: 0;
+  color: var(--muted-foreground);
+  line-height: 1.6;
+}
+.comparison-question {
+  font-weight: 600;
+}
+.comparison-pair {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
+  gap: 1rem;
+  margin-block: 1.5rem;
+}
+.comparison-pair > div {
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  padding: 1.25rem;
+}
+.comparison-pair h3 {
+  margin: 0 0 0.75rem;
+}
+.comparison-pair p {
+  margin: 0;
+}
+.comparison-main .resource-section-body a {
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+  text-decoration-thickness: 1px;
+}
+@media (max-width: 800px) {
+  .resource-heading.comparison-heading {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+  .comparison-heading-copy {
+    display: contents;
+  }
+  .comparison-heading-copy > .comparison-eyebrow {
+    order: 0;
+  }
+  .comparison-heading-copy > h1 {
+    order: 1;
+  }
+  .comparison-hero-art {
+    order: 2;
+    margin-block: 1.5rem;
+  }
+  .comparison-heading-copy > p:not(.comparison-eyebrow) {
+    order: 3;
+  }
+}

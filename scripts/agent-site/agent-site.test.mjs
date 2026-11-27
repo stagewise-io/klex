@@ -78,6 +78,27 @@ describe('representation negotiation', () => {
     );
     expect(manifest.pages['/'].markdownLocales.ja).toContain('あなた');
   });
+  it.each([
+    ['/compare/rerun', ''],
+    ['/compare/rerun', 'klex-language=fr'],
+    ['/compare/rerun.md', ''],
+    ['/compare/rerun.md', 'klex-language=fr'],
+  ])(
+    'labels English-only comparison Markdown correctly at %s with cookie %s',
+    (url, cookie) => {
+      const result = site.response({
+        url,
+        headers: {
+          accept: 'text/markdown',
+          'accept-language': 'de',
+          cookie,
+        },
+      });
+      expect(result.status).toBe(200);
+      expect(result.headers['Content-Language']).toBe('en');
+      expect(result.body).toContain('Klex vs Rerun');
+    },
+  );
   it('does not translate legal source Markdown', () => {
     const result = site.response({
       url: '/legal/privacy',

@@ -19,6 +19,12 @@ describe('shared website footer', () => {
     );
     expect(createFooterMarkup()).toBe(footerMarkup);
   });
+  it('marks the English comparison navigation as left-to-right', () => {
+    expect(footerMarkup).toContain(
+      '<nav aria-label="Compare Klex Bots to..." lang="en" dir="ltr">',
+    );
+  });
+
   it('uses the same button variants as the shared UI component', () => {
     expect(footerMarkup).toContain(
       `class="new-footer-cta ${buttonVariants({ size: 'lg' })}"`,

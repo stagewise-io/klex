@@ -9,6 +9,7 @@
     "preview": "node ../../scripts/agent-site/preview.mjs marketing",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:comparison-browser": "node scripts/comparison-browser.mjs",
     "test:i18n-browser": "node scripts/i18n-browser.mjs",
     "test:legal": "vitest run src/legal",
     "test:legal-browser": "node scripts/legal-browser.mjs",

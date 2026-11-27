@@ -36,12 +36,16 @@ async function renderMarketingLocale(locale = 'en'): Promise<MarketingRender> {
     const { resourceMarkup } = await server.ssrLoadModule(
       '/src/new/resources/page-markup.ts',
     );
+    const { comparisonMarkup } = await server.ssrLoadModule(
+      '/src/new/comparison/page-markup.ts',
+    );
     return {
       locales,
       pages: {
         '/index.html': prerenderLandingPage(),
         '/brand/index.html': resourceMarkup(false),
         '/press/index.html': resourceMarkup(true),
+        '/compare/rerun/index.html': comparisonMarkup(),
       },
     };
   } finally {
@@ -88,7 +92,10 @@ function devMarkdown(): Plugin {
           url.pathname.replace(/\/index\.html$/, '/').replace(/\/$/, '') || '/';
         const markdownRoute =
           route === '/index.md' ? '/' : route.replace(/\.md$/, '');
-        if (!['/', '/brand', '/press'].includes(markdownRoute)) return next();
+        if (
+          !['/', '/brand', '/press', '/compare/rerun'].includes(markdownRoute)
+        )
+          return next();
         try {
           const { createAgentSite } = await import(
             '../../scripts/agent-site/runtime.mjs'
@@ -127,7 +134,11 @@ function devMarkdown(): Plugin {
           const languages = Object.fromEntries(
             locales.map((locale) => [locale, true]),
           );
-          const locale = negotiation.language(request, languages);
+          // This comparison is English-only until translated copy is available.
+          const locale =
+            markdownRoute === '/compare/rerun'
+              ? 'en'
+              : negotiation.language(request, languages);
           const markup = (await render(locale)).pages[
             markdownRoute === '/'
               ? '/index.html'
@@ -174,7 +185,10 @@ function prerenderPages(): Plugin {
       const localized: Record<string, Record<string, string>> = {};
       for (const locale of locales) {
         if (locale === 'en') continue;
-        localized[locale] = (await renderMarketingLocale(locale)).pages;
+        const pages = (await renderMarketingLocale(locale)).pages;
+        // Do not advertise untranslated comparison copy as a localized variant.
+        delete pages['/compare/rerun/index.html'];
+        localized[locale] = pages;
       }
       this.emitFile({
         type: 'asset',
@@ -214,7 +228,7 @@ const servePageRoutes: Connect.NextHandleFunction = (
     response.end();
     return;
   }
-  if (['/brand', '/press'].includes(route)) {
+  if (['/brand', '/press', '/compare/rerun'].includes(route)) {
     request.url = `${route}/index.html${url.search}`;
   }
   next();
@@ -306,6 +320,9 @@ export default defineConfig({
         main: fileURLToPath(new URL('./index.html', import.meta.url)),
         brand: fileURLToPath(new URL('./brand/index.html', import.meta.url)),
         press: fileURLToPath(new URL('./press/index.html', import.meta.url)),
+        rerun: fileURLToPath(
+          new URL('./compare/rerun/index.html', import.meta.url),
+        ),
       },
     },
   },

@@ -1,0 +1,95 @@
+name: Auto-release Klex Desktop
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - apps/desktop/package.json
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-klex-desktop-stable
+  cancel-in-progress: false
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      ref: ${{ steps.release.outputs.ref }}
+      should_release: ${{ steps.release.outputs.should_release }}
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - name: Check out release commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: Detect unreleased Klex Desktop version
+        id: release
+        env:
+          BEFORE: ${{ github.event.before }}
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_REF: ${{ github.sha }}
+          RELEASE_SOURCE_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          package=apps/desktop/package.json
+          read_version() { node -e "let input=''; process.stdin.on('data', c => input += c).on('end', () => process.stdout.write(JSON.parse(input).version))"; }
+          version="$(read_version < "$package")"
+          if ! [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "Klex Desktop stable version must be x.y.z, got: $version" >&2
+            exit 1
+          fi
+          tag="desktop-v$version"
+          should_release=false
+
+          if [ "$EVENT_NAME" = workflow_dispatch ] && [ "$RELEASE_SOURCE_REF" != refs/heads/main ]; then
+            echo 'Auto-release must be dispatched from main.' >&2
+            exit 1
+          fi
+
+          if [ "$EVENT_NAME" = push ]; then
+            if [ -z "$BEFORE" ] || [[ "$BEFORE" =~ ^0+$ ]]; then
+              echo 'Cannot verify the package-version delta for this push.' >&2
+              exit 1
+            fi
+            previous="$(git show "$BEFORE:$package" 2>/dev/null | read_version || true)"
+            if [ "$previous" = "$version" ]; then
+              echo "Package version did not change ($version); skipping."
+            else
+              should_release=true
+            fi
+          else
+            should_release=true
+          fi
+
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+            echo "Tag $tag already exists; skipping."
+            should_release=false
+          fi
+          {
+            echo "ref=$RELEASE_REF"
+            echo "should_release=$should_release"
+            echo "tag=$tag"
+            echo "version=$version"
+          } >> "$GITHUB_OUTPUT"
+
+  release:
+    needs: detect
+    if: needs.detect.outputs.should_release == 'true'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/_release-klex-desktop.yml
+    with:
+      channel: stable
+      ref: ${{ needs.detect.outputs.ref }}
+      tag: ${{ needs.detect.outputs.tag }}
+      version: ${{ needs.detect.outputs.version }}
+    secrets: inherit

@@ -190,8 +190,8 @@ jobs:
           retention-days: 14
           if-no-files-found: error
 
-  # Unsigned debug bundles of Klex Desktop on every desktop OS. Signing and
-  # releases come later; this proves the app and its installers build.
+  # Unsigned debug bundles of Klex Desktop on every desktop OS, proving the
+  # app and its installers build. Signed releases: _release-klex-desktop.yml.
   desktop:
     name: Klex Desktop (${{ matrix.name }})
     runs-on: ${{ matrix.os }}

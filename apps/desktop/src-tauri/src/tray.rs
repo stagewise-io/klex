@@ -13,10 +13,17 @@ use crate::desktop::{AppStatus, Desktop, DisplayState};
 const TRAY_ID: &str = "main";
 const BASE_ICON: &[u8] = include_bytes!("../icons/32x32.png");
 
+const UPDATE_ID: &str = "update";
+/// Below the status line and its separator.
+const UPDATE_POSITION: usize = 2;
+
 /// Menu items whose text follows the status.
 pub struct TrayMenu {
+    menu: Menu<Wry>,
     status: MenuItem<Wry>,
     toggle: MenuItem<Wry>,
+    /// Only in the menu while an update is ready.
+    update: MenuItem<Wry>,
 }
 
 fn dot_color(state: DisplayState) -> Option<[u8; 3]> {
@@ -91,6 +98,7 @@ pub fn create(app: &AppHandle, status: &AppStatus) -> tauri::Result<()> {
     let open = MenuItem::with_id(app, "open", "Open Klex Desktop", true, None::<&str>)?;
     let toggle = MenuItem::with_id(app, "toggle", "Disconnect", status.paired, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+    let update_item = MenuItem::with_id(app, UPDATE_ID, "Restart to update", true, None::<&str>)?;
     let menu = Menu::with_items(
         app,
         &[
@@ -109,6 +117,12 @@ pub fn create(app: &AppHandle, status: &AppStatus) -> tauri::Result<()> {
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
             "open" => show_window(app),
+            UPDATE_ID => {
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = crate::update::install(&app).await;
+                });
+            }
             "toggle" => {
                 let desktop = app.state::<Arc<Desktop>>().inner().clone();
                 tauri::async_runtime::spawn(async move {
@@ -137,8 +151,10 @@ pub fn create(app: &AppHandle, status: &AppStatus) -> tauri::Result<()> {
         })
         .build(app)?;
     app.manage(TrayMenu {
+        menu,
         status: status_item,
         toggle,
+        update: update_item,
     });
     update(app, status);
     Ok(())
@@ -161,6 +177,21 @@ pub fn update(app: &AppHandle, status: &AppStatus) {
             "Connect"
         });
         let _ = menu.toggle.set_enabled(status.paired);
+        let shown = menu.menu.get(UPDATE_ID).is_some();
+        match &status.update_version {
+            Some(version) => {
+                let _ = menu
+                    .update
+                    .set_text(format!("Restart to update to {version}"));
+                if !shown {
+                    let _ = menu.menu.insert(&menu.update, UPDATE_POSITION);
+                }
+            }
+            None if shown => {
+                let _ = menu.menu.remove(&menu.update);
+            }
+            None => {}
+        }
     }
 }
 
@@ -203,6 +234,7 @@ mod tests {
             organization_name: Some("Kanzlei Müller".into()),
             reason: None,
             autostart: true,
+            update_version: None,
         };
         assert_eq!(status_text(&status), "Connected to Kanzlei Müller");
         let unpaired = AppStatus {

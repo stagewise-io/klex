@@ -16,6 +16,7 @@ import {
 import { LogsView } from './views/logs-view.tsx';
 import { Pairing } from './views/pairing.tsx';
 import { StatusView } from './views/status-view.tsx';
+import { UpdateBanner } from './views/update-banner.tsx';
 
 export function App() {
   const [status, setStatus] = useState<DesktopStatus | null>(null);
@@ -42,24 +43,36 @@ export function App() {
             {loadError ?? 'Loading…'}
           </p>
         ) : (
-          <Tabs defaultValue="status" className="min-h-0 flex-1">
-            <TabsList>
-              <TabsTrigger value="status">
-                {status.paired ? 'Status' : 'Connect'}
-              </TabsTrigger>
-              <TabsTrigger value="logs">Logs</TabsTrigger>
-            </TabsList>
-            <TabsContent value="status" keepMounted className="min-h-0 flex-1">
-              {status.paired ? (
-                <StatusView status={status} onStatus={setStatus} />
-              ) : (
-                <Pairing onPaired={setStatus} />
-              )}
-            </TabsContent>
-            <TabsContent value="logs" className="flex min-h-0 flex-1 flex-col">
-              <LogsView />
-            </TabsContent>
-          </Tabs>
+          <>
+            {status.updateVersion ? (
+              <UpdateBanner version={status.updateVersion} />
+            ) : null}
+            <Tabs defaultValue="status" className="min-h-0 flex-1">
+              <TabsList>
+                <TabsTrigger value="status">
+                  {status.paired ? 'Status' : 'Connect'}
+                </TabsTrigger>
+                <TabsTrigger value="logs">Logs</TabsTrigger>
+              </TabsList>
+              <TabsContent
+                value="status"
+                keepMounted
+                className="min-h-0 flex-1"
+              >
+                {status.paired ? (
+                  <StatusView status={status} onStatus={setStatus} />
+                ) : (
+                  <Pairing onPaired={setStatus} />
+                )}
+              </TabsContent>
+              <TabsContent
+                value="logs"
+                className="flex min-h-0 flex-1 flex-col"
+              >
+                <LogsView />
+              </TabsContent>
+            </Tabs>
+          </>
         )}
       </main>
     </div>

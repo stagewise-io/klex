@@ -1,0 +1,87 @@
+name: Nightly Klex Desktop Release
+
+on:
+  schedule:
+    - cron: '47 2 * * *'
+  workflow_dispatch:
+    inputs:
+      date:
+        description: Test-only nightly date override (YYYYMMDD)
+        required: false
+        type: string
+      counter:
+        description: Test-only nightly counter override
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  identity:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    outputs:
+      commit: ${{ steps.release.outputs.commit }}
+      should-release: ${{ steps.release.outputs.should-release }}
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: main
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+      - id: version
+        name: Generate nightly version
+        shell: bash
+        env:
+          NIGHTLY_COUNTER: ${{ inputs.counter }}
+          NIGHTLY_DATE: ${{ inputs.date }}
+        run: |
+          args=()
+          [[ -z "$NIGHTLY_DATE" ]] || args+=(--date "$NIGHTLY_DATE")
+          [[ -z "$NIGHTLY_COUNTER" ]] || args+=(--counter "$NIGHTLY_COUNTER")
+          node apps/desktop/scripts/release/nightly-version.ts "${args[@]}" >> "$GITHUB_OUTPUT"
+      # Scheduled runs skip when nothing that ships in the app changed since
+      # the last desktop nightly; manual runs always release.
+      - id: release
+        name: Resolve commit and detect changes
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          commit="$(git rev-parse HEAD)"
+          latest_tag="$(git tag --merged HEAD --sort=-creatordate --list 'desktop-v*-nightly.*' | head -1)"
+          should_release=true
+          if [[ "$EVENT_NAME" == schedule && -n "$latest_tag" ]]; then
+            if git diff --quiet "$latest_tag" HEAD -- \
+              apps/desktop \
+              mcp-servers/klex-machine-rs \
+              Cargo.toml \
+              Cargo.lock \
+              rust-toolchain.toml \
+              .github/workflows/_release-klex-desktop.yml; then
+              echo "No Klex Desktop changes since $latest_tag; skipping."
+              should_release=false
+            fi
+          fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "should-release=$should_release" >> "$GITHUB_OUTPUT"
+
+  release:
+    needs: identity
+    if: needs.identity.outputs.should-release == 'true'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/_release-klex-desktop.yml
+    with:
+      channel: nightly
+      ref: ${{ needs.identity.outputs.commit }}
+      tag: ${{ needs.identity.outputs.tag }}
+      version: ${{ needs.identity.outputs.version }}
+    secrets: inherit

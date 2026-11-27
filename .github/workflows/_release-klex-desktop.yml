@@ -1,0 +1,614 @@
+name: _Release Klex Desktop (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      channel:
+        description: Release channel (stable or nightly)
+        required: true
+        type: string
+      ref:
+        description: Immutable commit or ref to build
+        required: true
+        type: string
+      tag:
+        description: GitHub Release tag (desktop-v<version>)
+        required: true
+        type: string
+      version:
+        description: Klex Desktop version
+        required: true
+        type: string
+    secrets:
+      APPLE_ID:
+        required: false
+      APPLE_PASSWORD:
+        required: false
+      APPLE_TEAM_ID:
+        required: false
+      APPLE_SIGNING_IDENTITY:
+        required: false
+      MACOS_CERT_P12_BASE64:
+        required: false
+      MACOS_CERT_P12_PASSWORD:
+        required: false
+      AZURE_TENANT_ID:
+        required: false
+      AZURE_CLIENT_ID:
+        required: false
+      AZURE_CLIENT_SECRET:
+        required: false
+      AZURE_ACCOUNT_NAME:
+        required: false
+      AZURE_ACCOUNT_ENDPOINT_URI:
+        required: false
+      AZURE_CERTIFICATE_PROFILE_NAME:
+        required: false
+      TAURI_SIGNING_PRIVATE_KEY:
+        required: false
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD:
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  cancel-in-progress: false
+  group: klex-desktop-release-${{ inputs.tag }}
+
+jobs:
+  prepare:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    outputs:
+      commit: ${{ steps.identity.outputs.commit }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.ref }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+      - id: identity
+        name: Resolve immutable release identity
+        shell: bash
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ "$TAG" != "desktop-v$VERSION" ]]; then
+            echo "Release tag must be desktop-v$VERSION" >&2
+            exit 1
+          fi
+          # Checks the channel, the version format and the committed
+          # updater public key.
+          node apps/desktop/scripts/release/release-config.ts \
+            --channel "$CHANNEL" \
+            --output "$RUNNER_TEMP/tauri.release.json" \
+            --repository "$REPO" \
+            --version "$VERSION"
+          if [[ "$CHANNEL" == stable ]]; then
+            package_version="$(node -p "require('./apps/desktop/package.json').version")"
+            if [[ "$package_version" != "$VERSION" ]]; then
+              echo "apps/desktop/package.json is at $package_version, not $VERSION" >&2
+              exit 1
+            fi
+            node apps/desktop/scripts/release/release-notes.ts \
+              --output "$RUNNER_TEMP/release-notes.md" \
+              --version "$VERSION"
+          fi
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  checks:
+    needs: prepare
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.commit }}
+      - uses: ./.github/actions/setup-workspace
+        with:
+          install-scope: desktop
+          install-filter: --filter klex --filter @klex/desktop...
+      - run: pnpm --filter @klex/desktop typecheck
+      - run: pnpm --filter @klex/desktop test
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: [prepare, checks]
+    environment: Release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-26
+            target: darwin-arm64
+          - runner: macos-26-intel
+            target: darwin-x64
+          - runner: ubuntu-22.04-arm
+            target: linux-arm64
+          - runner: ubuntu-22.04
+            target: linux-x64
+          - runner: windows-2022
+            target: windows-x64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.commit }}
+      - uses: ./.github/actions/setup-workspace
+        with:
+          install-scope: desktop
+          install-filter: --filter klex --filter @klex/desktop...
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache-key: desktop-release
+      - if: runner.os == 'Linux'
+        uses: ./.github/actions/setup-tauri-linux
+
+      - name: Verify runner architecture
+        run: |
+          set -euo pipefail
+          actual="$(node -p 'process.arch')"
+          case "${{ matrix.target }}" in
+            *-arm64) expected=arm64 ;;
+            *) expected=x64 ;;
+          esac
+          test "$actual" = "$expected" || {
+            echo "Expected $expected runner, got $actual" >&2
+            exit 1
+          }
+
+      # Tauri skips notarization with only a warning when credentials are
+      # missing, and an unsigned updater artifact would never install.
+      - name: Require signing secrets
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          MACOS_CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          MACOS_CERT_P12_PASSWORD: ${{ secrets.MACOS_CERT_P12_PASSWORD }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          required=(TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD)
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            required+=(APPLE_ID APPLE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_TEAM_ID MACOS_CERT_P12_BASE64 MACOS_CERT_P12_PASSWORD)
+          fi
+          missing=()
+          for name in "${required[@]}"; do
+            [[ -n "${!name}" ]] || missing+=("$name")
+          done
+          if [[ "${#missing[@]}" -gt 0 ]]; then
+            echo "Missing Release environment secrets: ${missing[*]}" >&2
+            exit 1
+          fi
+
+      - name: Import macOS signing certificate
+        if: runner.os == 'macOS'
+        uses: apple-actions/import-codesign-certs@63fff01cd422d4b7b855d40ca1e9d34d2de9427d # v3
+        with:
+          p12-file-base64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          p12-password: ${{ secrets.MACOS_CERT_P12_PASSWORD }}
+
+      - name: Configure Azure Trusted Signing
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $requiredSecrets = @{
+            AZURE_TENANT_ID = '${{ secrets.AZURE_TENANT_ID }}'
+            AZURE_CLIENT_ID = '${{ secrets.AZURE_CLIENT_ID }}'
+            AZURE_CLIENT_SECRET = '${{ secrets.AZURE_CLIENT_SECRET }}'
+            AZURE_ACCOUNT_ENDPOINT_URI = '${{ secrets.AZURE_ACCOUNT_ENDPOINT_URI }}'
+            AZURE_ACCOUNT_NAME = '${{ secrets.AZURE_ACCOUNT_NAME }}'
+            AZURE_CERTIFICATE_PROFILE_NAME = '${{ secrets.AZURE_CERTIFICATE_PROFILE_NAME }}'
+          }
+          $missingSecrets = @($requiredSecrets.GetEnumerator() |
+            Where-Object { [string]::IsNullOrWhiteSpace($_.Value) } |
+            ForEach-Object Key)
+          if ($missingSecrets.Count -gt 0) {
+            throw "Missing Azure Trusted Signing secrets: $($missingSecrets -join ', ')"
+          }
+          $nugetDir = Join-Path '${{ runner.temp }}' 'nuget'
+          $trustedSigningVersion = '1.0.95'
+          $sdkBuildToolsVersion = '10.0.22621.3233'
+          nuget install Microsoft.Trusted.Signing.Client -Version $trustedSigningVersion -OutputDirectory $nugetDir -Source https://api.nuget.org/v3/index.json
+          nuget install Microsoft.Windows.SDK.BuildTools -Version $sdkBuildToolsVersion -OutputDirectory $nugetDir -Source https://api.nuget.org/v3/index.json
+          $dlib = Join-Path $nugetDir "Microsoft.Trusted.Signing.Client.$trustedSigningVersion\bin\x64\Azure.CodeSigning.Dlib.dll"
+          $signTool = Join-Path $nugetDir "Microsoft.Windows.SDK.BuildTools.$sdkBuildToolsVersion\bin\10.0.22621.0\x64\signtool.exe"
+          if (-not (Test-Path $dlib) -or -not (Test-Path $signTool)) {
+            throw 'Pinned Azure Trusted Signing tools not found'
+          }
+          $minimumSignToolVersion = [version]'10.0.22621.755'
+          $signToolVersion = (Get-Item $signTool).VersionInfo.FileVersionRaw
+          if (-not $signToolVersion -or $signToolVersion -lt $minimumSignToolVersion) {
+            throw "SignTool $signToolVersion is older than required version $minimumSignToolVersion"
+          }
+          $dotnetEightRuntime = dotnet --list-runtimes | Select-String '^Microsoft.NETCore.App 8\.'
+          if (-not $dotnetEightRuntime) {
+            throw '.NET 8 runtime is required by Azure Trusted Signing'
+          }
+          Write-Host "Using SignTool $signToolVersion from pinned Windows SDK Build Tools $sdkBuildToolsVersion"
+          $metadata = Join-Path '${{ runner.temp }}' 'azure-signing-metadata.json'
+          @{
+            Endpoint = '${{ secrets.AZURE_ACCOUNT_ENDPOINT_URI }}'
+            CodeSigningAccountName = '${{ secrets.AZURE_ACCOUNT_NAME }}'
+            CertificateProfileName = '${{ secrets.AZURE_CERTIFICATE_PROFILE_NAME }}'
+          } | ConvertTo-Json | Set-Content -Encoding utf8 $metadata
+          "AZURE_CODE_SIGNING_DLIB=$dlib" >> $env:GITHUB_ENV
+          "AZURE_METADATA_JSON=$metadata" >> $env:GITHUB_ENV
+          "SIGNTOOL_PATH=$signTool" >> $env:GITHUB_ENV
+
+      - name: Write the release config
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          REPO: ${{ github.repository }}
+          VERSION: ${{ inputs.version }}
+        run: >-
+          node apps/desktop/scripts/release/release-config.ts
+          --channel "$CHANNEL"
+          --output "$RUNNER_TEMP/tauri.release.json"
+          --repository "$REPO"
+          --version "$VERSION"
+
+      - name: Build, sign, and notarize
+        run: pnpm --filter @klex/desktop tauri build --ci --config "$RUNNER_TEMP/tauri.release.json"
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      # Tauri notarizes and staples the app but only signs the disk image.
+      - name: Notarize and staple the disk image
+        if: runner.os == 'macOS'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          dmg="$(find target/release/bundle/dmg -maxdepth 1 -name '*.dmg' -print -quit)"
+          test -n "$dmg"
+          xcrun notarytool submit "$dmg" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait \
+            --timeout 30m
+          xcrun stapler staple "$dmg"
+
+      - name: Smoke-test the daemon entry point
+        run: |
+          set -euo pipefail
+          case "$RUNNER_OS" in
+            Windows) app=target/release/klex-desktop.exe ;;
+            *) app=target/release/klex-desktop ;;
+          esac
+          "$app" --daemon --version
+
+      - name: Collect release files
+        env:
+          TARGET: ${{ matrix.target }}
+          VERSION: ${{ inputs.version }}
+        run: >-
+          node apps/desktop/scripts/release/collect-artifacts.ts
+          --bundle-directory target/release/bundle
+          --output-directory release-output
+          --target "$TARGET"
+          --version "$VERSION"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          if-no-files-found: error
+          name: klex-desktop-${{ matrix.target }}
+          path: release-output/
+          retention-days: 14
+
+  # Installs what users will download, on each platform, before anything is
+  # published: signatures, Gatekeeper, installer, and the daemon entry point.
+  verify:
+    name: Verify ${{ matrix.target }}
+    needs: [prepare, build]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-26
+            target: darwin-arm64
+          - runner: macos-26-intel
+            target: darwin-x64
+          - runner: ubuntu-22.04-arm
+            target: linux-arm64
+          - runner: ubuntu-22.04
+            target: linux-x64
+          - runner: windows-2022
+            target: windows-x64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    env:
+      PREFIX: klex-desktop-${{ inputs.version }}-${{ matrix.target }}
+      VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: klex-desktop-${{ matrix.target }}
+          path: release-output
+
+      - name: Verify the macOS disk image and update
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          dmg="release-output/$PREFIX.dmg"
+          codesign --verify --strict --verbose=2 "$dmg"
+          spctl --assess --type open --context context:primary-signature --verbose=2 "$dmg"
+          xcrun stapler validate "$dmg"
+          mount="$(mktemp -d)"
+          hdiutil attach -nobrowse -readonly -mountpoint "$mount" "$dmg"
+          trap 'hdiutil detach "$mount" -force >/dev/null || true' EXIT
+          app="$mount/Klex Desktop.app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          spctl --assess --type execute --verbose=2 "$app"
+          xcrun stapler validate "$app"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" = "$VERSION"
+          "$app/Contents/MacOS/klex-desktop" --daemon --version
+          update="$(mktemp -d)"
+          tar -xzf "release-output/$PREFIX.app.tar.gz" -C "$update"
+          codesign --verify --deep --strict --verbose=2 "$update/Klex Desktop.app"
+          xcrun stapler validate "$update/Klex Desktop.app"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$update/Klex Desktop.app/Contents/Info.plist")" = "$VERSION"
+
+      - name: Install, verify, and uninstall (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          appimage="release-output/$PREFIX.AppImage"
+          chmod +x "$appimage"
+          APPIMAGE_EXTRACT_AND_RUN=1 "$appimage" --daemon --version
+          sudo apt-get update
+          sudo apt-get install --yes "./release-output/$PREFIX.deb"
+          test "$(dpkg-query --show --showformat='${Version}' klex-desktop)" = "$VERSION"
+          /usr/bin/klex-desktop --daemon --version
+          sudo apt-get remove --yes klex-desktop
+          test ! -e /usr/bin/klex-desktop
+
+      - name: Install, verify, and uninstall (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          function Assert-Signed([string] $Path) {
+            $signature = Get-AuthenticodeSignature -LiteralPath $Path
+            if ($signature.Status -ne 'Valid') {
+              throw "$Path signature is $($signature.Status): $($signature.StatusMessage)"
+            }
+          }
+          $installer = Join-Path 'release-output' "$env:PREFIX-setup.exe"
+          Assert-Signed $installer
+          Start-Process -FilePath $installer -ArgumentList '/S' -Wait
+          $root = Join-Path $env:LOCALAPPDATA 'Klex Desktop'
+          $app = Join-Path $root 'klex-desktop.exe'
+          if (-not (Test-Path -LiteralPath $app)) {
+            throw "The installer did not create $app"
+          }
+          Assert-Signed $app
+          $version = & $app --daemon --version
+          if ($LASTEXITCODE -ne 0) { throw "klex-desktop --daemon --version exited with $LASTEXITCODE" }
+          Write-Host "Daemon version: $version"
+          $uninstaller = Join-Path $root 'uninstall.exe'
+          Assert-Signed $uninstaller
+          Start-Process -FilePath $uninstaller -ArgumentList '/S' -Wait
+          $deadline = (Get-Date).AddMinutes(2)
+          while ((Test-Path -LiteralPath $app) -and (Get-Date) -lt $deadline) {
+            Start-Sleep -Seconds 2
+          }
+          if (Test-Path -LiteralPath $app) { throw "$app remains after uninstall" }
+
+  aggregate:
+    needs: [prepare, build]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.commit }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          merge-multiple: true
+          path: release-output
+          pattern: klex-desktop-*
+      - name: Verify updater signatures and write latest.json
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          REPO: ${{ github.repository }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          notes=()
+          if [[ "$CHANNEL" == stable ]]; then
+            node apps/desktop/scripts/release/release-notes.ts \
+              --output "$RUNNER_TEMP/release-notes.md" \
+              --version "$VERSION"
+            notes=(--notes-file "$RUNNER_TEMP/release-notes.md")
+            cp "$RUNNER_TEMP/release-notes.md" release-notes.md
+          fi
+          node apps/desktop/scripts/release/assemble-release.ts \
+            --channel "$CHANNEL" \
+            --directory release-output \
+            --repository "$REPO" \
+            --version "$VERSION" \
+            "${notes[@]}"
+          rm release-output/target-*.json
+          if [[ -f release-notes.md ]]; then mv release-notes.md release-output/; fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          if-no-files-found: error
+          name: klex-desktop-release-${{ inputs.version }}
+          path: release-output/
+          retention-days: 14
+
+  publish:
+    needs: [prepare, verify, aggregate]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: klex-desktop-release-${{ inputs.version }}
+          path: release-output
+      - name: Publish the immutable stable or nightly release
+        shell: bash
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          COMMIT: ${{ needs.prepare.outputs.commit }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          cd release-output
+          mapfile -t files < <(awk '{ print $2 }' checksums.txt)
+          files+=(checksums.txt latest.json)
+          if [[ "${#files[@]}" -ne 11 ]]; then
+            printf 'Expected 11 public release files, found %s:\n' "${#files[@]}" >&2
+            printf '  %s\n' "${files[@]}" >&2
+            exit 1
+          fi
+
+          # Desktop releases never take the repository's Latest badge; it
+          # belongs to klex.
+          if [[ "$CHANNEL" == stable ]]; then
+            if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+              expected_assets="$(printf '%s\n' "${files[@]}" | sort)"
+              existing_assets="$(gh release view "$TAG" --json assets --jq '.assets[].name' --repo "$REPO" | sort)"
+              if [[ "$existing_assets" != "$expected_assets" ]]; then
+                echo "Stable release $TAG exists with unexpected assets; refusing to mutate it" >&2
+                diff -u <(printf '%s\n' "$expected_assets") <(printf '%s\n' "$existing_assets") >&2 || true
+                exit 1
+              fi
+              echo "Stable release $TAG is already complete; reusing its immutable assets"
+              gh release download "$TAG" --pattern latest.json --output latest.json --clobber --repo "$REPO"
+              exit 0
+            fi
+            gh release create "$TAG" "${files[@]}" \
+              --latest=false \
+              --notes-file release-notes.md \
+              --repo "$REPO" \
+              --target "$COMMIT" \
+              --title "Klex Desktop $VERSION"
+          else
+            gh release delete "$TAG" --cleanup-tag --repo "$REPO" --yes 2>/dev/null || true
+            gh release create "$TAG" "${files[@]}" \
+              --latest=false \
+              --notes "Klex Desktop nightly $VERSION, built from $COMMIT." \
+              --prerelease \
+              --repo "$REPO" \
+              --target "$COMMIT" \
+              --title "Klex Desktop nightly ($VERSION)"
+          fi
+      # A re-run of a published stable release serves the latest.json that
+      # release already carries, whose signatures match its assets.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          if-no-files-found: error
+          name: klex-desktop-manifest-${{ inputs.version }}
+          path: release-output/latest.json
+          retention-days: 14
+
+  publish-pointer:
+    name: Point desktop-channel-${{ inputs.channel }} at ${{ inputs.version }}
+    needs: [prepare, publish]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    concurrency:
+      group: klex-desktop-channel-${{ inputs.channel }}-pointer
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.commit }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: klex-desktop-manifest-${{ inputs.version }}
+          path: manifest
+      - name: Update the pointer
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          COMMIT: ${{ needs.prepare.outputs.commit }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: >-
+          apps/desktop/scripts/release/update-pointer.sh
+          "desktop-channel-$CHANNEL"
+          manifest/latest.json
+          "Klex Desktop $CHANNEL (rolling pointer)"
+
+  # Nightly installs follow the nightly manifest only, so a stable release
+  # newer than the current nightly is promoted there too. The next nightly
+  # is versioned above it again.
+  promote-stable-to-nightly:
+    needs: [prepare, publish-pointer]
+    if: inputs.channel == 'stable'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    concurrency:
+      group: klex-desktop-channel-nightly-pointer
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.commit }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: klex-desktop-manifest-${{ inputs.version }}
+          path: manifest
+      - name: Update the nightly pointer
+        env:
+          COMMIT: ${{ needs.prepare.outputs.commit }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: >-
+          apps/desktop/scripts/release/update-pointer.sh
+          desktop-channel-nightly
+          manifest/latest.json
+          "Klex Desktop nightly (rolling pointer)"

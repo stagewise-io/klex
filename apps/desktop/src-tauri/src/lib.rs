@@ -10,6 +10,7 @@ mod logs;
 mod pairing;
 mod settings;
 mod tray;
+mod update;
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -139,6 +140,11 @@ fn open_log_folder(desktop: State<'_>) -> Result<(), String> {
         .map_err(|error| error.to_string())
 }
 
+#[tauri::command]
+async fn install_update(app: AppHandle) -> Result<(), String> {
+    update::install(&app).await
+}
+
 fn handle_deep_links(app: &AppHandle, urls: impl IntoIterator<Item = url::Url>) {
     let Some(code) = urls
         .into_iter()
@@ -222,6 +228,10 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         handle_deep_links(&handle, urls);
     }
 
+    if update::is_configured(app.config()) {
+        update::spawn(desktop.clone());
+    }
+
     let enabled = lock(&desktop.settings).enabled;
     if enabled && desktop.is_paired() {
         tauri::async_runtime::spawn(async move { desktop.start().await });
@@ -230,7 +240,8 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 pub fn run() {
-    let app = tauri::Builder::default()
+    let context = tauri::generate_context!();
+    let mut builder = tauri::Builder::default()
         // Must be registered first, so a second launch exits before it
         // starts anything and only focuses this instance.
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
@@ -241,7 +252,11 @@ pub fn run() {
             MacosLauncher::LaunchAgent,
             Some(vec![AUTOSTART_FLAG]),
         ))
-        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_opener::init());
+    if update::is_configured(context.config()) {
+        builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    }
+    let app = builder
         .invoke_handler(tauri::generate_handler![
             status,
             preview_code,
@@ -253,9 +268,10 @@ pub fn run() {
             set_autostart,
             logs,
             open_log_folder,
+            install_update,
         ])
         .setup(setup)
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("Klex Desktop failed to start");
     // Closing the window only hides it, so an exit request always means Quit
     // (tray, Cmd+Q, or the Dock) and is allowed through.

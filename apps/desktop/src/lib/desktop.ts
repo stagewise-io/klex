@@ -14,6 +14,8 @@ export interface DesktopStatus {
   organizationName: string | null;
   reason: string | null;
   autostart: boolean;
+  /** A downloaded update waiting for "Restart to update". */
+  updateVersion: string | null;
 }
 
 export interface EnrollmentPreview {
@@ -55,6 +57,7 @@ export const desktop = {
     invoke<DesktopStatus>('set_autostart', { enabled }),
   logs: () => invoke<LogLine[]>('logs'),
   openLogFolder: () => invoke<void>('open_log_folder'),
+  installUpdate: () => invoke<void>('install_update'),
 };
 
 export function onStatus(handler: (status: DesktopStatus) => void) {

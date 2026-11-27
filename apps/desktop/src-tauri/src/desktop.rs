@@ -18,6 +18,7 @@ use tokio::sync::{mpsc, watch};
 use crate::logs::{Logs, Source};
 use crate::pairing::PendingPairing;
 use crate::settings::{Paths, Settings};
+use crate::update::ReadyUpdate;
 
 /// What the window and tray show. Mirrored by `DesktopStatus` in
 /// `src/lib/desktop.ts`.
@@ -31,6 +32,8 @@ pub struct AppStatus {
     pub organization_name: Option<String>,
     pub reason: Option<String>,
     pub autostart: bool,
+    /// A downloaded update waiting for "Restart to update".
+    pub update_version: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -77,6 +80,7 @@ pub struct Desktop {
     /// Set while Forget runs, so pairing links that arrive during the
     /// daemon's shutdown are kept for the pairing screen.
     pub forgetting: AtomicBool,
+    pub ready_update: Mutex<Option<ReadyUpdate>>,
     link: Mutex<Link>,
     running: tokio::sync::Mutex<Option<Running>>,
 }
@@ -131,6 +135,7 @@ impl Desktop {
             pending: Mutex::new(None),
             pending_deep_link: Mutex::new(None),
             forgetting: AtomicBool::new(false),
+            ready_update: Mutex::new(None),
             link: Mutex::new(Link::default()),
             running: tokio::sync::Mutex::new(None),
         }
@@ -165,6 +170,9 @@ impl Desktop {
                 .or(settings.organization_name),
             reason,
             autostart: self.app.autolaunch().is_enabled().unwrap_or(false),
+            update_version: lock(&self.ready_update)
+                .as_ref()
+                .map(|ready| ready.version().to_owned()),
         }
     }
 

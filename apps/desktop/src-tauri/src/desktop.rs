@@ -196,12 +196,14 @@ impl Desktop {
         *running = Some(Running { stop, task });
     }
 
-    /// Stops the daemon gracefully and waits for it to exit.
+    /// Stops the daemon gracefully and waits for it to exit. Holds the
+    /// supervisor lock throughout, so a concurrent `start` cannot spawn a
+    /// second daemon on the same identity before this one has exited.
     pub async fn stop(&self) {
-        let running = self.running.lock().await.take();
-        if let Some(running) = running {
-            running.stop.send_replace(true);
-            let _ = running.task.await;
+        let mut running = self.running.lock().await;
+        if let Some(current) = running.take() {
+            current.stop.send_replace(true);
+            let _ = current.task.await;
         }
         self.set_link(None, None);
     }

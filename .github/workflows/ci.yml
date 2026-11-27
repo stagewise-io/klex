@@ -328,10 +328,6 @@ jobs:
         run: pnpm --filter @klex/machine test
       - if: matrix.machine-checks
         run: pnpm --filter @klex/machine verify
-      - if: matrix.rust
-        uses: ./.github/actions/setup-rust
-      - if: matrix.rust
-        run: pnpm --filter @klex/machine-rs build
       - run: pnpm --filter @klex/machine-conformance typecheck
       - id: conformance-ts
         if: matrix.ts
@@ -339,8 +335,15 @@ jobs:
         run: pnpm --filter @klex/machine-conformance test
         env:
           KLEX_MACHINE_IMPL: ts
-      # Still runs when the ts suite fails, so one run reports both.
-      - if: matrix.rust && (success() || steps.conformance-ts.outcome == 'failure')
+      # The Rust build and suite still run when the ts suite fails, so one run
+      # reports both implementations.
+      - id: setup-rust
+        if: matrix.rust && (success() || steps.conformance-ts.outcome == 'failure')
+        uses: ./.github/actions/setup-rust
+      - id: build-rust
+        if: steps.setup-rust.outcome == 'success' && !cancelled()
+        run: pnpm --filter @klex/machine-rs build
+      - if: steps.build-rust.outcome == 'success' && !cancelled()
         name: Conformance tests (rust)
         run: pnpm --filter @klex/machine-conformance test
         env:

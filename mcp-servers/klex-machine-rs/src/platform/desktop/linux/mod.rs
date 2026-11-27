@@ -302,21 +302,30 @@ impl DesktopProvider for X11DesktopProvider {
                 .iter()
                 .map(|modifier| keys::to_xdotool_modifier(modifier))
                 .collect::<Result<Vec<_>, _>>()?;
-            self.run(move |session| {
-                session.modifiers(&held, true)?;
-                let clicked = session.move_to(point.x, point.y).and_then(|()| {
-                    session.click(
-                        Session::button_for(button),
-                        count,
-                        Duration::from_millis(80),
-                    )
-                });
-                // Release even when the click failed so no key stays held.
-                let released =
-                    session.modifiers(&held.iter().rev().cloned().collect::<Vec<_>>(), false);
-                clicked.and(released)
-            })
-            .await
+            let release = held.iter().rev().cloned().collect::<Vec<_>>();
+            let pressed = self
+                .run(move |session| session.modifiers(&held, true))
+                .await;
+            let clicked = match pressed {
+                Ok(()) => {
+                    self.run(move |session| {
+                        session.move_to(point.x, point.y)?;
+                        session.click(
+                            Session::button_for(button),
+                            count,
+                            Duration::from_millis(80),
+                        )
+                    })
+                    .await
+                }
+                Err(error) => Err(error),
+            };
+            // A separate call, so a failed or timed-out press or click (which
+            // resets the connection) still releases every modifier.
+            let released = self
+                .run(move |session| session.modifiers(&release, false))
+                .await;
+            clicked.and(released)
         }
         .boxed()
     }

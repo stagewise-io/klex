@@ -1,15 +1,21 @@
-//! The X11 desktop: computer use on the display from `DISPLAY`, the
-//! accessibility tree over AT-SPI, and the stream from a VNC server's Unix
-//! socket (`KLEX_MACHINE_VNC_SOCKET`). Computer use needs a reachable display
-//! with XTEST; streaming needs only a live socket for the configured display.
+//! The Linux desktop. On X11: computer use on the display from `DISPLAY`,
+//! the accessibility tree over AT-SPI, and the stream from a VNC server's
+//! Unix socket (`KLEX_MACHINE_VNC_SOCKET`), or from the display itself when
+//! no socket was configured and none answers. Computer use needs a reachable
+//! display with XTEST. On Wayland, everything goes through xdg-desktop-portal
+//! (see `wayland`), unless a VNC socket was configured.
 
 mod atspi;
 mod keys;
+mod pipewire;
+mod portal;
+mod wayland;
 mod x11;
+mod x11_stream;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures::FutureExt;
@@ -19,6 +25,9 @@ use tokio::net::UnixStream;
 
 use atspi::{AtspiClient, AtspiConnector};
 use x11::{COMMAND_TIMEOUT, Display, Session};
+
+use crate::desktop::Warn;
+use crate::desktop::rfb::RfbServer;
 
 use crate::desktop::provider::{
     AccessibilityElement, AccessibilityProvider, AccessibilityQuery, AccessibilityTree,
@@ -41,24 +50,72 @@ fn env(name: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-pub fn provider() -> Arc<dyn DesktopProvider> {
-    let vnc_socket = std::env::var("KLEX_MACHINE_VNC_SOCKET")
-        .ok()
-        .filter(|path| !path.is_empty())
-        .unwrap_or_else(|| DEFAULT_VNC_SOCKET_PATH.to_string());
-    Arc::new(X11DesktopProvider::new(
-        env("DISPLAY"),
-        vnc_socket.into(),
-        env("AT_SPI_BUS_ADDRESS"),
-        env("DBUS_SESSION_BUS_ADDRESS"),
-        Arc::new(atspi::connect_zbus),
-    ))
+#[derive(Debug, PartialEq, Eq)]
+enum Kind {
+    /// With the built-in stream as a fallback when no VNC socket answers.
+    X11 {
+        builtin_stream: bool,
+    },
+    Wayland,
+}
+
+/// A configured VNC socket means a sandbox serving X11; otherwise the
+/// session type decides.
+fn kind(
+    vnc_socket: Option<&str>,
+    wayland_display: Option<&str>,
+    session_type: Option<&str>,
+) -> Kind {
+    if vnc_socket.is_some() {
+        return Kind::X11 {
+            builtin_stream: false,
+        };
+    }
+    if wayland_display.is_some()
+        || session_type.is_some_and(|kind| kind.eq_ignore_ascii_case("wayland"))
+    {
+        return Kind::Wayland;
+    }
+    Kind::X11 {
+        builtin_stream: true,
+    }
+}
+
+pub fn provider(warn: Warn, data_dir: Option<&Path>) -> Arc<dyn DesktopProvider> {
+    let vnc_socket = env("KLEX_MACHINE_VNC_SOCKET");
+    match kind(
+        vnc_socket.as_deref(),
+        env("WAYLAND_DISPLAY").as_deref(),
+        env("XDG_SESSION_TYPE").as_deref(),
+    ) {
+        Kind::Wayland => Arc::new(wayland::WaylandDesktopProvider::new(
+            wayland::portal(
+                data_dir.map(|dir| dir.join(portal::TOKEN_FILE)),
+                warn.clone(),
+            ),
+            env("DISPLAY"),
+            warn,
+        )),
+        Kind::X11 { builtin_stream } => Arc::new(X11DesktopProvider::new(
+            env("DISPLAY"),
+            vnc_socket
+                .unwrap_or_else(|| DEFAULT_VNC_SOCKET_PATH.to_string())
+                .into(),
+            builtin_stream.then_some(warn),
+            env("AT_SPI_BUS_ADDRESS"),
+            env("DBUS_SESSION_BUS_ADDRESS"),
+            Arc::new(atspi::connect_zbus),
+        )),
+    }
 }
 
 pub struct X11DesktopProvider {
     display: Option<String>,
     x: Arc<Display>,
     vnc_socket: PathBuf,
+    /// Set when the display may stream itself; logs go here.
+    builtin_stream: Option<Warn>,
+    stream: Mutex<Option<Arc<RfbServer>>>,
     atspi: AtspiClient,
 }
 
@@ -66,6 +123,7 @@ impl X11DesktopProvider {
     fn new(
         display: Option<String>,
         vnc_socket: PathBuf,
+        builtin_stream: Option<Warn>,
         atspi_address: Option<String>,
         session_bus: Option<String>,
         connect: AtspiConnector,
@@ -83,8 +141,34 @@ impl X11DesktopProvider {
             display,
             x,
             vnc_socket,
+            builtin_stream,
+            stream: Mutex::new(None),
             atspi: AtspiClient::new(address, connect),
         }
+    }
+
+    fn stream_server(&self, warn: &Warn) -> Arc<RfbServer> {
+        let mut stream = self
+            .stream
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        stream
+            .get_or_insert_with(|| {
+                let errors = warn.clone();
+                Arc::new(
+                    RfbServer::new(
+                        Arc::new(x11_stream::X11StreamBackend::new(
+                            self.display.clone().unwrap_or_default(),
+                            warn.clone(),
+                        )),
+                        crate::platform::host::hostname(),
+                    )
+                    .on_error(Arc::new(move |error: &str| {
+                        errors(error.trim_end_matches('.'))
+                    })),
+                )
+            })
+            .clone()
     }
 
     async fn run<T, F>(&self, op: F) -> Result<T, String>
@@ -275,7 +359,7 @@ impl DesktopProvider for X11DesktopProvider {
             let screen = screen.ok();
             DesktopCapabilities {
                 computer_use: screen.is_some_and(|(_, xtest)| xtest),
-                stream: stream.is_ok(),
+                stream: stream.is_ok() || (self.builtin_stream.is_some() && screen.is_some()),
                 accessibility,
                 screen: screen.map(|(size, _)| size),
                 hint: None,
@@ -431,7 +515,14 @@ impl DesktopProvider for X11DesktopProvider {
             if self.display.is_none() {
                 return Err("No X display is configured".into());
             }
-            Ok(bridge(self.connect_stream().await?))
+            match (self.connect_stream().await, &self.builtin_stream) {
+                (Ok(socket), _) => Ok(bridge(socket)),
+                (Err(_), Some(warn)) => {
+                    self.run(|session| session.screen_size()).await?;
+                    Ok(self.stream_server(warn).open())
+                }
+                (Err(error), None) => Err(error),
+            }
         }
         .boxed()
     }
@@ -443,7 +534,14 @@ mod tests {
     use super::*;
 
     fn headless(connect: AtspiConnector) -> X11DesktopProvider {
-        X11DesktopProvider::new(None, "/nonexistent/vnc.sock".into(), None, None, connect)
+        X11DesktopProvider::new(
+            None,
+            "/nonexistent/vnc.sock".into(),
+            None,
+            None,
+            None,
+            connect,
+        )
     }
 
     #[tokio::test]
@@ -468,6 +566,7 @@ mod tests {
         let provider = X11DesktopProvider::new(
             Some(":99".into()),
             path.clone(),
+            None,
             None,
             None,
             fake.connector(),
@@ -499,6 +598,7 @@ mod tests {
         let provider = X11DesktopProvider::new(
             Some(":99".into()),
             "/nonexistent/vnc.sock".into(),
+            None,
             None,
             Some("unix:path=/run/user/1000/bus".into()),
             fake.connector(),
@@ -587,6 +687,23 @@ mod tests {
             "The accessibility bus launcher did not answer"
         );
         assert!(started.elapsed() < Duration::from_secs(8));
+    }
+
+    #[test]
+    fn picks_the_portal_on_wayland_unless_a_vnc_socket_is_configured() {
+        let x11 = |builtin_stream| Kind::X11 { builtin_stream };
+        assert_eq!(kind(None, None, None), x11(true));
+        assert_eq!(kind(None, None, Some("x11")), x11(true));
+        assert_eq!(kind(None, Some("wayland-0"), None), Kind::Wayland);
+        assert_eq!(kind(None, None, Some("wayland")), Kind::Wayland);
+        assert_eq!(
+            kind(
+                Some("/run/klex/vnc.sock"),
+                Some("wayland-0"),
+                Some("wayland")
+            ),
+            x11(false)
+        );
     }
 
     #[test]

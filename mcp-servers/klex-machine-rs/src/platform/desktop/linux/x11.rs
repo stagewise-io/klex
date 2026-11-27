@@ -13,6 +13,7 @@ use x11rb::CURRENT_TIME;
 use x11rb::connection::{Connection, RequestConnection};
 use x11rb::errors::{ConnectError, ConnectionError, ReplyError};
 use x11rb::image::{BitsPerPixel, Image, ImageOrder, PixelLayout};
+use x11rb::protocol::xfixes::{ConnectionExt as _, GetCursorImageReply};
 use x11rb::protocol::xproto::{
     Atom, AtomEnum, BUTTON_PRESS_EVENT, BUTTON_RELEASE_EVENT, ClientMessageEvent,
     ConnectionExt as _, EventMask, InputFocus, KEY_PRESS_EVENT, KEY_RELEASE_EVENT, Keycode,
@@ -94,6 +95,7 @@ pub struct Session {
     roots: Vec<Window>,
     atoms: Atoms,
     xtest: bool,
+    xfixes: bool,
     bindings: Bindings,
 }
 
@@ -273,6 +275,12 @@ impl Session {
             .extension_information(xtest::X11_EXTENSION_NAME)
             .map_err(|error| failed(error.into()))?
             .is_some();
+        // XFixes answers nothing else until a client has asked its version.
+        let xfixes = conn
+            .xfixes_query_version(4, 0)
+            .ok()
+            .and_then(|cookie| cookie.reply().ok())
+            .is_some();
         let session = Self {
             atoms: Atoms {
                 net_active_window: atoms[0],
@@ -289,6 +297,7 @@ impl Session {
             root,
             roots,
             xtest,
+            xfixes,
             bindings,
         };
         // Best effort: a stale binding only costs one spare keycode.
@@ -891,6 +900,88 @@ impl Session {
         self.flush()
     }
 
+    /// A connection of its own, for a long-lived user such as the stream.
+    pub fn open(name: &str) -> Result<Self, String> {
+        Self::connect(name, Bindings::default())
+    }
+
+    /// The whole root window as packed BGRX, with the pointer drawn in when
+    /// the server has XFixes (`GetImage` leaves it out).
+    pub fn grab(&self) -> XResult<(u32, u32, Vec<u8>)> {
+        let size = self.screen_size()?;
+        let (image, visual) = Image::get(
+            &self.conn,
+            self.root,
+            0,
+            0,
+            size.width.clamp(1, u16::MAX.into()) as u16,
+            size.height.clamp(1, u16::MAX.into()) as u16,
+        )?;
+        let (width, height) = (u32::from(image.width()), u32::from(image.height()));
+        let mut bgrx = self.to_bgrx(&image, visual)?;
+        if self.xfixes {
+            // Best effort: some servers refuse the cursor image to clients
+            // outside the session.
+            if let Ok(cursor) = self.conn.xfixes_get_cursor_image()?.reply() {
+                draw_cursor(&mut bgrx, width, height, &cursor);
+            }
+        }
+        Ok((width, height, bgrx))
+    }
+
+    fn to_bgrx(&self, image: &Image<'_>, visual: u32) -> XResult<Vec<u8>> {
+        let (width, height) = (image.width() as usize, image.height() as usize);
+        let visual_type = self
+            .conn
+            .setup()
+            .roots
+            .iter()
+            .flat_map(|screen| &screen.allowed_depths)
+            .flat_map(|depth| &depth.visuals)
+            .find(|candidate| candidate.visual_id == visual)
+            .copied()
+            .ok_or("The root window has an unknown visual")?;
+        let packed = image.bits_per_pixel() == BitsPerPixel::B32
+            && image.byte_order() == ImageOrder::LsbFirst
+            && visual_type.red_mask == 0x00ff_0000
+            && visual_type.green_mask == 0x0000_ff00
+            && visual_type.blue_mask == 0x0000_00ff;
+        let mut bgrx = Vec::with_capacity(width * height * 4);
+        if packed {
+            let stride = image.data().len() / height.max(1);
+            for row in image.data().chunks(stride).take(height) {
+                bgrx.extend_from_slice(&row[..width * 4]);
+            }
+            return Ok(bgrx);
+        }
+        let layout = PixelLayout::from_visual_type(visual_type)
+            .map_err(|_| "The root window's visual is not true color")?;
+        for y in 0..image.height() {
+            for x in 0..image.width() {
+                let (red, green, blue) = layout.decode(image.get_pixel(x, y));
+                bgrx.extend_from_slice(&[
+                    (blue >> 8) as u8,
+                    (green >> 8) as u8,
+                    (red >> 8) as u8,
+                    0,
+                ]);
+            }
+        }
+        Ok(bgrx)
+    }
+
+    /// The keycode that types `keysym` at its first or second level, if any.
+    pub fn keycode_for(&self, keysym: u32) -> XResult<Option<Keycode>> {
+        Ok(self.keymap()?.find(keysym).map(|(code, _)| code))
+    }
+
+    /// Presses or releases one key, for a viewer that holds its own modifiers.
+    pub fn press(&self, code: Keycode, down: bool) -> XResult<()> {
+        self.require_xtest()?;
+        self.key_event(code, down)?;
+        self.flush()
+    }
+
     /// `xdotool windowactivate --sync`, falling back to `windowfocus --sync`
     /// where the window manager does not support `_NET_ACTIVE_WINDOW`.
     pub fn focus_window(&self, window: Window) -> XResult<()> {
@@ -935,9 +1026,67 @@ impl Session {
     }
 }
 
+/// Blends XFixes' premultiplied ARGB cursor onto `bgrx` at the pointer.
+fn draw_cursor(bgrx: &mut [u8], width: u32, height: u32, cursor: &GetCursorImageReply) {
+    let left = i64::from(cursor.x) - i64::from(cursor.xhot);
+    let top = i64::from(cursor.y) - i64::from(cursor.yhot);
+    let cursor_width = usize::from(cursor.width);
+    for cy in 0..usize::from(cursor.height) {
+        let y = top + cy as i64;
+        if y < 0 || y >= i64::from(height) {
+            continue;
+        }
+        for cx in 0..cursor_width {
+            let x = left + cx as i64;
+            if x < 0 || x >= i64::from(width) {
+                continue;
+            }
+            let Some(&argb) = cursor.cursor_image.get(cy * cursor_width + cx) else {
+                return;
+            };
+            let alpha = argb >> 24;
+            if alpha == 0 {
+                continue;
+            }
+            let at = (y as usize * width as usize + x as usize) * 4;
+            for (channel, shift) in [(0, 0), (1, 8), (2, 16)] {
+                let source = (argb >> shift) & 0xff;
+                let target = u32::from(bgrx[at + channel]);
+                bgrx[at + channel] = (source + target * (255 - alpha) / 255).min(255) as u8;
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn blends_the_cursor_and_clips_it_at_the_edges() {
+        let mut bgrx = vec![100u8; 3 * 2 * 4];
+        let cursor = GetCursorImageReply {
+            sequence: 0,
+            length: 0,
+            x: 0,
+            y: 1,
+            width: 2,
+            height: 2,
+            xhot: 1,
+            yhot: 0,
+            cursor_serial: 0,
+            // Transparent, opaque red, then a column left of the screen and
+            // half-transparent blue.
+            cursor_image: vec![0, 0xffff_0000, 0xff00_ff00, 0x8000_0080],
+        };
+        draw_cursor(&mut bgrx, 3, 2, &cursor);
+        assert_eq!(&bgrx[12..16], [0, 0, 255, 100]);
+        assert_eq!(&bgrx[0..4], [100; 4]);
+        assert_eq!(&bgrx[16..20], [100; 4]);
+        draw_cursor(&mut bgrx, 3, 2, &GetCursorImageReply { y: 0, ..cursor });
+        assert_eq!(&bgrx[0..4], [0, 0, 255, 100]);
+        assert_eq!(&bgrx[12..16], [128, 0, 127, 100]);
+    }
 
     #[test]
     fn finds_keys_by_shift_level_and_spare_keycodes() {

@@ -3,6 +3,7 @@
 #[cfg(target_os = "linux")]
 mod linux;
 
+use std::path::Path;
 use std::sync::Arc;
 
 use crate::desktop::Warn;
@@ -22,28 +23,28 @@ mod windows_keys;
 /// The signed-in user's desktop on this platform, or `None` where
 /// klex-machine has no native desktop support.
 #[cfg(windows)]
-pub fn provider(warn: Warn) -> Option<Arc<dyn DesktopProvider>> {
+pub fn provider(warn: Warn, _data_dir: Option<&Path>) -> Option<Arc<dyn DesktopProvider>> {
     Some(Arc::new(windows::WindowsDesktopProvider::new(warn)))
 }
 
 /// The signed-in user's desktop on this platform, or `None` where
 /// klex-machine has no native desktop support.
 #[cfg(target_os = "macos")]
-pub fn provider(warn: Warn) -> Option<Arc<dyn DesktopProvider>> {
+pub fn provider(warn: Warn, _data_dir: Option<&Path>) -> Option<Arc<dyn DesktopProvider>> {
     Some(macos::provider(warn))
 }
 
 /// The signed-in user's desktop on this platform, or `None` where
 /// klex-machine has no native desktop support.
 #[cfg(target_os = "linux")]
-pub fn provider(_warn: Warn) -> Option<Arc<dyn DesktopProvider>> {
-    Some(linux::provider())
+pub fn provider(warn: Warn, data_dir: Option<&Path>) -> Option<Arc<dyn DesktopProvider>> {
+    Some(linux::provider(warn, data_dir))
 }
 
 /// The signed-in user's desktop on this platform, or `None` where
 /// klex-machine has no native desktop support.
 #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
-pub fn provider(_warn: Warn) -> Option<Arc<dyn DesktopProvider>> {
+pub fn provider(_warn: Warn, _data_dir: Option<&Path>) -> Option<Arc<dyn DesktopProvider>> {
     None
 }
 

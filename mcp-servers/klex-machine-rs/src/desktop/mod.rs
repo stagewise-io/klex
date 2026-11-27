@@ -10,6 +10,7 @@ pub mod service;
 pub mod tools;
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::{Arc, LazyLock, Mutex};
 
 use fake::{FakeDesktopMode, FakeDesktopProvider};
@@ -29,8 +30,9 @@ fn env(name: &str) -> Option<String> {
 /// The desktop provider for this platform, or none where klex-machine has
 /// no desktop support. `KLEX_MACHINE_DESKTOP=off` never offers one; the
 /// `fake*` modes select the deterministic test desktop. What a provider can
-/// actually do is left to its probe.
-pub fn create_provider(warn: Warn) -> Option<Arc<dyn DesktopProvider>> {
+/// actually do is left to its probe. `data_dir` keeps what a provider must
+/// remember across runs, such as a screen sharing permission.
+pub fn create_provider(warn: Warn, data_dir: Option<&Path>) -> Option<Arc<dyn DesktopProvider>> {
     let mode = env("KLEX_MACHINE_DESKTOP").map(|mode| mode.to_lowercase());
     if mode.as_deref() == Some("off") {
         return None;
@@ -42,19 +44,27 @@ pub fn create_provider(warn: Warn) -> Option<Arc<dyn DesktopProvider>> {
             log.map(Into::into),
         )));
     }
-    crate::platform::desktop::provider(warn)
+    crate::platform::desktop::provider(warn, data_dir)
 }
 
 /// The desktop for this process. Instances are shared per desktop mode,
 /// display and VNC socket so every principal's actions are serialized
 /// against one screen.
-pub fn desktop_from_environment(warn: Warn) -> Option<Arc<DesktopService>> {
+pub fn desktop_from_environment(
+    warn: Warn,
+    data_dir: Option<&Path>,
+) -> Option<Arc<DesktopService>> {
     let key = [
         env("KLEX_MACHINE_DESKTOP")
             .unwrap_or_default()
             .to_lowercase(),
         env("DISPLAY").unwrap_or_default().trim().to_string(),
         env("KLEX_MACHINE_VNC_SOCKET").unwrap_or_default(),
+        env("WAYLAND_DISPLAY").unwrap_or_default(),
+        env("XDG_SESSION_TYPE").unwrap_or_default(),
+        data_dir
+            .map(|path| path.display().to_string())
+            .unwrap_or_default(),
     ]
     .join("\0");
     let mut shared = SHARED
@@ -63,7 +73,7 @@ pub fn desktop_from_environment(warn: Warn) -> Option<Arc<DesktopService>> {
     if let Some(service) = shared.get(&key) {
         return Some(service.clone());
     }
-    let service = Arc::new(DesktopService::new(create_provider(warn)?));
+    let service = Arc::new(DesktopService::new(create_provider(warn, data_dir)?));
     shared.insert(key, service.clone());
     Some(service)
 }

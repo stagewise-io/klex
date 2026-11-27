@@ -48,6 +48,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2cb931c189b85683d69a5cfad41d4d418671e1ac413dd209f3f2fc31e3cfd902"
 
 [[package]]
+name = "ashpd"
+version = "0.14.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b60a01f4fbcba6a522ec4d285893bd0ce36f5987a8b3bf636e6aeb2d2acdf8ac"
+dependencies = [
+ "bitflags 2.13.2",
+ "futures-util",
+ "getrandom 0.4.3",
+ "serde",
+ "serde_repr",
+ "tokio",
+ "zbus 6.5.0",
+]
+
+[[package]]
 name = "async-broadcast"
 version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2610,6 +2625,7 @@ dependencies = [
 name = "klex-machine"
 version = "0.1.0"
 dependencies = [
+ "ashpd",
  "axum",
  "base64 0.23.1",
  "block2",

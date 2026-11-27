@@ -5,6 +5,8 @@ description: How a Klex bot works as a software engineer, delegates code to codi
 
 The Software Engineer template configures a Klex bot to own engineering work from ticket to merged pull request. The bot runs coding agent CLIs such as Claude Code or Codex CLI on a connected computer, reviews everything they write, and handles pull requests, CI, tickets, and team updates itself. It writes code by hand only when a change is a few lines and faster than writing a brief.
 
+See [Bot Templates](/guides/bot-templates) for an overview of starting points and use cases.
+
 <Panel title="Good to know">
 Bot templates are managed in [Klex Cloud](https://cloud.klex.bot). If you self-host Klex without Klex Cloud, you can follow the same workflow by connecting a computer over MCP and adding equivalent Agent Skills to your bot's data directory.
 </Panel>
@@ -22,7 +24,7 @@ A Software Engineer bot follows the same loop a human engineer uses when directi
 
 ## What the template includes
 
-In [Klex Cloud](https://cloud.klex.bot), the Software Engineer template sets the bot's soul, defaults, managed skills, tool categories, and first-run onboarding checklist.
+In [Klex Cloud](https://cloud.klex.bot), the Software Engineer template provides guidance for the bot’s soul, managed skills, tool categories, and starter todos.
 
 ### Skills
 
@@ -35,7 +37,6 @@ Klex Cloud attempts to sync these skills into the bot's `templates` skill namesp
 | `review-agent-work` | Reads the full diff, runs checks directly, catches common agent mistakes, sends concrete fixes back, and cleans up commits before opening a pull request. |
 | `own-pull-requests` | Opens focused PRs, keeps CI green, responds to review comments, and sees changes through to merge and deploy. |
 | `review-pull-requests` | Reviews teammates' pull requests for correctness, safety, design, tests, and readability, and separates blockers from optional suggestions. |
-| `connect-your-tools` | Lists the template's tool categories so the bot knows which tools help with its job and can suggest connecting them through Klex Cloud connectors or custom MCP servers. |
 
 ### Tool categories
 
@@ -48,9 +49,7 @@ You can connect the tools your team already uses through Klex Cloud connectors o
 - **Chat.** Slack, Teams, Discord.
 - **Other tools.** Sentry, PostHog, Figma, cloud consoles, or databases through MCP.
 
-### Defaults and onboarding checklist
-
-By default, the template uses a strong model tier, recommends a medium cloud computer if you do not connect your own machine, and enables the `test-first` and `small-prs` traits. You can also enable `nitpicker` and `boy-scout`.
+### Starter todos
 
 Cloud attempts to add these starter todos when the bot connects. This requires a bot that supports the todos API:
 

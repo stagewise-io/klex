@@ -1,4 +1,4 @@
 export default {
   title: 'Our Bot Templates',
-  pages: ['software-engineer'],
+  pages: ['bot-templates', 'software-engineer'],
 };

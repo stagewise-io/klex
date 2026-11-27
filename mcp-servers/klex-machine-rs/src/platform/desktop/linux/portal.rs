@@ -20,8 +20,11 @@ use ashpd::desktop::{PersistMode, ResponseError, Session};
 use futures::future::BoxFuture;
 use futures::{FutureExt, StreamExt};
 
+use self::clipboard::PortalClipboard;
 use super::pipewire::{Frame, VideoStream};
 use crate::desktop::Warn;
+
+mod clipboard;
 
 pub const TOKEN_FILE: &str = "desktop-portal-token";
 const FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(10);
@@ -77,6 +80,15 @@ pub trait Remote: Send + Sync {
     fn wait_newer(&self, after: u64, timeout: Duration) -> Result<Option<Frame>, String>;
     fn input(&self, input: Input) -> BoxFuture<'_, Result<(), String>>;
     fn ended(&self) -> Option<Ended>;
+    /// The desktop's clipboard text, numbered by change; `None` until any
+    /// is known or without clipboard access.
+    fn clipboard(&self) -> Option<(u64, String)> {
+        None
+    }
+    /// Offers text from a viewer as the desktop's clipboard.
+    fn set_clipboard(&self, _text: String) -> BoxFuture<'_, Result<(), String>> {
+        futures::future::ready(Ok(())).boxed()
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -113,6 +125,8 @@ impl Failure {
 pub struct Established {
     pub remote: Arc<dyn Remote>,
     pub token: Option<String>,
+    /// What the share can't do, such as sharing the clipboard.
+    pub warning: Option<String>,
 }
 
 /// Starts a share, given the saved restore token.
@@ -144,6 +158,7 @@ pub struct Portal {
     /// A token was found, so starting should not need the dialog.
     restoring: AtomicBool,
     warned_no_token: AtomicBool,
+    warned: Mutex<Option<String>>,
 }
 
 impl Portal {
@@ -165,6 +180,7 @@ impl Portal {
             lost_grace,
             restoring: AtomicBool::new(false),
             warned_no_token: AtomicBool::new(false),
+            warned: Mutex::new(None),
         })
     }
 
@@ -243,6 +259,7 @@ impl Portal {
             *state = match outcome {
                 Ok(established) => {
                     portal.save_token(established.token.as_deref());
+                    portal.warn_once(established.warning);
                     State::Ready(established.remote)
                 }
                 Err(failure) => {
@@ -259,6 +276,21 @@ impl Portal {
                 }
             };
         });
+    }
+
+    /// Restarts repeat a share's warning; it is logged once.
+    fn warn_once(&self, warning: Option<String>) {
+        let Some(warning) = warning else {
+            return;
+        };
+        let mut warned = self
+            .warned
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if warned.as_deref() != Some(warning.as_str()) {
+            (self.warn)(&warning);
+            *warned = Some(warning);
+        }
     }
 
     fn read_token(&self) -> Option<String> {
@@ -348,7 +380,7 @@ fn portal_failure(error: ashpd::Error, step: &str, consented: bool) -> Failure {
     }
 }
 
-fn is_missing_service(error: &str) -> bool {
+pub(super) fn is_missing_service(error: &str) -> bool {
     [
         "org.freedesktop.DBus.Error.ServiceUnknown",
         "org.freedesktop.DBus.Error.NameHasNoOwner",
@@ -367,7 +399,7 @@ async fn establish(token: Option<String>) -> Result<Established, Failure> {
     let proxy = RemoteDesktop::with_connection(connection.clone())
         .await
         .map_err(|error| portal_failure(error, "reach the portal", false))?;
-    let screencast = Screencast::with_connection(connection)
+    let screencast = Screencast::with_connection(connection.clone())
         .await
         .map_err(|error| portal_failure(error, "reach the portal", false))?;
     let session = proxy
@@ -378,6 +410,7 @@ async fn establish(token: Option<String>) -> Result<Established, Failure> {
         session: Arc::new(session),
         runtime: tokio::runtime::Handle::current(),
     };
+    let clipboard = clipboard::request(&connection, &session, proxy.version()).await;
     let mut devices =
         SelectDevicesOptions::default().set_devices(DeviceType::KEYBOARD | DeviceType::POINTER);
     // Version 2 added persistence.
@@ -428,10 +461,26 @@ async fn establish(token: Option<String>) -> Result<Established, Failure> {
         .after_start(None));
     }
     let token = selected.restore_token().map(str::to_string);
-    let remote = connect_stream(proxy, screencast, session, &selected)
-        .await
-        .map_err(|failure| failure.after_start(token.clone()))?;
-    Ok(Established { remote, token })
+    let (clipboard, mut warning) = match clipboard {
+        Ok(clipboard) if selected.is_clipboard_enabled() => (Some(clipboard), None),
+        Ok(_) => (None, Some(clipboard::NOT_ENABLED_HINT.to_string())),
+        Err(hint) => (None, Some(hint)),
+    };
+    let remote = connect_stream(
+        proxy,
+        screencast,
+        session,
+        &selected,
+        clipboard,
+        &mut warning,
+    )
+    .await
+    .map_err(|failure| failure.after_start(token.clone()))?;
+    Ok(Established {
+        remote,
+        token,
+        warning,
+    })
 }
 
 async fn connect_stream(
@@ -439,6 +488,8 @@ async fn connect_stream(
     screencast: Screencast,
     session: OpenSession,
     selected: &SelectedDevices,
+    clipboard: Option<ashpd::desktop::clipboard::Clipboard>,
+    warning: &mut Option<String>,
 ) -> Result<Arc<dyn Remote>, Failure> {
     let Some(stream) = selected.streams().first() else {
         return Err(Failure::new("The portal offered no screen", Retry::Never));
@@ -488,6 +539,16 @@ async fn connect_stream(
             stopped.store(true, Ordering::SeqCst);
         }
     });
+    let clipboard = match clipboard {
+        Some(clipboard) => match PortalClipboard::start(clipboard, session.session.clone()).await {
+            Ok(clipboard) => Some(clipboard),
+            Err(error) => {
+                *warning = Some(error);
+                None
+            }
+        },
+        None => None,
+    };
     Ok(Arc::new(PortalRemote {
         proxy,
         session,
@@ -496,6 +557,7 @@ async fn connect_stream(
         video,
         stopped,
         watcher,
+        clipboard,
     }))
 }
 
@@ -536,6 +598,7 @@ struct PortalRemote {
     video: VideoStream,
     stopped: Arc<AtomicBool>,
     watcher: tokio::task::JoinHandle<()>,
+    clipboard: Option<PortalClipboard>,
 }
 
 impl Drop for PortalRemote {
@@ -631,6 +694,17 @@ impl Remote for PortalRemote {
         }
         self.video.ended().map(Ended::Lost)
     }
+
+    fn clipboard(&self) -> Option<(u64, String)> {
+        self.clipboard.as_ref()?.latest()
+    }
+
+    fn set_clipboard(&self, text: String) -> BoxFuture<'_, Result<(), String>> {
+        match &self.clipboard {
+            Some(clipboard) => clipboard.offer(text).boxed(),
+            None => futures::future::ready(Ok(())).boxed(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -678,6 +752,7 @@ mod tests {
                 Ok(Established {
                     remote: remote as Arc<dyn Remote>,
                     token,
+                    warning: None,
                 })
             }
             .boxed()

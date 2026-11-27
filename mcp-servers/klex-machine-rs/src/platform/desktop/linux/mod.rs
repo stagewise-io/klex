@@ -11,6 +11,7 @@ mod pipewire;
 mod portal;
 mod wayland;
 mod x11;
+mod x11_clipboard;
 mod x11_stream;
 
 use std::path::{Path, PathBuf};

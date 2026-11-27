@@ -442,7 +442,16 @@ impl StreamBackend for WaylandStreamBackend {
 fn capture_loop(shared: &Shared, remote: &dyn Remote, sink: &StreamSink) -> Result<(), String> {
     let mut tiles = TileSender::new();
     let mut last = None;
+    let mut clipboard = 0;
     while shared.running.load(Ordering::SeqCst) {
+        if let Some((change, text)) = remote.clipboard()
+            && change != clipboard
+        {
+            clipboard = change;
+            if !sink.clipboard(text) {
+                break;
+            }
+        }
         let after = last
             .as_ref()
             .map_or(0, |frame: &super::pipewire::Frame| frame.sequence);
@@ -475,6 +484,7 @@ enum StreamInput {
     Button(MouseButton, bool, u32, u32),
     Wheel(ScrollDirection, u32, u32),
     Key(StreamKey),
+    Clipboard(String),
 }
 
 async fn input_loop(
@@ -484,8 +494,17 @@ async fn input_loop(
 ) {
     let mut held: Vec<Input> = Vec::new();
     let mut warned = false;
+    let mut warned_clipboard = false;
     while let Some(input) = inputs.recv().await {
         let events = match input {
+            StreamInput::Clipboard(text) => {
+                if let Err(error) = remote.set_clipboard(text).await
+                    && !std::mem::replace(&mut warned_clipboard, true)
+                {
+                    warn(&error);
+                }
+                continue;
+            }
             StreamInput::Move(x, y) => vec![Input::Motion(x.into(), y.into())],
             StreamInput::Button(button, down, x, y) => {
                 vec![
@@ -570,8 +589,9 @@ impl StreamCapture for WaylandCapture {
         self.send(StreamInput::Key(key));
     }
 
-    // Sharing the clipboard through the portal is not supported yet.
-    fn set_clipboard(&mut self, _text: String) {}
+    fn set_clipboard(&mut self, text: String) {
+        self.send(StreamInput::Clipboard(text));
+    }
 
     fn stop(&mut self) {
         self.shared.running.store(false, Ordering::SeqCst);

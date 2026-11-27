@@ -7,6 +7,8 @@ struct FakeRemote {
     frame: Frame,
     inputs: Mutex<Vec<Input>>,
     refuse: Option<Input>,
+    clipboard: Mutex<Option<(u64, String)>>,
+    offered: Mutex<Vec<String>>,
 }
 
 impl Remote for FakeRemote {
@@ -28,6 +30,13 @@ impl Remote for FakeRemote {
     }
     fn ended(&self) -> Option<Ended> {
         None
+    }
+    fn clipboard(&self) -> Option<(u64, String)> {
+        self.clipboard.lock().unwrap().clone()
+    }
+    fn set_clipboard(&self, text: String) -> BoxFuture<'_, Result<(), String>> {
+        self.offered.lock().unwrap().push(text);
+        futures::future::ready(Ok(())).boxed()
     }
 }
 
@@ -52,6 +61,8 @@ async fn ready(refuse: Option<Input>) -> (WaylandDesktopProvider, Arc<FakeRemote
         frame: frame(),
         inputs: Mutex::default(),
         refuse,
+        clipboard: Mutex::default(),
+        offered: Mutex::default(),
     });
     let shared = remote.clone();
     let connect: Connector = Arc::new(move |_| {
@@ -59,6 +70,7 @@ async fn ready(refuse: Option<Input>) -> (WaylandDesktopProvider, Arc<FakeRemote
         futures::future::ready(Ok(Established {
             remote,
             token: None,
+            warning: None,
         }))
         .boxed()
     });
@@ -272,4 +284,36 @@ async fn releases_held_stream_input_when_the_viewer_leaves() {
             Input::Button(BTN_LEFT, false),
         ]
     );
+}
+
+#[tokio::test]
+async fn shares_the_clipboard_both_ways() {
+    let (_, remote) = ready(None).await;
+    let (sink, mut texts) = StreamSink::clipboard_probe();
+    let shared = Arc::new(Shared {
+        running: AtomicBool::new(true),
+        quality: AtomicU8::new(0),
+        refresh: AtomicBool::new(false),
+    });
+    let capture = (shared.clone(), remote.clone());
+    let thread = std::thread::spawn(move || capture_loop(&capture.0, &*capture.1, &sink));
+    let settle = || std::thread::sleep(Duration::from_millis(100));
+    *remote.clipboard.lock().unwrap() = Some((1, "from the desktop".into()));
+    settle();
+    settle();
+    *remote.clipboard.lock().unwrap() = Some((2, "copied again".into()));
+    settle();
+    shared.running.store(false, Ordering::SeqCst);
+    thread.join().unwrap().unwrap();
+    assert_eq!(texts(), ["from the desktop", "copied again"]);
+
+    let (sender, receiver) = unbounded_channel();
+    let task = tokio::spawn(input_loop(remote.clone(), Arc::new(|_: &str| {}), receiver));
+    sender
+        .send(StreamInput::Clipboard("from a viewer".into()))
+        .unwrap();
+    drop(sender);
+    task.await.unwrap();
+    assert_eq!(*remote.offered.lock().unwrap(), ["from a viewer"]);
+    assert!(taken(&remote).is_empty());
 }

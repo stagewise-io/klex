@@ -97,6 +97,22 @@ impl StreamSink {
     pub fn ended(&self, error: Option<String>) {
         self.send(SinkEvent::Ended(error));
     }
+
+    /// A sink outside any server, and the clipboard texts sent to it.
+    #[cfg(test)]
+    pub(crate) fn clipboard_probe() -> (Self, impl FnMut() -> Vec<String>) {
+        let (events, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        let texts = move || {
+            let mut texts = Vec::new();
+            while let Ok(event) = receiver.try_recv() {
+                if let server::Event::Sink(_, SinkEvent::Clipboard(text)) = event {
+                    texts.push(text);
+                }
+            }
+            texts
+        };
+        (Self { run: 0, events }, texts)
+    }
 }
 
 /// One running capture, plus input and clipboard for the same desktop. Calls

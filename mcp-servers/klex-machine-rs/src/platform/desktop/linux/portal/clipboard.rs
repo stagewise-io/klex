@@ -74,6 +74,8 @@ struct State {
     changes: u64,
     /// Text from a viewer that this session offers.
     offered: Option<Arc<String>>,
+    /// Counts offers, so a read that started before one is dropped.
+    offers: u64,
 }
 
 struct Shared {
@@ -131,7 +133,11 @@ impl PortalClipboard {
     }
 
     pub async fn offer(&self, text: String) -> Result<(), String> {
-        self.shared.state().offered = Some(Arc::new(text));
+        {
+            let mut state = self.shared.state();
+            state.offered = Some(Arc::new(text));
+            state.offers += 1;
+        }
         self.shared
             .proxy
             .set_selection(
@@ -189,6 +195,7 @@ async fn follow_owner(shared: Arc<Shared>, mut owners: SignalStream<'static>) {
 }
 
 async fn read_text(shared: &Shared, types: &[String]) {
+    let offers = shared.state().offers;
     for mime in readable(types) {
         let Ok(fd) = shared.proxy.selection_read(&shared.session, mime).await else {
             continue;
@@ -201,8 +208,11 @@ async fn read_text(shared: &Shared, types: &[String]) {
         let Ok(Ok(bytes)) = read else {
             continue;
         };
+        let mut state = shared.state();
+        if state.offers != offers {
+            return;
+        }
         if let Some(text) = decode(&bytes) {
-            let mut state = shared.state();
             state.changes += 1;
             state.host = Some((state.changes, text));
         }

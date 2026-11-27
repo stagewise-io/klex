@@ -117,24 +117,3 @@ blume-tabs[data-sync-key="hosting"] [data-blume-tab-panel] ul {
 blume-tabs[data-sync-key="hosting"] [data-blume-tab-panel] li + li {
   margin-block-start: 0.5em;
 }
-
-.copy-agent-prompt:not([hidden]) {
-  border: 1px solid currentColor;
-  border-radius: 999px;
-  padding: 0.55rem 1rem;
-  cursor: pointer;
-  font: inherit;
-}
-.copy-agent-prompt:focus-visible {
-  outline: 2px solid currentColor;
-  outline-offset: 3px;
-}
-.copy-agent-prompt-status {
-  margin-inline-start: 0.75rem;
-}
-.agent-prompt-details {
-  margin-top: 0.75rem;
-}
-.agent-prompt-details summary {
-  cursor: pointer;
-}

@@ -16,7 +16,7 @@ The brand page follows naming → short description → SVG logo sets → color 
 
 The press page links to the brand kit and explains the product and stagewise team. Company background, founder names and roles, locations, and backing were sourced from [the stagewise company site](https://company.stagewise.io/company) and [its homepage](https://company.stagewise.io). No press contact or coverage has been invented.
 
-Validate the resource markup with `pnpm exec vitest run apps/website/src/new/resources/resources.test.ts` and the website build. Neither resource page initializes analytics.
+Validate the resource markup with `pnpm exec vitest run apps/website/src/new/resources/resources.test.ts` and the website build. Both resource pages initialize the same analytics module as the homepage.
 
 ## Logo context menu
 
@@ -33,43 +33,31 @@ personal API key or secret in a `VITE_` variable. For local testing, copy
 `.env.example` to `.env.local` and supply the public project token. Missing or
 invalid configuration disables capture.
 
-When configured, the homepage lazy-loads the pinned PostHog browser SDK and
-captures one `$pageview` per document plus `$autocapture` click events on links,
-buttons, button-role controls, and disclosure summaries, without consent UI.
+When configured, the homepage, brand page, and press page lazy-load the pinned
+PostHog browser SDK. Standard pageviews (including History API navigation),
+page-leave events, and autocapture are enabled. There is no custom `before_send`
+sanitizer or event/property allowlist: full URLs (including query strings and
+fragments), actual host and pathname, referrers, campaign parameters, browser/device
+metadata, session IDs, and normal element data remain available to PostHog.
+The SDK's built-in sensitive-field exclusions and bot filtering still apply.
+
+PostHog manages visitor identity using its standard localStorage and cookie
+persistence, so visitors and sessions can be recognized across page loads.
+There is no per-document ID override. Person profiles use `identified_only`;
+this website does not call `identify` or attach Cloud account identity.
+Session replay remains explicitly disabled. Other analytics features use SDK and
+project defaults instead of being globally blocked by this module.
+
 Do Not Track (`1` or `yes`) and Global Privacy Control prevent SDK initialization.
-Inputs, selects, textareas, editable content, and PostHog opt-out elements are
-excluded. Form changes, submissions, and clipboard events are not captured.
+SDK failures do not block the website. Generated legal pages and development demos
+do not load this entry point. Blockers, privacy signals, and network failures
+still make counts incomplete.
 
-Persistence is disabled and configured as memory-only. Each document gets a fresh
-random ID shared by its pageview and clicks; unique IDs count page loads, not
-unique people. No cookies or persistent visitor identity are used, and person
-profiles are disabled. All text and element attributes are masked. A fail-closed
-`before_send` hook allows only pageviews and click autocapture: outgoing properties
-contain the project token, document-local ID, actual page host (`$host`), origin
-plus `/` (`$current_url`), fixed `/` page label, and privacy flags, plus element
-tag names and sibling positions for clicks. This preserves domain attribution
-without forwarding raw browser URLs. Query strings, fragments, referrers, titles,
-text, classes, IDs, link destinations, device
-properties, session/window IDs, and person updates are stripped. This means click
-actions must use structural selectors rather than button text or link URLs;
-selectors may need updating when the markup changes.
-
-Session recording, active-visitor heartbeats, page-leave events, rage/dead clicks,
-heatmaps, performance/error capture, surveys, product tours, conversations,
-experiments, remote feature flags, and external script loading are disabled or
-excluded from outgoing events. There is no reliable active/returning visitor or
-cross-page session metric. The SDK uses its standard best-effort transport,
-batching, and retry behavior; the previous direct-fetch transport guarantees no
-longer apply. Brand, press, and demo pages remain untracked.
-
-Before enabling production analytics, enable PostHog's **Discard client IP data**
-project setting and disable IP-based enrichment. The payload includes `$ip: null`,
-`$geoip_disable: true`, and `$process_person_profile: false`, but the receiving
-infrastructure still sees network metadata such as the source IP and User-Agent.
-Autocapture broadens collection beyond traffic-volume measurement. Review the
-existing analytics disclosure and consent requirements before production rollout;
-cookie-free does not guarantee that policy changes or consent are unnecessary.
-Blockers, privacy signals, and network failures make counts incomplete.
+Persistent analytics storage and expanded collection require an accurate public
+disclosure and review of applicable device-access/consent requirements before
+production rollout. This module does not provide consent UI. The existing privacy
+policy describes the previous memory-only implementation; update it through the
+versioned legal publishing process before enabling this configuration.
 
 Verify with `pnpm exec vitest run apps/website/src/new/telemetry`, the website
 build/typecheck, and the repository formatter. Tests use a synthetic project token

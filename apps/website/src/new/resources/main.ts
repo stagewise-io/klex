@@ -9,6 +9,7 @@ import { mountCloudStatus } from '../cloud-status';
 import { mountLogoMenus } from '../logo-menu';
 import { mountNavigation } from '../navigation';
 import { mountLanguageSelector } from '../sections/footer/language';
+import { createTelemetry } from '../telemetry';
 import { mountPngDownloads } from './png-downloads';
 
 const app = document.getElementById('app');
@@ -18,6 +19,9 @@ const isPress = location.pathname.replace(/\/$/, '') === '/press';
 document.body.classList.add('resource-page');
 if (!app.hasChildNodes() || currentLocale() !== 'en')
   app.innerHTML = (await import('./page-markup')).resourceMarkup(isPress);
+
+const telemetry = createTelemetry();
+void telemetry.initialize();
 
 const events = new AbortController();
 matchMedia('(prefers-color-scheme: dark)').addEventListener(

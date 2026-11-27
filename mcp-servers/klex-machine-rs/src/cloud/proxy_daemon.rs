@@ -27,6 +27,9 @@ use super::http;
 pub const PROXY_PROTOCOL_VERSION: u64 = 2;
 pub const MAX_PROXY_CHUNK_BYTES: usize = 64 * 1024;
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(25);
+/// Two missed heartbeats. Without it a half-open link (a vanished Cloud pod
+/// or a dropped NAT mapping) would look connected until TCP gives up.
+const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(60);
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(30);
 const RECONNECT_INITIAL_MS: f64 = 250.0;
 const RECONNECT_MAXIMUM_MS: f64 = 30_000.0;
@@ -51,24 +54,57 @@ pub struct ProxyDaemon {
     task: tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
-async fn connect(provider: &ConnectionProvider) -> Result<Socket, String> {
+/// A failed connection attempt: `message` matches the TS daemon, `detail`
+/// says what went wrong for logs.
+struct ConnectFailure {
+    message: String,
+    detail: String,
+}
+
+impl From<String> for ConnectFailure {
+    fn from(message: String) -> Self {
+        Self {
+            detail: message.clone(),
+            message,
+        }
+    }
+}
+
+fn transport_failure(error: &tokio_tungstenite::tungstenite::Error) -> String {
+    use tokio_tungstenite::tungstenite::Error;
+    match error {
+        Error::Http(response) => format!("Cloud answered HTTP {}", response.status().as_u16()),
+        Error::Io(error) => format!("network error ({})", error.kind()),
+        Error::Tls(_) => "TLS handshake failed".into(),
+        other => other.to_string(),
+    }
+}
+
+async fn connect(provider: &ConnectionProvider) -> Result<Socket, ConnectFailure> {
     let connection = provider().await?;
     let url = url::Url::parse(&connection.url).map_err(|_| "Invalid URL".to_string())?;
     if url.scheme() != "ws" && url.scheme() != "wss" {
-        return Err("Proxy URL must use ws: or wss:".into());
+        return Err("Proxy URL must use ws: or wss:".to_string().into());
     }
-    let failed = || "Proxy connection failed".to_string();
-    let mut request = url.as_str().into_client_request().map_err(|_| failed())?;
+    let failed = |detail: String| ConnectFailure {
+        message: "Proxy connection failed".into(),
+        detail: format!("Proxy connection failed: {detail}"),
+    };
+    let mut request = url
+        .as_str()
+        .into_client_request()
+        .map_err(|_| failed("invalid request".into()))?;
     for (name, value) in &connection.headers {
-        let name = axum::http::HeaderName::from_bytes(name.as_bytes()).map_err(|_| failed())?;
-        let value = HeaderValue::from_str(value).map_err(|_| failed())?;
+        let name = axum::http::HeaderName::from_bytes(name.as_bytes())
+            .map_err(|_| failed("invalid header".into()))?;
+        let value = HeaderValue::from_str(value).map_err(|_| failed("invalid header".into()))?;
         request.headers_mut().insert(name, value);
     }
     let connector = tokio_tungstenite::Connector::Rustls(http::tls());
     let (socket, _) =
         tokio_tungstenite::connect_async_tls_with_config(request, None, true, Some(connector))
             .await
-            .map_err(|_| failed())?;
+            .map_err(|error| failed(transport_failure(&error)))?;
     Ok(socket)
 }
 
@@ -88,17 +124,19 @@ fn reconnect_delay(attempt: u32) -> Duration {
     Duration::from_millis(delay as u64)
 }
 
-/// What the daemon's link to the Cloud proxy is doing right now.
+/// What the daemon's link to the Cloud proxy is doing right now. Connected
+/// means the proxy accepted the machine token and upgraded the WebSocket.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LinkState {
     /// The first connection attempt is in flight.
     Connecting,
     Connected,
-    /// Disconnected and retrying with backoff; holds the last failure.
+    /// Disconnected and retrying with backoff; holds what went wrong.
     Offline(String),
 }
 
-pub type LinkStatus = watch::Sender<LinkState>;
+/// Receives every change of the link, in order.
+pub type LinkStatus = mpsc::UnboundedSender<LinkState>;
 
 impl ProxyDaemon {
     /// Connects once and fails if that first connection cannot be opened.
@@ -106,7 +144,9 @@ impl ProxyDaemon {
         connection: ConnectionProvider,
         handler: ProxyHandler,
     ) -> Result<Self, String> {
-        let socket = connect(&connection).await?;
+        let socket = connect(&connection)
+            .await
+            .map_err(|failure| failure.message)?;
         Ok(Self::spawn(connection, handler, Some(socket), None))
     }
 
@@ -129,7 +169,7 @@ impl ProxyDaemon {
         let (shutdown, mut stopped) = watch::channel(false);
         let report = move |state: LinkState| {
             if let Some(status) = &status {
-                status.send_replace(state);
+                let _ = status.send(state);
             }
         };
         let task = tokio::spawn(async move {
@@ -141,12 +181,14 @@ impl ProxyDaemon {
             loop {
                 if let Some(current) = socket.take() {
                     report(LinkState::Connected);
-                    run_session(current, &handler, stopped.clone()).await;
+                    let ended = run_session(current, &handler, stopped.clone()).await;
                     let stopping = *stopped.borrow();
                     if stopping {
                         return;
                     }
-                    report(LinkState::Offline("Proxy connection closed".into()));
+                    report(LinkState::Offline(format!(
+                        "Proxy connection closed: {ended}"
+                    )));
                 }
                 let mut attempt = 0;
                 while socket.is_none() {
@@ -161,7 +203,7 @@ impl ProxyDaemon {
                     tokio::select! {
                         result = connect(&connection) => match result {
                             Ok(connected) => socket = Some(connected),
-                            Err(error) => report(LinkState::Offline(error)),
+                            Err(failure) => report(LinkState::Offline(failure.detail)),
                         },
                         () = until_stopped(&mut stopped) => return,
                     }
@@ -213,7 +255,12 @@ fn is_registered(exchanges: &Exchanges, id: &str, generation: u64) -> bool {
         .is_some_and(|exchange| exchange.generation == generation)
 }
 
-async fn run_session(socket: Socket, handler: &ProxyHandler, mut stopped: watch::Receiver<bool>) {
+/// Serves exchanges until the link ends, and says why it ended.
+async fn run_session(
+    socket: Socket,
+    handler: &ProxyHandler,
+    mut stopped: watch::Receiver<bool>,
+) -> String {
     let (mut sink, mut stream) = socket.split();
     let (outgoing, mut queue) = mpsc::channel::<(Message, Option<oneshot::Sender<bool>>)>(64);
     let writer = tokio::spawn(async move {
@@ -235,6 +282,8 @@ async fn run_session(socket: Socket, handler: &ProxyHandler, mut stopped: watch:
         HEARTBEAT_INTERVAL,
     );
     let mut close_deadline: Option<tokio::time::Instant> = None;
+    let mut heard = tokio::time::Instant::now();
+    let mut ended = "closed".to_string();
     let protocol_error = || {
         Message::Close(Some(CloseFrame {
             code: CloseCode::Protocol,
@@ -255,19 +304,51 @@ async fn run_session(socket: Socket, handler: &ProxyHandler, mut stopped: watch:
                 close_deadline = Some(tokio::time::Instant::now() + CLOSE_TIMEOUT);
             }
             _ = heartbeat.tick(), if close_deadline.is_none() => {
+                if heard.elapsed() > HEARTBEAT_TIMEOUT {
+                    ended = format!(
+                        "no heartbeat reply from Klex Cloud for {} s",
+                        HEARTBEAT_TIMEOUT.as_secs()
+                    );
+                    break;
+                }
                 if outgoing.send((Message::Ping(Default::default()), None)).await.is_err() {
+                    ended = "sending a heartbeat failed".into();
                     break;
                 }
             }
             message = stream.next() => {
-                let Some(Ok(message)) = message else { break };
+                let message = match message {
+                    Some(Ok(message)) => message,
+                    Some(Err(error)) => {
+                        ended = format!("connection error: {}", transport_failure(&error));
+                        break;
+                    }
+                    None => {
+                        ended = "connection ended without a close frame".into();
+                        break;
+                    }
+                };
+                heard = tokio::time::Instant::now();
                 if close_deadline.is_some() {
                     continue;
                 }
                 let frame = match message {
                     Message::Text(text) => decode_frame(text.as_str()),
                     Message::Binary(_) => Err(()),
-                    Message::Close(_) => break,
+                    Message::Close(frame) => {
+                        ended = match frame {
+                            Some(frame) if frame.reason.is_empty() => {
+                                format!("closed by Klex Cloud (code {})", u16::from(frame.code))
+                            }
+                            Some(frame) => format!(
+                                "closed by Klex Cloud (code {}: {})",
+                                u16::from(frame.code),
+                                frame.reason
+                            ),
+                            None => "closed by Klex Cloud".into(),
+                        };
+                        break;
+                    }
                     _ => continue,
                 };
                 match frame {
@@ -283,6 +364,7 @@ async fn run_session(socket: Socket, handler: &ProxyHandler, mut stopped: watch:
                             duplicate
                         };
                         if duplicate {
+                            ended = "protocol error".into();
                             let _ = outgoing.send((protocol_error(), None)).await;
                             close_deadline = Some(tokio::time::Instant::now() + CLOSE_TIMEOUT);
                             continue;
@@ -293,7 +375,8 @@ async fn run_session(socket: Socket, handler: &ProxyHandler, mut stopped: watch:
                         lock(&exchanges).remove(&id);
                     }
                     Err(()) => {
-                        let _ = outgoing.send((protocol_error(), None)).await;
+                        ended = "protocol error".into();
+                            let _ = outgoing.send((protocol_error(), None)).await;
                         close_deadline = Some(tokio::time::Instant::now() + CLOSE_TIMEOUT);
                     }
                 }
@@ -303,6 +386,7 @@ async fn run_session(socket: Socket, handler: &ProxyHandler, mut stopped: watch:
     lock(&exchanges).clear();
     drop(outgoing);
     writer.abort();
+    ended
 }
 
 async fn send(
@@ -578,6 +662,15 @@ mod tests {
         tokio::spawn(async move {
             let (stream, _) = listener.accept().await.unwrap();
             let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+            socket
+                .close(Some(CloseFrame {
+                    code: CloseCode::Library(4000),
+                    reason: "replaced".into(),
+                }))
+                .await
+                .unwrap();
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
             while let Some(Ok(_)) = socket.next().await {}
         });
         let attempts = Arc::new(AtomicU64::new(0));
@@ -595,22 +688,66 @@ mod tests {
             })
         });
         let handler: ProxyHandler = Arc::new(|_| Box::pin(async { Response::new(Body::empty()) }));
-        let (status, mut states) = watch::channel(LinkState::Offline(String::new()));
+        let (status, mut states) = mpsc::unbounded_channel();
         let daemon = ProxyDaemon::start_supervised(connection, handler, status);
         let mut seen = Vec::new();
-        while seen.last() != Some(&LinkState::Connected) {
-            states.changed().await.unwrap();
-            let state = states.borrow_and_update().clone();
-            if seen.last() != Some(&state) {
-                seen.push(state);
-            }
+        while seen
+            .iter()
+            .filter(|state| **state == LinkState::Connected)
+            .count()
+            < 2
+        {
+            seen.push(states.recv().await.unwrap());
         }
-        assert!(
-            seen.contains(&LinkState::Offline("fetch failed".into())),
-            "{seen:?}"
+        assert_eq!(
+            seen,
+            [
+                LinkState::Connecting,
+                LinkState::Offline("fetch failed".into()),
+                LinkState::Connected,
+                LinkState::Offline(
+                    "Proxy connection closed: closed by Klex Cloud (code 4000: replaced)".into()
+                ),
+                LinkState::Connected,
+            ]
         );
-        assert_eq!(attempts.load(Ordering::Relaxed), 2);
+        assert_eq!(attempts.load(Ordering::Relaxed), 3);
         daemon.close().await;
+    }
+
+    #[tokio::test]
+    async fn reports_why_the_upgrade_failed() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!(
+            "ws://{}/machine-connections",
+            listener.local_addr().unwrap()
+        );
+        tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buffer = [0u8; 4096];
+            let _ = stream.read(&mut buffer).await;
+            let _ = stream
+                .write_all(
+                    b"HTTP/1.1 401 Unauthorized\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                )
+                .await;
+        });
+        let connection: ConnectionProvider = Arc::new(move || {
+            let url = url.clone();
+            Box::pin(async move {
+                Ok(ProxyConnection {
+                    url,
+                    headers: Vec::new(),
+                })
+            })
+        });
+        let failure = connect(&connection).await.err().unwrap();
+        assert_eq!(failure.message, "Proxy connection failed");
+        assert_eq!(
+            failure.detail,
+            "Proxy connection failed: Cloud answered HTTP 401"
+        );
     }
 
     #[test]

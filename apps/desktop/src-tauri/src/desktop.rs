@@ -102,19 +102,21 @@ enum Outcome {
     Exited(String),
 }
 
-/// Turns the daemon's terse transport errors into something a person can act on.
+/// Turns the daemon's terse transport errors into something a person can act
+/// on. The full reason stays in the logs.
 pub fn describe_reason(reason: &str) -> String {
-    match reason {
-        "fetch failed" => {
-            "Can’t reach Klex Cloud. Check the internet connection; this computer keeps retrying."
-                .into()
-        }
-        "Proxy connection failed" => {
-            "Can’t reach the Klex Cloud connection service; this computer keeps retrying.".into()
-        }
-        "Proxy connection closed" => "The connection to Klex Cloud dropped. Reconnecting…".into(),
-        other => other.into(),
+    if reason == "fetch failed" {
+        return "Can’t reach Klex Cloud. Check the internet connection; this computer keeps retrying."
+            .into();
     }
+    if reason.starts_with("Proxy connection failed") {
+        return "Can’t reach the Klex Cloud connection service; this computer keeps retrying."
+            .into();
+    }
+    if reason.starts_with("Proxy connection closed") {
+        return "The connection to Klex Cloud dropped. Reconnecting…".into();
+    }
+    reason.into()
 }
 
 impl Desktop {
@@ -399,6 +401,14 @@ mod tests {
     #[test]
     fn explains_transport_errors() {
         assert!(describe_reason("fetch failed").starts_with("Can’t reach Klex Cloud"));
+        assert!(
+            describe_reason("Proxy connection closed: closed by Klex Cloud (code 1001)")
+                .starts_with("The connection to Klex Cloud dropped")
+        );
+        assert!(
+            describe_reason("Proxy connection failed: Cloud answered HTTP 401")
+                .starts_with("Can’t reach the Klex Cloud connection service")
+        );
         assert_eq!(describe_reason("something else"), "something else");
     }
 

@@ -12,7 +12,7 @@ use futures::{SinkExt, StreamExt};
 use regex::Regex;
 use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::sync::{Notify, mpsc, oneshot, watch};
+use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::HeaderValue;
@@ -69,7 +69,9 @@ struct Shared {
     streams: Mutex<HashMap<String, StreamEntry>>,
     /// Control messages from stream tasks; sent while a control socket is open.
     outgoing: mpsc::UnboundedSender<Value>,
-    withdraw: Notify,
+    /// Bumped on every withdrawal; a version counter, so a withdrawal that
+    /// lands while the control session is busy elsewhere is not lost.
+    withdrawals: watch::Sender<u64>,
     closed: AtomicBool,
     shutdown: watch::Sender<bool>,
 }
@@ -180,7 +182,7 @@ impl DesktopLink {
             base,
             streams: Mutex::default(),
             outgoing,
-            withdraw: Notify::new(),
+            withdrawals: watch::channel(0).0,
             closed: AtomicBool::new(false),
             shutdown: watch::channel(false).0,
         });
@@ -238,7 +240,7 @@ impl Shared {
     fn withdraw(&self) {
         self.options.desktop.invalidate();
         self.close_streams(1001);
-        self.withdraw.notify_waiters();
+        self.withdrawals.send_modify(|count| *count += 1);
     }
 
     fn send(&self, message: Value) {
@@ -261,6 +263,8 @@ async fn run(shared: Arc<Shared>, mut outgoing: mpsc::UnboundedReceiver<Value>) 
         if shared.closed.load(Ordering::SeqCst) {
             return;
         }
+        // Before the probe, so a withdrawal during it also ends the session.
+        let mut withdrawn = shared.withdrawals.subscribe();
         let capabilities = tokio::select! {
             capabilities = shared.options.desktop.capabilities() => capabilities,
             () = until_shutdown(&mut shutdown) => return,
@@ -279,6 +283,7 @@ async fn run(shared: Arc<Shared>, mut outgoing: mpsc::UnboundedReceiver<Value>) 
                         socket,
                         &capabilities,
                         &mut outgoing,
+                        &mut withdrawn,
                         &mut shutdown,
                     )
                     .await;
@@ -359,6 +364,7 @@ async fn control_session(
     mut socket: Socket,
     capabilities: &crate::desktop::provider::DesktopCapabilities,
     outgoing: &mut mpsc::UnboundedReceiver<Value>,
+    withdrawn: &mut watch::Receiver<u64>,
     shutdown: &mut watch::Receiver<bool>,
 ) -> u16 {
     let logger = shared.logger();
@@ -406,7 +412,7 @@ async fn control_session(
                     return 1006;
                 }
             }
-            () = shared.withdraw.notified() => return 1006,
+            _ = withdrawn.changed() => return 1006,
             () = until_shutdown(shutdown) => {
                 // A peer that never answers the close frame must not hold shutdown.
                 let _ = tokio::time::timeout(CLOSE_TIMEOUT, async {
@@ -495,14 +501,15 @@ fn open_stream(shared: &Arc<Shared>, stream_id: String) {
     let fail = |reason: &str| {
         shared.send(json!({ "type": "stream.failed", "streamId": stream_id, "reason": reason }));
     };
-    // Shutdown snapshots the open streams, so none may start after it.
-    if shared.closed.load(Ordering::SeqCst) {
-        return;
-    }
     if !STREAM_ID.is_match(&stream_id) {
         return fail("invalid_stream_id");
     }
     let mut streams = lock(&shared.streams);
+    // Under the lock: shutdown sets `closed` and then drains this map, so a
+    // stream inserted after the check is still drained and joined.
+    if shared.closed.load(Ordering::SeqCst) {
+        return;
+    }
     if streams.contains_key(&stream_id) {
         return;
     }
@@ -730,6 +737,70 @@ async fn relay_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cloud::identity::MachineIdentity;
+    use crate::cloud::token_client::TokenClientOptions;
+    use crate::desktop::fake::{FakeDesktopMode, FakeDesktopProvider};
+
+    const STREAM: &str = "0b5e9c1a-1234-4abc-8def-0123456789ab";
+
+    fn shared() -> Arc<Shared> {
+        let options = DesktopLinkOptions {
+            cloud_base_url: "http://127.0.0.1:9".into(),
+            tokens: Arc::new(TokenClient::new(TokenClientOptions {
+                client_id: "machine".into(),
+                identity: MachineIdentity::generate().unwrap(),
+                token_endpoint: "http://127.0.0.1:9/token".into(),
+                resource: "http://127.0.0.1:9".into(),
+            })),
+            desktop: Arc::new(DesktopService::new(Arc::new(FakeDesktopProvider::new(
+                FakeDesktopMode::Full,
+                None,
+            )))),
+            machine_version: "test".into(),
+            logger: Logger::silent(),
+        };
+        Arc::new(Shared {
+            base: to_websocket_base(&options.cloud_base_url),
+            options,
+            streams: Mutex::default(),
+            outgoing: mpsc::unbounded_channel().0,
+            withdrawals: watch::channel(0).0,
+            closed: AtomicBool::new(false),
+            shutdown: watch::channel(false).0,
+        })
+    }
+
+    #[tokio::test]
+    async fn a_withdrawal_before_the_session_waits_still_ends_it() {
+        let shared = shared();
+        let mut withdrawn = shared.withdrawals.subscribe();
+        shared.withdraw();
+        tokio::time::timeout(Duration::from_secs(1), withdrawn.changed())
+            .await
+            .expect("withdrawal was lost")
+            .unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn no_stream_starts_once_shutdown_drained_the_streams() {
+        let shared = shared();
+        // Shutdown's order: `closed`, then drain under the lock. The opener
+        // arrives first and waits for the lock while shutdown runs.
+        let streams = lock(&shared.streams);
+        let opener = {
+            let shared = shared.clone();
+            let runtime = tokio::runtime::Handle::current();
+            std::thread::spawn(move || {
+                let _guard = runtime.enter();
+                open_stream(&shared, STREAM.into());
+            })
+        };
+        std::thread::sleep(Duration::from_millis(100));
+        shared.closed.store(true, Ordering::SeqCst);
+        drop(streams);
+        opener.join().unwrap();
+        assert!(lock(&shared.streams).is_empty());
+    }
 
     #[test]
     fn websocket_base_follows_the_cloud_scheme() {

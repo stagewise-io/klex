@@ -13,6 +13,7 @@ use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 
 use super::auth::Authenticator;
+use crate::desktop::service::DesktopService;
 use crate::logger::Logger;
 use crate::mcp::{Machine, MachineOptions};
 use crate::notifications::NotificationStore;
@@ -24,6 +25,7 @@ pub struct PrincipalRouterOptions {
     pub store: Arc<NotificationStore>,
     pub logger: Logger,
     pub omit_host_details: bool,
+    pub desktop: Option<Arc<DesktopService>>,
 }
 
 pub struct PrincipalRouter {
@@ -90,6 +92,7 @@ impl PrincipalRouter {
                         owns_store: false,
                         logger: self.options.logger.clone(),
                         omit_host_details: self.options.omit_host_details,
+                        desktop: self.options.desktop.clone(),
                     }))
                 })
                 .clone()

@@ -6,6 +6,7 @@ pub mod cli;
 pub mod cloud;
 pub mod collate;
 pub mod config;
+pub mod desktop;
 pub mod device_type;
 pub mod filesystem;
 pub mod fs_error;

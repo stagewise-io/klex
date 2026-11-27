@@ -5,6 +5,7 @@
 //! `unix.rs` and `windows.rs` provide the same modules with the same
 //! signatures; `macos.rs` and `linux.rs` hold what differs between Unixes.
 
+pub mod desktop;
 pub mod pty;
 
 #[cfg(target_os = "linux")]

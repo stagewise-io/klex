@@ -70,6 +70,8 @@ pub trait AtspiBus: Send + Sync {
     fn a11y_address(&self) -> BusFuture<'static, String>;
     /// True once the transport failed; the client then reconnects.
     fn closed(&self) -> bool;
+    /// Disconnects. Later calls fail and `closed` turns true.
+    fn close(&self) -> BoxFuture<'static, ()>;
 }
 
 pub type AtspiConnector =
@@ -250,13 +252,19 @@ impl AtspiClient {
     }
 
     pub async fn close(&self) {
-        self.bus.lock().await.take();
+        let bus = self.bus.lock().await.take();
+        if let Some(bus) = bus {
+            bus.close().await;
+        }
     }
 
     async fn connection(&self) -> BusResult<Arc<dyn AtspiBus>> {
         let mut bus = self.bus.lock().await;
         if let Some(current) = bus.as_ref().filter(|current| !current.closed()) {
             return Ok(current.clone());
+        }
+        if let Some(stale) = bus.take() {
+            stale.close().await;
         }
         let address = (self.address)().await?;
         let connected = (self.connect)(address).await?;
@@ -694,6 +702,17 @@ fn percent_encode(value: &str) -> String {
 struct ZbusBus {
     connection: zbus::Connection,
     closed: Arc<AtomicBool>,
+    _watcher: Arc<AbortOnDrop>,
+}
+
+/// The `closed()` watcher holds a connection clone, so it must stop with the
+/// last `ZbusBus` or the socket would outlive every user.
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
 }
 
 fn bus_error(error: zbus::Error) -> String {
@@ -847,6 +866,16 @@ impl AtspiBus for ZbusBus {
     fn closed(&self) -> bool {
         self.closed.load(Ordering::SeqCst)
     }
+
+    fn close(&self) -> BoxFuture<'static, ()> {
+        self.closed.store(true, Ordering::SeqCst);
+        self._watcher.0.abort();
+        let connection = self.connection.clone();
+        async move {
+            let _ = tokio::time::timeout(CALL_TIMEOUT, connection.close()).await;
+        }
+        .boxed()
+    }
 }
 
 fn variant_number(value: OwnedVariant) -> Option<f64> {
@@ -872,11 +901,15 @@ pub fn connect_zbus(address: String) -> BusFuture<'static, Arc<dyn AtspiBus>> {
         let closed = Arc::new(AtomicBool::new(false));
         let watcher = connection.clone();
         let flag = closed.clone();
-        tokio::spawn(async move {
+        let watcher = AbortOnDrop(tokio::spawn(async move {
             watcher.closed().await;
             flag.store(true, Ordering::SeqCst);
-        });
-        Ok(Arc::new(ZbusBus { connection, closed }) as Arc<dyn AtspiBus>)
+        }));
+        Ok(Arc::new(ZbusBus {
+            connection,
+            closed,
+            _watcher: Arc::new(watcher),
+        }) as Arc<dyn AtspiBus>)
     }
     .boxed()
 }
@@ -1218,6 +1251,11 @@ pub mod fake {
         fn closed(&self) -> bool {
             false
         }
+
+        fn close(&self) -> BoxFuture<'static, ()> {
+            self.record("", "Close");
+            futures::future::ready(()).boxed()
+        }
     }
 
     fn states(names: &[&'static str]) -> Vec<&'static str> {
@@ -1447,6 +1485,21 @@ mod tests {
         assert_eq!(
             client.find_window(Some(1), "Canvas game").await.unwrap(),
             None
+        );
+    }
+
+    #[tokio::test]
+    async fn closes_the_bus_connection_on_close() {
+        let fake = FakeAtspi::new(vec![sample_application()]);
+        let client = client(&fake);
+        assert!(client.available().await);
+        client.close().await;
+        assert!(
+            fake.calls
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(_, member, _)| member == "Close")
         );
     }
 

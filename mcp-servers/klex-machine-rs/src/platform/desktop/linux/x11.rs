@@ -5,7 +5,7 @@
 //! thread, and the next call reconnects.
 
 use std::os::fd::{AsRawFd, RawFd};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
@@ -94,12 +94,18 @@ pub struct Session {
     roots: Vec<Window>,
     atoms: Atoms,
     xtest: bool,
+    bindings: Bindings,
 }
+
+/// Spare keycodes bound to a keysym and not yet unbound. It outlives each
+/// session so the next one can unbind what a timed-out call left behind.
+type Bindings = Arc<Mutex<Vec<(Keycode, u32)>>>;
 
 /// The display named by `DISPLAY`, connected on first use.
 pub struct Display {
     name: String,
     session: tokio::sync::Mutex<Option<Arc<Session>>>,
+    bindings: Bindings,
 }
 
 impl Display {
@@ -107,6 +113,7 @@ impl Display {
         Self {
             name,
             session: tokio::sync::Mutex::new(None),
+            bindings: Bindings::default(),
         }
     }
 
@@ -116,7 +123,8 @@ impl Display {
             return Ok(session.clone());
         }
         let name = self.name.clone();
-        let connect = tokio::task::spawn_blocking(move || Session::connect(&name));
+        let bindings = self.bindings.clone();
+        let connect = tokio::task::spawn_blocking(move || Session::connect(&name, bindings));
         let session = match tokio::time::timeout(CONNECT_TIMEOUT, connect).await {
             Ok(Ok(result)) => Arc::new(result?),
             Ok(Err(_)) => return Err(format!("Can't open display: {}", self.name)),
@@ -233,7 +241,7 @@ pub fn scroll_button(direction: ScrollDirection) -> u8 {
 }
 
 impl Session {
-    fn connect(name: &str) -> Result<Self, String> {
+    fn connect(name: &str, bindings: Bindings) -> Result<Self, String> {
         let open = |error: ConnectError| format!("Can't open display: {name}: {error}");
         let (conn, screen) = RustConnection::connect(Some(name)).map_err(open)?;
         let fd = conn.stream().as_raw_fd();
@@ -265,7 +273,7 @@ impl Session {
             .extension_information(xtest::X11_EXTENSION_NAME)
             .map_err(|error| failed(error.into()))?
             .is_some();
-        Ok(Self {
+        let session = Self {
             atoms: Atoms {
                 net_active_window: atoms[0],
                 net_wm_name: atoms[1],
@@ -281,7 +289,31 @@ impl Session {
             root,
             roots,
             xtest,
-        })
+            bindings,
+        };
+        // Best effort: a stale binding only costs one spare keycode.
+        let _ = session.unbind_leftovers();
+        Ok(session)
+    }
+
+    /// Unbinds spare keycodes an earlier session bound and could not unbind,
+    /// when they still hold the keysym it set.
+    fn unbind_leftovers(&self) -> XResult<()> {
+        let leftovers = std::mem::take(&mut *self.bindings.lock().unwrap());
+        if leftovers.is_empty() {
+            return Ok(());
+        }
+        let keymap = self.keymap()?;
+        let ours = leftovers
+            .into_iter()
+            .filter(|&(code, keysym)| keymap.keysyms(code).iter().all(|&sym| sym == keysym))
+            .map(|(code, _)| Key {
+                code,
+                shift: false,
+                bound: true,
+            })
+            .collect::<Vec<_>>();
+        self.unbind(&keymap, &ours)
     }
 
     pub fn has_xtest(&self) -> bool {
@@ -471,6 +503,7 @@ impl Session {
             .spare(taken)
             .ok_or("No spare keycode is left to type this character")?;
         let syms = vec![keysym; keymap.per];
+        self.bindings.lock().unwrap().push((code, keysym));
         self.conn
             .change_keyboard_mapping(1, code, keymap.per as u8, &syms)?;
         self.flush()?;
@@ -490,7 +523,43 @@ impl Session {
             self.conn
                 .change_keyboard_mapping(1, key.code, keymap.per as u8, &empty)?;
         }
-        self.flush()
+        self.flush()?;
+        self.bindings
+            .lock()
+            .unwrap()
+            .retain(|(code, _)| !keys.iter().any(|key| key.bound && key.code == *code));
+        Ok(())
+    }
+
+    /// Unbinds `keys` and forgets them in the local keymap copy.
+    fn release_bindings(&self, keymap: &mut Keymap, keys: &[Key]) -> XResult<()> {
+        let unbound = self.unbind(keymap, keys);
+        for key in keys.iter().filter(|key| key.bound) {
+            let start = (key.code - keymap.min) as usize * keymap.per;
+            keymap.syms[start..start + keymap.per].fill(0);
+        }
+        unbound
+    }
+
+    /// Presses `keys` in order with optional Shift, then releases them.
+    fn tap(&self, keys: &[Key], shift: Option<Keycode>, delay: Duration) -> XResult<()> {
+        if let Some(code) = shift {
+            self.key_event(code, true)?;
+        }
+        for key in keys {
+            self.key_event(key.code, true)?;
+        }
+        self.flush()?;
+        sleep(delay / 2);
+        for key in keys.iter().rev() {
+            self.key_event(key.code, false)?;
+        }
+        if let Some(code) = shift {
+            self.key_event(code, false)?;
+        }
+        self.flush()?;
+        sleep(delay / 2);
+        Ok(())
     }
 
     /// Releases held modifiers and Caps Lock, as `--clearmodifiers` does, and
@@ -548,28 +617,14 @@ impl Session {
             for character in text.chars() {
                 let mut taken = Vec::new();
                 let key = self.resolve(&mut keymap, keys::char_keysym(character), &mut taken)?;
-                let shift = if key.shift {
-                    Some(self.shift_code(&keymap)?)
+                let typed = if key.shift {
+                    self.shift_code(&keymap)
+                        .and_then(|code| self.tap(&[key], Some(code), delay))
                 } else {
-                    None
+                    self.tap(&[key], None, delay)
                 };
-                if let Some(code) = shift {
-                    self.key_event(code, true)?;
-                }
-                self.key_event(key.code, true)?;
-                self.flush()?;
-                sleep(delay / 2);
-                self.key_event(key.code, false)?;
-                if let Some(code) = shift {
-                    self.key_event(code, false)?;
-                }
-                self.flush()?;
-                sleep(delay / 2);
-                if key.bound {
-                    self.unbind(&keymap, &[key])?;
-                    let start = (key.code - keymap.min) as usize * keymap.per;
-                    keymap.syms[start..start + keymap.per].fill(0);
-                }
+                let unbound = self.release_bindings(&mut keymap, &[key]);
+                typed.and(unbound)?;
             }
             Ok(())
         })();
@@ -597,37 +652,23 @@ impl Session {
         let result = (|| {
             for combo in &keysyms {
                 let mut taken = Vec::new();
-                let pressed = combo
+                let mut pressed = Vec::new();
+                let typed = combo
                     .iter()
-                    .map(|&keysym| self.resolve(&mut keymap, keysym, &mut taken))
-                    .collect::<XResult<Vec<_>>>()?;
-                let shift = pressed.iter().any(|key| key.shift) && !combo.contains(&SHIFT_L);
-                let shift = if shift {
-                    Some(self.shift_code(&keymap)?)
-                } else {
-                    None
-                };
-                if let Some(code) = shift {
-                    self.key_event(code, true)?;
-                }
-                for key in &pressed {
-                    self.key_event(key.code, true)?;
-                }
-                self.flush()?;
-                sleep(delay / 2);
-                for key in pressed.iter().rev() {
-                    self.key_event(key.code, false)?;
-                }
-                if let Some(code) = shift {
-                    self.key_event(code, false)?;
-                }
-                self.flush()?;
-                sleep(delay / 2);
-                self.unbind(&keymap, &pressed)?;
-                for key in pressed.iter().filter(|key| key.bound) {
-                    let start = (key.code - keymap.min) as usize * keymap.per;
-                    keymap.syms[start..start + keymap.per].fill(0);
-                }
+                    .try_for_each(|&keysym| {
+                        pressed.push(self.resolve(&mut keymap, keysym, &mut taken)?);
+                        Ok(())
+                    })
+                    .and_then(|()| {
+                        if pressed.iter().any(|key| key.shift) && !combo.contains(&SHIFT_L) {
+                            Ok(Some(self.shift_code(&keymap)?))
+                        } else {
+                            Ok(None)
+                        }
+                    })
+                    .and_then(|shift| self.tap(&pressed, shift, delay));
+                let unbound = self.release_bindings(&mut keymap, &pressed);
+                typed.and(unbound)?;
             }
             Ok(())
         })();
